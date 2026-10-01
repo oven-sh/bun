@@ -1,0 +1,42 @@
+K-PRED	checker.go:27946	c.isUniformUnionType	t.objectFlags |= ObjectFlagsIsUniformEnumComputed | core.IfElse(c.computeIsUniformUnionType(t.Types()), ObjectFlagsIsUniformEnum, ObjectFlagsNone)
+T-TUPLE	checker.go:23494	TupleNormalizer.normalize	message := core.IfElse(ast.IsPartOfTypeNode(c.currentNode),
+T-TUPLE	checker.go:24837	c.getTupleElementFlags	return core.IfElse(c.getArrayElementTypeNode(node.Type()) != nil, ElementFlagsRest, ElementFlagsVariadic)
+T-TUPLE	checker.go:24844	c.getTupleElementFlags	return core.IfElse(c.getArrayElementTypeNode(named.Type) != nil, ElementFlagsRest, ElementFlagsVariadic)
+T-TUPLE	checker.go:24854	c.getTupleElementInfo	labeledDeclaration: core.IfElse(ast.IsNamedTupleMember(node) || ast.IsParameterDeclaration(node), node, nil),
+T-TUPLE	checker.go:24914	c.createTupleTargetType	property := c.newSymbolEx(ast.SymbolFlagsProperty|core.IfElse(flags&ElementFlagsOptional != 0, ast.SymbolFlagsOptional, 0), strconv.Itoa(i), core.IfEl
+T-TUPLE	relater.go:1936	c.getKnownKeysOfTupleType	keys[fixedLength] = c.getIndexType(core.IfElse(t.TargetTupleType().readonly, c.globalReadonlyArrayType, c.globalArrayType))
+T-ENUMVAL	checker.go:24126	c.computeConstantEnumMemberValue	c.error(initializer, core.IfElse(numValue.IsNaN(),
+T-TYPENODE	checker.go:23028	c.getThisType	return core.Coalesce(c.getDeclaredTypeOfClassOrInterface(c.getSymbolOfDeclaration(parent)).AsInterfaceType().thisType, c.errorType)
+T-TYPENODE	checker.go:23713	c.getTypeFromTypeAliasReference	message := core.IfElse(minTypeArgumentCount == len(typeParameters),
+T-CONSTRAINT	checker.go:17267	c.getInferredTypeParameterConstraint	core.IfElse(checkMappedTypeParameter.AsTypeParameterDeclaration().Constraint != nil,
+T-UIMEMBERS	checker.go:21200	c.getArrayMemberCallSignatures	return t.Mapper().Map(core.IfElse(c.isReadonlyArraySymbol(t.symbol.Parent), c.globalReadonlyArrayType, c.globalArrayType).AsInterfaceType().TypeParame
+T-UIMEMBERS	checker.go:21354	c.combineUnionOrIntersectionParameters	shorterParamType := core.OrElse(c.tryGetTypeAtPosition(shorter, i), c.unknownType)
+T-UIMEMBERS	checker.go:21381	c.combineUnionOrIntersectionParameters	core.IfElse(isRestParam, ast.CheckFlagsRestParameter, core.IfElse(isOptional, ast.CheckFlagsOptionalParameter, 0)))
+T-APPARENT	checker.go:21887	c.getResolvedApparentTypeOfMappedType	target := core.OrElse(t.AsMappedType().target, t)
+T-SIGDECL	checker.go:19997	c.getSignatureFromDeclaration	otherKind := core.IfElse(ast.IsGetAccessorDeclaration(declaration), ast.KindSetAccessor, ast.KindGetAccessor)
+T-SIGDECL	checker.go:20046	c.getAccessorThisParameter	if len(accessor.Parameters()) == core.IfElse(ast.IsGetAccessorDeclaration(accessor), 1, 2) {
+T-SIGSHAPE	checker.go:9722	c.getRestTypeOfSignature	return core.OrElse(c.tryGetRestTypeOfSignature(signature), c.anyType)
+T-SIGSHAPE	relater.go:1731	c.getParameterCount	return length + restType.TargetTupleType().fixedLength - core.IfElse(restType.TargetTupleType().combinedFlags&ElementFlagsVariable != 0, 0, 1)
+T-SIGSHAPE	relater.go:1799	c.tryGetTypeAtPosition	paramCount := len(signature.parameters) - core.IfElse(signatureHasRestParameter(signature), 1, 0)
+T-SIGSHAPE	relater.go:1861	c.getNameableDeclarationAtPosition	paramCount := len(signature.parameters) - core.IfElse(signatureHasRestParameter(signature), 1, 0)
+T-SIGSHAPE	relater.go:1963	c.getParameterNameAtPosition	paramCount := len(signature.parameters) - core.IfElse(signatureHasRestParameter(signature), 1, 0)
+T-SIGINST	checker.go:19562	c.getBaseSignature	return core.OrElse(c.getConstraintOfTypeParameter(tp), c.unknownType)
+T-INSTANTIATE	checker.go:22243	c.instantiateTypeWithAlias	cache := c.activeTypeMappersCaches[core.IfElse(index != -1, index, len(c.activeTypeMappersCaches)-1)]
+T-SYMTYPE	checker.go:17789	c.checkRightHandSideOfForOf	use := core.IfElse(statement.AsForInOrOfStatement().AwaitModifier != nil, IterationUseForAwaitOf, IterationUseForOf)
+T-SYMTYPE	checker.go:17795	c.getTypeForBindingElement	checkMode := core.IfElse(hasDotDotDotToken(declaration), CheckModeRestBindingElement, CheckModeNormal)
+T-SYMTYPE	checker.go:17829	c.getBindingElementTypeFromParentType	accessFlags := AccessFlagsExpressionPosition | core.IfElse(noTupleBoundsCheck || c.hasDefaultValue(declaration), AccessFlagsAllowMissing, 0)
+T-SYMTYPE	checker.go:17859	c.getBindingElementTypeFromParentType	elementType := c.checkIteratedTypeOrElementType(IterationUseDestructuring|core.IfElse(hasDotDotDotToken(declaration), 0, IterationUsePossiblyOutOfBoun
+T-SYMTYPE	checker.go:17880	c.getBindingElementTypeFromParentType	declaredType := core.OrElse(c.getIndexedAccessTypeOrUndefined(parentType, indexType, accessFlags, declaration.Name(), nil), c.errorType)
+T-SYMTYPE	checker.go:18048	c.getTypeFromObjectBindingPattern	flags := ast.SymbolFlagsProperty | core.IfElse(e.Initializer() != nil, ast.SymbolFlagsOptional, 0)
+T-WIDEN	checker.go:18500	c.getWidenedTypeWithContext	result = c.getUnionTypeEx(widenedTypes, core.IfElse(core.Some(widenedTypes, c.isEmptyObjectType), UnionReductionSubtype, UnionReductionLiteral), nil, 
+T-WIDEN	checker.go:20587	c.shouldReportErrorsFromWideningWithContextualSignature	returnType = core.OrElse(c.getIterationTypeOfGeneratorFunctionReturnType(IterationTypeKindReturn, returnType, flags&ast.FunctionFlagsAsync != 0), retu
+T-WIDEN	checker.go:20589	c.shouldReportErrorsFromWideningWithContextualSignature	returnType = core.OrElse(c.getAwaitedTypeNoAlias(returnType), returnType)
+K-KEYOF	checker.go:26997	c.getIndexTypeForMappedType	nameType := c.getNameTypeFromMappedType(core.OrElse(t.AsMappedType().target, t))
+K-INDEXED	checker.go:27364	c.getSuggestionForNonexistentIndexSignature	suggestedMethod := core.IfElse(ast.IsAssignmentTarget(expr), "set", "get")
+K-INDEXED	checker.go:28080	c.getSimplifiedIndexedAccessTypeWorker	elementType := c.getElementTypeOfSliceOfTupleType(objectType, core.IfElse(indexType.flags&TypeFlagsNumber != 0, 0, objectType.TargetTupleType().fixedL
+K-INDEXED	checker.go:29417	c.substituteIndexedMappedType	instantiatedTemplateType := c.instantiateType(c.getTemplateTypeFromMappedType(core.OrElse(objectType.AsMappedType().target, objectType)), templateMapp
+T-MAPPED	checker.go:21017	c.resolveMappedTypeMembers	mappedType := core.OrElse(t.AsMappedType().target, t)
+T-MAPPED	checker.go:21051	c.resolveMappedTypeMembers	prop.CheckFlags = lateFlag | ast.CheckFlagsMapped | core.IfElse(isReadonly, ast.CheckFlagsReadonly, 0) | core.IfElse(stripOptional, ast.CheckFlagsStri
+T-MAPPED	checker.go:21106	c.getTypeOfMappedSymbol	templateType := c.getTemplateTypeFromMappedType(core.OrElse(mappedType.AsMappedType().target, mappedType))
+T-MAPPED	checker.go:22762	c.instantiateMappedTypeTemplate	propType := c.instantiateType(c.getTemplateTypeFromMappedType(core.OrElse(t.AsMappedType().target, t)), templateMapper)
+T-MAPPED	checker.go:22795	c.getConstraintTypeFromMappedType	m.constraintType = core.OrElse(c.getConstraintOfTypeParameter(c.getTypeParameterFromMappedType(t)), c.errorType)

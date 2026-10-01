@@ -1,0 +1,1014 @@
+group 08-declare-namespace-enum  dialect ts  config plain  inputs 2704
+counts A1=75 A1c=49 A1s=26 A2=95 AA=1599 AAg=371 B=14 RR=550
+
+calls of Bun that differ from transformSync without tsconfig: 8 inputs
+  "declare class C { accessor x: T; }"  base=ok  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "declare class C { static accessor x: T; }"  base=ok  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "namespace N { break }"  base="Cannot use \"break\" here"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "null = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "this = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "true = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "arguments = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "eval = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family declare  (392 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1855-1973 (1856-1864 newline, 1878-1888 "declare global", 1893 parses the statement, 1896-1911 rejects what is not STypeScript, SLocal or SEmpty, 1912-1921 discards the scopes, 1943-1970 "export declare" in a namespace), src/js_parser/parse/parse_stmt.rs:1728 (the keyword is first parsed as an expression)
+  ref: parser.go:1124 parseDeclaration, 1151 parseDeclarationWorker, 6119 isStartOfDeclaration, 6123 scanStartOfDeclaration, 3908 parseModifiersEx
+  counts A1=35 A2=18 AA=209 AAg=94 B=5 RR=31
+  -- A1: 35 distinct
+    "declare async\nfunction f(): Promise<void>;"
+        bun x1: Unexpected "async" @8
+    "declare function f(public a: A): void;"
+        bun x1: Expected ")" but found "a" @26
+    "declare abstract\nclass C {}"
+        bun x1: Unexpected "abstract" @8
+    "abstract declare class C {}"
+        bun x1: Expected ";" but found "declare" @9
+    "declare namespace;"
+        bun x1: Unexpected "namespace" @8
+    "declare module;"
+        bun x1: Unexpected "module" @8
+    "declare module"
+        bun x1: Unexpected "module" @8
+    "declare global;"
+        bun x1: Expected "{" but found ";" @14
+    "declare global"
+        bun x1: Expected "{" but found end of file @14
+    "declare\nglobal {}"
+        bun x1: Expected ";" but found "{" @15
+    "global {}"
+        bun x1: Expected ";" but found "{" @7
+    "global { var x: T; }"
+        bun x1: Expected ";" but found "{" @7
+    "namespace N { global {} }"
+        bun x1: Expected ";" but found "{" @21
+    "declare x;"
+        bun x1: Unexpected "x" @8
+    "declare x: T;"
+        bun x1: Unexpected "x" @8
+    "declare 1;"
+        bun x1: Unexpected "1" @8
+    "declare \"s\";"
+        bun x1: Unexpected "\"s\"" @8
+    "declare"
+        bun x1: Unexpected end of file @7
+    "declare as any"
+        bun x1: Unexpected end of file @14
+    "declare!"
+        bun x1: Unexpected end of file @8
+    "declare {}"
+        bun x1: Unexpected "{" @8
+    "declare { x }"
+        bun x1: Unexpected "{" @8
+    "declare if (a) {}"
+        bun x1: Unexpected "if" @8
+    "declare for (;;) {}"
+        bun x1: Unexpected "for" @8
+    "declare label: x;"
+        bun x1: Unexpected "label" @8
+    "declare try {} catch {}"
+        bun x1: Unexpected "try" @8
+    "declare throw x;"
+        bun x1: Unexpected "throw" @8
+    "declare debugger;"
+        bun x1: Unexpected "debugger" @8
+    "declare async () => {};"
+        bun x1: Unexpected "async" @8
+    "declare new C;"
+        bun x1: Unexpected "new" @8
+    "declare this;"
+        bun x1: Unexpected "this" @8
+    "declare import(\"x\");"
+        bun x1: Unexpected "import" @8
+    "declare import.meta;"
+        bun x1: Unexpected "import" @8
+    "declare abstract;"
+        bun x1: Unexpected "abstract" @8
+    "declare async;"
+        bun x1: Unexpected "async" @8
+  -- A2: 18 distinct
+    "declare using x: T;"
+        bun x1: Cannot use "declare" with a "using" declaration @8
+        tsc x1: TS1491 @0 len 7 "'declare' modifier cannot appear on a 'using' declaration."
+    "declare await using x: T;"
+        bun x1: Cannot use "declare" with an "await using" declaration @8
+        tsc x1: TS1495 @0 len 7 "'declare' modifier cannot appear on an 'await using' declaration."
+    "declare function f(...a: A[], b: B): void;"
+        bun x1: Expected ")" but found "b" @30
+        tsc x1: TS1014 @19 len 3 "A rest parameter must be last in a parameter list."
+    "declare function f(@d a: A): void;"
+        bun x1: Expected identifier but found "@" @19
+        tsc x1: TS1206 @19 len 1 "Decorators are not valid here."
+    "declare class {}"
+        bun x1: Expected identifier but found "{" @14
+        tsc x1: TS1211 @0 len 7 "A class declaration without the 'default' modifier must have a name."
+    "declare namespace N { return; }"
+        bun x1: A return statement cannot be used here @22
+        tsc x1: TS1036 @22 len 6 "Statements are not allowed in ambient contexts."
+    "declare namespace N { using x: T; }"
+        bun x1: Cannot use "declare" with a "using" declaration @22
+        tsc x1: TS1545 @22 len 10 "'using' declarations are not allowed in ambient contexts."
+    "declare\nmodule \"m\" {}"
+        bun x1: Expected ";" but found ""m"" @15
+        tsc x1: TS1035 @15 len 3 "Only ambient modules can use quoted names."
+    "declare import a from \"b\";"
+        bun x1: Unexpected "import" @8
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "declare export default x;"
+        bun x1: Unexpected "export" @8
+        tsc x1: TS1120 @0 len 7 "An export assignment cannot have modifiers."
+    "declare return;"
+        bun x1: Unexpected "return" @8
+        tsc x1: TS1108 @8 len 6 "A 'return' statement can only be used within a function body."
+    "declare export {};"
+        bun x1: Unexpected "export" @8
+        tsc x1: TS1193 @0 len 7 "An export declaration cannot have modifiers."
+    "declare export * from \"x\";"
+        bun x1: Unexpected "export" @8
+        tsc x1: TS1193 @0 len 7 "An export declaration cannot have modifiers."
+    "declare interface;"
+        bun x1: Expected identifier but found ";" @17
+        tsc x1: TS1212 @8 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+    "declare const;"
+        bun x1: Expected identifier but found ";" @13
+        tsc x1: TS1123 @13 len 0 "Variable declaration list cannot be empty."
+    "declare let;"
+        bun x1: Unexpected "let" @8
+        tsc x1: TS1123 @11 len 0 "Variable declaration list cannot be empty."
+    "declare var;"
+        bun x1: Expected identifier but found ";" @11
+        tsc x1: TS1123 @11 len 0 "Variable declaration list cannot be empty."
+    "function f() { declare namespace N {} }"
+        bun x1: Expected ";" but found "N" @33
+        tsc x1: TS1235 @15 len 7 "A namespace declaration is only allowed at the top level of a namespace or module."
+  -- B: 5 distinct
+    "declare namespace N;"
+        tsc x1: TS1005 @19 len 1 "'{' expected."
+    "declare namespace N"
+        tsc x1: TS1005 @19 len 0 "'{' expected."
+    "declare namespace N.M;"
+        tsc x1: TS1005 @21 len 1 "'{' expected."
+    "declare namespace \"N\" {}"
+        tsc x1: TS1003 @18 len 3 "Identifier expected."
+    "declare module \"m\".n {}"
+        tsc x1: TS1005 @18 len 1 "';' expected."
+  -- AAg: 94 distinct
+    "declare const x = null;"
+        tsc x1: TS1254 @18 len 4 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = E.A;"
+        tsc x1: TS1254 @18 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = E[\"A\"];"
+        tsc x1: TS1254 @18 len 6 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = E.A.B;"
+        tsc x1: TS1254 @18 len 5 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = \"a\" + \"b\";"
+        tsc x1: TS1254 @18 len 9 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = 1 + 1;"
+        tsc x1: TS1254 @18 len 5 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = y;"
+        tsc x1: TS1254 @18 len 1 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = f();"
+        tsc x1: TS1254 @18 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = {};"
+        tsc x1: TS1254 @18 len 2 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x = [];"
+        tsc x1: TS1254 @18 len 2 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare const x: T = 1;"
+        tsc x1: TS1039 @21 len 1 "Initializers are not allowed in ambient contexts."
+    "declare const x: 1 = 1;"
+        tsc x1: TS1039 @21 len 1 "Initializers are not allowed in ambient contexts."
+    "declare let x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare var x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare let x: T = 1;"
+        tsc x1: TS1039 @19 len 1 "Initializers are not allowed in ambient contexts."
+    "declare var x!: T;"
+        tsc x1: TS1255 @13 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "declare const x!: T;"
+        tsc x1: TS1255 @15 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "declare const { a } = b;"
+        tsc x1: TS1254 @22 len 1 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "declare let x: unique symbol;"
+        tsc x1: TS1332 @12 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "declare var x: unique symbol;"
+        tsc x1: TS1332 @12 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "declare function f(): void {}"
+        tsc x1: TS1183 @27 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare function f() {}"
+        tsc x1: TS1183 @21 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare async function f(): Promise<void>;"
+        tsc x1: TS1040 @8 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare function* f(): any;"
+        tsc x1: TS1221 @16 len 1 "Generators are not allowed in an ambient context."
+    "declare async function* f(): any;"
+        tsc x1: TS1040 @8 len 5 "'async' modifier cannot be used in an ambient context."
+        tsc x1: TS1221 @22 len 1 "Generators are not allowed in an ambient context."
+    "declare function f(a?: A = 1): void;"
+        tsc x1: TS1015 @19 len 1 "Parameter cannot have question mark and initializer."
+    "declare class C { x = 1; }"
+        tsc x1: TS1039 @22 len 1 "Initializers are not allowed in ambient contexts."
+    "declare class C { x: T = 1; }"
+        tsc x1: TS1039 @25 len 1 "Initializers are not allowed in ambient contexts."
+    "declare class C { readonly x: T = 1; }"
+        tsc x1: TS1039 @34 len 1 "Initializers are not allowed in ambient contexts."
+    "declare class C { static x = 1; }"
+        tsc x1: TS1039 @29 len 1 "Initializers are not allowed in ambient contexts."
+    "declare class C { m() {} }"
+        tsc x1: TS1183 @22 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { m(): void {} }"
+        tsc x1: TS1183 @28 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { constructor() {} }"
+        tsc x1: TS1183 @32 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { get x() { return 1 } }"
+        tsc x1: TS1183 @26 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { x!: T; }"
+        tsc x1: TS1255 @19 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "declare class C { abstract m(): void; }"
+        tsc x1: TS1244 @18 len 8 "Abstract methods can only appear within an abstract class."
+    "declare class C { async m(): Promise<void>; }"
+        tsc x1: TS1040 @18 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare class C { *m(): any; }"
+        tsc x1: TS1221 @18 len 1 "Generators are not allowed in an ambient context."
+    "declare class C { async *m(): any; }"
+        tsc x1: TS1040 @18 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare class C { @d m(): void; }"
+        tsc x1: TS1249 @18 len 1 "A decorator can only decorate a method implementation, not an overload."
+    "declare class C { m(@d a: A): void; }"
+        tsc x1: TS1206 @20 len 1 "Decorators are not valid here."
+    "declare abstract class C { abstract m() {} }"
+        tsc x1: TS1245 @36 len 1 "Method 'm' cannot have an implementation because it is marked abstract."
+        tsc x1: TS1183 @40 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare enum E { A = f() }"
+        tsc x1: TS1066 @21 len 3 "In ambient enum declarations member initializer must be constant expression."
+    "declare namespace N { function f() {} }"
+        tsc x1: TS1183 @35 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare namespace N { class C { m() {} } }"
+        tsc x1: TS1183 @36 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare namespace N { export default x; }"
+        tsc x1: TS1319 @22 len 17 "A default export can only be used in an ECMAScript-style module."
+    "declare namespace N { export = x; }"
+        tsc x1: TS1063 @22 len 11 "An export assignment cannot be used in a namespace."
+    "declare namespace N { declare var x: T; }"
+        tsc x1: TS1038 @22 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare namespace N { declare function f(): void; }"
+        tsc x1: TS1038 @22 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare namespace N { export declare var x: T; }"
+        tsc x1: TS1038 @29 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare namespace N { let x = 1; }"
+        tsc x1: TS1039 @30 len 1 "Initializers are not allowed in ambient contexts."
+    "declare namespace N { x = 1; }"
+        tsc x1: TS1036 @22 len 1 "Statements are not allowed in ambient contexts."
+    "declare namespace N { x; }"
+        tsc x1: TS1036 @22 len 1 "Statements are not allowed in ambient contexts."
+    "declare namespace N { f(); }"
+        tsc x1: TS1036 @22 len 1 "Statements are not allowed in ambient contexts."
+    "declare namespace N { if (a) {} }"
+        tsc x1: TS1036 @22 len 2 "Statements are not allowed in ambient contexts."
+    "declare module N {}"
+        tsc x1: TS1540 @15 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "declare module N.M {}"
+        tsc x1: TS1540 @15 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1540 @17 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "declare module \"m\" { var x = 1; }"
+        tsc x1: TS1039 @29 len 1 "Initializers are not allowed in ambient contexts."
+    "declare module \"m\" { function f() {} }"
+        tsc x1: TS1183 @34 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare module \"m\" { x; }"
+        tsc x1: TS1036 @21 len 1 "Statements are not allowed in ambient contexts."
+    "declare module \"m\" { declare const x: T; }"
+        tsc x1: TS1038 @21 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare module \"m\" { export declare const x: T; }"
+        tsc x1: TS1038 @28 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare module \"m\" { export as namespace X; }"
+        tsc x1: TS1316 @21 len 22 "Global module exports may only appear at top level."
+    "declare module \"m\" { export = x; export as namespace X; }"
+        tsc x1: TS1316 @33 len 22 "Global module exports may only appear at top level."
+    "declare module \"m\" { export default async function f(): Promise<void>; }"
+        tsc x1: TS1040 @36 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare global { x; }"
+        tsc x1: TS1036 @17 len 1 "Statements are not allowed in ambient contexts."
+    "declare global { var x = 1; }"
+        tsc x1: TS1039 @25 len 1 "Initializers are not allowed in ambient contexts."
+    "declare global { function f() {} }"
+        tsc x1: TS1183 @30 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare module global {}"
+        tsc x1: TS1540 @15 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "function f() { declare global {} }"
+        tsc x1: TS1234 @15 len 7 "An ambient module declaration is only allowed at the top level in a file."
+    "declare global { declare global {} }"
+        tsc x1: TS1038 @17 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare import a = b.c;"
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "declare export const x: T;"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "declare declare var x: T;"
+        tsc x1: TS1030 @8 len 7 "'declare' modifier already seen."
+    "function f() { declare var x: T; }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare function g(): void; }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare class C {} }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare const x: T; return x; }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare enum E {} }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare type T = 1; }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "function f() { declare interface I {} }"
+        tsc x1: TS1184 @15 len 7 "Modifiers cannot appear here."
+    "if (a) declare var x: T;"
+        tsc x1: TS1184 @7 len 7 "Modifiers cannot appear here."
+    "if (a) declare const x: T;"
+        tsc x1: TS1184 @7 len 7 "Modifiers cannot appear here."
+    "if (a) { declare const x: T; }"
+        tsc x1: TS1184 @9 len 7 "Modifiers cannot appear here."
+    "{ declare var x: T; }"
+        tsc x1: TS1184 @2 len 7 "Modifiers cannot appear here."
+    "{ declare let x: T; }"
+        tsc x1: TS1184 @2 len 7 "Modifiers cannot appear here."
+    "{ declare class C {} }"
+        tsc x1: TS1184 @2 len 7 "Modifiers cannot appear here."
+    "{ declare function f(): void; }"
+        tsc x1: TS1184 @2 len 7 "Modifiers cannot appear here."
+    "for (;;) declare var x: T;"
+        tsc x1: TS1184 @9 len 7 "Modifiers cannot appear here."
+    "label: declare var x: T;"
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+        tsc x1: TS1184 @7 len 7 "Modifiers cannot appear here."
+    "class C { static { declare var x: T; } }"
+        tsc x1: TS1184 @19 len 7 "Modifiers cannot appear here."
+    "() => { declare var x: T; }"
+        tsc x1: TS1184 @8 len 7 "Modifiers cannot appear here."
+    "switch (a) { case 1: declare var x: T; }"
+        tsc x1: TS1184 @21 len 7 "Modifiers cannot appear here."
+    "try { declare var x: T; } catch {}"
+        tsc x1: TS1184 @6 len 7 "Modifiers cannot appear here."
+
+==== family namespace  (169 inputs)
+  bun: src/js_parser/parse/parse_typescript.rs:205-481 parse_type_script_namespace_stmt (213 reads lexer.identifier also when the name is a string literal), src/js_parser/parse/parse_stmt.rs:1794-1807 (requires an identifier, or a string literal under declare; not in a nested scope), src/js_parser/parse/parse_stmt.rs:1843-1854 "global"
+  ref: parser.go:2202 parseModuleDeclaration, 2218 parseAmbientExternalModuleDeclaration, 2254 parseModuleOrNamespaceDeclaration, 2242 parseModuleBlock, 2163 nextIsNotDot
+  counts A1=2 A2=39 AA=81 AAg=9 B=3 RR=35
+  -- A1: 2 distinct
+    "namespace N { this.x }"
+        bun x1: Cannot use "this" here @14
+    "namespace N { super.x }"
+        bun x1: Unexpected "super" @14
+  -- A2: 39 distinct
+    "namespace N { export default 1 }"
+        bun x1: Unexpected default @21
+        tsc x1: TS1319 @14 len 16 "A default export can only be used in an ECMAScript-style module."
+    "namespace N { export default x }"
+        bun x1: Unexpected default @21
+        tsc x1: TS1319 @14 len 16 "A default export can only be used in an ECMAScript-style module."
+    "namespace N { export default class {} }"
+        bun x1: Unexpected default @21
+        tsc x1: TS1319 @21 len 7 "A default export can only be used in an ECMAScript-style module."
+    "namespace N { export default function () {} }"
+        bun x1: Unexpected default @21
+        tsc x1: TS1319 @21 len 7 "A default export can only be used in an ECMAScript-style module."
+    "namespace N { export * from \"x\" }"
+        bun x1: Unexpected * @21
+        tsc x1: TS1194 @28 len 3 "Export declarations are not permitted in a namespace."
+    "namespace N { export * as a from \"x\" }"
+        bun x1: Unexpected * @21
+        tsc x1: TS1194 @33 len 3 "Export declarations are not permitted in a namespace."
+    "namespace N { export { x } }"
+        bun x1: Unexpected { @21
+        tsc x1: TS1194 @14 len 12 "Export declarations are not permitted in a namespace."
+    "namespace N { export { x } from \"y\" }"
+        bun x1: Unexpected { @21
+        tsc x1: TS1194 @32 len 3 "Export declarations are not permitted in a namespace."
+    "namespace N { export {} }"
+        bun x1: Unexpected { @21
+        tsc x1: TS1194 @14 len 9 "Export declarations are not permitted in a namespace."
+    "namespace N { import x from \"y\" }"
+        bun x1: Expected "=" but found "from" @23
+        tsc x1: TS1147 @28 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { import \"y\" }"
+        bun x1: Expected identifier but found ""y"" @21
+        tsc x1: TS1147 @21 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { return }"
+        bun x1: A return statement cannot be used here @14
+        tsc x1: TS1108 @14 len 6 "A 'return' statement can only be used within a function body."
+    "namespace N { await x }"
+        bun x1: "await" can only be used inside an "async" function @20
+        tsc x1: TS1308 @14 len 5 "'await' expressions are only allowed within async functions and at the top levels of modules."
+    "namespace N { break }"
+        bun x1: Cannot use "break" here @14
+        tsc x1: TS1105 @14 len 5 "A 'break' statement can only be used within an enclosing iteration or switch statement."
+    "namespace N { export using x = y }"
+        bun x1: Unexpected using @21
+        tsc x1: TS1491 @14 len 6 "'export' modifier cannot appear on a 'using' declaration."
+    "module \"m\" {}"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+    "module 'm' {}"
+        bun x1: Expected ";" but found "'m'" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+    "module \"m\";"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+    "export module \"m\" {}"
+        bun x1: Expected ";" but found ""m"" @14
+        tsc x1: TS1035 @14 len 3 "Only ambient modules can use quoted names."
+    "async namespace N {}"
+        bun x1: Expected ";" but found "namespace" @6
+        tsc x1: TS1042 @0 len 5 "'async' modifier cannot be used here."
+    "abstract namespace N {}"
+        bun x1: Expected ";" but found "namespace" @9
+        tsc x1: TS1242 @0 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "public namespace N {}"
+        bun x1: Expected ";" but found "namespace" @7
+        tsc x1: TS1044 @0 len 6 "'public' modifier cannot appear on a module or namespace element."
+    "static namespace N {}"
+        bun x1: Expected ";" but found "namespace" @7
+        tsc x1: TS1044 @0 len 6 "'static' modifier cannot appear on a module or namespace element."
+    "@d namespace N {}"
+        bun x1: Expected "class" but found "namespace" @3
+        tsc x1: TS1206 @0 len 1 "Decorators are not valid here."
+    "function f() { namespace N {} }"
+        bun x1: Expected ";" but found "N" @25
+        tsc x1: TS1235 @15 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "function f() { module N {} }"
+        bun x1: Expected ";" but found "N" @22
+        tsc x1: TS1235 @15 len 6 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "if (a) namespace N {}"
+        bun x1: Expected ";" but found "N" @17
+        tsc x1: TS1235 @7 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "if (a) { namespace N {} }"
+        bun x1: Expected ";" but found "N" @19
+        tsc x1: TS1235 @9 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "{ namespace N {} }"
+        bun x1: Expected ";" but found "N" @12
+        tsc x1: TS1235 @2 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "{ module N {} }"
+        bun x1: Expected ";" but found "N" @9
+        tsc x1: TS1235 @2 len 6 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "for (;;) namespace N {}"
+        bun x1: Expected ";" but found "N" @19
+        tsc x1: TS1235 @9 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "label: namespace N {}"
+        bun x1: Expected ";" but found "N" @17
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+        tsc x1: TS1235 @7 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "class C { static { namespace N {} } }"
+        bun x1: Expected ";" but found "N" @29
+        tsc x1: TS1235 @19 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "() => { namespace N {} }"
+        bun x1: Expected ";" but found "N" @18
+        tsc x1: TS1235 @8 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "switch (a) { case 1: namespace N {} }"
+        bun x1: Expected ";" but found "N" @31
+        tsc x1: TS1235 @21 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "try { namespace N {} } catch {}"
+        bun x1: Expected ";" but found "N" @16
+        tsc x1: TS1235 @6 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "namespace N { { namespace M {} } }"
+        bun x1: Expected ";" but found "M" @26
+        tsc x1: TS1235 @16 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "namespace N { function f() { namespace M {} } }"
+        bun x1: Expected ";" but found "M" @39
+        tsc x1: TS1235 @29 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+    "namespace N { if (a) namespace M {} }"
+        bun x1: Expected ";" but found "M" @31
+        tsc x1: TS1235 @21 len 9 "A namespace declaration is only allowed at the top level of a namespace or module."
+  -- B: 3 distinct
+    "namespace N.\"M\" {}"
+        tsc x1: TS1003 @12 len 3 "Identifier expected."
+    "module as any"
+        tsc x1: TS1005 @10 len 3 "'{' expected."
+    "export namespace;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+  -- AAg: 9 distinct
+    "namespace N { export = x }"
+        tsc x1: TS1063 @14 len 10 "An export assignment cannot be used in a namespace."
+    "namespace N { yield }"
+        tsc x1: TS1212 @14 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "namespace N { new.target }"
+        tsc x1: TS17013 @14 len 10 "Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor."
+    "module N {}"
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "module N.M {}"
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1540 @9 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "module N { export const x = 1 }"
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "module N\n{}"
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "export module N {}"
+        tsc x1: TS1540 @14 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "declare export namespace N {}"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+
+==== family enum  (221 inputs)
+  bun: src/js_parser/parse/parse_typescript.rs:576-781 parse_typescript_enum_stmt (629-649 member name: string literal or identifier or keyword, 657-661 initializer, 675-679 "," or ";" between members), src/js_parser/parse/parse_stmt.rs:64-74 and :177-179 ("const enum")
+  ref: parser.go:2181 parseEnumDeclaration, 2171 parseEnumMember, 3503 parsePropertyNameWorker
+  counts A1=15 A2=13 AA=112 AAg=10 B=5 RR=66
+  -- A1: 15 distinct
+    "enum E { A = this }"
+        bun x1: Cannot use "this" here @13
+    "enum E { A = super.x }"
+        bun x1: Unexpected "super" @13
+    "enum E { A = 1, 2 }"
+        bun x1: Expected identifier but found "2" @16
+    "enum E { \"a\", \"a\" }"
+        bun x1: "a" has already been declared @14
+    "enum E { A, A }"
+        bun x1: "A" has already been declared @12
+    "enum E { 1 }"
+        bun x1: Expected identifier but found "1" @9
+    "enum E { 1 = 1 }"
+        bun x1: Expected identifier but found "1" @9
+    "enum E { 1.5 }"
+        bun x1: Expected identifier but found "1.5" @9
+    "enum E { 0x10 }"
+        bun x1: Expected identifier but found "0x10" @9
+    "enum E { 1n }"
+        bun x1: Expected identifier but found "1n" @9
+    "enum E { [\"x\"] }"
+        bun x1: Expected identifier but found "[" @9
+    "enum E { [\"x\"] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+    "enum E { ['x'] = 1, B = E.x }"
+        bun x1: Expected identifier but found "[" @9
+    "enum E { [`x`] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+    "enum E { [1] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+  -- A2: 13 distinct
+    "enum E { A = await x }"
+        bun x1: "await" can only be used inside an "async" function @19
+        tsc x1: TS1308 @13 len 5 "'await' expressions are only allowed within async functions and at the top levels of modules."
+    "enum E { [x] }"
+        bun x1: Expected identifier but found "[" @9
+        tsc x1: TS1164 @9 len 3 "Computed property names are not allowed in enums."
+    "enum E { [x] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+        tsc x1: TS1164 @9 len 3 "Computed property names are not allowed in enums."
+    "enum E { [\"x\" + \"y\"] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+        tsc x1: TS1164 @9 len 11 "Computed property names are not allowed in enums."
+    "enum E { [Symbol.iterator] = 1 }"
+        bun x1: Expected identifier but found "[" @9
+        tsc x1: TS1164 @9 len 17 "Computed property names are not allowed in enums."
+    "enum E { #a }"
+        bun x1: Expected identifier but found "#a" @9
+        tsc x1: TS18024 @9 len 2 "An enum member cannot be named with a private identifier."
+    "enum E { #a = 1 }"
+        bun x1: Expected identifier but found "#a" @9
+        tsc x1: TS18024 @9 len 2 "An enum member cannot be named with a private identifier."
+    "async enum E {}"
+        bun x1: Expected ";" but found "enum" @6
+        tsc x1: TS1042 @0 len 5 "'async' modifier cannot be used here."
+    "abstract enum E {}"
+        bun x1: Expected ";" but found "enum" @9
+        tsc x1: TS1242 @0 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "static enum E {}"
+        bun x1: Expected ";" but found "enum" @7
+        tsc x1: TS1044 @0 len 6 "'static' modifier cannot appear on a module or namespace element."
+    "public enum E {}"
+        bun x1: Expected ";" but found "enum" @7
+        tsc x1: TS1044 @0 len 6 "'public' modifier cannot appear on a module or namespace element."
+    "readonly enum E {}"
+        bun x1: Expected ";" but found "enum" @9
+        tsc x1: TS1024 @0 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+    "@d enum E {}"
+        bun x1: Expected "class" but found "enum" @3
+        tsc x1: TS1206 @0 len 1 "Decorators are not valid here."
+  -- B: 5 distinct
+    "enum E { a; b }"
+        tsc x1: TS1357 @10 len 1 "An enum member name must be followed by a ',', '=', or '}'."
+    "enum E { a = 1; b = 2 }"
+        tsc x1: TS1357 @14 len 1 "An enum member name must be followed by a ',', '=', or '}'."
+    "enum E { a, b; c }"
+        tsc x1: TS1357 @13 len 1 "An enum member name must be followed by a ',', '=', or '}'."
+    "enum E { a; }"
+        tsc x1: TS1357 @10 len 1 "An enum member name must be followed by a ',', '=', or '}'."
+    "enum E { a = 1; }"
+        tsc x1: TS1357 @14 len 1 "An enum member name must be followed by a ',', '=', or '}'."
+  -- AAg: 10 distinct
+    "enum E { A = `a${B}` }"
+        tsc x1: TS18033 @13 len 7 "Type 'string' is not assignable to type 'number' as required for computed enum member values."
+    "enum E { A = 1n }"
+        tsc x1: TS18033 @13 len 2 "Type 'bigint' is not assignable to type 'number' as required for computed enum member values."
+    "enum E { A = yield }"
+        tsc x1: TS1212 @13 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "enum E { A = new.target }"
+        tsc x1: TS17013 @13 len 10 "Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor."
+    "enum E { A = () => 1 }"
+        tsc x1: TS18033 @13 len 7 "Type '() => number' is not assignable to type 'number' as required for computed enum member values."
+    "enum E { A = function () {} }"
+        tsc x1: TS18033 @13 len 8 "Type '() => void' is not assignable to type 'number' as required for computed enum member values."
+    "enum E { A = class {} }"
+        tsc x1: TS18033 @13 len 5 "Type 'typeof (Anonymous class)' is not assignable to type 'number' as required for computed enum member values."
+    "enum E { yield, B = yield }"
+        tsc x1: TS1212 @20 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "declare export enum E {}"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "label: enum E {}"
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+
+==== family overload  (78 inputs)
+  bun: src/js_parser/parse/parse_fn.rs:19-161 parse_fn_stmt, src/js_parser/parse/parse_fn.rs:395-400 (a signature without body becomes a forward declaration), src/js_parser/parse/parse_fn.rs:19-161 returns S::TypeScript for it
+  ref: parser.go:1715 parseFunctionDeclaration, 3530 parseFunctionBlockOrSemicolon
+  counts A1=1 A2=2 AA=60 AAg=5 RR=10
+  -- A1: 1 distinct
+    "function f(public a: A): void; function f(a: any) {}"
+        bun x1: Expected ")" but found "a" @18
+  -- A2: 2 distinct
+    "function f(@d a: A): void; function f(a: any) {}"
+        bun x1: Expected identifier but found "@" @11
+        tsc x1: TS1206 @11 len 1 "Decorators are not valid here."
+    "const o = { m(): void; };"
+        bun x1: Expected "{" but found ";" @21
+        tsc x1: TS1005 @21 len 1 "'{' expected."
+  -- AAg: 5 distinct
+    "function* f(): any; function* f() {}"
+        tsc x1: TS1222 @8 len 1 "An overload signature cannot be declared as a generator."
+    "function* f(): any;"
+        tsc x1: TS1222 @8 len 1 "An overload signature cannot be declared as a generator."
+    "async function* f(): any; async function* f() {}"
+        tsc x1: TS1222 @14 len 1 "An overload signature cannot be declared as a generator."
+    "export function* f(): any; export function* f() {}"
+        tsc x1: TS1222 @15 len 1 "An overload signature cannot be declared as a generator."
+    "label: function f(): void;"
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+
+==== family fnSyntax  (118 inputs)
+  bun: src/js_parser/parse/parse_fn.rs:163-413 parse_fn (213-345 arguments, 281-303 "?" and ":", 311-315 default value, 327-341 rest and trailing comma, 370-393 return type)
+  ref: parser.go:3309 parseParameters, 3364 parseParameterEx, 3430 parseReturnType, 3452 parseTypeOrTypePredicate
+  counts A2=11 AA=70 AAg=17 RR=20
+  -- A2: 11 distinct
+    "function f(...a: T[] = []) {}"
+        bun x1: Expected ")" but found "=" @21
+        tsc x1: TS1048 @14 len 1 "A rest parameter cannot have an initializer."
+    "function f(...a = []) {}"
+        bun x1: Expected ")" but found "=" @16
+        tsc x1: TS1048 @14 len 1 "A rest parameter cannot have an initializer."
+    "function f(...a, b) {}"
+        bun x1: Expected ")" but found "," @15
+        tsc x1: TS1014 @11 len 3 "A rest parameter must be last in a parameter list."
+    "function f(...a: T[], b: U) {}"
+        bun x1: Expected ")" but found "," @20
+        tsc x1: TS1014 @11 len 3 "A rest parameter must be last in a parameter list."
+    "function f(...a,) {}"
+        bun x1: Expected ")" but found "," @15
+        tsc x1: TS1013 @15 len 1 "A rest parameter or binding pattern may not have a trailing comma."
+    "function f(...a: T[],) {}"
+        bun x1: Expected ")" but found "," @20
+        tsc x1: TS1013 @20 len 1 "A rest parameter or binding pattern may not have a trailing comma."
+    "function f(): ?A {}"
+        bun x1: Unexpected ? @14
+        tsc x1: TS17020 @14 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "function f(): * {}"
+        bun x1: Unexpected * @14
+        tsc x1: TS8020 @14 len 1 "JSDoc types can only be used inside documentation comments."
+    "function f<>() {}"
+        bun x1: Expected identifier but found ">" @11
+        tsc x1: TS1098 @10 len 2 "Type parameter list cannot be empty."
+    "function f<in T>() {}"
+        bun x1: The modifier "in" is not valid here @11
+        tsc x1: TS1274 @11 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+    "function f<out T>() {}"
+        bun x1: The modifier "out" is not valid here @11
+        tsc x1: TS1274 @11 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+  -- AAg: 17 distinct
+    "function f(a?: T, b: U) {}"
+        tsc x1: TS1016 @18 len 1 "A required parameter cannot follow an optional parameter."
+    "function f(a?: T = 1) {}"
+        tsc x1: TS1015 @11 len 1 "Parameter cannot have question mark and initializer."
+    "function f(a? = 1) {}"
+        tsc x1: TS1015 @11 len 1 "Parameter cannot have question mark and initializer."
+    "function f(...a?: T[]) {}"
+        tsc x1: TS1047 @15 len 1 "A rest parameter cannot be optional."
+    "function f(): a is B {}"
+        tsc x1: TS1225 @14 len 1 "Cannot find parameter 'a'."
+    "function f(): asserts a {}"
+        tsc x1: TS1225 @22 len 1 "Cannot find parameter 'a'."
+    "function f(): asserts a is B {}"
+        tsc x1: TS1225 @22 len 1 "Cannot find parameter 'a'."
+    "function f(): unique symbol {}"
+        tsc x1: TS1335 @14 len 13 "'unique symbol' types are not allowed here."
+    "function f(): infer U {}"
+        tsc x1: TS1338 @14 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "function f(): A! {}"
+        tsc x1: TS17019 @14 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "function yield() {}"
+        tsc x1: TS1212 @9 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "function let() {}"
+        tsc x1: TS1212 @9 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "function static() {}"
+        tsc x1: TS1212 @9 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "function interface() {}"
+        tsc x1: TS1212 @9 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+    "function implements() {}"
+        tsc x1: TS1212 @9 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+    "function arguments() {}"
+        tsc x1: TS1100 @9 len 9 "Invalid use of 'arguments' in strict mode."
+    "function eval() {}"
+        tsc x1: TS1100 @9 len 4 "Invalid use of 'eval' in strict mode."
+
+==== family declName  (1726 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1728 parse_expr_or_let_stmt then src/js_parser/parse/parse_stmt.rs:1745-1756 keyword test, src/js_parser/parse/parse_stmt.rs:1783-1852
+  ref: parser.go:6123 scanStartOfDeclaration (a contextual keyword starts a declaration when an identifier follows on the same line)
+  counts A1=22 A2=12 AA=1067 AAg=236 B=1 RR=388
+  -- A1: 9 distinct
+    "as"
+        contexts (3 of 24): namespaceDotted namespaceBody declareNamespace
+        bun x1: Unexpected . @form+2
+        bun x1: Unexpected = @form+20
+        bun x1: Unexpected "namespace" @form-10
+    "satisfies"
+        contexts (3 of 25): namespaceDotted namespaceBody declareNamespace
+        bun x1: Unexpected . @form+9
+        bun x1: Unexpected = @form+27
+        bun x1: Unexpected "namespace" @form-10
+    "in"
+        contexts (2 of 24): declareNamespace declareModule
+        bun x1: Unexpected "namespace" @form-10
+        bun x1: Unexpected "module" @form-7
+    "await"
+        contexts (8 of 24): declareVar declareConst declareLet declareClass abstractClass keywordAsStmt keywordAssign varNamed
+        bun x4: Cannot use "yield" or "await" here. @form+0
+        bun x2: Cannot use "await" as an identifier here @form+6
+        bun x1: Unexpected ; @form+5
+        bun x1: Unexpected = @form+6
+    "let"
+        contexts (2 of 24): declareConst declareLet
+        bun x1: Cannot use "let" as an identifier here @form+0
+        bun x1: Cannot use "let" as an identifier here @form+4
+    "null"
+        contexts (1 of 24): keywordAssign
+        bun x1: Invalid assignment target @form+0
+    "this"
+        contexts (1 of 24): keywordAssign
+        bun x1: Invalid assignment target @form+0
+    "true"
+        contexts (1 of 24): keywordAssign
+        bun x1: Invalid assignment target @form+0
+    "super"
+        contexts (1 of 25): keywordCall
+        bun x1: Unexpected "super" @form+0
+  -- A2: 9 distinct
+    "as"
+        contexts (1 of 24): declareModule
+        bun x1: Unexpected "module" @form-7
+        tsc x1: TS1540 @form+0 len 2 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "satisfies"
+        contexts (1 of 25): declareModule
+        bun x1: Unexpected "module" @form-7
+        tsc x1: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "extends"
+        contexts (2 of 25): declareClass abstractClass
+        bun x2: Expected identifier but found "extends" @form+0
+        tsc x1: TS1211 @form-14 len 7 "A class declaration without the 'default' modifier must have a name."
+        tsc x2: TS1097 @form+7 len 0 "'extends' list cannot be empty."
+        tsc x1: TS1211 @form-15 len 8 "A class declaration without the 'default' modifier must have a name."
+    "interface"
+        contexts (1 of 25): keywordAsStmt
+        bun x1: Expected identifier but found ";" @form+9
+        tsc x1: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+    "var"
+        contexts (1 of 24): keywordAsStmt
+        bun x1: Expected identifier but found ";" @form+3
+        tsc x1: TS1123 @form+3 len 0 "Variable declaration list cannot be empty."
+    "const"
+        contexts (3 of 24): keywordAsStmt keywordNewlineIdent keywordNewlineBlock
+        bun x1: Expected identifier but found ";" @form+5
+        bun x1: The constant "x" must be initialized @form+6
+        bun x1: This constant must be initialized @form+6
+        tsc x1: TS1123 @form+5 len 0 "Variable declaration list cannot be empty."
+        tsc x1: TS1155 @form+6 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1182 @form+6 len 2 "A destructuring declaration must have an initializer."
+    "arguments"
+        contexts (1 of 24): keywordAssign
+        bun x1: Invalid assignment target @form+0
+        tsc x1: TS1100 @form+0 len 9 "Invalid use of 'arguments' in strict mode."
+    "eval"
+        contexts (1 of 24): keywordAssign
+        bun x1: Invalid assignment target @form+0
+        tsc x1: TS1100 @form+0 len 4 "Invalid use of 'eval' in strict mode."
+    "class"
+        contexts (1 of 24): keywordNewlineBlock
+        bun x1: Expected identifier but found "{" @form+6
+        tsc x1: TS1211 @form+0 len 5 "A class declaration without the 'default' modifier must have a name."
+  -- B: 1 distinct
+    "in"
+        contexts (1 of 24): exportNamespace
+        tsc x1: TS1128 @form-17 len 6 "Declaration or statement expected."
+  -- AAg: 54 distinct
+    "yield"
+        contexts (16 of 24): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+6 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+24 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "let"
+        contexts (15 of 24): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineBlock varNamed
+        tsc x11: TS1212 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+4 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 3 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+22 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1182 @form+4 len 2 "A destructuring declaration must have an initializer."
+    "static"
+        contexts (16 of 24): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+7 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+25 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "package"
+        contexts (16 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+8 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+26 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+    "implements"
+        contexts (16 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+11 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 10 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+29 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+    "interface"
+        contexts (15 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x12: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+10 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+28 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+    "private"
+        contexts (16 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+8 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+26 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+    "public"
+        contexts (16 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+7 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+25 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+    "protected"
+        contexts (16 of 25): namespace namespaceDotted namespaceBody module declareModule exportNamespace enum constEnum abstractClass overload keywordAsStmt keywordAssign keywordCall keywordNewlineIdent keywordNewlineBlock varNamed
+        tsc x13: TS1212 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+10 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1214 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode. Modules are automatically in strict mode."
+        tsc x1: TS1213 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+28 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+    "as"
+        contexts (1 of 24): module
+        tsc x1: TS1540 @form+0 len 2 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "type"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 4 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "of"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 2 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "async"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "await"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "get"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 3 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "set"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 3 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "is"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 2 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "asserts"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "infer"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "keyof"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "readonly"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 8 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "unique"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "abstract"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 8 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "declare"
+        contexts (2 of 23): module declareModule
+        tsc x1: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1540 @form+15 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "module"
+        contexts (2 of 22): module declareModule
+        tsc x2: TS1540 @form+7 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "namespace"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "global"
+        contexts (1 of 20): module
+        tsc x1: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "require"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "constructor"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 11 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "from"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 4 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "out"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 3 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "satisfies"
+        contexts (1 of 25): module
+        tsc x1: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "accessor"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 8 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "override"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 8 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "intrinsic"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "using"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "defer"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "undefined"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "symbol"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "object"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "any"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 3 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "unknown"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "never"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 5 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "string"
+        contexts (2 of 24): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "number"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "boolean"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 7 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "bigint"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "arguments"
+        contexts (7 of 24): module declareModule declareVar declareConst declareLet overload varNamed
+        tsc x2: TS1540 @form+0 len 9 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x5: TS1100 @form+0 len 9 "Invalid use of 'arguments' in strict mode."
+        tsc x1: TS1100 @form+28 len 9 "Invalid use of 'arguments' in strict mode."
+    "eval"
+        contexts (7 of 24): module declareModule declareVar declareConst declareLet overload varNamed
+        tsc x2: TS1540 @form+0 len 4 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x5: TS1100 @form+0 len 4 "Invalid use of 'eval' in strict mode."
+        tsc x1: TS1100 @form+23 len 4 "Invalid use of 'eval' in strict mode."
+    "\\u0061"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 6 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "n\\u0061mespace"
+        contexts (2 of 25): module declareModule
+        tsc x2: TS1540 @form+0 len 14 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "if"
+        contexts (1 of 22): keywordCall
+        tsc x1: TS1313 @form+5 len 1 "The body of an 'if' statement cannot be the empty statement."
+    "delete"
+        contexts (1 of 25): keywordNewlineIdent
+        tsc x1: TS1102 @form+7 len 1 "'delete' cannot be called on an identifier in strict mode."
+    "var"
+        contexts (1 of 24): keywordNewlineBlock
+        tsc x1: TS1182 @form+4 len 2 "A destructuring declaration must have an initializer."

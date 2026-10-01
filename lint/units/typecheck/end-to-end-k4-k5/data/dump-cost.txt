@@ -1,0 +1,8 @@
+# Cost of dumping default lib files with the prototype dump (ts.createSourceFile of typescript 6.0.2, one JSON per file), measured on this machine under load (load average 300 to 600).
+# release = bun 1.4.3 of PATH; debug = /workspace/wt/cli/build/debug/bun-debug (debug build with ASAN), BUN_DEBUG_QUIET_LOGS=1. Both write the same bytes (cmp).
+set	files	source bytes	JSON bytes	JSON bytes without text	nodes	gzip -9 of the JSON	release: load typescript / parse+dump / total ms	debug: load typescript / parse+dump / total ms
+es5 closure (--lib es5)	3	233387	948661	710067	13798	197820	804 / 380 / 1190	35651 / 24273 / 60131
+es6 closure (target es2015, 10,750 of the 12,797 run instances)	19	2675187	11254811	8522502	136658	2242051	952 / 1394 / 2543	not measured
+es2025.full closure (default target)	82	2936928	12182402	9181536	148878	2433967	970 / 1078 / 2194	27539 / 37943 / 69543
+all lib files	108	3785075	15989865	12121693	198776	3226295	548 / 2018 / 3053	not measured
+# internal/bundled/libs as one tar.gz: 558663 bytes. min.ts alone: 864 bytes of JSON.

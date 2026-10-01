@@ -1,0 +1,21 @@
+export const v = 1 + 2 as number * 3
+export const v = a + b as any * c
+export const v = a * b as any + c
+export const v = a as any * c
+export const v = a + b as any + c
+export const v = a < b as any < c
+export const v = a == b as any < c
+export const v = a && b as any || c
+export const v = a || b as any && c
+export const v = a ?? b as any ?? c
+export const v = a + b satisfies any * c
+export const v = a ** b as any ** c
+export const v = a + b as any ** c
+export const v = a as any as any * c
+export const v = a + b as any as any * c
+export const v = a | b as any & c
+export const v = a in b as any
+export const v = a as any in b
+export const v = a + b as any < c
+export const v = a + b as any <= c
+export const v = a < b as any + c

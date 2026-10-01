@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["ast", "lint"]
+
+[profile.dev]
+panic = "abort"

@@ -1,0 +1,39 @@
+   Compiling ntproto v0.0.0 (/workspace/notes/lint/units/typecheck/node-table-id-contract/top-down/proto)
+warning: `ntproto` (manifest) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.66s
+     Running unittests lib.rs (/tmp/tc_probe/target/debug/build/ntproto/a1435b1b652df8cc/out/ntproto-a1435b1b652df8cc)
+running 1 test
+test tests::corpus_against_reference_digests ... corpus: nodes 1483326; import and finish 0.82 s; table heap 71182245 bytes; structs seen 186 of 194; kinds seen 271 of 351
+  ts family: units 14935 same as the reference 14912 differ 23 with importer faults 0; without parse errors 14162 of which same 14162
+  js: units 1276 same as the reference 769 differ 507 with importer faults 0; without parse errors 1240 of which same 745
+  json: units 0 same as the reference 0 differ 0 with importer faults 0; without parse errors 0 of which same 0
+  differing ts family units:
+    /c01026u1_values-bad-import.ts
+    /c01026u3_values-no-as.ts
+    /c01026u4_values-type-as.ts
+    /c01026u6_type-decls-bad-import.ts
+    /c01026u8_type-decls-no-as.ts
+    /c01026u9_type-decls-type-as.ts
+    /c01026u11_type-clause-bad-import.ts
+    /c01026u13_type-clause-no-as.ts
+    /c01026u14_type-clause-type-as-as.ts
+    /c02459u0_errorSuperCalls.ts
+    /c03255u0_jsdocDisallowedInTypescript.ts
+    /c03430u0_jsxAndTypeAssertion.tsx
+    /c03431u0_a.tsx
+    /c03442u0_jsxParserRecovery.tsx
+    /c04425u0_parserSuperExpression2.ts
+    /c05240u0_objectTypeWithStringNamedNumericProperty.ts
+    /c05420u0_objectSpreadNegativeParse.ts
+    /c07093u0_constructorWithIncompleteTypeAnnotation.ts
+    /c08510u0_expressionWithJSDocTypeArguments.ts
+    /c09741u0_jsxAttributeMissingInitializer.tsx
+    /c11688u0_superWithTypeArgument.ts
+    /c11689u0_superWithTypeArgument2.ts
+    /c11690u0_superWithTypeArgument3.ts
+  structs that no unit has: ["NotEmittedStatement", "NotEmittedTypeElement", "SyntheticExpression", "PartiallyEmittedExpression", "SyntaxList", "SyntheticReferenceExpression", "FlowSwitchClauseData", "FlowReduceLabelData"]
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 2.70s
+   Doc-tests ntproto
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

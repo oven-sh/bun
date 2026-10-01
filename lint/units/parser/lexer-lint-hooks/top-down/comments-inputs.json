@@ -1,0 +1,138 @@
+[
+ [
+  "kinds.ts",
+  "// a\n/* b */ /** c */ x; /**/ /***/ /** */ /*\n*/ //"
+ ],
+ [
+  "leading.ts",
+  "#!/usr/bin/env bun\n// lead\n/* lead2 */\nlet x;"
+ ],
+ [
+  "leading-only.ts",
+  "// only\n/* comments */"
+ ],
+ [
+  "empty.ts",
+  ""
+ ],
+ [
+  "terminators.ts",
+  "// cr\r\n// lf\n// ls // ps x // eof"
+ ],
+ [
+  "types.ts",
+  "let x: /* t1 */ number /* t2 */ = 1; interface I { /* m */ a: 1 } type T = /** j */ A | /* u */ B;"
+ ],
+ [
+  "erased.ts",
+  "declare function f(/* p */ a: number): void; // trailing\nabstract class C { /* a */ abstract m(): void; }"
+ ],
+ [
+  "template.ts",
+  "x = `a ${ /* in */ y } /* not */ // not`; s = '/* not */'; r = /\\/\\* not *\\//;"
+ ],
+ [
+  "decorators.ts",
+  "@dec /* d1 */ class C { @dec /* d2 */ m() {} }"
+ ],
+ [
+  "jsx-tag.tsx",
+  "const a = <div // c1\n  /* c2 */ id=\"x\" /* c3 */ {...p /* c4 */} >{/* c5 */}text // not a comment\n  </div /* c6 */>;\nconst b = </* c7 */ br /* c8 */ />;"
+ ],
+ [
+  "jsx-member.tsx",
+  "const a = <A /* c1 */ . /* c2 */ B /* c3 */ x={1} /* c4 */ y=\"s\" /* c5 */></A.B>;"
+ ],
+ [
+  "jsx-fragment.tsx",
+  "const a = < /* c1 */ >{x}</ /* c2 */ >;"
+ ],
+ [
+  "jsx-generic.tsx",
+  "const a = <A</* c1 */ T /* c2 */> /* c3 */ p={1} />;"
+ ],
+ [
+  "jsx-text.tsx",
+  "const a = <p>/* text */ // text {/* c1 */} &amp; </p>;"
+ ],
+ [
+  "spec-arrow-generic.tsx",
+  "const f = <T,>(/* c1 */ x: T) => x;"
+ ],
+ [
+  "spec-typeargs-call.ts",
+  "f</* c1 */ T /* c2 */>(/* c3 */ x);"
+ ],
+ [
+  "spec-typeargs-backtrack.ts",
+  "a < /* c1 */ b > /* c2 */ c;"
+ ],
+ [
+  "spec-typeargs-backtrack2.ts",
+  "a < /* c1 */ b > /* c2 */ (c) + d < /* c3 */ e >> /* c4 */ f;"
+ ],
+ [
+  "spec-arrow-paren.ts",
+  "let g = (a /* c1 */, b /* c2 */) /* c3 */ => a;"
+ ],
+ [
+  "spec-arrow-ret.ts",
+  "let g = (a /* c1 */): /* c2 */ number /* c3 */ => a;"
+ ],
+ [
+  "spec-not-arrow.ts",
+  "let g = (a /* c1 */, b /* c2 */) /* c3 */ ;"
+ ],
+ [
+  "spec-async-generic.ts",
+  "let y = async </* c1 */ T>(x: T) /* c2 */ => x;"
+ ],
+ [
+  "spec-cond-arrow.ts",
+  "let v = c ? (a /* c1 */) : b => /* c2 */ d : e;"
+ ],
+ [
+  "spec-cond-arrow2.ts",
+  "let v = c ? (a /* c1 */): /* c2 */ T => /* c3 */ d : /* c4 */ e;"
+ ],
+ [
+  "spec-infer.ts",
+  "type A<X> = X extends infer U extends /* c1 */ string ? /* c2 */ U : never; type B<X> = X extends (infer U extends /* c3 */ string ? 1 : 2) ? 3 : 4;"
+ ],
+ [
+  "spec-fn-type.ts",
+  "let h: (/* c1 */ a: number /* c2 */) => /* c3 */ void; let i: (/* c4 */ A /* c5 */) | B;"
+ ],
+ [
+  "spec-cast.ts",
+  "let k = </* c1 */ T /* c2 */> /* c3 */ x;"
+ ],
+ [
+  "spec-instantiation.ts",
+  "let m = f</* c1 */ T> /* c2 */ ; let n = new C</* c3 */ T>;"
+ ],
+ [
+  "spec-class-generic-method.ts",
+  "class D { m</* c1 */ T>(/* c2 */) {} f = </* c3 */ T,>(x: T) => x; }"
+ ],
+ [
+  "html-close.js",
+  "x\n--> legacy\n// after\n"
+ ],
+ [
+  "nested-tsx.tsx",
+  "const t = <a b={<c /* c1 */ d={/* c2 */ 1} /* c3 */ />} /* c4 */ ><e /* c5 */ /></a>;"
+ ],
+ [
+  "jsx-text2.tsx",
+  "const a = <p>{x} // text\n<b/> /* text */ <></> /* text */</p>; // c1"
+ ],
+ [
+  "jsx-attr-string.tsx",
+  "const a = <p title=\"/* not */\" /* c1 */ data-x='// not' // c2\n/>;"
+ ],
+ [
+  "jsx-after-self-close.tsx",
+  "const a = <br /> /* c1 */; const b = (<br />) // c2\n;"
+ ]
+]

@@ -1,0 +1,92 @@
+layer	site	function	statement
+F-UNREACH	checker.go:2411	c.checkSourceElementUnreachable	c.reportedUnreachableNodes.Add(node)
+F-UNREACH	checker.go:2443	c.checkSourceElementUnreachable	c.reportedUnreachableNodes.Add(nextNode)
+E-CORE	checker.go:7442	c.getTypeOfExpression	c.flowTypeCache = make(map[*ast.Node]*Type)
+E-CORE	checker.go:7444	c.getTypeOfExpression	c.flowTypeCache[node] = t
+E-CORE	checker.go:7576	c.checkExpressionWithContextualType	c.pushContextualType(contextNode, contextualType, false /*isCache*/)
+E-CORE	checker.go:7577	c.checkExpressionWithContextualType	c.pushInferenceContext(contextNode, inferenceContext)
+E-CORE	checker.go:7590	c.checkExpressionWithContextualType	c.popInferenceContext()
+E-CORE	checker.go:7591	c.checkExpressionWithContextualType	c.popContextualType()
+E-CORE	checker.go:7616	c.checkExpressionCachedEx	saveFlowLoopStack := c.flowLoopStack
+E-CORE	checker.go:7617	c.checkExpressionCachedEx	saveFlowTypeCache := c.flowTypeCache
+E-CORE	checker.go:7618	c.checkExpressionCachedEx	c.flowLoopStack = nil
+E-CORE	checker.go:7619	c.checkExpressionCachedEx	c.flowTypeCache = nil
+E-CORE	checker.go:7621	c.checkExpressionCachedEx	c.flowTypeCache = saveFlowTypeCache
+E-CORE	checker.go:7622	c.checkExpressionCachedEx	c.flowLoopStack = saveFlowLoopStack
+E-CORE	checker.go:7636	c.getContextFreeTypeOfExpression	c.pushContextualType(node, c.anyType, false /*isCache*/)
+E-CORE	checker.go:7639	c.getContextFreeTypeOfExpression	c.popContextualType()
+E-CORE	checker.go:7649	c.checkExpressionEx	defer tr.Push(tracing.PhaseCheck, "checkExpression", map[string]any{"kind": node.Kind, "pos": node.Pos(), "end": node.End(), "path": ast.GetSourceFileOfNode(node).FileName()}, false)()
+E-CORE	checker.go:7651	c.checkExpressionEx	saveCurrentNode := c.currentNode
+E-CORE	checker.go:7652	c.checkExpressionEx	c.currentNode = node
+E-CORE	checker.go:7653	c.checkExpressionEx	c.instantiationCount = 0
+E-CORE	checker.go:7659	c.checkExpressionEx	c.currentNode = saveCurrentNode
+E-LITERAL	checker.go:8115	c.checkArrayLiteral	c.pushCachedContextualType(node)
+E-LITERAL	checker.go:8172	c.checkArrayLiteral	c.popContextualType()
+E-CALL	checker.go:8503	c.getResolvedSignature	cached := links.resolvedSignature
+E-CALL	checker.go:8507	c.getResolvedSignature	saveResolutionStart := c.resolutionStart
+E-CALL	checker.go:8515	c.getResolvedSignature	c.resolutionStart = len(c.typeResolutions)
+E-CALL	checker.go:8517	c.getResolvedSignature	links.resolvedSignature = c.resolvingSignature
+E-CALL	checker.go:8519	c.getResolvedSignature	c.resolutionStart = saveResolutionStart
+E-CALL	checker.go:8535	c.getResolvedSignature	links.resolvedSignature = result
+E-CALL	checker.go:8537	c.getResolvedSignature	links.resolvedSignature = cached
+E-FUNC	checker.go:10251	c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod	links.flags |= NodeCheckFlagsContextChecked
+E-CORE	checker.go:10849	c.checkMetaProperty	if node.Name().Text() == "defer" {
+E-CORE	checker.go:10850	c.checkMetaProperty	debug.Assert(!ast.IsCallExpression(node.Parent) || node.Parent.Expression() != node, "Trying to get the type of `import.defer` in `import.defer(...)`")
+E-ACCESS	checker.go:11312	c.parameterInitializerContainsUndefined	if !c.pushTypeResolution(declaration, TypeSystemPropertyNameInitializerIsUndefined) {
+E-ACCESS	checker.go:11317	c.parameterInitializerContainsUndefined	if !c.popTypeResolution() {
+E-ACCESS	checker.go:11322	c.parameterInitializerContainsUndefined	links.flags |= NodeCheckFlagsInitializerIsUndefinedComputed | core.IfElse(containsUndefined, NodeCheckFlagsInitializerIsUndefined, 0)
+E-ACCESS	checker.go:11630	c.reportNonexistentProperty	links.flags |= NodeCheckFlagsTypeChecked
+E-LITERAL	checker.go:13257	c.checkObjectLiteral	c.pushCachedContextualType(node)
+E-LITERAL	checker.go:13424	c.checkObjectLiteral	c.popContextualType()
+E-ACCESS	checker.go:13865	c.getNarrowedTypeOfSymbol	links.flags |= NodeCheckFlagsInCheckIdentifier
+E-ACCESS	checker.go:13872	c.getNarrowedTypeOfSymbol	links.flags &^= NodeCheckFlagsInCheckIdentifier
+E-CTX	checker.go:29594	c.getContextuallyTypedParameterType	cached := links.resolvedSignature
+E-CTX	checker.go:29595	c.getContextuallyTypedParameterType	links.resolvedSignature = c.anySignature
+E-CTX	checker.go:29605	c.getContextuallyTypedParameterType	links.resolvedSignature = cached
+E-CTX	checker.go:30996	c.pushCachedContextualType	c.pushContextualType(node, c.getContextualType(node, ContextFlagsNone), true /*isCache*/)
+E-CTX	checker.go:31000	c.pushContextualType	c.contextualInfos = append(c.contextualInfos, ContextualInfo{node, t, isCache})
+E-CTX	checker.go:31005	c.popContextualType	c.contextualInfos[lastIndex] = ContextualInfo{}
+E-CTX	checker.go:31006	c.popContextualType	c.contextualInfos = c.contextualInfos[:lastIndex]
+E-CTX	checker.go:31079	c.pushInferenceContext	c.inferenceContextInfos = append(c.inferenceContextInfos, InferenceContextInfo{node, context})
+E-CTX	checker.go:31084	c.popInferenceContext	c.inferenceContextInfos[lastIndex] = InferenceContextInfo{}
+E-CTX	checker.go:31085	c.popInferenceContext	c.inferenceContextInfos = c.inferenceContextInfos[:lastIndex]
+E-CTX	checker.go:31089	c.getInferenceContext	for i := len(c.inferenceContextInfos) - 1; i >= 0; i-- {
+F-NARROW	flow.go:57	c.getFlowState	c.freeFlowState = f.next
+F-NARROW	flow.go:66	c.putFlowState	c.freeFlowState = f
+F-NARROW	flow.go:96	c.getFlowTypeOfReferenceEx	f.sharedFlowStart = len(c.sharedFlows)
+F-NARROW	flow.go:97	c.getFlowTypeOfReferenceEx	c.flowInvocationCount++
+F-NARROW	flow.go:99	c.getFlowTypeOfReferenceEx	c.sharedFlows = c.sharedFlows[:f.sharedFlowStart]
+F-NARROW	flow.go:124	c.getTypeAtFlowNode	c.flowAnalysisDisabled = true
+F-NARROW	flow.go:128	c.getTypeAtFlowNode	f.depth++
+F-NARROW	flow.go:136	c.getTypeAtFlowNode	for i := f.sharedFlowStart; i < len(c.sharedFlows); i++ {
+F-NARROW	flow.go:138	c.getTypeAtFlowNode	f.depth--
+F-NARROW	flow.go:182	c.getTypeAtFlowNode	f.reduceLabels = append(f.reduceLabels, flow.Node.AsFlowReduceLabelData())
+F-NARROW	flow.go:184	c.getTypeAtFlowNode	f.reduceLabels = f.reduceLabels[:len(f.reduceLabels)-1]
+F-NARROW	flow.go:201	c.getTypeAtFlowNode	c.sharedFlows = append(c.sharedFlows, SharedFlow{flow: sharedFlow, flowType: t})
+F-NARROW	flow.go:203	c.getTypeAtFlowNode	f.depth--
+F-NARROW	flow.go:391	c.narrowType	c.inlineLevel++
+F-NARROW	flow.go:393	c.narrowType	c.inlineLevel--
+F-NARROW	flow.go:1271	c.getTypeAtFlowBranchLabel	c.antecedentTypes = c.antecedentTypes[:antecedentStart]
+F-NARROW	flow.go:1275	c.getTypeAtFlowBranchLabel	c.antecedentTypes = append(c.antecedentTypes, flowType.t)
+F-NARROW	flow.go:1294	c.getTypeAtFlowBranchLabel	c.antecedentTypes = c.antecedentTypes[:antecedentStart]
+F-NARROW	flow.go:1297	c.getTypeAtFlowBranchLabel	c.antecedentTypes = append(c.antecedentTypes, flowType.t)
+F-NARROW	flow.go:1307	c.getTypeAtFlowBranchLabel	c.antecedentTypes = c.antecedentTypes[:antecedentStart]
+F-NARROW	flow.go:1327	c.getTypeAtFlowLoopLabel	f.refKey = c.getFlowReferenceKey(f)
+F-NARROW	flow.go:1367	c.getTypeAtFlowLoopLabel	c.flowLoopStack = append(c.flowLoopStack, FlowLoopInfo{key: key, types: antecedentTypes})
+F-NARROW	flow.go:1368	c.getTypeAtFlowLoopLabel	saveFlowTypeCache := c.flowTypeCache
+F-NARROW	flow.go:1369	c.getTypeAtFlowLoopLabel	c.flowTypeCache = nil
+F-NARROW	flow.go:1371	c.getTypeAtFlowLoopLabel	c.flowTypeCache = saveFlowTypeCache
+F-NARROW	flow.go:1372	c.getTypeAtFlowLoopLabel	c.flowLoopStack = c.flowLoopStack[:len(c.flowLoopStack)-1]
+F-NARROW	flow.go:1937	c.isExhaustiveSwitchStatement	links.exhaustiveState = ExhaustiveStateComputing
+F-NARROW	flow.go:1940	c.isExhaustiveSwitchStatement	links.exhaustiveState = core.IfElse(isExhaustive, ExhaustiveStateTrue, ExhaustiveStateFalse)
+F-NARROW	flow.go:1944	c.isExhaustiveSwitchStatement	links.exhaustiveState = ExhaustiveStateFalse
+F-NARROW	flow.go:2157	c.getExplicitTypeOfSymbol	if !c.resolvingExplicitTypeOfSymbol.AddIfAbsent(symbol) {
+F-NARROW	flow.go:2160	c.getExplicitTypeOfSymbol	defer c.resolvingExplicitTypeOfSymbol.Delete(symbol)
+F-REACH	flow.go:2517	c.isReachableFlowNode	c.lastFlowNode = flow
+F-REACH	flow.go:2518	c.isReachableFlowNode	c.lastFlowNodeReachable = result
+F-REACH	flow.go:2578	c.isReachableFlowNodeWorker	c.lastFlowNode = nil
+F-REACH	flow.go:2579	c.isReachableFlowNodeWorker	f.reduceLabels = append(f.reduceLabels, flow.Node.AsFlowReduceLabelData())
+F-REACH	flow.go:2581	c.isReachableFlowNodeWorker	f.reduceLabels = f.reduceLabels[:len(f.reduceLabels)-1]
+F-REACH	flow.go:2643	c.isPostSuperFlowNodeWorker	f.reduceLabels = append(f.reduceLabels, flow.Node.AsFlowReduceLabelData())
+F-REACH	flow.go:2645	c.isPostSuperFlowNodeWorker	f.reduceLabels = f.reduceLabels[:len(f.reduceLabels)-1]
+F-NARROW	flow.go:2684	c.ensureAssignmentsMarked	links.flags |= NodeCheckFlagsAssignmentsMarked

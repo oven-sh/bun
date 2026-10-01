@@ -1,0 +1,84 @@
+# postfix ! and ? (JSDoc)
+let x: string!
+let x: string?
+let x: !string
+let x: ?string
+let x: string![]
+let x: string!!
+let x: A!.B
+let x: string\n!
+let v = x as string!
+let v = x as any!
+let v = (x as string)!
+let v = x as string!.length
+let v = x as string\n!y
+type T = A!
+type T = A?
+type T = *
+type T = A? extends B ? C : D
+type T = A ? B : C
+type T = [A?]
+type T = [A!]
+type T = [?A]
+type T = [a?: A]
+type T = [A?, B?]
+type T = [...A?]
+type T = [(A)?]
+type T = [A[]?]
+type T = [A??]
+function f(a?: string!) {}
+# .name after any primary
+type T = string.a
+type T = any.a
+type T = number.a.b
+type T = void.a
+type T = null.a
+type T = this.a
+type T = "x".a
+type T = 1.a
+type T = 1 .a
+type T = true.a
+type T = (A).a
+type T = [A].a
+type T = {}.a
+type T = A[].a
+type T = A[0].a
+type T = typeof a.b.c
+type T = typeof a.#b
+type T = typeof a[0]
+type T = typeof a.b<c>
+type T = typeof a<b>.c
+type T = A<B>.C
+type T = A.B<C>.D
+type T = A.<B>
+type T = A.B.<C>
+type T = `a`.b
+type T = `a${B}`.c
+type T = keyof.a
+type T = readonly.a
+type T = unique.a
+type T = infer.a
+type T = asserts.a
+type T = abstract.a
+type T = undefined.a
+type T = never.a
+type T = object.a
+type T = symbol.a
+type T = bigint.a
+type T = boolean.a
+type T = unknown.a
+type T = A.class
+type T = A.if.else
+type T = A.\nB
+type T = A\n.B
+type T = A.#b
+type T = import("x").a
+type T = import("x").#a
+type T = import("x")<A>
+type T = import("x").a.b<C>
+type T = import("x")[]
+type T = A.1
+type T = A."b"
+type T = A.
+type T = (() => void).a
+type T = -1.a

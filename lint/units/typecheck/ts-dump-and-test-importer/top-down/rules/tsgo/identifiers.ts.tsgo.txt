@@ -1,0 +1,35 @@
+file /identifiers.ts scriptKind=3 variant=0 dts=false textLen=115
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=26 identifiers=6 text=12 reparsedClones=0
+root KindSourceFile [0,115) f=0x0
+  .Statements: list [0,114) n=3
+    - KindVariableStatement [0,33) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,32) f=0x2
+        .Declarations: list [5,32) n=2
+          - KindVariableDeclaration [5,19) f=0x0
+            .Initializer: KindNumericLiteral [17,19) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [5,15) f=0x0 Text="ab"
+          - KindVariableDeclaration [20,32) f=0x0
+            .Initializer: KindNumericLiteral [30,32) f=0x0 Text="2" TokenFlags=0x0
+            .name: KindIdentifier [20,28) f=0x0 Text="cd"
+    - KindVariableStatement [33,73) f=0x0
+      .DeclarationList: KindVariableDeclarationList [33,72) f=0x2
+        .Declarations: list [39,72) n=3
+          - KindVariableDeclaration [39,53) f=0x0
+            .Initializer: KindNumericLiteral [51,53) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [39,49) f=0x0 Text="__proto__"
+          - KindVariableDeclaration [54,63) f=0x0
+            .Initializer: KindNumericLiteral [61,63) f=0x0 Text="2" TokenFlags=0x0
+            .name: KindIdentifier [54,59) f=0x0 Text="___x"
+          - KindVariableDeclaration [64,72) f=0x0
+            .Initializer: KindNumericLiteral [70,72) f=0x0 Text="3" TokenFlags=0x0
+            .name: KindIdentifier [64,68) f=0x0 Text="__y"
+    - KindVariableStatement [73,114) f=0x0
+      .DeclarationList: KindVariableDeclarationList [73,113) f=0x1
+        .Declarations: list [77,113) n=1
+          - KindVariableDeclaration [77,113) f=0x0
+            .Initializer: KindStringLiteral [81,113) f=0x0 Text="\U0001f600 \xed\xa0\x80 \U0001f600" TokenFlags=0x408
+            .name: KindIdentifier [77,79) f=0x0 Text="s"
+  .EndOfFileToken: KindEndOfFile [114,115) f=0x0

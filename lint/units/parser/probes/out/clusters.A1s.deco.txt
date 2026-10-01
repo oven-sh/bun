@@ -1,0 +1,250 @@
+class A1s  dialect ts  config deco: 1263 inputs in 31 clusters
+
+[03-signatures / arrowSig]  bun Expected "…" but found "…"  /  tsc TS2369   (108 inputs, 18 distinct)
+    tsc also: TS2369 x108, TS2304 x76, TS7006 x36, TS2318 x18
+    "public a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "private a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "protected a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "readonly a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "override a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public readonly a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "private override readonly a: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public a"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public a?"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public a?: A"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public a = 1"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "public a: A = 1"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    … 6 more
+
+[03-signatures / arrowSig]  bun Expected "…" but found "…"  /  tsc TS2462   (2 inputs, 2 distinct)
+    tsc also: TS2462 x2, TS7031 x2
+    "[...a, b]"  [arrowRet]
+    "{ ...a, b }"  [arrowRet]
+
+[03-signatures / arrowSig]  bun Expected "…" but found "…"  /  tsc TS2730   (2 inputs, 2 distinct)
+    tsc also: TS2730 x2, TS7006 x2
+    "this"  [arrowRet]
+    "this, a"  [arrowRet]
+
+[03-signatures / arrowSig]  bun Invalid binding pattern  /  tsc TS2680 TS2730   (4 inputs, 1 distinct)
+    tsc also: TS7006 x4, TS2680 x4, TS2730 x4, TS2304 x4, TS2318 x1
+    "a, this: A"  [arrow,asyncArrow,genericArrow,arrowInCond]
+
+[03-signatures / arrowSig]  bun Invalid binding pattern  /  tsc TS2730   (24 inputs, 6 distinct)
+    tsc also: TS2730 x24, TS2304 x12, TS7006 x8, TS2318 x6, TS2526 x4, TS7041 x4
+    "this"  [arrow,asyncArrow,genericArrow,arrowInCond]
+    "this: A"  [arrow,asyncArrow,genericArrow,arrowInCond]
+    "this: A, a: B"  [arrow,asyncArrow,genericArrow,arrowInCond]
+    "this, a"  [arrow,asyncArrow,genericArrow,arrowInCond]
+    "this: this"  [arrow,asyncArrow,genericArrow,arrowInCond]
+    "this: typeof this"  [arrow,asyncArrow,genericArrow,arrowInCond]
+
+[03-signatures / arrowSig]  bun Unexpected …  /  tsc TS2462   (10 inputs, 2 distinct)
+    tsc also: TS2462 x10, TS7031 x10, TS2304 x4, TS2318 x2
+    "[...a, b]"  [arrow,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+    "{ ...a, b }"  [arrow,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]
+
+[03-signatures / arrowSig]  bun Unexpected …  /  tsc TS2680 TS2730   (2 inputs, 1 distinct)
+    tsc also: TS7006 x2, TS2680 x2, TS2730 x2, TS2304 x2
+    "a, this: A"  [arrowRet,arrowInCondRet]
+
+[03-signatures / arrowSig]  bun Unexpected …  /  tsc TS2730   (10 inputs, 6 distinct)
+    tsc also: TS2730 x10, TS2304 x8, TS2526 x2, TS7041 x2, TS7006 x2
+    "this: A"  [arrowRet,arrowInCondRet]
+    "this: A, a: B"  [arrowRet,arrowInCondRet]
+    "this: this"  [arrowRet,arrowInCondRet]
+    "this: typeof this"  [arrowRet,arrowInCondRet]
+    "this"  [arrowInCondRet]
+    "this, a"  [arrowInCondRet]
+
+[03-signatures / declSig]  bun Expected "…" but found "…"  /  tsc TS2369   (203 inputs, 22 distinct)
+    tsc also: TS2369 x203, TS2304 x117, TS7006 x74, TS2318 x18, TS7032 x4
+    "public a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "private a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "protected a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "readonly a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "override a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "public readonly a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "private override readonly a: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "public a"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "public a?"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "public a?: A"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "public a = 1"  [fnDecl,fnExpr,method,objMethod,generator,asyncFn]
+    "public a: A = 1"  [fnDecl,fnExpr,method,objMethod,generator,asyncFn]
+    … 10 more
+
+[03-signatures / declSig]  bun Expected "…" but found "…"  /  tsc TS2369 TS2371   (15 inputs, 3 distinct)
+    tsc also: TS2369 x15, TS2371 x15, TS2304 x5
+    "public a = 1"  [declareFn,overload,methodOverload,abstractMethod,declareMethod]
+    "public a: A = 1"  [declareFn,overload,methodOverload,abstractMethod,declareMethod]
+    "readonly a = 1"  [declareFn,overload,methodOverload,abstractMethod,declareMethod]
+
+[03-signatures / declSig]  bun Setter p must have exactly 1 argument (there are 0)  /  tsc TS2784   (4 inputs, 4 distinct)
+    tsc also: TS2784 x4, TS7032 x1, TS7006 x1, TS2304 x1, TS2502 x1
+    "this"  [setter]
+    "this: A"  [setter]
+    "this: this"  [setter]
+    "this: typeof this"  [setter]
+
+[03-signatures / declSig]  bun Unexpected …  /  tsc TS2462   (30 inputs, 2 distinct)
+    tsc also: TS2462 x30, TS7031 x30, TS7032 x2, TS2318 x2
+    "[...a, b]"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+    "{ ...a, b }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]
+
+[03-signatures / memberSig]  bun Expected "…" but found "…"  /  tsc TS2369   (75 inputs, 15 distinct)
+    tsc also: TS2369 x75, TS2304 x51, TS7006 x30
+    "public a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "private a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "protected a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "readonly a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "override a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public readonly a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "private override readonly a: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public a"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public a?"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public a?: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public readonly"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "readonly readonly"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    … 3 more
+
+[03-signatures / memberSig]  bun Expected "…" but found "…"  /  tsc TS2369 TS2371   (15 inputs, 3 distinct)
+    tsc also: TS2369 x15, TS2371 x15, TS2304 x7
+    "public a = 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "public a: A = 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "readonly a = 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+
+[03-signatures / memberSig]  bun Expected "…" but found "…"  /  tsc TS2371   (105 inputs, 21 distinct)
+    tsc also: TS2371 x105, TS2304 x49, TS2339 x5, TS7031 x5
+    "a = 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a: A = 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = 1, b = 2"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = b"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = () => 1"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = {}"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = (1, 2)"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = b = c"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a: A = b as A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = <A>b"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a = b!"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "a: (b: B) => C = d"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    … 9 more
+
+[03-signatures / memberSig]  bun Expected "…" but found "…"  /  tsc TS2842   (10 inputs, 2 distinct)
+    tsc also: TS2842 x10, TS2304 x2
+    "{ a: b = 1 }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "{ a: b = <A>c }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+
+[03-signatures / memberSig]  bun Unexpected …  /  tsc TS2842   (15 inputs, 3 distinct)
+    tsc also: TS2842 x15, TS2304 x3
+    "{ [k]: v }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "{ [k]: v = 1 }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+    "{ 1n: a }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"  /  tsc TS2369   (100 inputs, 15 distinct)
+    tsc also: TS2369 x100, TS2304 x84, TS7006 x37, TS2322 x15
+    "public a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "private a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "protected a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "readonly a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "override a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public readonly a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "private override readonly a: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public a"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public a?"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public a?: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public readonly"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public a\n: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    … 3 more
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"  /  tsc TS2369 TS2371   (21 inputs, 3 distinct)
+    tsc also: TS2369 x21, TS2371 x21, TS2304 x15, TS2322 x3
+    "public a = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "public a: A = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "readonly a = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"  /  tsc TS2371   (124 inputs, 21 distinct)
+    tsc also: TS2371 x124, TS2304 x90, TS2322 x21, TS2339 x7, TS7031 x7, TS2695 x1
+    "a = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a: A = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = 1, b = 2"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = b"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = () => 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = {}"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = (1, 2)"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = b = c"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a: A = b as A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = <A>b"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a = b!"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "a: (b: B) => C = d"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    … 9 more
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"  /  tsc TS2842   (15 inputs, 5 distinct)
+    tsc also: TS2842 x15, TS2304 x11, TS2322 x5, TS7031 x1
+    "{ [k]: v }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]
+    "{ a: b = 1 }"  [fnTypeAsArg,fnTypeArrowRet]
+    "{ [k]: v = 1 }"  [fnTypeAsArg,fnTypeArrowRet]
+    "{ 1n: a }"  [fnTypeAsArg,fnTypeArrowRet]
+    "{ a: b = <A>c }"  [fnTypeAsArg,fnTypeArrowRet]
+
+[03-signatures / typeSig]  bun Unexpected …  /  tsc TS2369   (5 inputs, 1 distinct)
+    tsc also: TS2369 x5, TS7006 x5, TS2304 x3
+    "readonly readonly"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+
+[03-signatures / typeSig]  bun Unexpected …  /  tsc TS2371   (23 inputs, 4 distinct)
+    tsc also: TS2371 x23, TS2304 x19
+    "{ a = 1 }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg]
+    "{ a = 1 }: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg]
+    "{ a = b as A }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg]
+    "readonly = 1"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+
+[03-signatures / typeSig]  bun Unexpected …  /  tsc TS2842   (20 inputs, 4 distinct)
+    tsc also: TS2842 x20, TS2304 x12
+    "{ a: b = 1 }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+    "{ [k]: v = 1 }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+    "{ 1n: a }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+    "{ a: b = <A>c }"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+
+[06-class-members / heritage]  bun Unexpected …  /  tsc TS2660   (1 inputs, 1 distinct)
+    tsc also: TS2660 x1
+    "class C extends super.b {}"  [-]
+
+[06-class-members / paramProp]  bun Expected "…" but found "…"  /  tsc TS2369   (287 inputs, 53 distinct)
+    tsc also: TS2369 x287, TS7006 x144, TS2304 x128, TS7032 x23
+    "public x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "private x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "protected x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "override x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "public readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "private readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "protected readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "public override x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "public override readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "override readonly x: T"  [method,staticMethod,setter,fn,arrow,objMethod]
+    "public x"  [method,staticMethod,setter,fn,arrow,objMethod]
+    … 41 more
+
+[06-class-members / paramProp]  bun Expected "…" but found "…"  /  tsc TS2730 TS2369   (1 inputs, 1 distinct)
+    tsc also: TS2730 x1, TS2304 x1, TS2369 x1
+    "this: T, public x: U"  [arrow]
+
+[06-class-members / paramProp]  bun Expected "…" but found "…"  /  tsc TS2784 TS2369   (1 inputs, 1 distinct)
+    tsc also: TS2784 x1, TS2304 x1, TS2369 x1
+    "this: T, public x: U"  [setter]
+
+[09-decorators / paramPos]  bun Expected "…" but found "…"  /  tsc TS2369   (29 inputs, 6 distinct)
+    tsc also: TS2369 x29, TS2304 x25, TS7006 x5, TS7032 x1
+    "@d public a: A"  [method,decoratedMethod,staticMethod,setter,privateMethod]
+    "@d readonly a: A"  [method,decoratedMethod,staticMethod,setter,privateMethod]
+    "@d public readonly a: A"  [method,decoratedMethod,staticMethod,setter,privateMethod]
+    "@d private a"  [method,decoratedMethod,staticMethod,setter,privateMethod]
+    "@d protected a?: A"  [method,decoratedMethod,staticMethod,privateMethod]
+    "@d override a: A"  [method,decoratedMethod,staticMethod,setter,privateMethod]
+
+[10-declaration-files / module]  bun Expected "…" but found "…"  /  tsc TS2669 TS2670   (1 inputs, 1 distinct)
+    tsc also: TS2669 x1, TS2670 x1, TS2304 x1
+    "global { var x: T; }"  [-]
+
+[10-declaration-files / topLevel]  bun Expected "…" but found "…"  /  tsc TS2669 TS2670   (1 inputs, 1 distinct)
+    tsc also: TS2669 x1, TS2670 x1
+    "global {}"  [-]

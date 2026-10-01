@@ -1,0 +1,59 @@
+   Compiling ntproto v0.0.0 (/workspace/notes/lint/units/typecheck/node-table-id-contract/top-down/proto)
+warning: `ntproto` (manifest) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.33s
+     Running unittests lib.rs (/tmp/tc_probe/target/debug/build/ntproto/a1435b1b652df8cc/out/ntproto-a1435b1b652df8cc)
+running 9 tests
+test tests::binder_writes_then_freeze_and_share ... ok
+test tests::core_name_probe::module_named_core ... ok
+test tests::corpus_against_reference_digests ... corpus: nodes 1483326; import and finish 0.55 s; table heap 71182245 bytes; structs seen 186 of 194; kinds seen 271 of 351
+  ts family: units 14935 same as the reference 14912 differ 23 with importer faults 0; without parse errors 14162 of which same 14162
+  js: units 1276 same as the reference 769 differ 507 with importer faults 0; without parse errors 1240 of which same 745
+  json: units 0 same as the reference 0 differ 0 with importer faults 0; without parse errors 0 of which same 0
+  differing ts family units:
+    /c01026u1_values-bad-import.ts
+    /c01026u3_values-no-as.ts
+    /c01026u4_values-type-as.ts
+    /c01026u6_type-decls-bad-import.ts
+    /c01026u8_type-decls-no-as.ts
+    /c01026u9_type-decls-type-as.ts
+    /c01026u11_type-clause-bad-import.ts
+    /c01026u13_type-clause-no-as.ts
+    /c01026u14_type-clause-type-as-as.ts
+    /c02459u0_errorSuperCalls.ts
+    /c03255u0_jsdocDisallowedInTypescript.ts
+    /c03430u0_jsxAndTypeAssertion.tsx
+    /c03431u0_a.tsx
+    /c03442u0_jsxParserRecovery.tsx
+    /c04425u0_parserSuperExpression2.ts
+    /c05240u0_objectTypeWithStringNamedNumericProperty.ts
+    /c05420u0_objectSpreadNegativeParse.ts
+    /c07093u0_constructorWithIncompleteTypeAnnotation.ts
+    /c08510u0_expressionWithJSDocTypeArguments.ts
+    /c09741u0_jsxAttributeMissingInitializer.tsx
+    /c11688u0_superWithTypeArgument.ts
+    /c11689u0_superWithTypeArgument2.ts
+    /c11690u0_superWithTypeArgument3.ts
+  structs that no unit has: ["NotEmittedStatement", "NotEmittedTypeElement", "SyntheticExpression", "PartiallyEmittedExpression", "SyntaxList", "SyntheticReferenceExpression", "FlowSwitchClauseData", "FlowReduceLabelData"]
+ok
+test tests::factory_finish_and_read ... ok
+test tests::importer_gives_the_reference_tree ... ok
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 5.5 ms; build 3.9 ms; finish 2.3 ms; freeze 0.09 ms; program 1 0.001 ms; program 2 0.001 ms (7 pages)
+  walk of 10888 nodes 0.3 ms (checksum 1466626); dump of all trees 3.3 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 40.8 ms; build 55.3 ms; finish 52.6 ms; freeze 1.33 ms; program 1 0.005 ms; program 2 0.002 ms (127 pages)
+  walk of 139412 nodes 5.3 ms (checksum 18949382); dump of all trees 76.8 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+test tests::rewind_and_synthetic_table ... ok
+test tests::update_clone_and_visit ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+   Doc-tests ntproto
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

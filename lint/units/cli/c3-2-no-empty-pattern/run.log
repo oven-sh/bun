@@ -1,0 +1,82 @@
+rustfmt: clean
+comment runs and markers found: 0
+comments apart, the file is the text of the research
+== 1. the file inside a copy of the crate, against the .rmeta files of the debug build
+rule modules as the tree has them: no_compare_neg_zero, no_dupe_class_members, no_dupe_keys, no_duplicate_case, no_empty_pattern, no_self_assign, no_unsafe_negation, use_isnan, valid_typeof
+rule modules from the text of the research: no_debugger, no_sparse_arrays
+rustc --emit=metadata, every module as the tree or the research has it: exit 0; lines that name no_empty_pattern: 0
+rule modules as the tree has them: no_compare_neg_zero, no_dupe_class_members, no_dupe_keys, no_duplicate_case, no_empty_pattern, no_self_assign, no_unsafe_negation, use_isnan, valid_typeof
+rule modules from the text of the research: no_debugger, no_sparse_arrays
+clippy-driver --emit=metadata, every module as the tree or the research has it: exit 0; lines that name no_empty_pattern: 0
+control 1 (a method that the list of a binding does not have): rejected, 4 lines with no_empty_pattern.rs:.*E0599
+control 2 (a handler under another name): rejected, 4 lines with E0425
+control 3 (the place by reference): rejected, 24 lines with E0308
+control 4 (a std HashMap in the file, for clippy-driver): rejected, 8 lines with no_empty_pattern.rs:.*disallowed
+== 2. the file against stand-ins of what it reads, every warning an error, and its logic over hand-made patterns
+no_empty_pattern.rs against the stand-ins: 52 checks, 0 failed
+fault 1 (a binding with elements reported, an empty one not): 16 checks fail, as they should
+fault 2 (an assignment target with one property reported): 1 checks fail, as they should
+fault 3 (the text of the object for an array): 12 checks fail, as they should
+fault 4 (an assignment target of holes reported): 3 checks fail, as they should
+fault 5 (the place of an object moved by one): 12 checks fail, as they should
+== 3. the cases: ESLint at the pin against the probe, which has the text of the research and not this file
+no-empty-pattern: 186 cases: same 186
+186 cases: 136 with a report, 50 without, 0 that differ from ESLint (), 20 with the code of a case of ESLint's own test, 3 with jsx; 0 that are not what the oracle says
+24 codes in the test of ESLint, 4 of them not in the fixture, 0 cases marked that are not among them
+  not in the fixture: "var foo = ({a: {}}) => {}"
+  not in the fixture: "var foo = ({} = bar) => {}"
+  not in the fixture: "var foo = ({} = { bar: 1 }) => {}"
+  not in the fixture: "var foo = ([]) => {}"
+no-empty-pattern: 119 cases: same 118, both-reject 1
+outside the fixture: 119 cases, 90 with a report of the probe, 1 that a parser rejects, 0 where both parse and the answers differ
+no-empty-pattern: 13 cases: eslint-rejects 13
+eslint-rejects: "({}) = a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:2 Unexpected empty object pattern.
+eslint-rejects: "([]) = a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:2 Unexpected empty array pattern.
+eslint-rejects: "[({})] = a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:3 Unexpected empty object pattern.
+eslint-rejects: "[([])] = a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:3 Unexpected empty array pattern.
+eslint-rejects: "for (({}) of a);" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:7 Unexpected empty object pattern.
+eslint-rejects: "for (([]) in a);" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:7 Unexpected empty array pattern.
+eslint-rejects: "({a: ({})} = b)" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:7 Unexpected empty object pattern.
+eslint-rejects: "({a: ([])} = b)" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:7 Unexpected empty array pattern.
+eslint-rejects: "[...({})] = a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:6 Unexpected empty object pattern.
+eslint-rejects: "({} += a)" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "[] -= a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({} ||= a)" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "[] ??= a" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+no-empty-pattern: 186 cases, 0 wrong, 0 unexpected lines, 0 files that do not parse; 147 lines of this rule, 0 of other rules (); exit code 2
+no-compare-neg-zero: 99 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-debugger: 70 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-dupe-class-members: 402 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-dupe-keys: 477 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-duplicate-case: 349 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-self-assign: 572 cases, 3 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-sparse-arrays: 149 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+no-unsafe-negation: 122 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+use-isnan: 438 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have
+valid-typeof: 477 cases, 0 lines of no-empty-pattern, 0 of them in a case that no-empty-pattern does not have

@@ -1,0 +1,26 @@
+enum E { "x" = 1, B = x }
+enum E { ["x"] = 1, B = x }
+enum E { ["x"] = 1, B = E.x }
+enum E { ["x"] = 1, B = E["x"] }
+enum E { [`x`] = 1, B = x }
+enum E { ["a-b"] = 1, B = E["a-b"] }
+enum E { ["x"], ["y"] }
+enum E { ["x"] = "s" }
+enum E { ['x'] }
+enum E { ["x"], }
+enum E { [ "x" ] = 1 }
+enum E { ["x" ] = 1 }
+enum E { [("x")] = 1 }
+enum E { ["x" as any] = 1 }
+enum E { ["\u0078"] = 1 }
+enum E { ["x"]: 1 }
+enum E { ["x"]() {} }
+const enum E { ["x"] = 1 } var v = E.x;
+const enum E { ["x"] = 1 } var v = E["x"];
+declare enum E { ["x"] = 1 }
+export enum E { ["x"] = 1 }
+namespace N { export enum E { ["x"] = 1 } }
+enum E { [`x`] = 1, [`y`] }
+enum E { ["x"] = 1 } enum E { ["y"] = 2 }
+enum E { ["__proto__"] = 1 }
+enum E { ["constructor"] }

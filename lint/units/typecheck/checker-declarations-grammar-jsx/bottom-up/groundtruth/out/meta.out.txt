@@ -1,0 +1,17 @@
+PARSE mod_a.ts parse=[] js=[] bind=[]
+mod_a.ts(4,1)+11: error TS1203: Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.
+mod_a.ts(4,1)+11: error TS2309: An export assignment cannot be used in a module with other exported elements.
+PARSE meta.ts parse=[] js=[] bind=[]
+meta.ts(3,38)+1: error TS1272: A type referenced in a decorated signature must be imported with 'import type' or a namespace import when 'isolatedModules' and 'emitDecoratorMetadata' are enabled.
+  related meta.ts(1,10)+1: message TS1376: 'T' was imported here.
+meta.ts(3,69)+1: error TS1272: A type referenced in a decorated signature must be imported with 'import type' or a namespace import when 'isolatedModules' and 'emitDecoratorMetadata' are enabled.
+  related meta.ts(1,10)+1: message TS1376: 'T' was imported here.
+meta.ts(3,73)+1: error TS1272: A type referenced in a decorated signature must be imported with 'import type' or a namespace import when 'isolatedModules' and 'emitDecoratorMetadata' are enabled.
+  related meta.ts(1,10)+1: message TS1376: 'T' was imported here.
+meta.ts(3,98)+1: error TS1272: A type referenced in a decorated signature must be imported with 'import type' or a namespace import when 'isolatedModules' and 'emitDecoratorMetadata' are enabled.
+  related meta.ts(1,10)+1: message TS1376: 'T' was imported here.
+meta.ts(4,5)+7: error TS18027: Compiler reserves name 'WeakMap' when emitting private identifier downlevel. [skippedOnNoEmit]
+meta.ts(4,22)+7: error TS2818: Duplicate identifier 'Reflect'. Compiler reserves name 'Reflect' when emitting 'super' references in static initializers. [skippedOnNoEmit]
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=15 GetImpliedNodeFormatForEmit=1 GetModeForUsageLocation=3 GetResolvedModule=3 GetSourceFile=3 GetSourceFileForResolvedModule=3 Options=1 SourceFiles=1
+COUNTS TypeCount=122 SymbolCount=50 SignatureCount=14 TotalInstantiationCount=2

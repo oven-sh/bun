@@ -1,0 +1,782 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /rel.ts
+SINCE type=85 signature=4
+DRIVE symtypes
+SYMTYPE EnumDeclaration@/rel.ts:0:16 "E1"@EnumDeclaration@/rel.ts:0:16/0x100 T86
+SYMTYPE EnumMember@/rel.ts:9:11 "A"@EnumMember@/rel.ts:9:11/0x8 T88
+SYMTYPE EnumMember@/rel.ts:12:14 "B"@EnumMember@/rel.ts:12:14/0x8 T90
+SYMTYPE VariableDeclaration@/rel.ts:30:40 "vAny"@VariableDeclaration@/rel.ts:30:40/0x2 T1
+SYMTYPE VariableDeclaration@/rel.ts:55:73 "vUnknown"@VariableDeclaration@/rel.ts:55:73/0x2 T9
+SYMTYPE VariableDeclaration@/rel.ts:88:102 "vNever"@VariableDeclaration@/rel.ts:88:102/0x2 T24
+SYMTYPE VariableDeclaration@/rel.ts:117:133 "vString"@VariableDeclaration@/rel.ts:117:133/0x2 T14
+SYMTYPE VariableDeclaration@/rel.ts:148:164 "vNumber"@VariableDeclaration@/rel.ts:148:164/0x2 T15
+SYMTYPE VariableDeclaration@/rel.ts:179:190 "vLitA"@VariableDeclaration@/rel.ts:179:190/0x2 T92
+SYMTYPE VariableDeclaration@/rel.ts:205:214 "vLit1"@VariableDeclaration@/rel.ts:205:214/0x2 T94
+SYMTYPE VariableDeclaration@/rel.ts:229:253 "vUnion"@VariableDeclaration@/rel.ts:229:253/0x2 T29
+SYMTYPE VariableDeclaration@/rel.ts:268:290 "vUndefined"@VariableDeclaration@/rel.ts:268:290/0x2 T10
+SYMTYPE VariableDeclaration@/rel.ts:305:317 "vNull"@VariableDeclaration@/rel.ts:305:317/0x2 T13
+SYMTYPE VariableDeclaration@/rel.ts:332:344 "vVoid"@VariableDeclaration@/rel.ts:332:344/0x2 T23
+SYMTYPE VariableDeclaration@/rel.ts:359:380 "vObjA"@VariableDeclaration@/rel.ts:359:380/0x2 T96
+SYMTYPE PropertySignature@/rel.ts:368:378 "a"@PropertySignature@/rel.ts:368:378/0x4 T14
+SYMTYPE VariableDeclaration@/rel.ts:395:429 "vObjAB"@VariableDeclaration@/rel.ts:395:429/0x2 T97
+SYMTYPE PropertySignature@/rel.ts:405:416 "a"@PropertySignature@/rel.ts:405:416/0x4 T14
+SYMTYPE PropertySignature@/rel.ts:416:427 "b"@PropertySignature@/rel.ts:416:427/0x1000004 T98
+SYMTYPE VariableDeclaration@/rel.ts:444:472 "vObjRo"@VariableDeclaration@/rel.ts:444:472/0x2 T99
+SYMTYPE PropertySignature@/rel.ts:454:470 "a"@PropertySignature@/rel.ts:454:470/0x4 T92
+SYMTYPE VariableDeclaration@/rel.ts:487:513 "vFn1"@VariableDeclaration@/rel.ts:487:513/0x2 T100
+SYMTYPE Parameter@/rel.ts:495:504 "x"@Parameter@/rel.ts:495:504/0x1 T14
+SYMTYPE VariableDeclaration@/rel.ts:528:556 "vFn2"@VariableDeclaration@/rel.ts:528:556/0x2 T101
+SYMTYPE Parameter@/rel.ts:536:542 "x"@Parameter@/rel.ts:536:542/0x1 T92
+SYMTYPE VariableDeclaration@/rel.ts:571:608 "vFn3"@VariableDeclaration@/rel.ts:571:608/0x2 T102
+SYMTYPE Parameter@/rel.ts:579:588 "x"@Parameter@/rel.ts:579:588/0x1 T14
+SYMTYPE Parameter@/rel.ts:589:599 "y"@Parameter@/rel.ts:589:599/0x1 T15
+SYMTYPE VariableDeclaration@/rel.ts:623:648 "vTuple"@VariableDeclaration@/rel.ts:623:648/0x2 T108
+SYMTYPE VariableDeclaration@/rel.ts:663:680 "vArray"@VariableDeclaration@/rel.ts:663:680/0x2 T109
+SYMTYPE VariableDeclaration@/rel.ts:695:723 "vRoArray"@VariableDeclaration@/rel.ts:695:723/0x2 T110
+SYMTYPE VariableDeclaration@/rel.ts:738:748 "vEnum"@VariableDeclaration@/rel.ts:738:748/0x2 T91
+SYMTYPE VariableDeclaration@/rel.ts:763:776 "vEnumA"@VariableDeclaration@/rel.ts:763:776/0x2 T87
+SYMTYPE VariableDeclaration@/rel.ts:791:807 "vObject"@VariableDeclaration@/rel.ts:791:807/0x2 T28
+SYMTYPE VariableDeclaration@/rel.ts:822:833 "vEmpty"@VariableDeclaration@/rel.ts:822:833/0x2 T38
+DRIVE rel
+REL vAny(T1) vAny(T1) 11111
+REL vAny(T1) vUnknown(T9) 01110
+REL vAny(T1) vNever(T24) 00000
+REL vAny(T1) vString(T14) 01100
+REL vAny(T1) vNumber(T15) 01100
+REL vAny(T1) vLitA(T92) 01100
+REL vAny(T1) vLit1(T94) 01100
+REL vAny(T1) vUnion(T29) 01100
+REL vAny(T1) vUndefined(T10) 01100
+REL vAny(T1) vNull(T13) 01100
+REL vAny(T1) vVoid(T23) 01100
+REL vAny(T1) vObjA(T96) 01100
+REL vAny(T1) vObjAB(T97) 01100
+REL vAny(T1) vObjRo(T99) 01100
+REL vAny(T1) vFn1(T100) 01100
+REL vAny(T1) vFn2(T101) 01100
+REL vAny(T1) vFn3(T102) 01100
+REL vAny(T1) vTuple(T108) 01100
+REL vAny(T1) vArray(T109) 01100
+REL vAny(T1) vRoArray(T110) 01100
+REL vAny(T1) vEnum(T91) 01100
+REL vAny(T1) vEnumA(T87) 01100
+REL vAny(T1) vObject(T28) 01100
+REL vAny(T1) vEmpty(T38) 01100
+REL vUnknown(T9) vAny(T1) 01111
+REL vUnknown(T9) vUnknown(T9) 11111
+REL vUnknown(T9) vNever(T24) 00000
+REL vUnknown(T9) vString(T14) 00100
+REL vUnknown(T9) vNumber(T15) 00100
+REL vUnknown(T9) vLitA(T92) 00100
+REL vUnknown(T9) vLit1(T94) 00100
+REL vUnknown(T9) vUnion(T29) 00100
+REL vUnknown(T9) vUndefined(T10) 00100
+REL vUnknown(T9) vNull(T13) 00100
+REL vUnknown(T9) vVoid(T23) 00100
+REL vUnknown(T9) vObjA(T96) 00100
+REL vUnknown(T9) vObjAB(T97) 00100
+REL vUnknown(T9) vObjRo(T99) 00100
+REL vUnknown(T9) vFn1(T100) 00100
+REL vUnknown(T9) vFn2(T101) 00100
+REL vUnknown(T9) vFn3(T102) 00100
+REL vUnknown(T9) vTuple(T108) 00100
+REL vUnknown(T9) vArray(T109) 00100
+REL vUnknown(T9) vRoArray(T110) 00100
+REL vUnknown(T9) vEnum(T91) 00100
+REL vUnknown(T9) vEnumA(T87) 00100
+REL vUnknown(T9) vObject(T28) 00100
+REL vUnknown(T9) vEmpty(T38) 00100
+REL vNever(T24) vAny(T1) 01111
+REL vNever(T24) vUnknown(T9) 01111
+REL vNever(T24) vNever(T24) 11111
+REL vNever(T24) vString(T14) 01111
+REL vNever(T24) vNumber(T15) 01111
+REL vNever(T24) vLitA(T92) 01111
+REL vNever(T24) vLit1(T94) 01111
+REL vNever(T24) vUnion(T29) 01111
+REL vNever(T24) vUndefined(T10) 01111
+REL vNever(T24) vNull(T13) 01111
+REL vNever(T24) vVoid(T23) 01111
+REL vNever(T24) vObjA(T96) 01111
+REL vNever(T24) vObjAB(T97) 01111
+REL vNever(T24) vObjRo(T99) 01111
+REL vNever(T24) vFn1(T100) 01111
+REL vNever(T24) vFn2(T101) 01111
+REL vNever(T24) vFn3(T102) 01111
+REL vNever(T24) vTuple(T108) 01111
+REL vNever(T24) vArray(T109) 01111
+REL vNever(T24) vRoArray(T110) 01111
+REL vNever(T24) vEnum(T91) 01111
+REL vNever(T24) vEnumA(T87) 01111
+REL vNever(T24) vObject(T28) 01111
+REL vNever(T24) vEmpty(T38) 01111
+REL vString(T14) vAny(T1) 01111
+REL vString(T14) vUnknown(T9) 01111
+REL vString(T14) vNever(T24) 00000
+REL vString(T14) vString(T14) 11111
+REL vString(T14) vNumber(T15) 00000
+REL vString(T14) vLitA(T92) 00100
+REL vString(T14) vLit1(T94) 00000
+REL vString(T14) vUnion(T29) 01111
+REL vString(T14) vUndefined(T10) 00000
+REL vString(T14) vNull(T13) 00000
+REL vString(T14) vVoid(T23) 00000
+REL vString(T14) vObjA(T96) 00000
+REL vString(T14) vObjAB(T97) 00000
+REL vString(T14) vObjRo(T99) 00000
+REL vString(T14) vFn1(T100) 00000
+REL vString(T14) vFn2(T101) 00000
+REL vString(T14) vFn3(T102) 00000
+REL vString(T14) vTuple(T108) 00000
+REL vString(T14) vArray(T109) 00000
+REL vString(T14) vRoArray(T110) 00000
+REL vString(T14) vEnum(T91) 00000
+REL vString(T14) vEnumA(T87) 00000
+REL vString(T14) vObject(T28) 00000
+REL vString(T14) vEmpty(T38) 01111
+REL vNumber(T15) vAny(T1) 01111
+REL vNumber(T15) vUnknown(T9) 01111
+REL vNumber(T15) vNever(T24) 00000
+REL vNumber(T15) vString(T14) 00000
+REL vNumber(T15) vNumber(T15) 11111
+REL vNumber(T15) vLitA(T92) 00000
+REL vNumber(T15) vLit1(T94) 00100
+REL vNumber(T15) vUnion(T29) 01111
+REL vNumber(T15) vUndefined(T10) 00000
+REL vNumber(T15) vNull(T13) 00000
+REL vNumber(T15) vVoid(T23) 00000
+REL vNumber(T15) vObjA(T96) 00000
+REL vNumber(T15) vObjAB(T97) 00000
+REL vNumber(T15) vObjRo(T99) 00000
+REL vNumber(T15) vFn1(T100) 00000
+REL vNumber(T15) vFn2(T101) 00000
+REL vNumber(T15) vFn3(T102) 00000
+REL vNumber(T15) vTuple(T108) 00000
+REL vNumber(T15) vArray(T109) 00000
+REL vNumber(T15) vRoArray(T110) 00000
+REL vNumber(T15) vEnum(T91) 01100
+REL vNumber(T15) vEnumA(T87) 01100
+REL vNumber(T15) vObject(T28) 00000
+REL vNumber(T15) vEmpty(T38) 01111
+REL vLitA(T92) vAny(T1) 01111
+REL vLitA(T92) vUnknown(T9) 01111
+REL vLitA(T92) vNever(T24) 00000
+REL vLitA(T92) vString(T14) 01111
+REL vLitA(T92) vNumber(T15) 00000
+REL vLitA(T92) vLitA(T92) 11111
+REL vLitA(T92) vLit1(T94) 00000
+REL vLitA(T92) vUnion(T29) 01111
+REL vLitA(T92) vUndefined(T10) 00000
+REL vLitA(T92) vNull(T13) 00000
+REL vLitA(T92) vVoid(T23) 00000
+REL vLitA(T92) vObjA(T96) 00000
+REL vLitA(T92) vObjAB(T97) 00000
+REL vLitA(T92) vObjRo(T99) 00000
+REL vLitA(T92) vFn1(T100) 00000
+REL vLitA(T92) vFn2(T101) 00000
+REL vLitA(T92) vFn3(T102) 00000
+REL vLitA(T92) vTuple(T108) 00000
+REL vLitA(T92) vArray(T109) 00000
+REL vLitA(T92) vRoArray(T110) 00000
+REL vLitA(T92) vEnum(T91) 00000
+REL vLitA(T92) vEnumA(T87) 00000
+REL vLitA(T92) vObject(T28) 00000
+REL vLitA(T92) vEmpty(T38) 01111
+REL vLit1(T94) vAny(T1) 01111
+REL vLit1(T94) vUnknown(T9) 01111
+REL vLit1(T94) vNever(T24) 00000
+REL vLit1(T94) vString(T14) 00000
+REL vLit1(T94) vNumber(T15) 01111
+REL vLit1(T94) vLitA(T92) 00000
+REL vLit1(T94) vLit1(T94) 11111
+REL vLit1(T94) vUnion(T29) 01111
+REL vLit1(T94) vUndefined(T10) 00000
+REL vLit1(T94) vNull(T13) 00000
+REL vLit1(T94) vVoid(T23) 00000
+REL vLit1(T94) vObjA(T96) 00000
+REL vLit1(T94) vObjAB(T97) 00000
+REL vLit1(T94) vObjRo(T99) 00000
+REL vLit1(T94) vFn1(T100) 00000
+REL vLit1(T94) vFn2(T101) 00000
+REL vLit1(T94) vFn3(T102) 00000
+REL vLit1(T94) vTuple(T108) 00000
+REL vLit1(T94) vArray(T109) 00000
+REL vLit1(T94) vRoArray(T110) 00000
+REL vLit1(T94) vEnum(T91) 01100
+REL vLit1(T94) vEnumA(T87) 00000
+REL vLit1(T94) vObject(T28) 00000
+REL vLit1(T94) vEmpty(T38) 01111
+REL vUnion(T29) vAny(T1) 01111
+REL vUnion(T29) vUnknown(T9) 01111
+REL vUnion(T29) vNever(T24) 00000
+REL vUnion(T29) vString(T14) 00100
+REL vUnion(T29) vNumber(T15) 00100
+REL vUnion(T29) vLitA(T92) 00100
+REL vUnion(T29) vLit1(T94) 00100
+REL vUnion(T29) vUnion(T29) 11111
+REL vUnion(T29) vUndefined(T10) 00000
+REL vUnion(T29) vNull(T13) 00000
+REL vUnion(T29) vVoid(T23) 00000
+REL vUnion(T29) vObjA(T96) 00000
+REL vUnion(T29) vObjAB(T97) 00000
+REL vUnion(T29) vObjRo(T99) 00000
+REL vUnion(T29) vFn1(T100) 00000
+REL vUnion(T29) vFn2(T101) 00000
+REL vUnion(T29) vFn3(T102) 00000
+REL vUnion(T29) vTuple(T108) 00000
+REL vUnion(T29) vArray(T109) 00000
+REL vUnion(T29) vRoArray(T110) 00000
+REL vUnion(T29) vEnum(T91) 00100
+REL vUnion(T29) vEnumA(T87) 00100
+REL vUnion(T29) vObject(T28) 00000
+REL vUnion(T29) vEmpty(T38) 01111
+REL vUndefined(T10) vAny(T1) 01111
+REL vUndefined(T10) vUnknown(T9) 01111
+REL vUndefined(T10) vNever(T24) 00000
+REL vUndefined(T10) vString(T14) 00000
+REL vUndefined(T10) vNumber(T15) 00000
+REL vUndefined(T10) vLitA(T92) 00000
+REL vUndefined(T10) vLit1(T94) 00000
+REL vUndefined(T10) vUnion(T29) 00000
+REL vUndefined(T10) vUndefined(T10) 11111
+REL vUndefined(T10) vNull(T13) 00000
+REL vUndefined(T10) vVoid(T23) 01111
+REL vUndefined(T10) vObjA(T96) 00000
+REL vUndefined(T10) vObjAB(T97) 00000
+REL vUndefined(T10) vObjRo(T99) 00000
+REL vUndefined(T10) vFn1(T100) 00000
+REL vUndefined(T10) vFn2(T101) 00000
+REL vUndefined(T10) vFn3(T102) 00000
+REL vUndefined(T10) vTuple(T108) 00000
+REL vUndefined(T10) vArray(T109) 00000
+REL vUndefined(T10) vRoArray(T110) 00000
+REL vUndefined(T10) vEnum(T91) 00000
+REL vUndefined(T10) vEnumA(T87) 00000
+REL vUndefined(T10) vObject(T28) 00000
+REL vUndefined(T10) vEmpty(T38) 00000
+REL vNull(T13) vAny(T1) 01111
+REL vNull(T13) vUnknown(T9) 01111
+REL vNull(T13) vNever(T24) 00000
+REL vNull(T13) vString(T14) 00000
+REL vNull(T13) vNumber(T15) 00000
+REL vNull(T13) vLitA(T92) 00000
+REL vNull(T13) vLit1(T94) 00000
+REL vNull(T13) vUnion(T29) 00000
+REL vNull(T13) vUndefined(T10) 00000
+REL vNull(T13) vNull(T13) 11111
+REL vNull(T13) vVoid(T23) 00000
+REL vNull(T13) vObjA(T96) 00000
+REL vNull(T13) vObjAB(T97) 00000
+REL vNull(T13) vObjRo(T99) 00000
+REL vNull(T13) vFn1(T100) 00000
+REL vNull(T13) vFn2(T101) 00000
+REL vNull(T13) vFn3(T102) 00000
+REL vNull(T13) vTuple(T108) 00000
+REL vNull(T13) vArray(T109) 00000
+REL vNull(T13) vRoArray(T110) 00000
+REL vNull(T13) vEnum(T91) 00000
+REL vNull(T13) vEnumA(T87) 00000
+REL vNull(T13) vObject(T28) 00000
+REL vNull(T13) vEmpty(T38) 00000
+REL vVoid(T23) vAny(T1) 01111
+REL vVoid(T23) vUnknown(T9) 01111
+REL vVoid(T23) vNever(T24) 00000
+REL vVoid(T23) vString(T14) 00000
+REL vVoid(T23) vNumber(T15) 00000
+REL vVoid(T23) vLitA(T92) 00000
+REL vVoid(T23) vLit1(T94) 00000
+REL vVoid(T23) vUnion(T29) 00000
+REL vVoid(T23) vUndefined(T10) 00100
+REL vVoid(T23) vNull(T13) 00000
+REL vVoid(T23) vVoid(T23) 11111
+REL vVoid(T23) vObjA(T96) 00000
+REL vVoid(T23) vObjAB(T97) 00000
+REL vVoid(T23) vObjRo(T99) 00000
+REL vVoid(T23) vFn1(T100) 00000
+REL vVoid(T23) vFn2(T101) 00000
+REL vVoid(T23) vFn3(T102) 00000
+REL vVoid(T23) vTuple(T108) 00000
+REL vVoid(T23) vArray(T109) 00000
+REL vVoid(T23) vRoArray(T110) 00000
+REL vVoid(T23) vEnum(T91) 00000
+REL vVoid(T23) vEnumA(T87) 00000
+REL vVoid(T23) vObject(T28) 00000
+REL vVoid(T23) vEmpty(T38) 00000
+REL vObjA(T96) vAny(T1) 01111
+REL vObjA(T96) vUnknown(T9) 01111
+REL vObjA(T96) vNever(T24) 00000
+REL vObjA(T96) vString(T14) 00000
+REL vObjA(T96) vNumber(T15) 00000
+REL vObjA(T96) vLitA(T92) 00000
+REL vObjA(T96) vLit1(T94) 00000
+REL vObjA(T96) vUnion(T29) 00000
+REL vObjA(T96) vUndefined(T10) 00000
+REL vObjA(T96) vNull(T13) 00000
+REL vObjA(T96) vVoid(T23) 00000
+REL vObjA(T96) vObjA(T96) 11111
+REL vObjA(T96) vObjAB(T97) 01100
+REL vObjA(T96) vObjRo(T99) 00100
+REL vObjA(T96) vFn1(T100) 00000
+REL vObjA(T96) vFn2(T101) 00000
+REL vObjA(T96) vFn3(T102) 00000
+REL vObjA(T96) vTuple(T108) 00000
+REL vObjA(T96) vArray(T109) 00000
+REL vObjA(T96) vRoArray(T110) 00000
+REL vObjA(T96) vEnum(T91) 00000
+REL vObjA(T96) vEnumA(T87) 00000
+REL vObjA(T96) vObject(T28) 01111
+REL vObjA(T96) vEmpty(T38) 01111
+REL vObjAB(T97) vAny(T1) 01111
+REL vObjAB(T97) vUnknown(T9) 01111
+REL vObjAB(T97) vNever(T24) 00000
+REL vObjAB(T97) vString(T14) 00000
+REL vObjAB(T97) vNumber(T15) 00000
+REL vObjAB(T97) vLitA(T92) 00000
+REL vObjAB(T97) vLit1(T94) 00000
+REL vObjAB(T97) vUnion(T29) 00000
+REL vObjAB(T97) vUndefined(T10) 00000
+REL vObjAB(T97) vNull(T13) 00000
+REL vObjAB(T97) vVoid(T23) 00000
+REL vObjAB(T97) vObjA(T96) 01111
+REL vObjAB(T97) vObjAB(T97) 11111
+REL vObjAB(T97) vObjRo(T99) 00100
+REL vObjAB(T97) vFn1(T100) 00000
+REL vObjAB(T97) vFn2(T101) 00000
+REL vObjAB(T97) vFn3(T102) 00000
+REL vObjAB(T97) vTuple(T108) 00000
+REL vObjAB(T97) vArray(T109) 00000
+REL vObjAB(T97) vRoArray(T110) 00000
+REL vObjAB(T97) vEnum(T91) 00000
+REL vObjAB(T97) vEnumA(T87) 00000
+REL vObjAB(T97) vObject(T28) 01111
+REL vObjAB(T97) vEmpty(T38) 01111
+REL vObjRo(T99) vAny(T1) 01111
+REL vObjRo(T99) vUnknown(T9) 01111
+REL vObjRo(T99) vNever(T24) 00000
+REL vObjRo(T99) vString(T14) 00000
+REL vObjRo(T99) vNumber(T15) 00000
+REL vObjRo(T99) vLitA(T92) 00000
+REL vObjRo(T99) vLit1(T94) 00000
+REL vObjRo(T99) vUnion(T29) 00000
+REL vObjRo(T99) vUndefined(T10) 00000
+REL vObjRo(T99) vNull(T13) 00000
+REL vObjRo(T99) vVoid(T23) 00000
+REL vObjRo(T99) vObjA(T96) 01110
+REL vObjRo(T99) vObjAB(T97) 01100
+REL vObjRo(T99) vObjRo(T99) 11111
+REL vObjRo(T99) vFn1(T100) 00000
+REL vObjRo(T99) vFn2(T101) 00000
+REL vObjRo(T99) vFn3(T102) 00000
+REL vObjRo(T99) vTuple(T108) 00000
+REL vObjRo(T99) vArray(T109) 00000
+REL vObjRo(T99) vRoArray(T110) 00000
+REL vObjRo(T99) vEnum(T91) 00000
+REL vObjRo(T99) vEnumA(T87) 00000
+REL vObjRo(T99) vObject(T28) 01111
+REL vObjRo(T99) vEmpty(T38) 01111
+REL vFn1(T100) vAny(T1) 01111
+REL vFn1(T100) vUnknown(T9) 01111
+REL vFn1(T100) vNever(T24) 00000
+REL vFn1(T100) vString(T14) 00000
+REL vFn1(T100) vNumber(T15) 00000
+REL vFn1(T100) vLitA(T92) 00000
+REL vFn1(T100) vLit1(T94) 00000
+REL vFn1(T100) vUnion(T29) 00000
+REL vFn1(T100) vUndefined(T10) 00000
+REL vFn1(T100) vNull(T13) 00000
+REL vFn1(T100) vVoid(T23) 00000
+REL vFn1(T100) vObjA(T96) 00000
+REL vFn1(T100) vObjAB(T97) 00000
+REL vFn1(T100) vObjRo(T99) 00000
+REL vFn1(T100) vFn1(T100) 11111
+REL vFn1(T100) vFn2(T101) 00100
+REL vFn1(T100) vFn3(T102) 01111
+REL vFn1(T100) vTuple(T108) 00000
+REL vFn1(T100) vArray(T109) 00000
+REL vFn1(T100) vRoArray(T110) 00000
+REL vFn1(T100) vEnum(T91) 00000
+REL vFn1(T100) vEnumA(T87) 00000
+REL vFn1(T100) vObject(T28) 01111
+REL vFn1(T100) vEmpty(T38) 01111
+REL vFn2(T101) vAny(T1) 01111
+REL vFn2(T101) vUnknown(T9) 01111
+REL vFn2(T101) vNever(T24) 00000
+REL vFn2(T101) vString(T14) 00000
+REL vFn2(T101) vNumber(T15) 00000
+REL vFn2(T101) vLitA(T92) 00000
+REL vFn2(T101) vLit1(T94) 00000
+REL vFn2(T101) vUnion(T29) 00000
+REL vFn2(T101) vUndefined(T10) 00000
+REL vFn2(T101) vNull(T13) 00000
+REL vFn2(T101) vVoid(T23) 00000
+REL vFn2(T101) vObjA(T96) 00000
+REL vFn2(T101) vObjAB(T97) 00000
+REL vFn2(T101) vObjRo(T99) 00000
+REL vFn2(T101) vFn1(T100) 00100
+REL vFn2(T101) vFn2(T101) 11111
+REL vFn2(T101) vFn3(T102) 00100
+REL vFn2(T101) vTuple(T108) 00000
+REL vFn2(T101) vArray(T109) 00000
+REL vFn2(T101) vRoArray(T110) 00000
+REL vFn2(T101) vEnum(T91) 00000
+REL vFn2(T101) vEnumA(T87) 00000
+REL vFn2(T101) vObject(T28) 01111
+REL vFn2(T101) vEmpty(T38) 01111
+REL vFn3(T102) vAny(T1) 01111
+REL vFn3(T102) vUnknown(T9) 01111
+REL vFn3(T102) vNever(T24) 00000
+REL vFn3(T102) vString(T14) 00000
+REL vFn3(T102) vNumber(T15) 00000
+REL vFn3(T102) vLitA(T92) 00000
+REL vFn3(T102) vLit1(T94) 00000
+REL vFn3(T102) vUnion(T29) 00000
+REL vFn3(T102) vUndefined(T10) 00000
+REL vFn3(T102) vNull(T13) 00000
+REL vFn3(T102) vVoid(T23) 00000
+REL vFn3(T102) vObjA(T96) 00000
+REL vFn3(T102) vObjAB(T97) 00000
+REL vFn3(T102) vObjRo(T99) 00000
+REL vFn3(T102) vFn1(T100) 00000
+REL vFn3(T102) vFn2(T101) 00000
+REL vFn3(T102) vFn3(T102) 11111
+REL vFn3(T102) vTuple(T108) 00000
+REL vFn3(T102) vArray(T109) 00000
+REL vFn3(T102) vRoArray(T110) 00000
+REL vFn3(T102) vEnum(T91) 00000
+REL vFn3(T102) vEnumA(T87) 00000
+REL vFn3(T102) vObject(T28) 01111
+REL vFn3(T102) vEmpty(T38) 01111
+REL vTuple(T108) vAny(T1) 01111
+REL vTuple(T108) vUnknown(T9) 01111
+REL vTuple(T108) vNever(T24) 00000
+REL vTuple(T108) vString(T14) 00000
+REL vTuple(T108) vNumber(T15) 00000
+REL vTuple(T108) vLitA(T92) 00000
+REL vTuple(T108) vLit1(T94) 00000
+REL vTuple(T108) vUnion(T29) 00000
+REL vTuple(T108) vUndefined(T10) 00000
+REL vTuple(T108) vNull(T13) 00000
+REL vTuple(T108) vVoid(T23) 00000
+REL vTuple(T108) vObjA(T96) 00000
+REL vTuple(T108) vObjAB(T97) 00000
+REL vTuple(T108) vObjRo(T99) 00000
+REL vTuple(T108) vFn1(T100) 00000
+REL vTuple(T108) vFn2(T101) 00000
+REL vTuple(T108) vFn3(T102) 00000
+REL vTuple(T108) vTuple(T108) 11111
+REL vTuple(T108) vArray(T109) 00100
+REL vTuple(T108) vRoArray(T110) 00100
+REL vTuple(T108) vEnum(T91) 00000
+REL vTuple(T108) vEnumA(T87) 00000
+REL vTuple(T108) vObject(T28) 01111
+REL vTuple(T108) vEmpty(T38) 01111
+REL vArray(T109) vAny(T1) 01111
+REL vArray(T109) vUnknown(T9) 01111
+REL vArray(T109) vNever(T24) 00000
+REL vArray(T109) vString(T14) 00000
+REL vArray(T109) vNumber(T15) 00000
+REL vArray(T109) vLitA(T92) 00000
+REL vArray(T109) vLit1(T94) 00000
+REL vArray(T109) vUnion(T29) 00000
+REL vArray(T109) vUndefined(T10) 00000
+REL vArray(T109) vNull(T13) 00000
+REL vArray(T109) vVoid(T23) 00000
+REL vArray(T109) vObjA(T96) 00000
+REL vArray(T109) vObjAB(T97) 00000
+REL vArray(T109) vObjRo(T99) 00000
+REL vArray(T109) vFn1(T100) 00000
+REL vArray(T109) vFn2(T101) 00000
+REL vArray(T109) vFn3(T102) 00000
+REL vArray(T109) vTuple(T108) 00000
+REL vArray(T109) vArray(T109) 11111
+REL vArray(T109) vRoArray(T110) 01111
+REL vArray(T109) vEnum(T91) 00000
+REL vArray(T109) vEnumA(T87) 00000
+REL vArray(T109) vObject(T28) 01111
+REL vArray(T109) vEmpty(T38) 01111
+REL vRoArray(T110) vAny(T1) 01111
+REL vRoArray(T110) vUnknown(T9) 01111
+REL vRoArray(T110) vNever(T24) 00000
+REL vRoArray(T110) vString(T14) 00000
+REL vRoArray(T110) vNumber(T15) 00000
+REL vRoArray(T110) vLitA(T92) 00000
+REL vRoArray(T110) vLit1(T94) 00000
+REL vRoArray(T110) vUnion(T29) 00000
+REL vRoArray(T110) vUndefined(T10) 00000
+REL vRoArray(T110) vNull(T13) 00000
+REL vRoArray(T110) vVoid(T23) 00000
+REL vRoArray(T110) vObjA(T96) 00000
+REL vRoArray(T110) vObjAB(T97) 00000
+REL vRoArray(T110) vObjRo(T99) 00000
+REL vRoArray(T110) vFn1(T100) 00000
+REL vRoArray(T110) vFn2(T101) 00000
+REL vRoArray(T110) vFn3(T102) 00000
+REL vRoArray(T110) vTuple(T108) 00000
+REL vRoArray(T110) vArray(T109) 00000
+REL vRoArray(T110) vRoArray(T110) 11111
+REL vRoArray(T110) vEnum(T91) 00000
+REL vRoArray(T110) vEnumA(T87) 00000
+REL vRoArray(T110) vObject(T28) 01111
+REL vRoArray(T110) vEmpty(T38) 01111
+REL vEnum(T91) vAny(T1) 01111
+REL vEnum(T91) vUnknown(T9) 01111
+REL vEnum(T91) vNever(T24) 00000
+REL vEnum(T91) vString(T14) 00000
+REL vEnum(T91) vNumber(T15) 01111
+REL vEnum(T91) vLitA(T92) 00000
+REL vEnum(T91) vLit1(T94) 00100
+REL vEnum(T91) vUnion(T29) 01111
+REL vEnum(T91) vUndefined(T10) 00000
+REL vEnum(T91) vNull(T13) 00000
+REL vEnum(T91) vVoid(T23) 00000
+REL vEnum(T91) vObjA(T96) 00000
+REL vEnum(T91) vObjAB(T97) 00000
+REL vEnum(T91) vObjRo(T99) 00000
+REL vEnum(T91) vFn1(T100) 00000
+REL vEnum(T91) vFn2(T101) 00000
+REL vEnum(T91) vFn3(T102) 00000
+REL vEnum(T91) vTuple(T108) 00000
+REL vEnum(T91) vArray(T109) 00000
+REL vEnum(T91) vRoArray(T110) 00000
+REL vEnum(T91) vEnum(T91) 11111
+REL vEnum(T91) vEnumA(T87) 00100
+REL vEnum(T91) vObject(T28) 00000
+REL vEnum(T91) vEmpty(T38) 01111
+REL vEnumA(T87) vAny(T1) 01111
+REL vEnumA(T87) vUnknown(T9) 01111
+REL vEnumA(T87) vNever(T24) 00000
+REL vEnumA(T87) vString(T14) 00000
+REL vEnumA(T87) vNumber(T15) 01111
+REL vEnumA(T87) vLitA(T92) 00000
+REL vEnumA(T87) vLit1(T94) 00000
+REL vEnumA(T87) vUnion(T29) 01111
+REL vEnumA(T87) vUndefined(T10) 00000
+REL vEnumA(T87) vNull(T13) 00000
+REL vEnumA(T87) vVoid(T23) 00000
+REL vEnumA(T87) vObjA(T96) 00000
+REL vEnumA(T87) vObjAB(T97) 00000
+REL vEnumA(T87) vObjRo(T99) 00000
+REL vEnumA(T87) vFn1(T100) 00000
+REL vEnumA(T87) vFn2(T101) 00000
+REL vEnumA(T87) vFn3(T102) 00000
+REL vEnumA(T87) vTuple(T108) 00000
+REL vEnumA(T87) vArray(T109) 00000
+REL vEnumA(T87) vRoArray(T110) 00000
+REL vEnumA(T87) vEnum(T91) 01111
+REL vEnumA(T87) vEnumA(T87) 11111
+REL vEnumA(T87) vObject(T28) 00000
+REL vEnumA(T87) vEmpty(T38) 01111
+REL vObject(T28) vAny(T1) 01111
+REL vObject(T28) vUnknown(T9) 01111
+REL vObject(T28) vNever(T24) 00000
+REL vObject(T28) vString(T14) 00000
+REL vObject(T28) vNumber(T15) 00000
+REL vObject(T28) vLitA(T92) 00000
+REL vObject(T28) vLit1(T94) 00000
+REL vObject(T28) vUnion(T29) 00000
+REL vObject(T28) vUndefined(T10) 00000
+REL vObject(T28) vNull(T13) 00000
+REL vObject(T28) vVoid(T23) 00000
+REL vObject(T28) vObjA(T96) 00100
+REL vObject(T28) vObjAB(T97) 00100
+REL vObject(T28) vObjRo(T99) 00100
+REL vObject(T28) vFn1(T100) 00100
+REL vObject(T28) vFn2(T101) 00100
+REL vObject(T28) vFn3(T102) 00100
+REL vObject(T28) vTuple(T108) 00100
+REL vObject(T28) vArray(T109) 00100
+REL vObject(T28) vRoArray(T110) 00100
+REL vObject(T28) vEnum(T91) 00000
+REL vObject(T28) vEnumA(T87) 00000
+REL vObject(T28) vObject(T28) 11111
+REL vObject(T28) vEmpty(T38) 01111
+REL vEmpty(T38) vAny(T1) 01111
+REL vEmpty(T38) vUnknown(T9) 01111
+REL vEmpty(T38) vNever(T24) 00000
+REL vEmpty(T38) vString(T14) 00000
+REL vEmpty(T38) vNumber(T15) 00000
+REL vEmpty(T38) vLitA(T92) 00000
+REL vEmpty(T38) vLit1(T94) 00000
+REL vEmpty(T38) vUnion(T29) 00000
+REL vEmpty(T38) vUndefined(T10) 00000
+REL vEmpty(T38) vNull(T13) 00000
+REL vEmpty(T38) vVoid(T23) 00000
+REL vEmpty(T38) vObjA(T96) 00000
+REL vEmpty(T38) vObjAB(T97) 00000
+REL vEmpty(T38) vObjRo(T99) 00000
+REL vEmpty(T38) vFn1(T100) 00000
+REL vEmpty(T38) vFn2(T101) 00000
+REL vEmpty(T38) vFn3(T102) 00000
+REL vEmpty(T38) vTuple(T108) 00000
+REL vEmpty(T38) vArray(T109) 00000
+REL vEmpty(T38) vRoArray(T110) 00000
+REL vEmpty(T38) vEnum(T91) 00000
+REL vEmpty(T38) vEnumA(T87) 00000
+REL vEmpty(T38) vObject(T28) 01110
+REL vEmpty(T38) vEmpty(T38) 11111
+STATE
+COUNTS TypeCount=114 SymbolCount=70 SignatureCount=7 TotalInstantiationCount=7 transientSymbols=70 mergedSymbols=0 globals=143
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=114 SymbolCount=70 SignatureCount=7
+SIZES identity=45 assignable=213 comparable=201 subtype=223 strictSubtype=224 enum=0 types=114
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x10 data=Object symbol="E1"@EnumDeclaration@/rel.ts:0:16/0x100
+TYPE 87 flags=0x8800 objectFlags=0x0 data=Literal symbol="A"@EnumMember@/rel.ts:9:11/0x8 value=n0 fresh=T88 regular=T87
+TYPE 88 flags=0x8800 objectFlags=0x0 data=Literal symbol="A"@EnumMember@/rel.ts:9:11/0x8 value=n0 fresh=T88 regular=T87
+TYPE 89 flags=0x8800 objectFlags=0x0 data=Literal symbol="B"@EnumMember@/rel.ts:12:14/0x8 value=n1 fresh=T90 regular=T89
+TYPE 90 flags=0x8800 objectFlags=0x0 data=Literal symbol="B"@EnumMember@/rel.ts:12:14/0x8 value=n1 fresh=T90 regular=T89
+TYPE 91 flags=0x8008000 objectFlags=0x4008000 data=Union symbol="E1"@EnumDeclaration@/rel.ts:0:16/0x100 alias="E1"@EnumDeclaration@/rel.ts:0:16/0x100nil types=[T87 T89] regular=T91 keyProperty="\xFEmissing"
+TYPE 92 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T93 regular=T92
+TYPE 93 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T93 regular=T92
+TYPE 94 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T95 regular=T94
+TYPE 95 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T95 regular=T94
+TYPE 96 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@TypeLiteral@/rel.ts:366:380/0x800 members={"a":"a"@PropertySignature@/rel.ts:368:378/0x4} props=["a"@PropertySignature@/rel.ts:368:378/0x4] sigs=nil calls=0 index=nil
+TYPE 97 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@TypeLiteral@/rel.ts:403:429/0x800 members={"a":"a"@PropertySignature@/rel.ts:405:416/0x4 "b":"b"@PropertySignature@/rel.ts:416:427/0x1000004} props=["a"@PropertySignature@/rel.ts:405:416/0x4 "b"@PropertySignature@/rel.ts:416:427/0x1000004] sigs=nil calls=0 index=nil
+TYPE 98 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T15]
+TYPE 99 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@TypeLiteral@/rel.ts:452:472/0x800 members={"a":"a"@PropertySignature@/rel.ts:454:470/0x4} props=["a"@PropertySignature@/rel.ts:454:470/0x4] sigs=nil calls=0 index=nil
+TYPE 100 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@FunctionType@/rel.ts:493:513/0x800 members={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:493:513/0x20000} props=[] sigs=[S5] calls=1 index=nil
+TYPE 101 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@FunctionType@/rel.ts:534:556/0x800 members={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:534:556/0x20000} props=[] sigs=[S6] calls=1 index=nil
+TYPE 102 flags=0x100000 objectFlags=0x200010 data=Object symbol="\xFEtype"@FunctionType@/rel.ts:577:608/0x800 members={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:577:608/0x20000} props=[] sigs=[S7] calls=1 index=nil
+TYPE 103 flags=0x80000 objectFlags=0x180000 data=TypeParameter constraint=nil
+TYPE 104 flags=0x80000 objectFlags=0x180000 data=TypeParameter constraint=nil
+TYPE 105 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=nil regular=T105
+TYPE 106 flags=0x100000 objectFlags=0xc data=Tuple target=T106 inst=[T106 T108] targs=[T103 T104] tparams=[T103 T104 T107] outer=0 this=T107 bases=[T112] dmembers={"0":Y1 "1":Y2 "length":Y3} dcalls=nil dctors=nil dindex=nil elements=[1 1] minLength=2 fixedLength=2 combinedFlags=1 readonly=false
+TYPE 107 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T106 isThisType
+TYPE 108 flags=0x100000 objectFlags=0x40200004 data=TypeReference members={"0":Y4 "1":Y5 "concat":Y6 "every":Y7 "filter":Y8 "forEach":Y9 "indexOf":Y10 "join":Y11 "lastIndexOf":Y12 "length":Y3 "map":Y13 "pop":Y14 "push":Y15 "reduce":Y16 "reduceRight":Y17 "reverse":Y18 "shift":Y19 "slice":Y20 "some":Y21 "sort":Y22 "splice":Y23 "toLocaleString":Y24 "toString":Y25 "unshift":Y26} props=[Y25 Y24 Y14 Y15 Y6 Y11 Y18 Y19 Y20 Y22 Y23 Y26 Y10 Y12 Y7 Y21 Y9 Y13 Y8 Y16 Y17 Y4 Y5 Y3] sigs=nil calls=0 index=[(T15:T29 decl=IndexSignature@/lib.es5.d.ts:71193:71216)] target=T106 targs=[T14 T15]
+TYPE 109 flags=0x100000 objectFlags=0x48200004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 members={"concat":Y27 "every":Y28 "filter":Y29 "forEach":Y30 "indexOf":Y31 "join":Y32 "lastIndexOf":Y33 "length":Y34 "map":Y35 "pop":Y36 "push":Y37 "reduce":Y38 "reduceRight":Y39 "reverse":Y40 "shift":Y41 "slice":Y42 "some":Y43 "sort":Y44 "splice":Y45 "toLocaleString":Y46 "toString":Y47 "unshift":Y48} props=[Y34 Y47 Y46 Y36 Y37 Y27 Y32 Y40 Y41 Y42 Y44 Y45 Y48 Y31 Y33 Y28 Y43 Y30 Y35 Y29 Y38 Y39] sigs=nil calls=0 index=[(T15:T14 decl=IndexSignature@/lib.es5.d.ts:71193:71216)] target=T65 targs=[T14]
+TYPE 110 flags=0x100000 objectFlags=0x48200004 data=TypeReference symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 members={"concat":Y49 "every":Y50 "filter":Y51 "forEach":Y52 "indexOf":Y53 "join":Y54 "lastIndexOf":Y55 "length":Y56 "map":Y57 "reduce":Y58 "reduceRight":Y59 "slice":Y60 "some":Y61 "toLocaleString":Y62 "toString":Y63} props=[Y56 Y63 Y62 Y49 Y54 Y60 Y53 Y55 Y50 Y61 Y52 Y57 Y51 Y58 Y59] sigs=nil calls=0 index=[(T15:T14 readonly decl=IndexSignature@/lib.es5.d.ts:57894:57926)] target=T79 targs=[T14]
+TYPE 111 flags=0x8000000 objectFlags=0x180000 data=Union types=[T103 T104]
+TYPE 112 flags=0x100000 objectFlags=0x180004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T111]
+TYPE 113 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T29]
+TYPE 114 flags=0x100000 objectFlags=0x200004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 members={"concat":Y6 "every":Y7 "filter":Y8 "forEach":Y9 "indexOf":Y10 "join":Y11 "lastIndexOf":Y12 "length":Y64 "map":Y13 "pop":Y14 "push":Y15 "reduce":Y16 "reduceRight":Y17 "reverse":Y18 "shift":Y19 "slice":Y20 "some":Y21 "sort":Y22 "splice":Y23 "toLocaleString":Y24 "toString":Y25 "unshift":Y26} props=[Y64 Y25 Y24 Y14 Y15 Y6 Y11 Y18 Y19 Y20 Y22 Y23 Y26 Y10 Y12 Y7 Y21 Y9 Y13 Y8 Y16 Y17] sigs=nil calls=0 index=[(T15:T29 decl=IndexSignature@/lib.es5.d.ts:71193:71216)] target=T65 targs=[T29 T108]
+SIGNATURE 5 flags=0x0 minArgumentCount=1 resolvedMinArgumentCount=1 declaration=FunctionType@/rel.ts:493:513 typeParameters=nil parameters=["x"@Parameter@/rel.ts:495:504/0x1] returnType=T23
+SIGNATURE 6 flags=0x2 minArgumentCount=1 resolvedMinArgumentCount=1 declaration=FunctionType@/rel.ts:534:556 typeParameters=nil parameters=["x"@Parameter@/rel.ts:536:542/0x1] returnType=T10 predicate=(1:0:"<<unresolved>>":T1)
+SIGNATURE 7 flags=0x0 minArgumentCount=2 resolvedMinArgumentCount=2 declaration=FunctionType@/rel.ts:577:608 typeParameters=nil parameters=["x"@Parameter@/rel.ts:579:588/0x1 "y"@Parameter@/rel.ts:589:599/0x1] returnType=T23
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65 resolvedMembers={"T":"T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 "\xFEindex":"\xFEindex"@IndexSignature@/lib.es5.d.ts:71193:71216/0x20000 "concat":"concat"@MethodSignature@/lib.es5.d.ts:58946:59210/0x2000 "every":"every"@MethodSignature@/lib.es5.d.ts:63888:64548/0x2000 "filter":"filter"@MethodSignature@/lib.es5.d.ts:66872:67414/0x2000 "forEach":"forEach"@MethodSignature@/lib.es5.d.ts:65843:66331/0x2000 "indexOf":"indexOf"@MethodSignature@/lib.es5.d.ts:63109:63478/0x2000 "join":"join"@MethodSignature@/lib.es5.d.ts:59480:59813/0x2000 "lastIndexOf":"lastIndexOf"@MethodSignature@/lib.es5.d.ts:63478:63888/0x2000 "length":"length"@PropertySignature@/lib.es5.d.ts:58132:58282/0x4 "map":"map"@MethodSignature@/lib.es5.d.ts:66331:66872/0x2000 "pop":"pop"@MethodSignature@/lib.es5.d.ts:58553:58745/0x2000 "push":"push"@MethodSignature@/lib.es5.d.ts:58745:58946/0x2000 "reduce":"reduce"@MethodSignature@/lib.es5.d.ts:67940:68666/0x2000 "reduceRight":"reduceRight"@MethodSignature@/lib.es5.d.ts:69533:70290/0x2000 "reverse":"reverse"@MethodSignature@/lib.es5.d.ts:59813:59985/0x2000 "shift":"shift"@MethodSignature@/lib.es5.d.ts:59985:60180/0x2000 "slice":"slice"@MethodSignature@/lib.es5.d.ts:60180:60826/0x2000 "some":"some"@MethodSignature@/lib.es5.d.ts:65188:65843/0x2000 "sort":"sort"@MethodSignature@/lib.es5.d.ts:60826:61401/0x2000 "splice":"splice"@MethodSignature@/lib.es5.d.ts:61401:62146/0x2000 "toLocaleString":"toLocaleString"@MethodSignature@/lib.es5.d.ts:58378:58553/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:58282:58378/0x2000 "unshift":"unshift"@MethodSignature@/lib.es5.d.ts:62891:63109/0x2000}
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66 referenceKinds=0xc09e8
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70 resolvedMembers={"apply":"apply"@MethodSignature@/lib.es5.d.ts:11540:11803/0x2000 "bind":"bind"@MethodSignature@/lib.es5.d.ts:12552:12946/0x2000 "call":"call"@MethodSignature@/lib.es5.d.ts:12184:12552/0x2000}
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69 resolvedMembers={"apply":"apply"@MethodSignature@/lib.es5.d.ts:9348:9724/0x2000 "arguments":"arguments"@PropertySignature@/lib.es5.d.ts:10669:10724/0x4 "bind":"bind"@MethodSignature@/lib.es5.d.ts:10039:10530/0x2000 "call":"call"@MethodSignature@/lib.es5.d.ts:9724:10039/0x2000 "caller":"caller"@PropertySignature@/lib.es5.d.ts:10724:10747/0x4 "length":"length"@PropertySignature@/lib.es5.d.ts:10639:10669/0x4 "prototype":"prototype"@PropertySignature@/lib.es5.d.ts:10616:10639/0x4 "toString":"toString"@MethodSignature@/lib.es5.d.ts:10530:10616/0x2000}
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73 resolvedMembers={"toExponential":"toExponential"@MethodSignature@/lib.es5.d.ts:22598:22866/0x2000 "toFixed":"toFixed"@MethodSignature@/lib.es5.d.ts:22346:22598/0x2000 "toLocaleString":"toLocaleString"@MethodSignature@/lib.es5.d.ts:220157:220785/0x2000 "toPrecision":"toPrecision"@MethodSignature@/lib.es5.d.ts:22866:23166/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:22117:22346/0x2000 "valueOf":"valueOf"@MethodSignature@/lib.es5.d.ts:23166:23257/0x2000}
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68 resolvedMembers={"constructor":"constructor"@PropertySignature@/lib.es5.d.ts:3312:3447/0x4 "hasOwnProperty":"hasOwnProperty"@MethodSignature@/lib.es5.d.ts:3731:3908/0x2000 "isPrototypeOf":"isPrototypeOf"@MethodSignature@/lib.es5.d.ts:3908:4121/0x2000 "propertyIsEnumerable":"propertyIsEnumerable"@MethodSignature@/lib.es5.d.ts:4121:4290/0x2000 "toLocaleString":"toLocaleString"@MethodSignature@/lib.es5.d.ts:3532:3640/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:3447:3532/0x2000 "valueOf":"valueOf"@MethodSignature@/lib.es5.d.ts:3640:3731/0x2000}
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79 resolvedMembers={"T":"T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 "\xFEindex":"\xFEindex"@IndexSignature@/lib.es5.d.ts:57894:57926/0x20000 "concat":"concat"@MethodSignature@/lib.es5.d.ts:48792:48960/0x2000 "every":"every"@MethodSignature@/lib.es5.d.ts:50463:51141/0x2000 "filter":"filter"@MethodSignature@/lib.es5.d.ts:53501:54052/0x2000 "forEach":"forEach"@MethodSignature@/lib.es5.d.ts:52454:52951/0x2000 "indexOf":"indexOf"@MethodSignature@/lib.es5.d.ts:49748:50089/0x2000 "join":"join"@MethodSignature@/lib.es5.d.ts:49134:49451/0x2000 "lastIndexOf":"lastIndexOf"@MethodSignature@/lib.es5.d.ts:50089:50463/0x2000 "length":"length"@PropertySignature@/lib.es5.d.ts:48361:48521/0x4 "map":"map"@MethodSignature@/lib.es5.d.ts:52951:53501/0x2000 "reduce":"reduce"@MethodSignature@/lib.es5.d.ts:54587:55322/0x2000 "reduceRight":"reduceRight"@MethodSignature@/lib.es5.d.ts:56207:56973/0x2000 "slice":"slice"@MethodSignature@/lib.es5.d.ts:49451:49748/0x2000 "some":"some"@MethodSignature@/lib.es5.d.ts:51790:52454/0x2000 "toLocaleString":"toLocaleString"@MethodSignature@/lib.es5.d.ts:48617:48792/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:48521:48617/0x2000}
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80 referenceKinds=0xc09e8
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72 resolvedMembers={"\xFEindex":"\xFEindex"@IndexSignature@/lib.es5.d.ts:21413:21454/0x20000 "charAt":"charAt"@MethodSignature@/lib.es5.d.ts:15617:15791/0x2000 "charCodeAt":"charCodeAt"@MethodSignature@/lib.es5.d.ts:15791:16035/0x2000 "concat":"concat"@MethodSignature@/lib.es5.d.ts:16035:16250/0x2000 "indexOf":"indexOf"@MethodSignature@/lib.es5.d.ts:16250:16639/0x2000 "lastIndexOf":"lastIndexOf"@MethodSignature@/lib.es5.d.ts:16639:16996/0x2000 "length":"length"@PropertySignature@/lib.es5.d.ts:20779:20862/0x4 "localeCompare":"localeCompare"@MethodSignature@/lib.es5.d.ts:16996:17190/0x2000 "match":"match"@MethodSignature@/lib.es5.d.ts:17190:17493/0x2000 "replace":"replace"@MethodSignature@/lib.es5.d.ts:17493:18052/0x2000 "search":"search"@MethodSignature@/lib.es5.d.ts:18382:18595/0x2000 "slice":"slice"@MethodSignature@/lib.es5.d.ts:18595:19055/0x2000 "split":"split"@MethodSignature@/lib.es5.d.ts:19055:19512/0x2000 "substr":"substr"@MethodSignature@/lib.es5.d.ts:20862:21322/0x2000 "substring":"substring"@MethodSignature@/lib.es5.d.ts:19512:20039/0x2000 "toLocaleLowerCase":"toLocaleLowerCase"@MethodSignature@/lib.es5.d.ts:20146:20329/0x2000 "toLocaleUpperCase":"toLocaleUpperCase"@MethodSignature@/lib.es5.d.ts:20436:20653/0x2000 "toLowerCase":"toLowerCase"@MethodSignature@/lib.es5.d.ts:20039:20146/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:15535:15617/0x2000 "toUpperCase":"toUpperCase"@MethodSignature@/lib.es5.d.ts:20329:20436/0x2000 "trim":"trim"@MethodSignature@/lib.es5.d.ts:20653:20779/0x2000 "valueOf":"valueOf"@MethodSignature@/lib.es5.d.ts:21322:21413/0x2000}
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "E1"@EnumDeclaration@/rel.ts:0:16/0x100 type=T86 declaredType=T91
+LINKS "A"@EnumMember@/rel.ts:9:11/0x8 type=T88 declaredType=T88
+LINKS "B"@EnumMember@/rel.ts:12:14/0x8 type=T90 declaredType=T90
+LINKS "vAny"@VariableDeclaration@/rel.ts:30:40/0x2 type=T1
+LINKS "vArray"@VariableDeclaration@/rel.ts:663:680/0x2 type=T109
+LINKS "vEmpty"@VariableDeclaration@/rel.ts:822:833/0x2 type=T38
+LINKS "vEnum"@VariableDeclaration@/rel.ts:738:748/0x2 type=T91
+LINKS "vEnumA"@VariableDeclaration@/rel.ts:763:776/0x2 type=T87
+LINKS "vFn1"@VariableDeclaration@/rel.ts:487:513/0x2 type=T100
+LINKS "vFn2"@VariableDeclaration@/rel.ts:528:556/0x2 type=T101
+LINKS "vFn3"@VariableDeclaration@/rel.ts:571:608/0x2 type=T102
+LINKS "vLit1"@VariableDeclaration@/rel.ts:205:214/0x2 type=T94
+LINKS "vLitA"@VariableDeclaration@/rel.ts:179:190/0x2 type=T92
+LINKS "vNever"@VariableDeclaration@/rel.ts:88:102/0x2 type=T24
+LINKS "vNull"@VariableDeclaration@/rel.ts:305:317/0x2 type=T13
+LINKS "vNumber"@VariableDeclaration@/rel.ts:148:164/0x2 type=T15
+LINKS "vObjA"@VariableDeclaration@/rel.ts:359:380/0x2 type=T96
+LINKS "vObjAB"@VariableDeclaration@/rel.ts:395:429/0x2 type=T97
+LINKS "vObjRo"@VariableDeclaration@/rel.ts:444:472/0x2 type=T99
+LINKS "vObject"@VariableDeclaration@/rel.ts:791:807/0x2 type=T28
+LINKS "vRoArray"@VariableDeclaration@/rel.ts:695:723/0x2 type=T110
+LINKS "vString"@VariableDeclaration@/rel.ts:117:133/0x2 type=T14
+LINKS "vTuple"@VariableDeclaration@/rel.ts:623:648/0x2 type=T108
+LINKS "vUndefined"@VariableDeclaration@/rel.ts:268:290/0x2 type=T10
+LINKS "vUnion"@VariableDeclaration@/rel.ts:229:253/0x2 type=T29
+LINKS "vUnknown"@VariableDeclaration@/rel.ts:55:73/0x2 type=T9
+LINKS "vVoid"@VariableDeclaration@/rel.ts:332:344/0x2 type=T23
+LINKS "\xFEtype"@TypeLiteral@/rel.ts:366:380/0x800 resolvedMembers={"a":"a"@PropertySignature@/rel.ts:368:378/0x4}
+LINKS "a"@PropertySignature@/rel.ts:368:378/0x4 type=T14
+LINKS "\xFEtype"@TypeLiteral@/rel.ts:403:429/0x800 resolvedMembers={"a":"a"@PropertySignature@/rel.ts:405:416/0x4 "b":"b"@PropertySignature@/rel.ts:416:427/0x1000004}
+LINKS "a"@PropertySignature@/rel.ts:405:416/0x4 type=T14
+LINKS "b"@PropertySignature@/rel.ts:416:427/0x1000004 type=T98
+LINKS "\xFEtype"@TypeLiteral@/rel.ts:452:472/0x800 resolvedMembers={"a":"a"@PropertySignature@/rel.ts:454:470/0x4}
+LINKS "a"@PropertySignature@/rel.ts:454:470/0x4 type=T92
+LINKS "\xFEtype"@FunctionType@/rel.ts:493:513/0x800 resolvedMembers={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:493:513/0x20000}
+LINKS "x"@Parameter@/rel.ts:495:504/0x1 type=T14
+LINKS "\xFEtype"@FunctionType@/rel.ts:534:556/0x800 resolvedMembers={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:534:556/0x20000}
+LINKS "x"@Parameter@/rel.ts:536:542/0x1 type=T92
+LINKS "\xFEtype"@FunctionType@/rel.ts:577:608/0x800 resolvedMembers={"\xFEcall":"\xFEcall"@FunctionType@/rel.ts:577:608/0x20000}
+LINKS "x"@Parameter@/rel.ts:579:588/0x1 type=T14
+LINKS "y"@Parameter@/rel.ts:589:599/0x1 type=T15
+GLOBALS count=143 transient=2
+SYMBOL Y1 name="0" flags=0x2000004 checkFlags=0x0 declarations=[] type=T103
+SYMBOL Y2 name="1" flags=0x2000004 checkFlags=0x0 declarations=[] type=T104
+SYMBOL Y3 name="length" flags=0x2000004 checkFlags=0x0 declarations=[] type=T105
+SYMBOL Y4 name="0" flags=0x2000004 checkFlags=0x1 declarations=[] target=Y1 mapper=array([T103 T104 T107]=>[T14 T15 T108])
+SYMBOL Y5 name="1" flags=0x2000004 checkFlags=0x1 declarations=[] target=Y2 mapper=array([T103 T104 T107]=>[T14 T15 T108])
+SYMBOL Y6 name="concat" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58946:59210 MethodSignature@/lib.es5.d.ts:59210:59480] valueDeclaration=MethodSignature@/lib.es5.d.ts:58946:59210 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="concat"@MethodSignature@/lib.es5.d.ts:58946:59210/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y7 name="every" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63888:64548 MethodSignature@/lib.es5.d.ts:64548:65188] valueDeclaration=MethodSignature@/lib.es5.d.ts:63888:64548 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="every"@MethodSignature@/lib.es5.d.ts:63888:64548/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y8 name="filter" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:66872:67414 MethodSignature@/lib.es5.d.ts:67414:67940] valueDeclaration=MethodSignature@/lib.es5.d.ts:66872:67414 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="filter"@MethodSignature@/lib.es5.d.ts:66872:67414/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y9 name="forEach" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:65843:66331] valueDeclaration=MethodSignature@/lib.es5.d.ts:65843:66331 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="forEach"@MethodSignature@/lib.es5.d.ts:65843:66331/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y10 name="indexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63109:63478] valueDeclaration=MethodSignature@/lib.es5.d.ts:63109:63478 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="indexOf"@MethodSignature@/lib.es5.d.ts:63109:63478/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y11 name="join" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59480:59813] valueDeclaration=MethodSignature@/lib.es5.d.ts:59480:59813 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="join"@MethodSignature@/lib.es5.d.ts:59480:59813/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y12 name="lastIndexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63478:63888] valueDeclaration=MethodSignature@/lib.es5.d.ts:63478:63888 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="lastIndexOf"@MethodSignature@/lib.es5.d.ts:63478:63888/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y13 name="map" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:66331:66872] valueDeclaration=MethodSignature@/lib.es5.d.ts:66331:66872 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="map"@MethodSignature@/lib.es5.d.ts:66331:66872/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y14 name="pop" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58553:58745] valueDeclaration=MethodSignature@/lib.es5.d.ts:58553:58745 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="pop"@MethodSignature@/lib.es5.d.ts:58553:58745/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y15 name="push" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58745:58946] valueDeclaration=MethodSignature@/lib.es5.d.ts:58745:58946 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="push"@MethodSignature@/lib.es5.d.ts:58745:58946/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y16 name="reduce" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:67940:68666 MethodSignature@/lib.es5.d.ts:68666:68787 MethodSignature@/lib.es5.d.ts:68787:69533] valueDeclaration=MethodSignature@/lib.es5.d.ts:67940:68666 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reduce"@MethodSignature@/lib.es5.d.ts:67940:68666/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y17 name="reduceRight" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:69533:70290 MethodSignature@/lib.es5.d.ts:70290:70416 MethodSignature@/lib.es5.d.ts:70416:71193] valueDeclaration=MethodSignature@/lib.es5.d.ts:69533:70290 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reduceRight"@MethodSignature@/lib.es5.d.ts:69533:70290/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y18 name="reverse" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59813:59985] valueDeclaration=MethodSignature@/lib.es5.d.ts:59813:59985 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reverse"@MethodSignature@/lib.es5.d.ts:59813:59985/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y19 name="shift" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59985:60180] valueDeclaration=MethodSignature@/lib.es5.d.ts:59985:60180 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="shift"@MethodSignature@/lib.es5.d.ts:59985:60180/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y20 name="slice" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:60180:60826] valueDeclaration=MethodSignature@/lib.es5.d.ts:60180:60826 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="slice"@MethodSignature@/lib.es5.d.ts:60180:60826/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y21 name="some" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:65188:65843] valueDeclaration=MethodSignature@/lib.es5.d.ts:65188:65843 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="some"@MethodSignature@/lib.es5.d.ts:65188:65843/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y22 name="sort" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:60826:61401] valueDeclaration=MethodSignature@/lib.es5.d.ts:60826:61401 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="sort"@MethodSignature@/lib.es5.d.ts:60826:61401/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y23 name="splice" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:61401:62146 MethodSignature@/lib.es5.d.ts:62146:62891] valueDeclaration=MethodSignature@/lib.es5.d.ts:61401:62146 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="splice"@MethodSignature@/lib.es5.d.ts:61401:62146/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y24 name="toLocaleString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58378:58553] valueDeclaration=MethodSignature@/lib.es5.d.ts:58378:58553 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="toLocaleString"@MethodSignature@/lib.es5.d.ts:58378:58553/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y25 name="toString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58282:58378] valueDeclaration=MethodSignature@/lib.es5.d.ts:58282:58378 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="toString"@MethodSignature@/lib.es5.d.ts:58282:58378/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y26 name="unshift" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:62891:63109] valueDeclaration=MethodSignature@/lib.es5.d.ts:62891:63109 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="unshift"@MethodSignature@/lib.es5.d.ts:62891:63109/0x2000 mapper=array([T66 T67]=>[T29 T108])
+SYMBOL Y27 name="concat" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58946:59210 MethodSignature@/lib.es5.d.ts:59210:59480] valueDeclaration=MethodSignature@/lib.es5.d.ts:58946:59210 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="concat"@MethodSignature@/lib.es5.d.ts:58946:59210/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y28 name="every" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63888:64548 MethodSignature@/lib.es5.d.ts:64548:65188] valueDeclaration=MethodSignature@/lib.es5.d.ts:63888:64548 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="every"@MethodSignature@/lib.es5.d.ts:63888:64548/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y29 name="filter" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:66872:67414 MethodSignature@/lib.es5.d.ts:67414:67940] valueDeclaration=MethodSignature@/lib.es5.d.ts:66872:67414 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="filter"@MethodSignature@/lib.es5.d.ts:66872:67414/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y30 name="forEach" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:65843:66331] valueDeclaration=MethodSignature@/lib.es5.d.ts:65843:66331 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="forEach"@MethodSignature@/lib.es5.d.ts:65843:66331/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y31 name="indexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63109:63478] valueDeclaration=MethodSignature@/lib.es5.d.ts:63109:63478 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="indexOf"@MethodSignature@/lib.es5.d.ts:63109:63478/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y32 name="join" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59480:59813] valueDeclaration=MethodSignature@/lib.es5.d.ts:59480:59813 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="join"@MethodSignature@/lib.es5.d.ts:59480:59813/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y33 name="lastIndexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:63478:63888] valueDeclaration=MethodSignature@/lib.es5.d.ts:63478:63888 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="lastIndexOf"@MethodSignature@/lib.es5.d.ts:63478:63888/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y34 name="length" flags=0x2000004 checkFlags=0x1 declarations=[PropertySignature@/lib.es5.d.ts:58132:58282] valueDeclaration=PropertySignature@/lib.es5.d.ts:58132:58282 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="length"@PropertySignature@/lib.es5.d.ts:58132:58282/0x4 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y35 name="map" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:66331:66872] valueDeclaration=MethodSignature@/lib.es5.d.ts:66331:66872 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="map"@MethodSignature@/lib.es5.d.ts:66331:66872/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y36 name="pop" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58553:58745] valueDeclaration=MethodSignature@/lib.es5.d.ts:58553:58745 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="pop"@MethodSignature@/lib.es5.d.ts:58553:58745/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y37 name="push" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58745:58946] valueDeclaration=MethodSignature@/lib.es5.d.ts:58745:58946 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="push"@MethodSignature@/lib.es5.d.ts:58745:58946/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y38 name="reduce" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:67940:68666 MethodSignature@/lib.es5.d.ts:68666:68787 MethodSignature@/lib.es5.d.ts:68787:69533] valueDeclaration=MethodSignature@/lib.es5.d.ts:67940:68666 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reduce"@MethodSignature@/lib.es5.d.ts:67940:68666/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y39 name="reduceRight" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:69533:70290 MethodSignature@/lib.es5.d.ts:70290:70416 MethodSignature@/lib.es5.d.ts:70416:71193] valueDeclaration=MethodSignature@/lib.es5.d.ts:69533:70290 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reduceRight"@MethodSignature@/lib.es5.d.ts:69533:70290/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y40 name="reverse" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59813:59985] valueDeclaration=MethodSignature@/lib.es5.d.ts:59813:59985 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="reverse"@MethodSignature@/lib.es5.d.ts:59813:59985/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y41 name="shift" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:59985:60180] valueDeclaration=MethodSignature@/lib.es5.d.ts:59985:60180 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="shift"@MethodSignature@/lib.es5.d.ts:59985:60180/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y42 name="slice" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:60180:60826] valueDeclaration=MethodSignature@/lib.es5.d.ts:60180:60826 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="slice"@MethodSignature@/lib.es5.d.ts:60180:60826/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y43 name="some" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:65188:65843] valueDeclaration=MethodSignature@/lib.es5.d.ts:65188:65843 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="some"@MethodSignature@/lib.es5.d.ts:65188:65843/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y44 name="sort" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:60826:61401] valueDeclaration=MethodSignature@/lib.es5.d.ts:60826:61401 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="sort"@MethodSignature@/lib.es5.d.ts:60826:61401/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y45 name="splice" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:61401:62146 MethodSignature@/lib.es5.d.ts:62146:62891] valueDeclaration=MethodSignature@/lib.es5.d.ts:61401:62146 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="splice"@MethodSignature@/lib.es5.d.ts:61401:62146/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y46 name="toLocaleString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58378:58553] valueDeclaration=MethodSignature@/lib.es5.d.ts:58378:58553 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="toLocaleString"@MethodSignature@/lib.es5.d.ts:58378:58553/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y47 name="toString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:58282:58378] valueDeclaration=MethodSignature@/lib.es5.d.ts:58282:58378 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="toString"@MethodSignature@/lib.es5.d.ts:58282:58378/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y48 name="unshift" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:62891:63109] valueDeclaration=MethodSignature@/lib.es5.d.ts:62891:63109 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="unshift"@MethodSignature@/lib.es5.d.ts:62891:63109/0x2000 mapper=array([T66 T67]=>[T14 T109])
+SYMBOL Y49 name="concat" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:48792:48960 MethodSignature@/lib.es5.d.ts:48960:49134] valueDeclaration=MethodSignature@/lib.es5.d.ts:48792:48960 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="concat"@MethodSignature@/lib.es5.d.ts:48792:48960/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y50 name="every" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:50463:51141 MethodSignature@/lib.es5.d.ts:51141:51790] valueDeclaration=MethodSignature@/lib.es5.d.ts:50463:51141 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="every"@MethodSignature@/lib.es5.d.ts:50463:51141/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y51 name="filter" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:53501:54052 MethodSignature@/lib.es5.d.ts:54052:54587] valueDeclaration=MethodSignature@/lib.es5.d.ts:53501:54052 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="filter"@MethodSignature@/lib.es5.d.ts:53501:54052/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y52 name="forEach" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:52454:52951] valueDeclaration=MethodSignature@/lib.es5.d.ts:52454:52951 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="forEach"@MethodSignature@/lib.es5.d.ts:52454:52951/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y53 name="indexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:49748:50089] valueDeclaration=MethodSignature@/lib.es5.d.ts:49748:50089 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="indexOf"@MethodSignature@/lib.es5.d.ts:49748:50089/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y54 name="join" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:49134:49451] valueDeclaration=MethodSignature@/lib.es5.d.ts:49134:49451 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="join"@MethodSignature@/lib.es5.d.ts:49134:49451/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y55 name="lastIndexOf" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:50089:50463] valueDeclaration=MethodSignature@/lib.es5.d.ts:50089:50463 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="lastIndexOf"@MethodSignature@/lib.es5.d.ts:50089:50463/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y56 name="length" flags=0x2000004 checkFlags=0x1 declarations=[PropertySignature@/lib.es5.d.ts:48361:48521] valueDeclaration=PropertySignature@/lib.es5.d.ts:48361:48521 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="length"@PropertySignature@/lib.es5.d.ts:48361:48521/0x4 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y57 name="map" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:52951:53501] valueDeclaration=MethodSignature@/lib.es5.d.ts:52951:53501 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="map"@MethodSignature@/lib.es5.d.ts:52951:53501/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y58 name="reduce" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:54587:55322 MethodSignature@/lib.es5.d.ts:55322:55452 MethodSignature@/lib.es5.d.ts:55452:56207] valueDeclaration=MethodSignature@/lib.es5.d.ts:54587:55322 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="reduce"@MethodSignature@/lib.es5.d.ts:54587:55322/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y59 name="reduceRight" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:56207:56973 MethodSignature@/lib.es5.d.ts:56973:57108 MethodSignature@/lib.es5.d.ts:57108:57894] valueDeclaration=MethodSignature@/lib.es5.d.ts:56207:56973 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="reduceRight"@MethodSignature@/lib.es5.d.ts:56207:56973/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y60 name="slice" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:49451:49748] valueDeclaration=MethodSignature@/lib.es5.d.ts:49451:49748 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="slice"@MethodSignature@/lib.es5.d.ts:49451:49748/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y61 name="some" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:51790:52454] valueDeclaration=MethodSignature@/lib.es5.d.ts:51790:52454 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="some"@MethodSignature@/lib.es5.d.ts:51790:52454/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y62 name="toLocaleString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:48617:48792] valueDeclaration=MethodSignature@/lib.es5.d.ts:48617:48792 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="toLocaleString"@MethodSignature@/lib.es5.d.ts:48617:48792/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y63 name="toString" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/lib.es5.d.ts:48521:48617] valueDeclaration=MethodSignature@/lib.es5.d.ts:48521:48617 parent="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target="toString"@MethodSignature@/lib.es5.d.ts:48521:48617/0x2000 mapper=array([T80 T81]=>[T14 T110])
+SYMBOL Y64 name="length" flags=0x2000004 checkFlags=0x1 declarations=[PropertySignature@/lib.es5.d.ts:58132:58282] valueDeclaration=PropertySignature@/lib.es5.d.ts:58132:58282 parent="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target="length"@PropertySignature@/lib.es5.d.ts:58132:58282/0x4 mapper=array([T66 T67]=>[T29 T108])
+SYMBOLS named=64 unnamed=6

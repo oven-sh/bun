@@ -1,0 +1,15 @@
+PARSE tla.ts parse=[] js=[] bind=[]
+tla.ts(1,1)+5: error TS1375: 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+tla.ts(2,5)+5: error TS1431: 'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+tla.ts(3,17)+5: error TS1308: 'await' expressions are only allowed within async functions and at the top levels of modules.
+  related tla.ts(3,10)+2: error TS1356: Did you mean to mark this function as 'async'?
+tla.ts(3,30)+5: error TS1103: 'for await' loops are only allowed within async functions and at the top levels of modules.
+  related tla.ts(3,10)+2: error TS1356: Did you mean to mark this function as 'async'?
+tla.ts(4,19)+5: error TS2523: 'yield' expressions cannot be used in a parameter initializer.
+tla.ts(4,19)+5: error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.
+tla.ts(5,20)+7: error TS18037: 'await' expression cannot be used inside a class static block.
+tla.ts(6,23)+7: error TS2524: 'await' expressions cannot be used in a parameter initializer.
+RESOLUTIONDEPTH 0 []
+global: error TS2318: Cannot find global type 'IterableIterator'.
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=10 Options=1 SourceFiles=1
+COUNTS TypeCount=100 SymbolCount=28 SignatureCount=6 TotalInstantiationCount=1

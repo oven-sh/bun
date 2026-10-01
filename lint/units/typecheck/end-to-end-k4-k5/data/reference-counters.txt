@@ -1,0 +1,12 @@
+# Counters of the reference (typescript-go 89d5d5b, /tmp/e2e/k4real, --extendedDiagnostics --singleThreaded) for min.ts = `const x: number = "s";\n`.
+# Files, Lines (sum of ECMA line maps), Identifiers, Symbols (binder symbols of all files + symbols made by the checker), Types, Instantiations: compiler/program.go:1636-1679.
+variant	lib directory	Files	Lines	Identifiers	Symbols	Types	Instantiations	output
+--noEmit --noLib	-	1	2	1	7	64	0	ten lines "error TS2318: Cannot find global type '<X>'." for Array Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String, exit 2
+--noEmit --skipDefaultLibCheck --lib es5	internal/bundled/libs	4	5006	4352	3085	87	0	the K4 line, exit 2
+--noEmit --skipDefaultLibCheck --lib es5	node_modules/typescript 6.0.2 lib	4	5006	4352	3085	87	0	the K4 line, exit 2
+--noEmit --skipDefaultLibCheck	internal/bundled/libs	83	58444	49709	32118	89	0	the K4 line, exit 2
+--noEmit --skipDefaultLibCheck	node_modules/typescript 6.0.2 lib	83	58433	49720	32125	89	0	the K4 line, exit 2
+--noEmit	internal/bundled/libs	83	58444	49709	56407	30927	32819	the K4 line, exit 2
+# the K4 line: min.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.   (77 bytes with the line feed, on stdout, stderr empty)
+# wall time of the reference on this machine (load average about 580): --noEmit 0.54 to 0.81 s; with --skipDefaultLibCheck 0.08 to 0.14 s; with --lib es5 too 0.02 s.
+# With the default library path set to _submodules/TypeScript/src/lib as it is (source names) the reference finds no lib file and prints the ten TS2318 lines only.

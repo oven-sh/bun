@@ -1,0 +1,163 @@
+== R-REL
+  earlier D-SINK (1): c.addDiagnostic
+  earlier K-COND (2): c.getFalseTypeFromConditionalType c.getTrueTypeFromConditionalType
+  earlier K-GENERIC (4): c.isGenericIndexType c.isGenericMappedType c.isGenericObjectType c.isGenericTupleType
+  earlier K-INDEXED (6): c.getIndexedAccessType c.getIndexedAccessTypeOrUndefined c.getSimplifiedType c.getSimplifiedTypeOrConstraint c.getSuggestedTypeForNonexistentStringLiteralType c.getSuggestionForNonexistentProperty
+  earlier K-INTERSECT (3): c.getIntersectionType c.getIntersectionTypeEx c.intersectTypes
+  earlier K-KEYOF (4): c.getIndexType c.getIndexTypeEx c.getLiteralTypeFromProperty c.shouldDeferIndexType
+  earlier K-LIT (6): c.getBaseTypeOfEnumLikeType c.getBaseTypeOfLiteralType c.getRegularTypeOfLiteralType isFreshLiteralType isLiteralType isUnitType
+  earlier K-OBJ (1): c.createTypeReference
+  earlier K-PRED (11): c.IsEmptyAnonymousObjectType c.extractTypesOfKind c.filterType c.getTargetType c.isEmptyObjectType c.isErrorType c.isUnknownLikeUnionType c.typeHasCallOrConstructSignatures containsType everyType someType
+  earlier K-SUBST (1): c.getSubstitutionIntersection
+  earlier K-TEMPLATE (3): c.isMemberOfStringMapping c.isTypeMatchedByTemplateLiteralType c.templateLiteralTypesDefinitelyUnrelated
+  earlier K-UNION (1): c.getUnionType
+  earlier M-MODULE (1): c.getMembersOfSymbol
+  earlier MAPPER (2): newSimpleTypeMapper newTypeMapper
+  earlier P-PRINT (7): c.SymbolToString c.TypeToString c.TypeToStringEx c.symbolToString c.typeToString c.typeToStringEx c.valueToString
+  earlier S-MERGE (2): c.getParentOfSymbol createDiagnosticForNode
+  earlier T-APPARENT (5): c.getApparentType c.getReducedType c.isDiscriminantWithNeverType c.isMappedTypeGenericIndexedAccess isConflictingPrivateProperty
+  earlier T-BASE (4): c.getBaseTypes c.getTypeWithThisArgument c.hasBaseType getBaseTypeNodeOfClass
+  earlier T-CONSTRAINT (9): c.fillMissingTypeArguments c.getBaseConstraintOfType c.getBaseConstraintOrType c.getConstraintOfDistributiveConditionalType c.getConstraintOfType c.getConstraintOfTypeParameter c.getDefaultConstraintOfConditionalType c.getMinTypeArgumentCount c.hasNonCircularBaseConstraint
+  earlier T-DECLARED (1): c.getDeclaredTypeOfSymbol
+  earlier T-ENUMVAL (1): c.getEnumMemberValue
+  earlier T-INSTANTIATE (6): c.cloneTypeParameter c.getPermissiveInstantiation c.getRestrictiveInstantiation c.getTypeArguments c.instantiateType c.isTypeParameterPossiblyReferenced
+  earlier T-KEYS (1): getRelationKey
+  earlier T-LOOKUP (13): c.getApplicableIndexInfo c.getApplicableIndexInfoForName c.getIndexInfoOfType c.getIndexInfosOfType c.getIndexTypeOfTypeEx c.getPropertiesOfObjectType c.getPropertiesOfType c.getPropertiesOfUnionOrIntersectionType c.getPropertyOfObjectType c.getPropertyOfType c.getSignaturesOfStructuredType c.getSignaturesOfType c.isApplicableIndexType
+  earlier T-MAPPED (10): c.getApparentMappedTypeKeys c.getCombinedMappedTypeOptionality c.getConstraintTypeFromMappedType c.getModifiersTypeFromMappedType c.getNameTypeFromMappedType c.getTemplateTypeFromMappedType c.getTypeParameterFromMappedType c.isMappedTypeWithKeyofConstraintDeclaration getMappedTypeModifiers isPartialMappedType
+  earlier T-MEMBERS (1): c.resolveStructuredTypeMembers
+  earlier T-SIGDECL (1): c.getReturnTypeOfSignature
+  earlier T-SYMTYPE (4): c.addOptionalityEx c.getNonMissingTypeOfSymbol c.getTypeOfSymbol c.removeMissingType
+  earlier T-TUPLE (15): c.createArrayType c.createNormalizedTupleType c.getElementTypes c.getKnownKeysOfTupleType c.getTypeReferenceArity c.isArrayOrTupleType c.isArrayType c.isEmptyArrayLiteralType c.isMutableArrayOrTuple c.isReadonlyArrayType getEndElementCount getStartElementCount isMutableTupleType isSingleElementGenericTupleType isTupleType
+  earlier T-UIMEMBERS (2): c.compareProperties c.getPropertyOfUnionOrIntersectionType
+  earlier T-WIDEN (1): c.getRegularTypeOfObjectLiteral
+  earlier TYPES (20): InterfaceType.TypeParameters Type.AsConditionalType Type.AsIndexType Type.AsIndexedAccessType Type.AsInterfaceType Type.AsIntersectionType Type.AsLiteralType Type.AsMappedType Type.AsReverseMappedType Type.AsStringMappingType Type.AsSubstitutionType Type.AsTemplateLiteralType Type.AsTypeParameter Type.AsTypeReference Type.AsUnionType Type.Distributed Type.Symbol Type.Target Type.TargetTupleType Type.Types
+  earlier UTIL (7): NewDiagnosticForNode getDeclarationModifierFlagsFromSymbol isLateBoundName isNumericLiteralName isObjectLiteralType isObjectOrArrayLiteralType isStaticPrivateIdentifierProperty
+  this unit I-INFER (2): c.inferTypes c.newInferenceContext
+  this unit R-DISCRIM (5): c.filterPrimitivesIfContainsNonPrimitive c.findMatchingDiscriminantType c.getBestMatchingType c.getMatchingUnionConstituentForType r.typeRelatedToDiscriminatedType
+  this unit R-SIGREL (1): r.signaturesRelatedTo
+  this unit R-VARIANCE (5): c.getAliasVariances c.getVariances c.hasCovariantVoidArgument c.isMarkerType r.typeArgumentsRelatedTo
+  later binder.go (1): binder.GetSymbolNameForPrivateIdentifier
+  later c18_identifiers_property_access_this (2): c.getDeclaringClass c.isValidOverrideOf
+  later c19_assertions_binary_operators (1): c.getExactOptionalUnassignableProperties
+  later c20_object_literals_spread (2): c.isNonGenericObjectType c.isReadonlySymbol
+  later c50_contextual_properties_inference_context (1): c.isContextSensitive
+  later c51_type_facts_awaited (2): c.getTypeWithFacts c.isFunctionObjectType
+  later jsx.go (2): c.getJsxType c.getSuggestedSymbolForNonexistentJSXAttribute
+  later tracer.go (2): Tracer.Instant Tracer.Push
+== R-SIGREL
+  earlier MAPPER (1): newTypeMapper
+  earlier P-PRINT (3): c.TypeToString c.signatureToString c.typePredicateToString
+  earlier T-CONSTRAINT (3): c.getConstraintFromTypeParameter c.getConstraintOrUnknownFromTypeParameter c.getDefaultOrUnknownFromTypeParameter
+  earlier T-INSTANTIATE (1): c.instantiateType
+  earlier T-LOOKUP (1): c.getSignaturesOfType
+  earlier T-SIGDECL (2): c.getNonCircularReturnTypeOfSignature c.getReturnTypeOfSignature
+  earlier T-SIGINST (5): c.getCanonicalSignature c.getErasedSignature c.getSingleCallSignature c.instantiateSignatureEx c.instantiateSignatureInContextOf
+  earlier T-SIGSHAPE (13): c.getMinArgumentCount c.getNonArrayRestType c.getParameterCount c.getParameterNameAtPosition c.getRestOrAnyTypeAtPosition c.getThisTypeOfSignature c.getTypeAtPosition c.getTypePredicateOfSignature c.hasEffectiveRestParameter c.isInstantiatedGenericParameter c.isTopSignature c.tryGetTypeAtPosition c.typePredicateKindsMatch
+  earlier T-SYMTYPE (1): c.GetNonNullableType
+  earlier TYPES (1): Type.Target
+  this unit R-REL (8): c.compareTypesIdentical c.compareTypesSubtypeOf c.isTypeIdenticalTo r.getErrorState r.isRelatedToEx r.isRelatedToSimple r.reportError r.restoreErrorState
+  later c51_type_facts_awaited (1): c.getTypeFacts
+== R-VARIANCE
+  earlier K-OBJ (1): c.createTypeReference
+  earlier K-PRED (1): c.isErrorType
+  earlier MAPPER (1): newSimpleTypeMapper
+  earlier T-DECLARED (1): c.getDeclaredTypeOfSymbol
+  earlier T-INSTANTIATE (2): c.instantiateType c.instantiateTypes
+  earlier T-TYPENODE (1): c.getTypeAliasInstantiation
+  earlier TYPES (3): InterfaceType.TypeParameters Type.AsInterfaceType VarianceFlags.String
+  this unit R-REL (4): c.compareTypesIdentical c.isTypeAssignableTo r.isRelatedTo r.isRelatedToEx
+  later tracer.go (1): Tracer.Push
+== R-DISCRIM
+  earlier K-GENERIC (1): c.isGenericType
+  earlier K-INDEXED (1): c.getTypeOfPropertyOrIndexSignatureOfType
+  earlier K-INTERSECT (1): c.getIntersectionType
+  earlier K-KEYOF (1): c.getIndexType
+  earlier K-LIT (3): c.getRegularTypeOfLiteralType isLiteralType isUnitType
+  earlier K-PRED (4): c.filterType c.maybeTypeOfKind countTypes someType
+  earlier K-UNION (1): c.getUnionTypeEx
+  earlier T-APPARENT (1): c.getReducedType
+  earlier T-LOOKUP (4): c.getPropertiesOfType c.getPropertyOfType c.getSignaturesOfType c.getTypeOfPropertyOfType
+  earlier T-SYMTYPE (2): c.getNonMissingTypeOfSymbol c.getTypeOfSymbol
+  earlier T-TUPLE (2): c.isArrayLikeType isTupleType
+  earlier T-UIMEMBERS (1): c.getUnionOrIntersectionProperty
+  earlier TYPES (4): Type.AsUnionType Type.Distributed Type.Target Type.Types
+  this unit R-REL (3): r.indexSignaturesRelatedTo r.propertiesRelatedTo r.propertyRelatedTo
+  this unit R-SIGREL (1): r.signaturesRelatedTo
+  later tracer.go (1): Tracer.Instant
+== R-ELAB
+  earlier K-INDEXED (2): c.getIndexedAccessTypeOrUndefined c.getPropertyNameFromIndex
+  earlier K-KEYOF (1): c.getLiteralTypeFromProperty
+  earlier K-LIT (1): c.getNumberLiteralType
+  earlier K-UNION (1): c.getUnionType
+  earlier P-PRINT (1): c.TypeToString
+  earlier S-MERGE (2): c.getSymbolOfDeclaration createDiagnosticForNode
+  earlier T-LOOKUP (4): c.getApplicableIndexInfo c.getPropertyOfType c.getSignaturesOfType c.getTypeOfPropertyOfType
+  earlier T-SIGDECL (1): c.getReturnTypeOfSignature
+  earlier T-SIGINST (1): c.getSingleCallSignature
+  earlier T-SYMTYPE (1): c.removeMissingType
+  earlier T-TUPLE (1): c.isTupleLikeType
+  earlier TYPES (1): Type.Types
+  earlier UTIL (3): getPropertyNameFromType hasType isTypeUsableAsPropertyName
+  this unit R-DISCRIM (1): c.getBestMatchingType
+  this unit R-REL (5): c.checkTypeRelatedTo c.checkTypeRelatedToEx c.compareTypesAssignableSimple c.isTypeRelatedTo c.reportDiagnostic
+  later c14_expressions (1): c.checkArrayLiteral
+  later c15_calls (1): c.getEffectiveCheckNode
+  later c19_assertions_binary_operators (1): c.isExactOptionalPropertyMismatch
+  later c20_object_literals_spread (1): c.checkExpressionForMutableLocation
+  later c34_return_types (1): c.createPromiseType
+  later c50_contextual_properties_inference_context (2): c.popContextualType c.pushContextualType
+  later jsx.go (1): c.elaborateJsxComponents
+== I-INFER
+  earlier K-COND (2): c.getFalseTypeFromConditionalType c.getTrueTypeFromConditionalType
+  earlier K-GENERIC (1): c.isGenericMappedType
+  earlier K-INDEXED (2): c.distributeIndexOverObjectType c.getSimplifiedType
+  earlier K-INTERSECT (1): c.getIntersectionType
+  earlier K-KEYOF (2): c.getIndexTypeEx c.getLiteralTypeFromProperty
+  earlier K-LIT (10): c.getBaseTypeOfLiteralType c.getNumberLiteralType c.getRegularTypeOfLiteralType c.getWidenedLiteralType c.parseBigIntLiteralType getBigIntLiteralValue getBooleanLiteralValue getNumberLiteralValue getStringLiteralValue isLiteralType
+  earlier K-OBJ (2): c.newAnonymousType c.newIndexInfo
+  earlier K-PRED (3): c.filterType c.maybeTypeOfKind someType
+  earlier K-SUBST (3): c.getActualTypeVariable c.getSubstitutionIntersection c.isNoInferType
+  earlier K-TEMPLATE (3): applyStringMapping c.inferTypesFromTemplateLiteralType c.isTypeMatchedByTemplateLiteralType
+  earlier K-UNION (3): c.getUnionType c.getUnionTypeEx c.mapType
+  earlier LINKS (1): symbolArenaLinkStore.Get
+  earlier MAPPER (4): c.newBackreferenceMapper c.newInferenceTypeMapper mergeTypeMappers newMergedTypeMapper
+  earlier S-MERGE (1): c.newSymbol
+  earlier T-APPARENT (2): c.getApparentType c.getReducedType
+  earlier T-BASE (1): c.getTypeWithThisArgument
+  earlier T-CONSTRAINT (7): c.fillMissingTypeArguments c.getBaseConstraintOfType c.getConstraintOfType c.getConstraintOfTypeParameter c.getDefaultConstraintOfConditionalType c.getDefaultFromTypeParameter c.getMinTypeArgumentCount
+  earlier T-INSTANTIATE (3): c.clearActiveMapperCaches c.getTypeArguments c.instantiateType
+  earlier T-LOOKUP (7): c.getApplicableIndexInfo c.getIndexInfosOfType c.getPropertiesOfObjectType c.getPropertiesOfType c.getPropertyOfType c.getSignaturesOfType c.isApplicableIndexType
+  earlier T-MAPPED (3): c.getConstraintTypeFromMappedType c.getNameTypeFromMappedType c.getTemplateTypeFromMappedType
+  earlier T-SIGDECL (1): c.getReturnTypeOfSignature
+  earlier T-SIGINST (2): c.getBaseSignature c.getErasedSignature
+  earlier T-SIGSHAPE (7): c.getEffectiveRestType c.getParameterCount c.getRestTypeAtPosition c.getThisTypeOfSignature c.getTypeAtPosition c.getTypePredicateOfSignature c.typePredicateKindsMatch
+  earlier T-SYMTYPE (4): c.getNullableType c.getTypeOfSymbol c.removeMissingOrUndefinedType c.removeMissingType
+  earlier T-TUPLE (10): c.createArrayType c.createTupleTypeEx c.getElementTypeOfSliceOfTupleType c.getTypeReferenceArity c.isArrayOrTupleType c.isArrayType c.isMutableArrayLikeType c.sliceTupleType getEndElementCount isTupleType
+  earlier T-WIDEN (1): c.getWidenedType
+  earlier TYPES (13): Type.AsConditionalType Type.AsIndexType Type.AsIndexedAccessType Type.AsIntrinsicType Type.AsMappedType Type.AsStringMappingType Type.AsSubstitutionType Type.AsTemplateLiteralType Type.AsTypeReference Type.Distributed Type.Target Type.TargetTupleType Type.Types
+  earlier UTIL (6): CompareTypes IsTypeAny isObjectOrArrayLiteralType isValidBigIntString isValidNumberString pseudoBigIntToString
+  this unit I-REVMAP (1): c.inferTypeForHomomorphicMappedType
+  this unit R-REL (7): c.getUnmatchedProperty c.isDeeplyNestedType c.isObjectTypeWithInferableIndex c.isTypeAssignableTo c.isTypeIdenticalTo c.isTypeStrictSubtypeOf c.isTypeSubtypeOf
+  this unit R-VARIANCE (2): c.getAliasVariances c.getVariances
+  later c20_object_literals_spread (2): c.isConstTypeVariable c.isNonGenericObjectType
+  later c48_contextual_types (2): c.getContextualType c.getContextualTypeForObjectLiteralMethod
+== I-REVMAP
+  earlier K-INDEXED (1): c.getIndexedAccessType
+  earlier K-INTERSECT (1): c.getIntersectionType
+  earlier K-KEYOF (2): c.getIndexType c.getLiteralTypeFromProperty
+  earlier K-LIT (1): c.getNumberLiteralType
+  earlier K-OBJ (3): c.newIndexInfo c.newObjectType c.setStructuredTypeMembers
+  earlier LINKS (1): symbolArenaLinkStore.Get
+  earlier MAPPER (1): newTypeMapper
+  earlier S-MERGE (1): c.newSymbolEx
+  earlier T-INSTANTIATE (2): c.getTypeArguments c.instantiateType
+  earlier T-LOOKUP (2): c.getIndexInfoOfType c.getPropertiesOfType
+  earlier T-MAPPED (4): c.getConstraintTypeFromMappedType c.getTemplateTypeFromMappedType c.getTypeParameterFromMappedType getMappedTypeModifiers
+  earlier T-SYMTYPE (1): c.getTypeOfSymbol
+  earlier T-TUPLE (7): c.createArrayTypeEx c.createTupleType c.createTupleTypeEx c.getElementTypes c.isArrayType c.isReadonlyArrayType isTupleType
+  earlier T-WIDEN (1): c.getWidenedType
+  earlier TYPES (6): Type.AsIndexType Type.AsIndexedAccessType Type.AsReverseMappedType Type.AsUnionType Type.TargetTupleType Type.Types
+  earlier UTIL (1): isObjectLiteralType
+  this unit I-INFER (3): c.getTypeFromInference c.inferTypes newInferenceInfo
+  this unit R-REL (2): c.isDeeplyNestedType c.isTypeAssignableTo
+  later c20_object_literals_spread (1): c.isReadonlySymbol

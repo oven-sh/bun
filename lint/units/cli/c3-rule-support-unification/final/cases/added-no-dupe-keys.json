@@ -1,0 +1,20 @@
+[
+	"({ b: 1, a: 1, b: 2, a: 2 });",
+	"({ ab: 1, a: 1, ab: 2 });",
+	"({ a: 1, ab: 2, abc: 3 });",
+	"({ get a() {}, set b(v) {}, set a(v) {}, get b() {} });",
+	"({ get a() {}, get b() {}, get a() {}, set b(v) {} });",
+	"({ get b() {}, a: 1, set b(v) {}, get a() {}, get b() {} });",
+	"({ z: 0, a: 1, get a() {}, b: 1, get b() {}, c: 1, get c() {}, d: 1, get d() {}, e: 1, get e() {}, f: 1, get f() {}, g: 1, get g() {}, h: 1, get h() {}, i: 1, get i() {}, j: 1, get j() {}, k: 1, get k() {}, l: 1, get l() {}, m: 1, get m() {}, n: 1, get n() {}, o: 1, get o() {}, p: 1, get p() {}, q: 1, get q() {}, r: 1, get r() {}, s: 1, get s() {}, t: 1, get t() {}, u: 1, get u() {}, v: 1, get v() {}, get z() {} });",
+	"({ a: { a: 1, a: 2 }, a: { a: 1, a: 2 } });",
+	"({ get a() { return { b: 1, b: 2 }; }, set a(v) {} });",
+	"({});",
+	"({ a: 1 });",
+	"({ ...a, ...a });",
+	"({ async __proto__() {}, *__proto__() {} });",
+	"({ __proto__: 1, async __proto__() {} });",
+	"class A { a() {} a() {} }",
+	"(class { a = 1; a = 2; });",
+	"class A { static a = { b: 1, b: 2 }; }",
+	"class A { [{ a: 1, a: 2 }.a]() {} }"
+]

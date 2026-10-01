@@ -1,0 +1,2 @@
+corpus 4 = corpus 2 + typescript.js (9.1 MB) + corpus 3:
+7008 files: 6244 with the same reports, 0 different, 764 Bun's parser rejects, 0 ESLint's parser rejects; 88 reports of ESLint: {"no-self-assign":5,"valid-typeof":5,"no-sparse-arrays":61,"no-empty-pattern":6,"no-debugger":8,"no-dupe-keys":2,"no-compare-neg-zero":1}

@@ -1,0 +1,49 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+BIND oper.ts(27,8): error TS1102: 'delete' cannot be called on an identifier in strict mode. [len=1]
+oper.ts(2,12): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type. [len=1]
+oper.ts(3,12): error TS2365: Operator '+' cannot be applied to types 'number' and '{ a: 1; }'. [len=5]
+oper.ts(4,12): error TS2365: Operator '+' cannot be applied to types 'boolean' and 'boolean'. [len=5]
+oper.ts(5,14): error TS2447: The '&' operator is not allowed for boolean types. Consider using '&&' instead. [len=1]
+oper.ts(6,12): error TS2365: Operator '<' cannot be applied to types 'string' and 'number'. [len=5]
+oper.ts(7,12): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap. [len=7]
+oper.ts(8,25): error TS2359: The right-hand side of an 'instanceof' expression must be either of type 'any', a class, function, or other type assignable to the 'Function' interface type, or an object type with a 'Symbol.hasInstance' method. [len=1]
+oper.ts(10,19): error TS2322: Type 'string' is not assignable to type 'object'. [len=1]
+oper.ts(11,14): error TS2695: Left side of comma operator is unused and has no side effects. [len=1]
+oper.ts(12,13): error TS18048: 'u' is possibly 'undefined'. [len=1]
+oper.ts(13,14): error TS2469: The '-' operator cannot be applied to type 'symbol'. [len=3]
+oper.ts(14,14): error TS2736: Operator '+' cannot be applied to type 'bigint'. [len=2]
+oper.ts(15,13): error TS2365: Operator '+' cannot be applied to types 'bigint' and 'number'. [len=6]
+oper.ts(18,13): error TS2839: This condition will always return 'false' since JavaScript compares objects by reference, not value. [len=11]
+oper.ts(19,13): error TS2845: This condition will always return 'false'. [len=9]
+  RELATED oper.ts(19,13): message TS1369: Did you mean 'Number.isNaN(n)'? [len=1]
+oper.ts(21,7): error TS2322: Type 'string | number' is not assignable to type 'number'. [len=3]
+  CHAIN TS2322: Type 'string' is not assignable to type 'number'.
+oper.ts(22,13): error TS2367: This comparison appears to be unintentional because the types '"bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"' and '"strin"' have no overlap. [len=20]
+oper.ts(23,13): error TS2869: Right operand of ?? is unreachable because the left operand is never nullish. [len=6]
+oper.ts(24,17): error TS2588: Cannot assign to 's' because it is a constant. [len=1]
+oper.ts(25,14): error TS2588: Cannot assign to 'k' because it is a constant. [len=1]
+oper.ts(25,21): error TS2588: Cannot assign to 'k' because it is a constant. [len=1]
+oper.ts(26,8): error TS2790: The operand of a 'delete' operator must be optional. [len=3]
+oper.ts(27,8): error TS2703: The operand of a 'delete' operator must be a property reference. [len=1]
+oper.ts(28,5): error TS2588: Cannot assign to 's' because it is a constant. [len=1]
+oper.ts(29,7): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+oper.ts(30,1): error TS2588: Cannot assign to 'n' because it is a constant. [len=1]
+oper.ts(31,1): error TS2588: Cannot assign to 'an' because it is a constant. [len=2]
+oper.ts(32,13): error TS1375: 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module. [len=5]
+oper.ts(34,7): error TS2322: Type 'string | boolean' is not assignable to type 'string'. [len=3]
+  CHAIN TS2322: Type 'boolean' is not assignable to type 'string'.
+SUGGESTION oper.ts(16,13): suggestion TS6807: This operation can be simplified. This shift is identical to `n << 0`. [len=7]
+SUGGESTION oper.ts(32,13): suggestion TS80007: 'await' has no effect on the type of this expression. [len=7]
+AFTER check
+STATE flowInvocationCount=61 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=2
+STATE flowNodeReachable=5 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=169 SymbolCount=191 SignatureCount=7

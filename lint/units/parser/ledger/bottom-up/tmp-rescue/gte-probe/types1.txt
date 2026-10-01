@@ -1,0 +1,159 @@
+# conditional operand binding
+A | B extends C ? D : E
+string | number extends C ? string : string
+string | number extends C ? number : number
+string & number extends C ? number : number
+A | B extends C ? string : string
+string | A extends B ? number : number
+number | A extends B ? number : number
+A extends B ? string : string
+A extends B ? string : number
+A extends B ? string : string | string
+A extends B ? string : string & string
+A extends B ? string : string | number
+A extends B ? string : number | string
+A extends B ? string : never
+A extends B ? never : string
+A extends B ? string : unknown
+A extends B ? unknown : string
+A extends B ? string : any
+A extends B ? any : string
+A extends B ? string : null
+A extends B ? null : string
+A extends B ? string : undefined
+A extends B ? undefined : string
+A extends B ? string : void
+A extends B ? void : string
+A extends B ? void : void
+A extends B ? never : never
+A extends B ? unknown : unknown
+A extends B ? null : null
+A extends B ? C : C
+A extends B ? C : D
+A extends B ? C.D : C.D
+A extends B ? Object : string
+A extends B ? string : Object
+A extends B ? string : C extends D ? string : string
+A extends B ? string : C extends D ? string : number
+A extends B ? string : (C extends D ? string : string)
+A extends B ? (string) : (string)
+A extends B ? string[] : number[]
+A extends B ? () => void : () => void
+A extends B ? [] : string[]
+A extends B ? {} : {}
+A extends B ? 1 : 2
+A extends B ? "a" : "b"
+A extends B ? true : false
+A extends B ? 1n : 2n
+A extends B ? `a${string}` : "b"
+keyof A extends B ? string : string
+readonly A[] extends B ? string : string
+unique symbol extends B ? string : string
+typeof a extends B ? string : string
+A[] extends B ? string : string
+A["x"] extends B ? string : string
+# keyof / readonly / unique
+keyof A
+keyof A | string
+string | keyof A
+keyof A & string
+keyof string[]
+readonly string[]
+readonly [string]
+readonly A
+readonly string
+readonly string[] | number[]
+readonly string[] | string[]
+string[] | readonly string[]
+readonly A[][]
+readonly (string | number)[]
+unique symbol
+symbol
+keyof readonly string[]
+readonly keyof A
+keyof keyof A
+# infer
+A extends infer U ? U : never
+infer U
+# postfix
+A[]
+A[][]
+A["x"]
+A["x"][]
+A[][0]
+A[0]
+string[]
+string["length"]
+(string)[]
+(string)
+((string))
+(A)
+(A.B)
+(A | B)
+(string | string)
+# literals
+-1
+-1n
+1
+1n
+"a"
+`a`
+`a${string}b`
+true
+false
+null
+void
+undefined
+never
+any
+unknown
+object
+this
+# references
+A
+A.B
+A.B.C
+A.B.C.D
+A<string>
+A.B<string>
+Array<string>
+Promise<string>
+Object
+Function
+Number
+String
+Boolean
+Symbol
+BigInt
+# typeof / import
+typeof a
+typeof a.b
+typeof a<string>
+typeof import("x")
+import("x")
+import("x").A
+import("x").A.B
+import("x").A<string>
+typeof import("x").A
+# function types
+() => void
+new () => A
+abstract new () => A
+<T>() => void
+(a: string) => void
+(() => void)
+(new () => A)
+# tuple and object
+[]
+[string]
+[a: string]
+[a?: string]
+[...a: string[]]
+[...string[]]
+[string?]
+{}
+{ a: string }
+{ [k: string]: number }
+{ [K in keyof A]: A[K] }
+{ (): void }
+{ new (): A }

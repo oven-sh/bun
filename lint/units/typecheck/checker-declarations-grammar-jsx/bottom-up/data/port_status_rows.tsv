@@ -1,0 +1,39 @@
+upstream path	lines	group	Rust module	state	commit
+internal/checker/checker.go	2202-2545	D-DRIVER: checkSourceFile .. checkDeferredNode (9 functions)	checker/c05_check_source_file.rs	not started	89d5d5b
+internal/checker/checker.go	2547-2609	D-JSDOC: checkJSDocComments .. checkJSDocTypeIsInJsFile (5 functions)	checker/c05_check_source_file.rs	not started	89d5d5b
+internal/checker/checker.go	2611-2660	D-TYPENODE: checkTypeParameter .. shouldCheckErasableSyntax (3 functions)	checker/c05_check_source_file.rs	not started	89d5d5b
+internal/checker/checker.go	2662-2988	D-FUNC: checkParameter .. checkAccessorDeclaration (13 functions)	checker/c06_check_members_type_nodes.rs	not started	89d5d5b
+internal/checker/checker.go	2990-3410	D-TYPENODE: checkTypeReferenceNode .. checkMappedType (24 functions)	checker/c06_check_members_type_nodes.rs	not started	89d5d5b
+internal/checker/checker.go	3412-3791	D-FUNC: checkFunctionDeclaration .. isUnwrappedReturnTypeUndefinedVoidOrAny (8 functions)	checker/c07_check_functions.rs	not started	89d5d5b
+internal/checker/checker.go	3793-4284	D-STMT: checkBlock .. checkBindingElement (23 functions)	checker/c08_check_statements.rs	not started	89d5d5b
+internal/checker/checker.go	4286-5146	D-CLASS: checkClassDeclaration .. isPropertyIdenticalTo (30 functions)	checker/c09_check_classes_interfaces.rs	not started	89d5d5b
+internal/checker/checker.go	5148-5342	D-ENUMNS: checkEnumDeclaration .. checkModuleAugmentationElement (7 functions)	checker/c10_check_enums_modules_imports.rs	not started	89d5d5b
+internal/checker/checker.go	5344-5852	D-IMPEXP: checkImportDeclaration .. checkMissingDeclaration (19 functions)	checker/c10_check_enums_modules_imports.rs	not started	89d5d5b
+internal/checker/checker.go	5854-6110	D-VAR: checkVariableStatement .. checkVarDeclaredNamesNotShadowed (6 functions)	checker/c11_check_variables_decorators.rs	not started	89d5d5b
+internal/checker/checker.go	6112-6183	D-DECOR: checkDecorators .. checkDecorator (2 functions)	checker/c11_check_variables_decorators.rs	not started	89d5d5b
+internal/checker/checker.go	6185-6824	D-ITER: checkIteratedTypeOrElementType .. isES2015OrLaterIterable (30 functions)	checker/c12_iteration_types.rs	not started	89d5d5b
+internal/checker/checker.go	6826-6964	D-IMPEXP: checkAliasSymbol .. areDeclarationFlagsIdentical (2 functions)	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	6966-6998	D-TYPENODE: checkTypeAliasDeclaration .. checkTypeNameIsReserved (2 functions)	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	7000-7090	D-IMPEXP: checkExportsOnMergedDeclarations .. getDeclarationSpaces (2 functions)	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	7092-7128	D-TYPENODE: checkTypeParameters .. checkTypeParametersNotReferenced (2 functions)	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	7130-7417	D-UNUSED: registerForUnusedIdentifiersCheck .. checkUnusedRenamedBindingElements (21 functions)	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	8833-8888	E-DECOR: resolveDecorator .. getDiagnosticHeadMessageForDecoratorResolution (3 functions)	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	9273-9302	E-DECOR: getDecoratorArgumentCount .. getLegacyDecoratorArgumentCount (2 functions)	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	10171-10197	D-HELPERS: checkClassExpressionExternalHelpers (1 functions)	checker/c16_function_expressions_collisions.rs	not started	89d5d5b
+internal/checker/checker.go	10534-10705	E-COLLIDE: checkCollisionsForDeclarationName .. checkClassNameCollisionWithObject (11 functions)	checker/c16_function_expressions_collisions.rs	not started	89d5d5b
+internal/checker/checker.go	10935-10943	E-AWAIT: checkAwaitExpression (1 functions)	checker/c17_unary_meta_yield.rs	not started	89d5d5b
+internal/checker/checker.go	18151-18350	T-JSDECL: getTypeOfPrototypeProperty .. isGlobalSymbolConstructor (8 functions)	checker/c31_binding_patterns_widening.rs	not started	89d5d5b
+internal/checker/checker.go	28312-28697	U-ALIASMARK: markLinkedReferences .. markExportSpecifierAliasReferenced (11 functions)	checker/c46_mark_references.rs	not started	89d5d5b
+internal/checker/checker.go	28699-28807	D-HELPERS: checkExternalEmitHelpers .. resolveHelpersModule (4 functions)	checker/c46_mark_references.rs	not started	89d5d5b
+internal/checker/checker.go	28809-29040	U-ALIASMARK: markDecoratorAliasReferenced .. markTypeNodeAsReferenced (11 functions)	checker/c46_mark_references.rs	not started	89d5d5b
+internal/checker/checker.go	29042-29133	E-AWAIT: GetPromisedTypeOfPromise .. getTypeOfFirstParameterOfSignatureWithFallback (4 functions)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29924-29930	E-DECOR: getContextualTypeForDecorator (1 functions)	checker/c48_contextual_types.rs	not started	89d5d5b
+internal/checker/checker.go	30265-30672	E-DECOR: getEffectiveDecoratorArguments .. getClassElementPropertyKeyType (23 functions)	checker/c49_call_arguments_decorator_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	31355-31591	E-AWAIT: checkAwaitedType .. getAwaitedTypeOfPromiseEx (13 functions)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/checker.go	31704-32296	Z-SERVICES: GetSymbolAtLocation .. GetAliasedSymbol (16 functions)	checker/c52_symbol_at_location.rs	not started	89d5d5b
+internal/checker/grammarchecks.go	19-2185	G-GRAMMAR: grammarErrorOnFirstToken .. checkGrammarImportCallExpression (76 functions)	checker/grammarchecks.rs	not started	89d5d5b
+internal/checker/jsx.go	72-1488	X-JSX: checkJsxElement .. getJSXRuntimeImportSpecifier (59 functions)	checker/jsx.rs	not started	89d5d5b
+internal/checker/jsdoc.go	9-100	D-JSDOC: checkUnmatchedJSDocParameters .. getAllJSDocTags (2 functions)	checker/jsdoc.rs	not started	89d5d5b
+internal/checker/services.go	17-1140	Z-SERVICES: GetSymbolsInScope .. IsLibTypeForHoverVerbosity (66 functions)	checker/services.rs	out of scope (see the exception list)	89d5d5b
+internal/checker/emitresolver.go	45-1330	Z-SERVICES: newEmitResolver .. EmitResolver.IsThisPropertyAssignmentDeclarationRedundant (65 functions)	checker/emitresolver.rs	out of scope (see the exception list)	89d5d5b
+internal/checker/exports.go	9-373	Z-SERVICES: GetStringType .. CompareSymbols (85 functions)	checker/exports.rs	out of scope (see the exception list)	89d5d5b

@@ -1,0 +1,3 @@
+file mod2.ts bytes=24 statements=1
+s_export_default @0
+  s_class @15

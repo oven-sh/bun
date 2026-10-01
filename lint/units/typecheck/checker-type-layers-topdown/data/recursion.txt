@@ -1,0 +1,91 @@
+functions 3060, largest component 1453, functions of the layers 632, of them inside the largest component 446
+== K-LIT inside 10 of 25
+outside: c.getFreshTypeOfLiteralType isFreshLiteralType c.getStringLiteralType c.getNumberLiteralType c.getBigIntLiteralType c.parseBigIntLiteralType getStringLiteralValue getNumberLiteralValue getBigIntLiteralValue getBooleanLiteralValue c.getEnumLiteralType isLiteralType isNeitherUnitTypeNorNever isUnitType c.extractUnitType
+self recursive: c.getRegularTypeOfLiteralType c.getBaseTypeOfLiteralTypeForComparison c.getWidenedLiteralType c.getWidenedUniqueESSymbolType c.isLiteralOfContextualType
+== K-PRED inside 11 of 41
+outside: isUnionWithUndefined isUnionWithNull isIntersectionType isPrimitiveUnion isNotUndefinedType isNotNullType getConstituentCount getConstituentCountOfTypes c.filterTypes c.isEmptyResolvedType c.isPatternLiteralPlaceholderType c.isPatternLiteralType c.isGenericStringLikeType forEachType someType everyType everyContainedType c.filterType c.removeType containsType insertType countTypes c.isErrorType compareTypeIds c.maybeTypeOfKind isConstEnumObjectType isConstEnumSymbol c.containsUndefinedType c.extractTypesOfKind c.getTargetType
+self recursive: getConstituentCount c.isEmptyObjectType c.isPatternLiteralPlaceholderType c.maybeTypeOfKind c.allTypesAssignableToKindEx
+== K-GENERIC inside 7 of 9
+outside: c.isGenericTupleType c.getUniqueLiteralTypeForTypeParameter
+self recursive: c.getGenericObjectFlags c.isGenericReducibleType
+== K-UNION inside 11 of 18
+outside: c.getUnionTypeFromSortedList c.UnionTypes c.addTypesToUnion c.addNamedUnions c.removeRedundantLiteralTypes c.checkCrossProductUnion c.getCrossProductUnionSize
+self recursive: c.mapTypeEx c.addNamedUnions
+== K-INTERSECT inside 8 of 11
+outside: c.intersectUnionsOfPrimitiveTypes c.eachUnionContains c.unionContainsType
+self recursive: c.getIntersectionTypeEx
+== T-TUPLE inside 23 of 44
+outside: getStartElementCount getEndElementCount getTotalFixedElementCount c.getTypeReferenceArity c.isArrayType c.isReadonlyArrayType isTupleType isMutableTupleType isGenericTupleType isSingleElementGenericTupleType c.isArrayOrTupleType c.isMutableArrayOrTuple c.isEmptyLiteralType c.isArrayOrTupleOrIntersection c.createTypeFromGenericGlobalType c.getGlobalStrictFunctionType c.createIterableType c.createArrayType c.createArrayTypeEx c.getTupleElementFlags c.getTupleElementInfo
+self recursive: c.createNormalizedTupleTypeEx
+== T-DECLARED inside 17 of 23
+outside: isLocalTypeAlias getTypeReferenceName c.getClassOrInterfaceLikeDeclaration c.canGetTypeParametersOfClassOrInterface c.getDeclaredTypeOfTypeParameter c.createComputedEnumType
+self recursive: c.getOuterTypeParameters
+== T-ENUMVAL inside 4 of 6
+outside: c.evaluateEntity c.evaluateEnumMember
+self recursive: 
+== T-TYPENODE inside 33 of 39
+outside: c.getUnresolvedSymbolForEntityName getSymbolPath c.isResolvedByTypeAlias c.isVariadicTupleElement c.isReadonlyTypeOperator c.getArrayElementTypeNode
+self recursive: c.getUnresolvedSymbolForEntityName getSymbolPath c.isResolvedByTypeAlias c.mayResolveTypeAlias c.getArrayElementTypeNode
+== T-CONSTRAINT inside 24 of 29
+outside: c.getTypeParametersForTypeAndSymbol c.getMinTypeArgumentCount c.hasTypeParameterDefault c.getDefaultTypeArgumentType c.getConstraintDeclaration
+self recursive: c.getResolvedTypeParameterDefault
+== T-BASE inside 16 of 18
+outside: getBaseTypeNodeOfClass getTargetType
+self recursive: c.isValidBaseType c.getTypeWithThisArgument
+== T-MEMBERS inside 23 of 33
+outside: findIndexInfo c.addInheritedMembers c.isSymbolWithComputedName c.findIndexInfo isThisless isThislessVariableLikeDeclaration isThislessType isThislessFunctionLikeDeclaration isThislessTypeParameter c.isDeclarationContainedBy
+self recursive: c.isValidIndexKeyType isThislessType
+== T-UIMEMBERS inside 18 of 23
+outside: c.getTargetSymbol isPrototypeProperty c.hasCommonDeclaration c.createSymbolWithType compareTypesEqual
+self recursive: 
+== T-LOOKUP inside 18 of 18
+outside: 
+self recursive: 
+== T-APPARENT inside 11 of 12
+outside: isConflictingPrivateProperty
+self recursive: 
+== T-SIGDECL inside 16 of 21
+outside: c.getAnnotatedAccessorThisParameter c.getAccessorThisParameter isLateBindableAST c.getAnnotatedAccessorTypeNode getEffectiveSetAccessorTypeAnnotationNode
+self recursive: c.getReturnTypeOfSignature
+== T-SIGSHAPE inside 23 of 36
+outside: c.getRestTypeOfSignature signatureHasRestParameter c.expandSignatureParametersWithTupleMembers c.getUniqAssociatedNamesFromTupleType hasRestParameter isRestParameter getNameFromIndexInfo c.isValidDeclarationForTupleLabel c.getTupleElementLabel c.getTupleElementLabelFromBindingElement c.typePredicateKindsMatch c.newTypePredicate c.isResolvingReturnTypeOfSignature
+self recursive: c.getTupleElementLabelFromBindingElement c.getTypePredicateOfSignature c.isResolvingReturnTypeOfSignature
+== T-SIGINST inside 18 of 19
+outside: c.cloneSignature
+self recursive: 
+== T-INSTANTIATE inside 16 of 26
+outside: c.pushActiveMapper c.popActiveMapper c.findActiveMapper c.clearActiveMapperCaches c.isNonGenericTopLevelType c.cloneTypeParameter instantiateList c.getRestrictiveTypeParameter c.restrictiveMapperWorker c.permissiveMapperWorker
+self recursive: c.couldContainTypeVariablesWorker
+== T-SYMTYPE inside 54 of 66
+outside: c.GetTypeOfSymbolAtLocation c.isParameterOfContextSensitiveSignature c.isNullOrUndefined c.declarationBelongsToPrivateAmbientMember c.isConstructorDeclaredThisProperty c.getDeclarationNodeFlagsFromSymbol c.getCombinedNodeFlagsCached c.isVarConstLike c.tryGetNameFromType c.getCombinedModifierFlagsCached c.removeOptionalTypeMarker c.removeMissingType
+self recursive: c.getRestType
+== T-WIDEN inside 11 of 13
+outside: WideningContext.getChildContext c.getUndefinedProperty
+self recursive: c.getWidenedTypeWithContext c.getSiblingsOfContext c.reportWideningErrorsInType c.getRegularTypeOfObjectLiteral
+== K-KEYOF inside 10 of 13
+outside: c.isKeyTypeIncluded isInvalidComputedPropertyName c.getIndexTypeForGenericType
+self recursive: c.getIndexTypeEx c.isKeyTypeIncluded
+== K-INDEXED inside 21 of 29
+outside: c.getSuggestedTypeForNonexistentStringLiteralType getIndexNodeForAccessExpression c.isSelfTypeAccess c.isThisPropertyAccessInConstructor c.isAutoTypedProperty c.getDeclaringConstructor c.getPropertyNameFromIndex indexTypeLessThan
+self recursive: c.isStringIndexSignatureOnlyTypeWorker
+== K-SUBST inside 6 of 10
+outside: isUnaryTupleTypeNode c.isNoInferType c.getSubstitutionType c.getOrCreateSubstitutionType
+self recursive: c.getImpliedConstraint c.isNoInferTargetType c.getActualTypeVariable
+== K-COND inside 8 of 10
+outside: c.getTailRecursionRoot c.isSimpleTupleType
+self recursive: 
+== T-MAPPED inside 17 of 23
+outside: getModifiedReadonlyState c.isMappedTypeWithKeyofConstraintDeclaration c.getConstraintDeclarationForMappedType getMappedTypeModifiers getMappedTypeOptionality isPartialMappedType
+self recursive: c.getLowerBoundOfKeyType c.getCombinedMappedTypeOptionality
+== K-TEMPLATE inside 10 of 14
+outside: c.getTemplateStringForType applyStringMapping c.getStringMappingTypeForGenericType c.templateLiteralTypesDefinitelyUnrelated
+self recursive: c.getTemplateLiteralType c.getStringMappingType c.isValidTypeForTemplateLiteralPlaceholder c.isMemberOfStringMapping c.applyTargetStringMappingToSource
+== K-IMPORTTYPE inside 2 of 3
+outside: c.getIdentifierChain
+self recursive: c.getIdentifierChain
+== entries of the layers that test the stack: 77
+getTypeOfSymbol getWriteTypeOfSymbol getTypeFromTypeNode instantiateTypeWithAlias resolveStructuredTypeMembers getUnionTypeEx getIntersectionTypeEx mapTypeEx getResolvedBaseConstraint getApparentType getBaseTypes getBaseConstructorTypeOfClass getReturnTypeOfSignature getTypePredicateOfSignature getDeclaredTypeOfSymbol getDeclaredTypeOfClassOrInterface getConditionalType getIndexedAccessTypeOrUndefined getIndexTypeEx getSimplifiedType getTemplateLiteralType getStringMappingType getWidenedTypeWithContext getRegularTypeOfObjectLiteral reportWideningErrorsInType getReducedType getTypeArguments getOuterTypeParameters getPropertyOfTypeEx getSignaturesOfType getPropertiesOfType getIndexInfosOfType getGenericObjectFlags couldContainTypeVariablesWorker getResolvedTypeParameterDefault getTypeForVariableLikeDeclaration getTypeFromBindingPattern getConstraintOfType getConstraintFromTypeParameter getSyntheticElementAccess getApparentTypeOfMappedType isValidTypeForTemplateLiteralPlaceholder isPatternLiteralPlaceholderType addTypeToIntersection getTypeWithThisArgument mayResolveTypeAlias isResolvedByTypeAlias getUnresolvedSymbolForEntityName getArrayElementTypeNode getIdentifierChain getImpliedConstraint getTupleElementLabelFromBindingElement getActualTypeVariable isNoInferTargetType getCombinedMappedTypeOptionality isValidIndexKeyType isLiteralOfContextualType allTypesAssignableToKindEx maybeTypeOfKind isEmptyObjectType addNamedUnions applyTargetStringMappingToSource isResolvingReturnTypeOfSignature getLowerBoundOfKeyType isKeyTypeIncluded isValidBaseType computeEnumMemberValues createNormalizedTupleTypeEx getRestType getTypeFromBindingElement getSiblingsOfContext isGenericReducibleType isMemberOfStringMapping isStringIndexSignatureOnlyTypeWorker getSymbolPath isThislessType getConstituentCount
+== entries of other layers taken as tested: checkExpressionEx checkExpressionCachedEx checkSourceElement checkDeferredNode getTypeOfExpression getFlowTypeOfReferenceEx getContextualType isTypeRelatedTo checkTypeRelatedToEx inferTypes getTypeFacts getTypeWithFacts resolveAlias resolveEntityName getExportsOfModule getResolvedMembersOrExportsOfSymbol TypeMapper.Map CompareTypes
+== recursion only through a method value handed to mapType, tested in mapTypeEx: getRegularTypeOfLiteralType getBaseTypeOfLiteralType getBaseTypeOfLiteralTypeUnion getBaseTypeOfLiteralTypeForComparison getWidenedLiteralType getWidenedUniqueESSymbolType
+== cycles through functions of the layers that pass no tested entry: 1
+121 own: c.checkNoTypeArguments c.elaborateNeverIntersection c.getIntendedTypeFromJSDocTypeReference | other: EmitResolver.aliasMarkingVisitorWorker EmitResolver.isEntityNameVisible EmitResolver.isOptionalParameter EmitResolver.isOptionalUninitializedParameterProperty EmitResolver.isRequiredInitializedParameter EmitResolver.isSymbolAccessible EmitResolver.markLinkedAliases EmitResolver.requiresAddingImplicitUndefined EmitResolver.requiresAddingImplicitUndefinedWorker NodeBuilder.SymbolToNode NodeBuilder.T

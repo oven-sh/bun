@@ -1,0 +1,44 @@
+# name | flags | libs | drive steps | fixture files      (read by state.sh)
+init.nolib | -strict -all -marks -fields -globals | | | empty.ts
+init.es5 | -strict -all -marks -fields -globals | es5 | | empty.ts
+init.es5.nostrict | -nostrict -all -marks -fields | es5 | | empty.ts
+lit.nolib | -strict -nolinks | | lit | empty.ts
+lit | -strict -nolinks | es5 | lit | empty.ts
+tuple.nolib | -strict -nolinks | | tuple | empty.ts
+tuple | -strict -nolinks | es5 | tuple | empty.ts
+interfaces.01-declared | -strict | es5 | declared | interfaces.ts
+interfaces.02-typenodes | -strict | es5 | declared,typenodes | interfaces.ts
+interfaces.03-constraints | -strict | es5 | declared,typenodes,constraints | interfaces.ts
+interfaces.04-bases | -strict | es5 | declared,typenodes,constraints,bases | interfaces.ts
+interfaces.05-members | -strict | es5 | declared,typenodes,constraints,bases,members | interfaces.ts
+interfaces.06-lookup | -strict | es5 | declared,typenodes,constraints,bases,members,lookup | interfaces.ts
+interfaces.07-apparent | -strict | es5 | declared,typenodes,constraints,bases,members,lookup,apparent | interfaces.ts
+interfaces.08-signatures | -strict | es5 | declared,typenodes,constraints,bases,members,lookup,apparent,signatures | interfaces.ts
+interfaces.09-proptypes | -strict | es5 | declared,typenodes,constraints,bases,members,lookup,apparent,signatures,proptypes | interfaces.ts
+interfaces.10-symtypes | -strict | es5 | declared,typenodes,constraints,bases,members,lookup,apparent,signatures,proptypes,symtypes | interfaces.ts
+interfaces.11-widen | -strict | es5 | declared,typenodes,constraints,bases,members,lookup,apparent,signatures,proptypes,symtypes,widen | interfaces.ts
+typenodes.01-typenodes | -strict | es5 | typenodes | typenodes.ts
+typenodes.02-signatures | -strict | es5 | typenodes,signatures | typenodes.ts
+typenodes.03-symtypes | -strict | es5 | typenodes,signatures,symtypes | typenodes.ts
+typenodes.04-members | -strict | es5 | typenodes,signatures,symtypes,members | typenodes.ts
+typenodes.05-lookup | -strict | es5 | typenodes,signatures,symtypes,members,lookup | typenodes.ts
+typenodes.06-proptypes | -strict | es5 | typenodes,signatures,symtypes,members,lookup,proptypes | typenodes.ts
+typenodes.07-widen | -strict | es5 | typenodes,signatures,symtypes,members,lookup,proptypes,widen | typenodes.ts
+typenodes.08-keyof | -strict | es5 | typenodes,signatures,symtypes,members,lookup,proptypes,widen,keyof | typenodes.ts
+generic.01-declared | -strict | es5 | declared | generic.ts
+generic.02-typenodes | -strict | es5 | declared,typenodes | generic.ts
+generic.03-symtypes | -strict | es5 | declared,typenodes,symtypes | generic.ts
+generic.04-members | -strict | es5 | declared,typenodes,symtypes,members | generic.ts
+generic.05-lookup | -strict | es5 | declared,typenodes,symtypes,members,lookup | generic.ts
+generic.06-proptypes | -strict | es5 | declared,typenodes,symtypes,members,lookup,proptypes | generic.ts
+generic.07-apparent | -strict | es5 | declared,typenodes,symtypes,members,lookup,proptypes,apparent | generic.ts
+generic.08-constraints | -strict | es5 | declared,typenodes,symtypes,members,lookup,proptypes,apparent,constraints | generic.ts
+generic.09-keyof | -strict | es5 | declared,typenodes,symtypes,members,lookup,proptypes,apparent,constraints,keyof | generic.ts
+classes.01-declared | -strict | es5 | declared | classes.ts
+classes.02-symtypes | -strict | es5 | declared,symtypes | classes.ts
+classes.03-bases | -strict | es5 | declared,symtypes,bases | classes.ts
+classes.04-members | -strict | es5 | declared,symtypes,bases,members | classes.ts
+classes.05-proptypes | -strict | es5 | declared,symtypes,bases,members,proptypes | classes.ts
+rel | -strict | es5 | symtypes,rel | rel.ts
+check.min | -strict -diagtext | es5 | check | min.ts
+check.rich | -strict -diagtext | es5 | check | rich.ts

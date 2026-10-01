@@ -1,0 +1,169 @@
+A1c	declare	"abstract declare class C {}"	[-]	bun: Expected ";" but found "declare" @9	tsc: parses
+A1c	namespace	"export module \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @14	tsc: parses
+A1c	declName	"as"	[declareNamespace]	bun: Unexpected "namespace" @-10	tsc: parses
+A1c	declName	"satisfies"	[declareNamespace]	bun: Unexpected "namespace" @-10	tsc: parses
+A1c	declName	"await"	[declareVar,declareConst,declareLet,declareClass]	bun: Cannot use "yield" or "await" here. @0	tsc: parses
+A1s	declare	"declare function f(public a: A): void;"	[-]	bun: Expected ")" but found "a" @26	tsc: parses also TS2369
+A1s	declName	"let"	[declareConst,declareLet]	bun: Cannot use "let" as an identifier here @0	tsc: parses also TS2480
+A2	declare	"declare using x: T;"	[-]	bun: Cannot use "declare" with a "using" declaration @8	tsc: TS1491 @0+7 'declare' modifier cannot appear on a 'using' declaration.
+A2	declare	"declare await using x: T;"	[-]	bun: Cannot use "declare" with an "await using" declaration @8	tsc: TS1495 @0+7 'declare' modifier cannot appear on an 'await using' declaration.
+A2	declare	"declare function f(...a: A[], b: B): void;"	[-]	bun: Expected ")" but found "b" @30	tsc: TS1014 @19+3 A rest parameter must be last in a parameter list.
+A2	declare	"declare async\nfunction f(): Promise<void>;"	[-]	bun: Unexpected "async" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare function f(@d a: A): void;"	[-]	bun: Expected identifier but found "@" @19	tsc: TS1206 @19+1 Decorators are not valid here.
+A2	declare	"declare abstract\nclass C {}"	[-]	bun: Unexpected "abstract" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare class {}"	[-]	bun: Expected identifier but found "{" @14	tsc: TS1211 @0+7 A class declaration without the 'default' modifier must have a name.
+A2	declare	"declare namespace N { return; }"	[-]	bun: A return statement cannot be used here @22	tsc: TS1036 @22+6 Statements are not allowed in ambient contexts.
+A2	declare	"declare namespace N { using x: T; }"	[-]	bun: Cannot use "declare" with a "using" declaration @22	tsc: TS1545 @22+10 'using' declarations are not allowed in ambient contexts.
+A2	declare	"declare namespace;"	[-]	bun: Unexpected "namespace" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare\nmodule \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @15	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare module;"	[-]	bun: Unexpected "module" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare module"	[-]	bun: Unexpected "module" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare global;"	[-]	bun: Expected "{" but found ";" @14	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare global"	[-]	bun: Expected "{" but found end of file @14	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare\nglobal {}"	[-]	bun: Expected ";" but found "{" @15	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts. also TS2669
+A2	declare	"global {}"	[-]	bun: Expected ";" but found "{" @7	tsc: TS1046 @0+6 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2669
+A2	declare	"global { var x: T; }"	[-]	bun: Expected ";" but found "{" @7	tsc: TS1046 @0+6 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2669
+A2	declare	"namespace N { global {} }"	[-]	bun: Expected ";" but found "{" @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2669
+A2	declare	"declare import a from \"b\";"	[-]	bun: Unexpected "import" @8	tsc: TS1079 @0+7 A 'declare' modifier cannot be used with an import declaration.
+A2	declare	"declare export default x;"	[-]	bun: Unexpected "export" @8	tsc: TS1120 @0+7 An export assignment cannot have modifiers.
+A2	declare	"declare x;"	[-]	bun: Unexpected "x" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare x: T;"	[-]	bun: Unexpected "x" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare 1;"	[-]	bun: Unexpected "1" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare \"s\";"	[-]	bun: Unexpected "\"s\"" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare"	[-]	bun: Unexpected end of file @7	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare as any"	[-]	bun: Unexpected end of file @14	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare!"	[-]	bun: Unexpected end of file @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare {}"	[-]	bun: Unexpected "{" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare { x }"	[-]	bun: Unexpected "{" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare if (a) {}"	[-]	bun: Unexpected "if" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare for (;;) {}"	[-]	bun: Unexpected "for" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare return;"	[-]	bun: Unexpected "return" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare label: x;"	[-]	bun: Unexpected "label" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare try {} catch {}"	[-]	bun: Unexpected "try" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare throw x;"	[-]	bun: Unexpected "throw" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare debugger;"	[-]	bun: Unexpected "debugger" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare async () => {};"	[-]	bun: Unexpected "async" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare new C;"	[-]	bun: Unexpected "new" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare this;"	[-]	bun: Unexpected "this" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare import(\"x\");"	[-]	bun: Unexpected "import" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare import.meta;"	[-]	bun: Unexpected "import" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare export {};"	[-]	bun: Unexpected "export" @8	tsc: TS1193 @0+7 An export declaration cannot have modifiers.
+A2	declare	"declare export * from \"x\";"	[-]	bun: Unexpected "export" @8	tsc: TS1193 @0+7 An export declaration cannot have modifiers.
+A2	declare	"declare abstract;"	[-]	bun: Unexpected "abstract" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare interface;"	[-]	bun: Expected identifier but found ";" @17	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"declare const;"	[-]	bun: Expected identifier but found ";" @13	tsc: TS1123 @13+0 Variable declaration list cannot be empty.
+A2	declare	"declare let;"	[-]	bun: Unexpected "let" @8	tsc: TS1123 @11+0 Variable declaration list cannot be empty.
+A2	declare	"declare var;"	[-]	bun: Expected identifier but found ";" @11	tsc: TS1123 @11+0 Variable declaration list cannot be empty.
+A2	declare	"declare async;"	[-]	bun: Unexpected "async" @8	tsc: TS1036 @0+7 Statements are not allowed in ambient contexts.
+A2	declare	"function f() { declare namespace N {} }"	[-]	bun: Expected ";" but found "N" @33	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export default 1 }"	[-]	bun: Unexpected default @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export default x }"	[-]	bun: Unexpected default @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export default class {} }"	[-]	bun: Unexpected default @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export default function () {} }"	[-]	bun: Unexpected default @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export * from \"x\" }"	[-]	bun: Unexpected * @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export * as a from \"x\" }"	[-]	bun: Unexpected * @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export { x } }"	[-]	bun: Unexpected { @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export { x } from \"y\" }"	[-]	bun: Unexpected { @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export {} }"	[-]	bun: Unexpected { @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { import x from \"y\" }"	[-]	bun: Expected "=" but found "from" @23	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { import \"y\" }"	[-]	bun: Expected identifier but found ""y"" @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { return }"	[-]	bun: A return statement cannot be used here @14	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { this.x }"	[-]	bun: Cannot use "this" here @14	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2331
+A2	namespace	"namespace N { await x }"	[-]	bun: "await" can only be used inside an "async" function @20	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { super.x }"	[-]	bun: Unexpected "super" @14	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2660
+A2	namespace	"namespace N { break }"	[-]	bun: Cannot use "break" here @14	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { export using x = y }"	[-]	bun: Unexpected using @21	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"module \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1046 @0+6 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"module 'm' {}"	[-]	bun: Expected ";" but found "'m'" @7	tsc: TS1046 @0+6 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"module \"m\";"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1046 @0+6 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"async namespace N {}"	[-]	bun: Expected ";" but found "namespace" @6	tsc: TS1040 @0+5 'async' modifier cannot be used in an ambient context.
+A2	namespace	"abstract namespace N {}"	[-]	bun: Expected ";" but found "namespace" @9	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"public namespace N {}"	[-]	bun: Expected ";" but found "namespace" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	namespace	"static namespace N {}"	[-]	bun: Expected ";" but found "namespace" @7	tsc: TS1044 @0+6 'static' modifier cannot appear on a module or namespace element.
+A2	namespace	"@d namespace N {}"	[-]	bun: Expected "class" but found "namespace" @3	tsc: TS1046 @0+1 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"function f() { namespace N {} }"	[-]	bun: Expected ";" but found "N" @25	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"function f() { module N {} }"	[-]	bun: Expected ";" but found "N" @22	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"if (a) namespace N {}"	[-]	bun: Expected ";" but found "N" @17	tsc: TS1036 @0+2 Statements are not allowed in ambient contexts.
+A2	namespace	"if (a) { namespace N {} }"	[-]	bun: Expected ";" but found "N" @19	tsc: TS1036 @0+2 Statements are not allowed in ambient contexts.
+A2	namespace	"{ namespace N {} }"	[-]	bun: Expected ";" but found "N" @12	tsc: TS1036 @0+1 Statements are not allowed in ambient contexts.
+A2	namespace	"{ module N {} }"	[-]	bun: Expected ";" but found "N" @9	tsc: TS1036 @0+1 Statements are not allowed in ambient contexts.
+A2	namespace	"for (;;) namespace N {}"	[-]	bun: Expected ";" but found "N" @19	tsc: TS1036 @0+3 Statements are not allowed in ambient contexts.
+A2	namespace	"label: namespace N {}"	[-]	bun: Expected ";" but found "N" @17	tsc: TS1036 @0+5 Statements are not allowed in ambient contexts.
+A2	namespace	"class C { static { namespace N {} } }"	[-]	bun: Expected ";" but found "N" @29	tsc: TS1046 @0+5 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"() => { namespace N {} }"	[-]	bun: Expected ";" but found "N" @18	tsc: TS1036 @0+1 Statements are not allowed in ambient contexts.
+A2	namespace	"switch (a) { case 1: namespace N {} }"	[-]	bun: Expected ";" but found "N" @31	tsc: TS1036 @0+6 Statements are not allowed in ambient contexts.
+A2	namespace	"try { namespace N {} } catch {}"	[-]	bun: Expected ";" but found "N" @16	tsc: TS1036 @0+3 Statements are not allowed in ambient contexts.
+A2	namespace	"namespace N { { namespace M {} } }"	[-]	bun: Expected ";" but found "M" @26	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { function f() { namespace M {} } }"	[-]	bun: Expected ";" but found "M" @39	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	namespace	"namespace N { if (a) namespace M {} }"	[-]	bun: Expected ";" but found "M" @31	tsc: TS1046 @0+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { A = this }"	[-]	bun: Cannot use "this" here @13	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2332
+A2	enum	"enum E { A = await x }"	[-]	bun: "await" can only be used inside an "async" function @19	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { A = super.x }"	[-]	bun: Unexpected "super" @13	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2660
+A2	enum	"enum E { A = 1, 2 }"	[-]	bun: Expected identifier but found "2" @16	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { \"a\", \"a\" }"	[-]	bun: "a" has already been declared @14	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2300
+A2	enum	"enum E { A, A }"	[-]	bun: "A" has already been declared @12	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2300
+A2	enum	"enum E { 1 }"	[-]	bun: Expected identifier but found "1" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { 1 = 1 }"	[-]	bun: Expected identifier but found "1" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { 1.5 }"	[-]	bun: Expected identifier but found "1.5" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { 0x10 }"	[-]	bun: Expected identifier but found "0x10" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { 1n }"	[-]	bun: Expected identifier but found "1n" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { [x] }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [x] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [\"x\"] }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [\"x\"] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { ['x'] = 1, B = E.x }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [`x`] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [1] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2452
+A2	enum	"enum E { [\"x\" + \"y\"] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { [Symbol.iterator] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { #a }"	[-]	bun: Expected identifier but found "#a" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"enum E { #a = 1 }"	[-]	bun: Expected identifier but found "#a" @9	tsc: TS1046 @0+4 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"async enum E {}"	[-]	bun: Expected ";" but found "enum" @6	tsc: TS1040 @0+5 'async' modifier cannot be used in an ambient context.
+A2	enum	"abstract enum E {}"	[-]	bun: Expected ";" but found "enum" @9	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	enum	"static enum E {}"	[-]	bun: Expected ";" but found "enum" @7	tsc: TS1044 @0+6 'static' modifier cannot appear on a module or namespace element.
+A2	enum	"public enum E {}"	[-]	bun: Expected ";" but found "enum" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	enum	"readonly enum E {}"	[-]	bun: Expected ";" but found "enum" @9	tsc: TS1024 @0+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	enum	"@d enum E {}"	[-]	bun: Expected "class" but found "enum" @3	tsc: TS1046 @0+1 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	overload	"function f(public a: A): void; function f(a: any) {}"	[-]	bun: Expected ")" but found "a" @18	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier. also TS2369
+A2	overload	"function f(@d a: A): void; function f(a: any) {}"	[-]	bun: Expected identifier but found "@" @11	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	overload	"const o = { m(): void; };"	[-]	bun: Expected "{" but found ";" @21	tsc: TS1046 @0+5 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a: T[] = []) {}"	[-]	bun: Expected ")" but found "=" @21	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a = []) {}"	[-]	bun: Expected ")" but found "=" @16	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a, b) {}"	[-]	bun: Expected ")" but found "," @15	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a: T[], b: U) {}"	[-]	bun: Expected ")" but found "," @20	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a,) {}"	[-]	bun: Expected ")" but found "," @15	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(...a: T[],) {}"	[-]	bun: Expected ")" but found "," @20	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(): ?A {}"	[-]	bun: Unexpected ? @14	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f(): * {}"	[-]	bun: Unexpected * @14	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f<>() {}"	[-]	bun: Expected identifier but found ">" @11	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f<in T>() {}"	[-]	bun: The modifier "in" is not valid here @11	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	fnSyntax	"function f<out T>() {}"	[-]	bun: The modifier "out" is not valid here @11	tsc: TS1046 @0+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"as"	[namespaceDotted,namespaceBody,declareModule]	bun: Unexpected . @2	tsc: TS1046 @-10+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"satisfies"	[namespaceDotted,namespaceBody,declareModule]	bun: Unexpected . @9	tsc: TS1046 @-10+9 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"in"	[declareNamespace,declareModule]	bun: Unexpected "namespace" @-10	tsc: TS1036 @-18+7 Statements are not allowed in ambient contexts.
+A2	declName	"extends"	[declareClass,abstractClass]	bun: Expected identifier but found "extends" @0	tsc: TS1211 @-14+7 A class declaration without the 'default' modifier must have a name.
+A2	declName	"await"	[abstractClass,keywordAsStmt,keywordAssign,varNamed]	bun: Cannot use "await" as an identifier here @6	tsc: TS1046 @-15+8 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"interface"	[keywordAsStmt]	bun: Expected identifier but found ";" @9	tsc: TS1036 @0+9 Statements are not allowed in ambient contexts.
+A2	declName	"var"	[keywordAsStmt]	bun: Expected identifier but found ";" @3	tsc: TS1046 @0+3 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"const"	[keywordAsStmt,keywordNewlineIdent,keywordNewlineBlock]	bun: Expected identifier but found ";" @5	tsc: TS1046 @0+5 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+A2	declName	"null"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1036 @0+4 Statements are not allowed in ambient contexts. also TS2364
+A2	declName	"this"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1036 @0+4 Statements are not allowed in ambient contexts. also TS2364
+A2	declName	"true"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1036 @0+4 Statements are not allowed in ambient contexts. also TS2364
+A2	declName	"arguments"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1036 @0+9 Statements are not allowed in ambient contexts.
+A2	declName	"eval"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1036 @0+4 Statements are not allowed in ambient contexts.
+A2	declName	"super"	[keywordCall]	bun: Unexpected "super" @0	tsc: TS1036 @0+5 Statements are not allowed in ambient contexts. also TS2337
+A2	declName	"class"	[keywordNewlineBlock]	bun: Expected identifier but found "{" @6	tsc: TS1046 @0+5 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+B	declare	"declare namespace N;"	[-]	bun: accepts	tsc: TS1005 @19+1 '{' expected.
+B	declare	"declare namespace N"	[-]	bun: accepts	tsc: TS1005 @19+0 '{' expected.
+B	declare	"declare namespace N.M;"	[-]	bun: accepts	tsc: TS1005 @21+1 '{' expected.
+B	declare	"declare namespace \"N\" {}"	[-]	bun: accepts	tsc: TS1003 @18+3 Identifier expected.
+B	declare	"declare module \"m\".n {}"	[-]	bun: accepts	tsc: TS1005 @18+1 ';' expected.
+B	namespace	"namespace N.\"M\" {}"	[-]	bun: accepts	tsc: TS1003 @12+3 Identifier expected.
+B	namespace	"module as any"	[-]	bun: accepts	tsc: TS1005 @10+3 '{' expected.
+B	namespace	"export namespace;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	enum	"enum E { a; b }"	[-]	bun: accepts	tsc: TS1357 @10+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a = 1; b = 2 }"	[-]	bun: accepts	tsc: TS1357 @14+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a, b; c }"	[-]	bun: accepts	tsc: TS1357 @13+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a; }"	[-]	bun: accepts	tsc: TS1357 @10+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a = 1; }"	[-]	bun: accepts	tsc: TS1357 @14+1 An enum member name must be followed by a ',', '=', or '}'.
+B	declName	"in"	[exportNamespace]	bun: accepts	tsc: TS1128 @-17+6 Declaration or statement expected.

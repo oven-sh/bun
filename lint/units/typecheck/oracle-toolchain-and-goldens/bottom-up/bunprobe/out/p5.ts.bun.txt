@@ -1,0 +1,33 @@
+file p5.ts bytes=143
+s_for_in 0
+  s_expr 5
+    e_identifier 5 name="a"
+  e_identifier 10 name="b"
+  s_empty -1
+s_for_of 15
+  s_expr 20
+    e_dot 20 name="b"
+      e_identifier 20 name="a"
+  e_identifier 27 name="c"
+  s_empty -1
+s_for 32
+  s_local 37
+    b_identifier 41 name="x"
+    b_identifier 44 name="y"
+  s_empty -1
+s_if 52
+  e_identifier 56 name="a"
+  s_block 59
+    s_expr 61
+      e_identifier 61 name="b"
+s_function 66
+  s_return 95
+s_local 105
+  b_identifier 109 name="o"
+  e_object 113
+    e_string 117 text="a"
+    e_number 120 value=1
+s_local 125
+  b_identifier 129 name="arr"
+  e_array 135
+    e_number 139 value=1

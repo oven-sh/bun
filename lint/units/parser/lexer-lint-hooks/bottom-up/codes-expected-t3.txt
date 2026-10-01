@@ -1,0 +1,323 @@
+--- property:324 get *x [ts] "class A { get *x() {} }"
+   bun: @14+1 Expected ";" but found "*"
+   tsc: @10+3 TS1434 Unexpected keyword or identifier.
+--- property:324 obj get *x [ts] "x = { get *x() {} }"
+   bun: @10+1 Expected "}" but found "*"
+   bun: @11+1 Expected ";" but found "x"
+   bun: @15+1 Expected "=>" but found "{"
+   tsc: @10+1 TS1005 ',' expected.
+   chk: @6+3 TS18004 No value exists in scope for the shorthand property 'get'. Either declare one or provide an initializer.
+--- property:284 expected(TIdentifier) [ts] "class A { accessor 5 }"
+--- property:52 ctor getter [ts] "class A { get constructor() {} }"
+   bun: @14+11 Class constructor cannot be a getter
+   chk: @14+11 TS1341 Class constructor may not be an accessor.
+--- property:64 ctor async [ts] "class A { async constructor() {} }"
+   bun: @16+11 Class constructor cannot be an async function
+   chk: @10+5 TS1089 'async' modifier cannot appear on a constructor declaration.
+--- property:70 ctor generator [ts] "class A { *constructor() {} }"
+   bun: @11+11 Class constructor cannot be a generator function
+   chk: @11+11 TS1368 Class constructor may not be a generator.
+--- property:79 static prototype [ts] "class A { static prototype() {} }"
+   bun: @17+9 Invalid static method name "prototype"
+   chk: @17+9 TS2699 Static property 'prototype' conflicts with built-in property 'Function.prototype' of constructor function 'A'.
+--- property:141 getter args [ts] "class A { get x(a) {} }"
+   bun: @16+1 Getter x must have zero arguments
+   chk: @14+1 TS1054 A 'get' accessor cannot have parameters.
+--- property:165 setter args [ts] "class A { set x() {} }"
+   bun: @15+0 Setter x must have exactly 1 argument (there are 0)
+   chk: @14+1 TS1049 A 'set' accessor must have exactly one parameter.
+   chk: @14+1 TS7032 Property 'x' implicitly has type 'any', because its set accessor lacks a parameter type annotation.
+--- property:208 #constructor method [ts] "class A { #constructor() {} }"
+   bun: @10+12 Invalid method name "#constructor"
+   chk: @10+12 TS18012 '#constructor' is a reserved word.
+--- property:536 Unexpected [ts] "x = { a b }"
+   bun: @8+1 Expected "}" but found "b"
+   bun: @10+1 Unexpected }
+   tsc: @8+1 TS1005 ',' expected.
+   chk: @6+1 TS18004 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+   chk: @8+1 TS18004 No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer.
+--- property:536 class member garbage [ts] "class A { 1 + 2 }"
+   bun: @12+1 Expected ";" but found "+"
+   tsc: @12+1 TS1005 ';' expected.
+   tsc: @16+1 TS1128 Declaration or statement expected.
+--- property:563 await shorthand [ts] "async function f() { x = { await } }"
+   bun: @27+5 Cannot use "await" here
+   tsc: @33+1 TS1005 ':' expected.
+--- property:569 yield shorthand [ts] "function* f() { x = { yield } }"
+   bun: @22+5 Cannot use "yield" here
+   tsc: @28+1 TS1005 ':' expected.
+--- property:652 field named constructor [ts] "class A { constructor = 1 }"
+   bun: @10+11 Invalid field name
+   tsc: @22+1 TS1005 '(' expected.
+--- property:681 declare field init [ts] "class A { declare x = 1 }"
+   chk: @22+1 TS1039 Initializers are not allowed in ambient contexts.
+--- property:708 #constructor field [ts] "class A { #constructor = 1 }"
+   bun: @10+12 Invalid field name "#constructor"
+   chk: @10+12 TS18012 '#constructor' is a reserved word.
+--- property:751 accessor with body [ts] "class A { accessor x() {} }"
+   bun: @19+1 auto-accessor properties cannot have a method body
+   chk: @10+8 TS1275 'accessor' modifier can only appear on a property declaration.
+--- property: class missing brace [ts] "class A { m() { }"
+   bun: @17+0 Expected "}" but found end of file
+   tsc: @17+0 TS1005 '}' expected.
+--- property: class stray token [ts] "class A { ; ) }"
+   bun: @12+1 Expected identifier but found ")"
+   bun: @15+0 Expected "}" but found end of file
+   tsc: @12+1 TS1068 Unexpected token. A constructor, method, accessor, or property was expected.
+--- property: obj missing comma [ts] "x = { a: 1 b: 2 }"
+   bun: @11+1 Expected "}" but found "b"
+   bun: @12+1 Expected ";" but found ":"
+   bun: @16+1 Unexpected }
+   tsc: @11+1 TS1005 ',' expected.
+--- property: obj method missing body [ts] "x = { m() }"
+   bun: @10+1 Expected "{" but found "}"
+   bun: @11+0 Unexpected end of file
+   chk: @8+1 TS1005 '{' expected.
+--- property: index sig in class ok [ts] "class A { [k: string]: number }"
+--- suffix:427 a? not arrow [ts] "x = (a?) + 1"
+   bun: @7+1 Unexpected )
+   tsc: @9+1 TS1005 '=>' expected.
+--- suffix:427 (a?: b) non-arrow [ts] "x = f(a?)"
+   bun: @8+1 Unexpected )
+   tsc: @8+1 TS1109 Expression expected.
+--- suffix:496 x! in js [js] "x = y!;"
+   bun: @5+1 Unexpected !
+   syn: @4+2 TS8013 Non-null assertions can only be used in TypeScript files.
+--- suffix:1148 ?? || [ts] "x = a ?? b || c"
+   bun: @11+2 Unexpected ||
+   chk: @4+6 TS5076 '??' and '||' operations cannot be mixed without parentheses.
+--- suffix:1169 || ?? [ts] "x = a || b ?? c"
+   bun: @11+2 Unexpected ??
+--- suffix:1207 ?? && [ts] "x = a ?? b && c"
+   bun: @11+2 Unexpected &&
+--- suffix:1229 && ?? [ts] "x = a && b ?? c"
+   bun: @11+2 Unexpected ??
+--- suffix:75 a. nonident [ts] "x = a.;"
+   bun: @6+1 Expected identifier but found ";"
+   tsc: @6+1 TS1003 Identifier expected.
+--- suffix:75 a. number [ts] "x = a.5;"
+   bun: @5+2 Expected ";" but found ".5"
+   tsc: @5+2 TS1005 ';' expected.
+--- suffix:75 a. EOF [ts] "x = a."
+   bun: @6+0 Expected identifier but found end of file
+   tsc: @6+0 TS1003 Identifier expected.
+--- suffix:190 a?. nonident [ts] "x = a?.;"
+   bun: @7+1 Expected identifier but found ";"
+   tsc: @7+1 TS1003 Identifier expected.
+--- suffix:196 a?.<T> no paren [ts] "x = a?.<T>b"
+   bun: @10+1 Expected "(" but found "b"
+   bun: @11+0 Unexpected end of file
+   tsc: @7+1 TS1003 Identifier expected.
+--- suffix:277 optional chain template [ts] "x = a?.b`c`"
+   bun: @8+3 Template literals cannot have an optional chain as a tag
+   chk: @8+3 TS1358 Tagged template expressions are not permitted in an optional chain.
+--- suffix:308 optional chain template head [ts] "x = a?.b`c${d}`"
+   bun: @8+4 Template literals cannot have an optional chain as a tag
+   chk: @8+7 TS1358 Tagged template expressions are not permitted in an optional chain.
+--- suffix: a[] empty index [ts] "x = a[];"
+   bun: @6+1 Unexpected ]
+   tsc: @6+0 TS1011 An element access expression should take an argument.
+--- suffix: call missing paren [ts] "f(a, b"
+   bun: @6+0 Expected ")" but found end of file
+   tsc: @6+0 TS1005 ')' expected.
+--- suffix: ternary missing colon [ts] "x = a ? b;"
+   bun: @9+1 Expected ":" but found ";"
+   bun: @10+0 Unexpected end of file
+   tsc: @9+1 TS1005 ':' expected.
+--- suffix: as missing type [ts] "x = a as ;"
+   bun: @9+1 Unexpected ;
+   tsc: @9+1 TS1110 Type expected.
+--- suffix: satisfies missing type [ts] "x = a satisfies ;"
+   bun: @16+1 Unexpected ;
+   tsc: @16+1 TS1110 Type expected.
+--- suffix: new a?.b() [ts] "x = new a?.b()"
+   tsc: @9+2 TS1209 Invalid optional chain from new expression. Did you mean to call 'a()'?
+--- suffix: a?.#x [ts] "class A { #x; m(a) { return a?.#x } }"
+   tsc: @31+2 TS18030 An optional chain cannot contain private identifiers.
+--- suffix: f<T>.x instantiation then dot [ts] "x = f<T>.y"
+   tsc: @5+3 TS1477 An instantiation expression cannot be followed by a property access.
+--- suffix: super<T>() [ts] "class A extends B { constructor() { super<T>() } }"
+   bun: @36+5 Unexpected "super"
+   tsc: @41+3 TS2754 'super' may not use type arguments.
+--- mod:110 yield newline * [ts] "function* f() { yield\n* x }"
+   bun: @22+1 Unexpected *
+   tsc: @22+1 TS1109 Expression expected.
+--- mod:520 arrow at high level [ts] "x = 1 + (a) => 1"
+   bun: @12+2 Expected ";" but found "=>"
+   tsc: @12+2 TS1005 ';' expected.
+--- mod:520 typed arrow at high level [ts] "x = 1 + (a): number => 1"
+   bun: @11+1 Expected ";" but found ":"
+   tsc: @11+1 TS1005 ';' expected.
+--- mod:963 await x ** 2 (using path) [ts] "async function f() { await x ** 2; }"
+   bun: @29+2 Unexpected **
+   tsc: @21+7 TS17006 An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- mod:657 () not arrow [ts] "x = ();"
+   bun: @6+1 Expected "=>" but found ";"
+   tsc: @5+1 TS1109 Expression expected.
+--- mod:657 (a, ) not arrow [ts] "x = (a, );"
+   tsc: @8+1 TS1109 Expression expected.
+--- mod:687 @dec abstract non-class [ts] "@dec abstract foo"
+   bun: @14+3 Expected "class" but found "foo"
+   bun: @17+0 Expected "{" but found end of file
+   tsc: @13+0 TS1146 Declaration expected.
+--- mod:245 ts decorator on ctor [ts] "class A { @dec constructor() {} }"
+   bun: @10+0 TypeScript does not allow decorators on class constructors
+   chk: @10+1 TS1206 Decorators are not valid here.
+--- mod:617 (a: b) non-arrow [ts] "x = (a: b);"
+   bun: @6+1 Unexpected ":"
+   tsc: @10+1 TS1005 '=>' expected.
+--- mod:647 (...a) non-arrow [ts] "x = (...a);"
+   bun: @0+0 Unexpected "..."
+   tsc: @10+1 TS1005 '=>' expected.
+   chk: @5+4 TS7019 Rest parameter 'a' implicitly has an 'any[]' type.
+--- mod:711 class await [ts] "async function f() { class await {} }"
+   bun: @33+1 Cannot use "await" as an identifier here
+   chk: @27+5 TS1359 Identifier expected. 'await' is a reserved word that cannot be used here.
+--- mod:849 export using [ts] "export using x = y;"
+   bun: @7+5 Unexpected using
+   chk: @0+6 TS1491 'export' modifier cannot appear on a 'using' declaration.
+--- mod:872 declare using [ts] "declare using x = y;"
+   bun: @8+0 Cannot use "declare" with a "using" declaration
+   chk: @0+7 TS1491 'declare' modifier cannot appear on a 'using' declaration.
+   chk: @18+1 TS1254 A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference.
+--- mod:897 export await using [ts] "export await using x = y;"
+   bun: @7+5 Unexpected await
+   chk: @0+6 TS1495 'export' modifier cannot appear on an 'await using' declaration.
+--- mod:927 declare await using [ts] "declare await using x = y;"
+   bun: @8+0 Cannot use "declare" with an "await using" declaration
+   chk: @0+7 TS1495 'declare' modifier cannot appear on an 'await using' declaration.
+   chk: @24+1 TS1254 A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference.
+--- mod:1013 binding yield [ts] "function* f() { let yield = 1 }"
+   bun: @20+5 Cannot use "yield" or "await" here.
+   chk: @20+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.
+--- mod:1070 rest then comma array [ts] "let [...a, b] = c;"
+   bun: @9+1 Unexpected "," after rest pattern
+   chk: @8+1 TS2462 A rest element must be last in a destructuring pattern.
+--- mod:1127 rest then comma object [ts] "let {...a, b} = c;"
+   bun: @9+1 Unexpected "," after rest pattern
+   chk: @8+1 TS2462 A rest element must be last in a destructuring pattern.
+--- mod:1290 let let [ts] "let let = 1;"
+   bun: @4+3 Cannot use "let" as an identifier here
+   chk: @4+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+   chk: @4+3 TS2480 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+--- mod: binding missing [ts] "let = 1;"
+   chk: @0+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+--- mod: binding number [ts] "let 5 = 1;"
+   bun: @4+1 Expected ";" but found "5"
+   bun: @6+1 Unexpected =
+   tsc: @0+3 TS1440 Variable declaration not allowed at this location.
+   chk: @4+1 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- mod: binding keyword [ts] "var class = 1;"
+   bun: @4+5 Expected identifier but found "class"
+   tsc: @4+5 TS1389 'class' is not allowed as a variable declaration name.
+   tsc: @10+1 TS1005 '{' expected.
+--- mod: binding in params [ts] "function f(5) {}"
+   bun: @11+1 Expected identifier but found "5"
+   tsc: @11+1 TS1003 Identifier expected.
+--- mod: binding array elem [ts] "let [5] = a;"
+   bun: @5+1 Expected identifier but found "5"
+   tsc: @5+1 TS1181 Array element destructuring pattern expected.
+   tsc: @6+1 TS1005 ';' expected.
+   tsc: @8+1 TS1128 Declaration or statement expected.
+--- mod: binding object prop [ts] "let {a: 5} = b;"
+   bun: @8+1 Expected identifier but found "5"
+   tsc: @8+1 TS1003 Identifier expected.
+   tsc: @9+1 TS1005 ':' expected.
+   chk: @7+0 TS2451 Cannot redeclare block-scoped variable '(Missing)'.
+   chk: @9+0 TS2451 Cannot redeclare block-scoped variable '(Missing)'.
+--- mod: binding object key [ts] "let {+} = b;"
+   bun: @5+1 Expected identifier but found "+"
+   bun: @11+1 Expected "}" but found ";"
+   tsc: @5+1 TS1180 Property destructuring pattern expected.
+   tsc: @6+1 TS1109 Expression expected.
+   tsc: @8+1 TS1128 Declaration or statement expected.
+--- mod: catch binding [ts] "try {} catch (5) {}"
+   bun: @14+1 Expected identifier but found "5"
+   tsc: @14+1 TS1003 Identifier expected.
+   tsc: @15+1 TS1005 ';' expected.
+--- mod: class name keyword [ts] "class if {}"
+   bun: @6+2 Expected identifier but found "if"
+   tsc: @6+2 TS1005 '{' expected.
+   tsc: @9+1 TS1005 '(' expected.
+   tsc: @11+0 TS1005 ')' expected.
+--- mod: function name missing [ts] "function () {}"
+   bun: @9+1 Expected identifier but found "("
+   bun: @10+1 Expected "(" but found ")"
+   bun: @14+0 Expected ")" but found end of file
+   tsc: @9+1 TS1003 Identifier expected.
+--- mod: function name number [ts] "function 5() {}"
+   bun: @9+1 Expected identifier but found "5"
+   tsc: @9+1 TS1003 Identifier expected.
+   tsc: @13+1 TS1005 ';' expected.
+--- mod: parse_path non-string [ts] "import a from 5"
+   bun: @14+1 Expected string but found "5"
+   chk: @14+1 TS1141 String literal expected.
+--- mod: import attrs bad [ts] "import a from 'x' with { 5: 'y' }"
+   bun: @25+1 Expected identifier but found "5"
+   bun: @28+3 Expected ":" but found "'y'"
+   bun: @32+1 Expected string but found "}"
+   bun: @33+0 Expected "}" but found end of file
+   tsc: @25+1 TS1478 Identifier or string literal expected.
+   tsc: @26+1 TS1005 ';' expected.
+   tsc: @32+1 TS1128 Declaration or statement expected.
+--- mod: import assert [ts] "import a from 'x' assert { type: 'json' }"
+   chk: @18+6 TS2880 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+--- mod: label reserved [ts] "x = { class }"
+   bun: @12+1 Expected ":" but found "}"
+   bun: @13+0 Unexpected end of file
+   tsc: @12+1 TS1005 ':' expected.
+--- fn:530 newline before => [ts] "x = (a)\n=> 1"
+   bun: @8+2 Unexpected newline before "=>"
+   chk: @8+2 TS1200 Line terminator not permitted before arrow.
+--- fn: async arrow newline [ts] "x = async (a)\n=> 1"
+   bun: @14+2 Unexpected newline before "=>"
+   chk: @14+2 TS1200 Line terminator not permitted before arrow.
+--- fn: fn missing body [ts] "function f()"
+   chk: @9+1 TS2391 Function implementation is missing or not immediately following the declaration.
+--- fn: fn arg missing paren [ts] "function f(a {}"
+   bun: @13+1 Expected ")" but found "{"
+   bun: @14+1 Unexpected }
+   tsc: @13+1 TS1005 ',' expected.
+   tsc: @15+0 TS1005 ')' expected.
+   chk: @9+1 TS2391 Function implementation is missing or not immediately following the declaration.
+--- fn: rest not last [ts] "function f(...a, b) {}"
+   bun: @15+1 Expected ")" but found ","
+   bun: @17+1 Expected ")" but found "b"
+   bun: @18+1 Expected ";" but found ")"
+   chk: @11+3 TS1014 A rest parameter must be last in a parameter list.
+   chk: @11+4 TS7019 Rest parameter 'a' implicitly has an 'any[]' type.
+--- fn: this param arrow [ts] "x = (this: any) => 1"
+   bun: @5+0 Invalid binding pattern
+   chk: @5+9 TS2730 An arrow function cannot have a 'this' parameter.
+--- fn: param modifiers non-ctor [ts] "function f(public a) {}"
+   bun: @18+1 Expected ")" but found "a"
+   bun: @19+1 Expected ";" but found ")"
+   chk: @11+8 TS2369 A parameter property is only allowed in a constructor implementation.
+--- fn: overload no body [ts] "function f(): void\nlet x = 1"
+   chk: @9+1 TS2391 Function implementation is missing or not immediately following the declaration.
+--- fn: generator arrow [ts] "x = *() => 1"
+   bun: @4+1 Unexpected *
+   tsc: @4+1 TS1109 Expression expected.
+   tsc: @6+1 TS1109 Expression expected.
+   tsc: @8+2 TS1005 ';' expected.
+--- fn: async newline function [ts] "async\nfunction f() {}"
+--- fn: validate async named await [ts] "async function await() {}"
+--- fn: generator named yield [ts] "x = function* yield() {}"
+   bun: @14+5 An generator function expression cannot be named "yield"
+   chk: @14+5 TS1212 Identifier expected. 'yield' is a reserved word in strict mode.
+--- fn: return type missing [ts] "function f(): {}"
+   chk: @9+1 TS2391 Function implementation is missing or not immediately following the declaration.
+--- fn: arrow return type missing [ts] "x = (a): => a"
+   tsc: @7+1 TS1005 ';' expected.
+   tsc: @9+2 TS1128 Declaration or statement expected.
+--- fn: param type missing [ts] "function f(a: ) {}"
+   bun: @14+1 Unexpected )
+   tsc: @14+1 TS1110 Type expected.
+--- fn: type param missing [ts] "function f<>() {}"
+   bun: @11+1 Expected identifier but found ">"
+   bun: @12+1 Expected ">" but found "("
+   chk: @10+2 TS1098 Type parameter list cannot be empty.
+--- fn: type args missing [ts] "f<>()"
+   chk: @1+2 TS1099 Type argument list cannot be empty.
+--- fn: type arg trailing bar [ts] "f<A | >(x)"
+   tsc: @6+1 TS1110 Type expected.

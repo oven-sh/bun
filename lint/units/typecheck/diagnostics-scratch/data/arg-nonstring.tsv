@@ -1,0 +1,52 @@
+checker/checker.go:1201	c.error	int	arity
+checker/checker.go:1225	c.error	int	arity
+checker/checker.go:12500	c.errorOrSuggestion	jsnum.Number	numValue.Remainder(32)
+checker/checker.go:23308	c.error	int	len(typeParameters)
+checker/checker.go:23308	c.error	int	minTypeArgumentCount
+checker/checker.go:23716	c.error	int	len(typeParameters)
+checker/checker.go:23716	c.error	int	minTypeArgumentCount
+checker/checker.go:27195	c.error	int	c.getTypeReferenceArity(objectType)
+checker/checker.go:27259	createDiagnosticForNode	any	indexType.AsLiteralType().value
+checker/checker.go:27296	NewDiagnosticForNode	any	indexType.AsLiteralType().value
+checker/checker.go:27298	NewDiagnosticForNode	any	indexType.AsLiteralType().value
+checker/checker.go:27319	c.error	any	indexType.AsLiteralType().value
+checker/checker.go:28724	c.error	int (const)	4
+checker/checker.go:28728	c.error	int (const)	5
+checker/checker.go:4714	c.error	int	remainingMissedProperties
+checker/checker.go:4716	c.error	int	remainingMissedProperties
+checker/checker.go:9855	NewDiagnosticForNode	int	len(args)
+checker/checker.go:9855	NewDiagnosticForNode	int	maxBelow
+checker/checker.go:9855	NewDiagnosticForNode	int	minAbove
+checker/checker.go:9862	NewDiagnosticForNode	int	len(args)
+checker/checker.go:9889	NewDiagnosticForNode	int	len(args)
+checker/checker.go:9905	ast.NewDiagnostic	int	len(args)
+checker/checker.go:9958	ast.NewDiagnostic	int	argCount
+checker/checker.go:9973	ast.NewDiagnostic	int	aboveArgCount
+checker/checker.go:9973	ast.NewDiagnostic	int	argCount
+checker/checker.go:9973	ast.NewDiagnostic	int	belowArgCount
+checker/checker.go:9975	ast.NewDiagnostic	int	argCount
+checker/checker.go:9975	ast.NewDiagnostic	int	core.IfElse(belowArgCount == math.MinInt, aboveArgCount, belowArgCount)
+checker/jsx.go:559	ast.NewDiagnostic	int	len(typeArguments)
+checker/jsx.go:559	ast.NewDiagnostic	int (const)	0
+checker/jsx.go:671	NewDiagnosticForNode	int	absoluteMinArgCount
+checker/jsx.go:671	NewDiagnosticForNode	int	maxParamCount
+checker/relater.go:1514	errorReporter	int	c.getMinArgumentCount(source)
+checker/relater.go:1514	errorReporter	int	targetCount
+checker/relater.go:4161	r.reportError	int	sourceArity
+checker/relater.go:4161	r.reportError	int	targetMinLength
+checker/relater.go:4167	r.reportError	int	sourceMinLength
+checker/relater.go:4167	r.reportError	int	targetArity
+checker/relater.go:4174	r.reportError	int	targetMinLength
+checker/relater.go:4176	r.reportError	int	targetArity
+checker/relater.go:4200	r.reportError	int	targetArity
+checker/relater.go:4212	r.reportError	int	targetPosition
+checker/relater.go:4218	r.reportError	int	sourcePosition
+checker/relater.go:4218	r.reportError	int	targetPosition
+checker/relater.go:4224	r.reportError	int	targetPosition
+checker/relater.go:4249	r.reportError	int	sourceArity - targetEndCount - 1
+checker/relater.go:4249	r.reportError	int	targetPosition
+checker/relater.go:4249	r.reportError	int	targetStartCount
+checker/relater.go:4251	r.reportError	int	sourcePosition
+checker/relater.go:4251	r.reportError	int	targetPosition
+checker/relater.go:4403	r.reportError	int	len(props) - 4
+scanner/regexp.go:1100	p.error	int	p.numberOfCapturingGroups

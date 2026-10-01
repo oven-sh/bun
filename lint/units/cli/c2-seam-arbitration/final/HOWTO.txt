@@ -1,0 +1,39 @@
+Final artefacts of the C2 seam arbitration (pass 1b, top-down). Worktree /workspace/wt/cli at e3566be889; nothing was applied there.
+The files of the directory above (bun_ast-msg-code.patch, forced-arms.patch, lint-prototype.patch) are an earlier prototype; this directory replaces lint-prototype.patch.
+
+Apply:  cd /workspace/wt/cli && git apply <dir>/01-bun_ast-msg-code.patch <dir>/02-forced-arms.patch <dir>/03-bun_lint-diagnostics.patch
+        (git apply --check passes at e3566be889)
+
+01-bun_ast-msg-code.patch        src/ast/lib.rs: Metadata::Code(u32), Msg::code, Log::add_range_error_with_code, the size assertion, three tests.
+                                 Same text as ../bun_ast-msg-code.patch.
+02-forced-arms.patch             the three match arms that the variant forces: src/jsc/VirtualMachine.rs, src/jsc/lib.rs,
+                                 src/runtime/server/DevErrorPage.rs. Same text as ../forced-arms.patch.
+03-bun_lint-diagnostics.patch    src/lint: diagnostic.rs, diagnosticwriter.rs, program.rs, scanner.rs, tspath.rs (ports), code_frame.rs,
+                                 tests.rs, lib.rs, Cargo.toml, UPSTREAM_PORTED; and the Cargo.lock entry of bun_lint.
+ALTERNATIVE-msg-code-field.patch the fallback for 01 and 02: a field `code: u32` on Msg, no edit outside src/ast/lib.rs.
+                                 With it Diagnostic::from_msg reads `msg.code` (0: none) where it calls `msg.code()`.
+
+What was run in this pass, in the scratch workspace /tmp/c2td/ws (the crates bun_ast and bun_lint as above, the lint tables of the
+root Cargo.toml copied into the manifests (12 rust and 91 clippy entries, compared by script), the clippy.toml and rustfmt.toml of
+the repository, path dependencies into the worktree, profile dev with panic = "abort"); scratch-only/run1.sh and run2.sh:
+  cargo check -p bun_ast -p bun_lint --all-targets                              exit 0            logs/01-check.log
+  cargo clippy -p bun_ast -p bun_lint --all-targets --no-deps                   3 errors, all in the scratch-only file vector_tests.rs   logs/02-clippy.log
+  rustfmt --check of every file of 03 and of src/ast/lib.rs                     exit 0            logs/07-rustfmt-final.log
+  MIRIFLAGS=-Zmiri-tree-borrows cargo miri test -p bun_ast --lib msg_code_tests 3 passed          logs/04-miri-ast.log
+  MIRIFLAGS=-Zmiri-tree-borrows cargo miri test -p bun_lint --lib               10 passed         logs/05-miri-lint.log
+  A second clippy run without vector_tests.rs was queued behind the machine lock (scratch-only/run2.sh); it copies logs/06-clippy.log here when it has run.
+
+Logs of the earlier passes, copied here because they lived under /tmp (logs-earlier/):
+  01-baseline-assert.log                 the assertion size_of::<Msg>() == 152 holds at e3566be889 before any change
+  13-cross-*.log                         cargo check -p bun_ast with the variant and the assertion for three more targets: exit 0
+  14-negative.log                        the assertion with 160 fails to compile (E0080)
+  12-field-check.log                     the field alternative compiles with the assertion
+  11-vectors-miri.log                    the plain writer, the order and the line map against 256 fuzz vectors of the conformance unit
+                                         (scratch-only/vector_tests.rs reads /tmp/c2probe/vec/vectors.txt, made by scratch-only/prepare.ts)
+  ../logs/shadow-neg1.log, shadow-neg2.log, shadow-check2.log, shadow-alt.log   the workspace without the arms (E0004 three times), with them, and the fallback
+
+scratch-only/eslint-dedupe.cjs   what ESLint reports for the cases of the deduplication (needs /tmp/eslint-oracle).
+../probes/order_probe.py <dir>   order of the oracle baselines against a comparison by text:
+  python3 ../probes/order_probe.py /workspace/ref/typescript-go/testdata/baselines/reference/submodule
+  7027 files; 1212 adjacent pairs at one file, line and column, 77 of them with the code order reversed; 151 with one code,
+  23 with one text, 2 with the text in descending order (both have different ends: compiler/intersectionsOfLargeUnions*).

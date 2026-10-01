@@ -1,0 +1,22 @@
+declare var x: {
+    propertyWithAnExceedinglyLongName1: string;
+    propertyWithAnExceedinglyLongName2: string;
+    propertyWithAnExceedinglyLongName3: string;
+    propertyWithAnExceedinglyLongName4: string;
+    propertyWithAnExceedinglyLongName5: string;
+    propertyWithAnExceedinglyLongName6: string;
+    propertyWithAnExceedinglyLongName7: string;
+    propertyWithAnExceedinglyLongName8: string;
+    propertyWithAnExceedinglyLongName9: string;
+    propertyWithAnExceedinglyLongName10: string;
+    propertyWithAnExceedinglyLongName11: string;
+    propertyWithAnExceedinglyLongName12: string;
+};
+var s: string = x;
+type U = "aaaaaaaaaaaaaaaaaaaa" | "bbbbbbbbbbbbbbbbbbbbbbbb" | "cccccccccccccccccccccccc" | "dddddddddddddddddddddddd" | "eeeeeeeeeeeeeeeeeeeeeeee" | "ffffffffffffffffffffffff" | "gggggggggggggggggggggggg" | "hhhhhhhhhhhhhhhhhhhhhhhh" | "iiiiiiiiiiiiiiiiiiiiiiiiiii" | "jjjjjjjjjjjjjjjjjjjjjjjjjjjjj" | "kkkkkkkkkkkkkkkkkkkkkkk";
+declare var u: U;
+var n: number = u;
+declare var t: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number, cccccccccccccccccccccccccccccccccccccccc: boolean, dddddddddddddddddddddddddddddddddddddddd: string, eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: number, fffffffffffffffffffffffffffffffffffffffffffff: string, gggggggggggggggggggggggggggggggggggggggggggggg: number, hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh: string];
+var n2: number = t;
+declare var f: (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number, ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc: { a: string; b: number; c: boolean; d: string; e: number }) => void;
+var n3: number = f;

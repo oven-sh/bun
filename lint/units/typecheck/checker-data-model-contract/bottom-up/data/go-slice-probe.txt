@@ -1,0 +1,6 @@
+clip same: true tail same: true copy same: false
+clone nil is nil: true clone empty is nil: false
+filter all kept same: true
+filter none kept: nil: false len: 0
+empty vs nil same: true
+result: [100 -1 102] mapper of round 1 maps 30 to: 102

@@ -1,0 +1,108 @@
+Draft of the part of NEEDS.md that comes from the check contract (research, top-down pass).
+The unit "conformance" asks; the units "cli" and "typecheck" own the files. Nothing here is implemented on their side.
+
+What reads the output: test/cli/lint/conformance/runner/check.ts spawns
+    <command> --lint <operands>
+with BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1, BUN_DEBUG_QUIET_LOGS=1, NO_COLOR=1, without FORCE_COLOR and BUN_OPTIONS,
+stdin closed, stdout and stderr piped, the current directory of the instance as the current directory.
+A result that does not fit the rules below is a failure of the instance, never an empty list of diagnostics.
+
+======================================================================================================
+A. The plain form of C2 (cli). Needed before the default check can hand one instance to the binary.
+======================================================================================================
+A1. stdout stays empty.
+A2. stderr holds diagnostics and nothing else. The lines, each ended by LF (CR LF is read too):
+        <path>(<line>,<column>): <category> <code>: <text>      a diagnostic in a file
+        <category> <code>: <text>                                a diagnostic without a file
+        <two spaces per level><text>                             a line of the message chain, level 1 and up
+    line and column are 1-based, the column counts UTF-16 code units.
+    category is one of: error warning suggestion message.
+    No empty line, no summary line, no code frame, no colour. A text holds no line break.
+A3. <code> is "TS" and the number for a diagnostic that typescript-go (89d5d5b) has under that number, with its
+    text. Every other diagnostic has a code that matches [A-Za-z@][A-Za-z0-9@/_-]* and is not "TS" and a number:
+    the name of a rule, or a name of the binary for a syntax error that has no TypeScript number.
+    A line without a code is not read.
+A4. <path> is absolute, or relative to the current directory of the process. A default library file that is
+    part of the binary prints a name whose last component is lib.<name>.d.ts.
+A5. Exit code: 0 when no diagnostic of category error was printed, 2 when one or more were, 1 for a refusal
+    with any text on stderr. Every other exit code and every signal is read as a crash.
+A6. Order. Two diagnostics of one file that start at the same place are printed in the order of
+    ast.CompareDiagnostics (internal/ast/diagnostic.go:458): end of the span, code, category, message.
+    C2.2 of cli.md says "file, then position, then code"; the end has to come before the code.
+    Measured on the 7,027 baselines of the oracle: 475 have two diagnostics at one start, in 105 their ends
+    differ, in 37 the order by code is the reverse of the order by end (compiler/arithmeticOnInvalidTypes:
+    TS2454 with end 39 before TS2365 with end 43). The runner orders by file and start itself.
+A7. A lint run prints nothing about bunfig.toml, package.json, tsconfig.json or jsconfig.json of the current
+    directory: the cases have broken ones on purpose.
+
+======================================================================================================
+B. What the checker could not do (typecheck gives the data, cli prints it).
+======================================================================================================
+B1. For each name of the stand-in log of the run one line without a file:
+        error internal-stand-in: <name>
+    and the exit code 2. The runner gives the instance the status "provisional"; it never passes.
+B2. For an internal diagnostic (a ported panic or assert) one line, with or without a file:
+        error internal-error: <text>
+    The runner reads it as a failure of the instance.
+    typecheck: the stand-in log is read per run, in the order of the first reach, each name once.
+
+======================================================================================================
+C. The batch form (cli and typecheck). Needed before ANY instance can pass through the binary: it is the
+   only way by which the options of an instance reach the binary. Needed too for the level "baseline"
+   (spans, related information) and for the time budget. Measured on a machine under load: one process per instance costs about
+   12 ms with a release build and 0.4 s to 1 s with a debug build; 1,000 instances through four processes of
+   a stand-in command cost 1.1 s to 4.3 s, the files written to disk included.
+======================================================================================================
+C1. Switch: the environment variable BUN_INTERNAL_LINT_CONFORMANCE=1 (a boolean of src/bun_core/env_var.rs, as
+    BUN_INTERNAL_INTERACTIVE_ASSUME_TTY is), read only when BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1.
+    With it `bun --lint <file>` takes its one operand as a manifest. No flag is added.
+C2. The manifest, JSON in UTF-8. Every name in it is real and absolute.
+        { "version": 1,
+          "instances": [ {
+            "id": "compiler/2dArrays.ts",
+            "currentDirectory": "/tmp/x/0/.src",
+            "rootNames": ["/tmp/x/0/.src/2dArrays.ts"],
+            "configFile": "/tmp/x/0/.src/tsconfig.json",          absent when the case has none
+            "compilerOptions": { "noErrorTruncation": true, "target": "es2015", "strict": false, "lib": ["es2015", "dom"] },
+            "defaultOptions": { "newLine": "crlf", "skipDefaultLibCheck": true },
+            "captureSuggestions": false
+          } ] }
+    compilerOptions has the form of "compilerOptions" of a tsconfig.json: declared names, booleans, numbers,
+    strings, lists of strings; a value of an enumeration is its name in lower case; a file name is absolute.
+    Order of precedence, as harnessutil.go:81-113 has it: options of configFile, then defaultOptions where no
+    value is set, then compilerOptions.
+    captureSuggestions: the diagnostics of category suggestion are part of the result (harnessutil.go:670).
+C3. The report: stdout, one line of JSON per instance, in the order of the manifest, each line written and
+    flushed when its instance is done. Nothing else on stdout.
+        { "id": "...", "diagnostics": [ D, ... ], "standIns": ["name", ...] }
+        { "id": "...", "refused": "text" }                     the binary cannot run this instance
+    D = { "category": "error" | "warning" | "suggestion" | "message",
+          "code": 2322,
+          "messageText": "...",
+          "next": [ { "messageText": "...", "next": [...] } ],            absent or empty: no chain
+          "location": { "file": "/tmp/x/0/.src/a.ts", "start": 6, "length": 1, "line": 1, "character": 7 },
+                                                                          absent: no file
+          "relatedInformation": [ { "code": 2728, "messageText": "...", "next": [...], "location": {...} } ] }
+    start and length count UTF-8 bytes of the file on disk; line and character are 1-based, the character in
+    UTF-16 code units; both pairs are given and have to agree. relatedInformation is always there, empty when
+    there is none. A field that is not named here makes the line unreadable.
+    The diagnostics are what the harness of the reference collects (harnessutil.go:627-690): configuration
+    file, program, syntactic, semantic and global diagnostics, declaration diagnostics when the options emit
+    declarations, suggestions when captureSuggestions is set; sorted and without duplicates as
+    compiler.SortAndDeduplicateDiagnostics leaves them. No diagnostic of a lint rule.
+C4. An option or a configuration file that the binary does not implement gives "refused" for that instance.
+    It is never left out in silence.
+C5. Exit code 0 when every instance has its line; 1 with a text on stderr when the manifest is refused as a
+    whole. stderr is empty otherwise.
+C6. typecheck: an entry that sets one compiler option from its name and its JSON value (the port of
+    tsoptions.ParseCompilerOptions), so that cli can hand the options of C2 over.
+
+======================================================================================================
+D. What the conformance unit does until then.
+======================================================================================================
+Without A the probe of the default check refuses the binary and no instance is run.
+With A and without C a run by operands did not have the options of the instance (12,786 of the 12,797 run
+instances set a compiler option, and the harness sets noErrorTruncation for all): its status is "unsupported"
+and it is in no list. On request the runner compares its first section and reports the result apart.
+With C a result has the level "baseline" when every span and the related information are there, else
+"first-section". A diagnostic of a lint rule fails the instance unless the caller names the rule.

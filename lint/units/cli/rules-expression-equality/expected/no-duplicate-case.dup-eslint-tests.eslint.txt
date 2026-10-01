@@ -1,0 +1,29 @@
+"var a = 1; switch (a) {case 1: break; case 2: break; default: break;}"  =>  (none)
+"var a = 1; switch (a) {case 1: break; case '1': break; default: break;}"  =>  (none)
+"var a = 1; switch (a) {case 1: break; case true: break; default: break;}"  =>  (none)
+"var a = 1; switch (a) {default: break;}"  =>  (none)
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p.p.p2: break; default: break;}"  =>  (none)
+"var a = 1, f = function(b) { return b ? { p1: 1 } : { p1: 2 }; }; switch (a) {case f(true).p1: break; case f(true, false).p1: break; default: break;}"  =>  (none)
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a + 2).p1: break; default: break;}"  =>  (none)
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a == 1 ? 2 : 3).p1: break; case f(a === 1 ? 2 : 3).p1: break; default: break;}"  =>  (none)
+"var a = 1, f1 = function() { return { p1: 1 } }, f2 = function() { return { p1: 2 } }; switch (a) {case f1().p1: break; case f2().p1: break; default: break;}"  =>  (none)
+"var a = [1,2]; switch(a.toString()){case ([1,2]).toString():break; case ([1]).toString():break; default:break;}"  =>  (none)
+"switch(a) { case a: break; } switch(a) { case a: break; }"  =>  (none)
+"switch(a) { case toString: break; }"  =>  (none)
+"var a = 1; switch (a) {case 1: break; case 1: break; case 2: break; default: break;}"  =>  1:39-1:53 no-duplicate-case "Duplicate case label."
+"var a = '1'; switch (a) {case '1': break; case '1': break; case '2': break; default: break;}"  =>  1:43-1:59 no-duplicate-case "Duplicate case label."
+"var a = 1, one = 1; switch (a) {case one: break; case one: break; case 2: break; default: break;}"  =>  1:50-1:66 no-duplicate-case "Duplicate case label."
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p.p.p1: break; default: break;}"  =>  1:69-1:88 no-duplicate-case "Duplicate case label."
+"var a = 1, f = function(b) { return b ? { p1: 1 } : { p1: 2 }; }; switch (a) {case f(true).p1: break; case f(true).p1: break; default: break;}"  =>  1:103-1:126 no-duplicate-case "Duplicate case label."
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a + 1).p1: break; default: break;}"  =>  1:87-1:111 no-duplicate-case "Duplicate case label."
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a === 1 ? 2 : 3).p1: break; case f(a === 1 ? 2 : 3).p1: break; default: break;}"  =>  1:97-1:131 no-duplicate-case "Duplicate case label."
+"var a = 1, f1 = function() { return { p1: 1 } }; switch (a) {case f1().p1: break; case f1().p1: break; default: break;}"  =>  1:83-1:103 no-duplicate-case "Duplicate case label."
+"var a = [1, 2]; switch(a.toString()){case ([1, 2]).toString():break; case ([1, 2]).toString():break; default:break;}"  =>  1:70-1:101 no-duplicate-case "Duplicate case label."
+"switch (a) { case a: case a: }"  =>  1:22-1:29 no-duplicate-case "Duplicate case label."
+"switch (a) { case a: break; case b: break; case a: break; case c: break; case a: break; }"  =>  1:44-1:58 no-duplicate-case "Duplicate case label."  |  1:74-1:88 no-duplicate-case "Duplicate case label."
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p. p // comment\n .p1: break; default: break;}"  =>  1:69-2:13 no-duplicate-case "Duplicate case label."
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p .p\n/* comment */\n.p1: break; case p.p.p1: break; default: break;}"  =>  3:13-3:32 no-duplicate-case "Duplicate case label."
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p .p\n/* comment */\n.p1: break; case p. p // comment\n .p1: break; default: break;}"  =>  3:13-4:13 no-duplicate-case "Duplicate case label."
+"var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p. p // comment\n .p1: break; case p .p\n/* comment */\n.p1: break; default: break;}"  =>  1:69-2:13 no-duplicate-case "Duplicate case label."  |  2:14-4:12 no-duplicate-case "Duplicate case label."
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a+1).p1: break; default: break;}"  =>  1:87-1:109 no-duplicate-case "Duplicate case label."
+"var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(\na + 1 // comment\n).p1: break; case f(a+1)\n.p1: break; default: break;}"  =>  3:14-4:12 no-duplicate-case "Duplicate case label."

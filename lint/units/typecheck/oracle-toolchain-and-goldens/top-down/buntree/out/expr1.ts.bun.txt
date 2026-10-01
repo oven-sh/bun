@@ -1,0 +1,221 @@
+file expr1.ts bytes=705 statements=33
+s_expr @0
+  e_binary @1
+    e_identifier @6 b
+    e_identifier @1 a
+s_expr @9
+  e_binary @10
+    e_identifier @14 b
+    e_identifier @10 a
+s_expr @18
+  e_binary @20
+    e_identifier @30 c
+  e_binary @20
+    e_identifier @25 b
+    e_identifier @20 a
+s_expr @33
+  e_binary @34
+    e_identifier @37 b
+    e_identifier @34 a
+s_expr @41
+  e_call @41
+    e_identifier @41 f
+    e_identifier @44 a
+    e_identifier @48 b
+s_expr @52
+  e_dot @53
+    e_dot @53
+      e_identifier @53 a
+s_expr @62
+  e_index @62
+    e_call @62
+      e_dot @62
+        e_dot @62
+          e_identifier @62 a
+      e_identifier @69 d
+    e_identifier @74 e
+s_expr @78
+  e_call @78
+    e_identifier @78 a
+    e_identifier @82 x
+s_expr @86
+  e_binary @86
+    e_arrow @90
+      b_identifier @91 y
+      s_return @97
+        e_identifier @97 y
+    e_identifier @86 x
+s_expr @100
+  e_binary @100
+    e_arrow @105
+      b_identifier @106 y
+      s_return @112
+        e_identifier @112 y
+    e_identifier @100 x
+s_expr @116
+  e_binary @116
+    e_arrow @120
+      b_identifier @127 y
+      s_return @133
+        e_identifier @133 y
+    e_identifier @116 x
+s_expr @136
+  e_binary @136
+    e_arrow @140
+      b_identifier @146 y
+      s_return @151
+        e_identifier @151 y
+    e_identifier @136 x
+s_expr @154
+  e_binary @154
+    e_arrow @158
+      b_identifier @158 y
+      s_return @165
+        e_identifier @172 y
+    e_identifier @154 x
+s_expr @178
+  e_new @178
+    e_identifier @182 Foo
+s_expr @187
+  e_new @187
+    e_identifier @191 Foo
+    e_number @195
+    e_spread @198
+      e_identifier @201 r
+s_expr @205
+  e_new_target @205
+s_expr @217
+  e_import_meta @217
+s_expr @230
+  e_import @230
+    e_string @237
+    e_missing @-1
+s_expr @243
+  e_array @243
+    e_number @244
+    e_missing @247
+    e_spread @249
+      e_identifier @252 s
+s_expr @258
+  e_object @259
+    e_string @261
+    e_identifier @261 a
+    e_string @264
+    e_identifier @267 c
+    e_identifier @271 d
+    e_identifier @275 e
+    e_identifier @281 f
+    e_string @284
+    e_function @285
+    e_string @296
+    e_function @297
+      s_return @302
+        e_number @309
+    e_string @319
+    e_function @320
+      b_identifier @321 v
+    e_string @335
+    e_function @336
+    e_string @343
+    e_number @348
+    e_number @351
+    e_number @354
+s_expr @360
+  e_template @360
+    e_identifier @364 b
+    e_identifier @369 d
+s_expr @375
+  e_template @375
+    e_identifier @375 tag
+    e_identifier @382 y
+s_expr @388
+  e_template @388
+    e_identifier @388 tag
+s_expr @400
+  e_string @400
+s_expr @409
+  e_if @409
+    e_identifier @409 a
+    e_identifier @413 b
+    e_identifier @417 c
+s_expr @420
+  e_binary @420
+    e_unary @425
+      e_identifier @427 b
+    e_unary @420
+      e_identifier @420 a
+s_expr @430
+  e_binary @430
+    e_unary @472
+      e_identifier @473 a
+  e_binary @430
+    e_unary @468
+      e_identifier @469 a
+  e_binary @430
+    e_unary @464
+      e_identifier @465 a
+  e_binary @430
+    e_unary @460
+      e_identifier @461 a
+  e_binary @430
+    e_unary @448
+      e_dot @455
+        e_identifier @455 a
+  e_binary @430
+    e_unary @440
+      e_number @445
+    e_unary @430
+      e_identifier @437 a
+s_expr @476
+  e_binary @476
+    e_binary @482
+      e_binary @487
+        e_identifier @492 d
+        e_identifier @487 c
+      e_identifier @482 b
+    e_identifier @476 a
+s_expr @495
+  e_call @495
+    e_dot @495
+      e_reg_exp @495
+    e_identifier @506 s
+s_expr @510
+  e_binary @510
+    e_function @514
+      b_identifier @530 p
+      e_number @534
+      b_object @537
+        e_string @538
+        b_identifier @538 q
+      b_array @542
+        b_identifier @543 r
+      b_identifier @550 rest
+    e_identifier @510 x
+s_expr @560
+  e_binary @560
+    e_class @564
+      e_identifier @584 Base
+      e_string @598
+      e_number @602
+      e_private_identifier @605
+      e_string @609
+      e_function @610
+      s_expr @625
+        e_call @625
+          e_identifier @625 f
+      e_string @634
+      e_function @645
+        s_expr @650
+          e_call @650
+            e_super @650
+      e_identifier @666 k
+      e_function @668
+        s_return @673
+          e_number @680
+    e_identifier @560 x
+s_expr @688
+  e_await @688
+    e_number @694
+s_expr @697
+  e_dot @697
+    e_this @697

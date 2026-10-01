@@ -1,0 +1,25 @@
+type T = A.\nB extends C ? 1 : 2
+let v = x as A.\nB as C
+let v = x as A.\nB satisfies C
+type T = A.\nB | C
+type T = A.\nB
+type T = A.\nB[]
+type T = A.\nB<C>
+let x: readonly is A
+let x: keyof is A
+function* g() { let x: yield }
+function* g(): yield is A {}
+async function g(): await is A {}
+async function g(await: any): await is A {}
+type T = string is A
+let x: abstract is A
+type T = new (A)
+type T = new (string | number)
+type T = <T>(A)
+type T = new <T>(A)
+type T = abstract new (A)
+type T = (A) => B
+type T = new
+type T = unique symbol
+let x: unique symbol[] = 1
+type T = A extends B ? C : D extends E ? F : G extends H ? I : J

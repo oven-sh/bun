@@ -1,0 +1,14 @@
+file q5.js bytes=86
+s_local 0
+  b_identifier 4 name="x"
+  e_number 8 value=1
+s_function 11
+  b_identifier 22 name="a"
+  s_return 27
+    e_dot 34 name="b"
+      e_identifier 34 name="a"
+s_class 42
+  e_string 59 text="m"
+  e_function 60
+s_export_default 68
+  e_identifier 83 name="C"

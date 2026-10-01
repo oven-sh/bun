@@ -1,0 +1,5 @@
+# probe 1: new_simple_type_mapper(c, c.string_type, c.number_type) with c: &mut Checker compiles (a field read in an argument after the checker is passed).
+# probe 2: c.instantiate_type(c.new_type_parameter(SymbolId::NIL), m): an argument that calls a &mut method does not compile:
+    Checking bun_typecheck_dm v0.0.0 (/workspace/notes/lint/units/typecheck/checker-data-model-contract/bottom-up/crate)
+src/tests.rs:1135:36: error[E0499]: cannot borrow `*c` as mutable more than once at a time: second mutable borrow occurs here
+error: could not compile `bun_typecheck_dm` (lib test) due to 1 previous error

@@ -1,0 +1,102 @@
+Disagreements of tsc 6.0.2 and typescript-go by cause (rows x dialects; verdict = one accepts and one rejects, first = both reject with another first diagnostic).
+
+jsdoc-function-type: verdict 368, first 461, distinct sources 281
+        356  tsc accepts, typescript-go rejects
+        318  both reject: TS1005 -> TS1005
+         42  both reject: TS1005 -> TS1144
+         32  both reject: TS1138 -> TS1005
+         21  both reject: TS1005 -> TS1441
+         12  typescript-go accepts, tsc rejects
+         12  both reject: TS1128 -> TS1005
+          6  both reject: TS1442 -> TS1441
+      ts "f<function()>(x);"  tsc accepts  |  go [1005,12,1] '{' expected.
+      ts "let x: function();"  tsc accepts  |  go [1005,15,1] ',' expected.
+      ts "type X = function();"  tsc accepts  |  go [1005,17,1] ';' expected.
+      ts "let x: [function()];"  tsc accepts  |  go [1005,16,1] ',' expected.
+      ts "type X = function.A;"  tsc [1005,17,1] ';' expected.  |  go accepts
+      ts "f<function(A): B>(x);"  tsc accepts  |  go [1005,16,1] '{' expected.
+import-assert (TS2880 from the parser of typescript-go): verdict 193, first 364, distinct sources 189
+        273  both reject: TS1005 -> TS2880
+        193  tsc accepts, typescript-go rejects
+         47  both reject: TS1109 -> TS2880
+         44  both reject: TS1478 -> TS2880
+      ts "import 'a' assert { type: 'json' }"  tsc accepts  |  go [2880,11,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+      ts "import \"x\" assert { type: \"json\" };"  tsc accepts  |  go [2880,11,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+      ts "import a from 'x' assert { type: 'json' }"  tsc accepts  |  go [2880,18,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+      ts "import A from \"x\" assert { type: \"json\" };"  tsc accepts  |  go [2880,18,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+      ts "import A from \"x\" assert\n{ type: \"json\" };"  tsc accepts  |  go [2880,18,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+      ts "import a from \"m\" assert { type: \"json\" };"  tsc accepts  |  go [2880,18,6] Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+jsdoc-question (a `?` that is a whole type, or `?` before a function type): verdict 242, first 201, distinct sources 150
+        239  tsc accepts, typescript-go rejects
+        142  both reject: TS1005 -> TS1110
+         50  both reject: TS1005 -> TS1005
+          6  both reject: TS1144 -> TS1110
+          3  typescript-go accepts, tsc rejects
+          3  both reject: TS1442 -> TS1110
+      ts "f<?>(x);"  tsc accepts  |  go [1110,3,1] Type expected.
+      ts "f<(?)>(x);"  tsc accepts  |  go [1110,4,1] Type expected.
+      ts "let x: (?);"  tsc accepts  |  go [1110,9,1] Type expected.
+      ts "let x: A<?>;"  tsc accepts  |  go [1110,10,1] Type expected.
+      ts "let v = <?>x;"  tsc accepts  |  go [1110,10,1] Type expected.
+      ts "f<[?, B]>(x);"  tsc accepts  |  go [1110,4,1] Type expected.
+typeof-private-name: verdict 279, first 0, distinct sources 94
+        279  typescript-go accepts, tsc rejects
+      ts "f<typeof a.#b>(x);"  tsc [1003,13,0] Identifier expected.  |  go accepts
+      ts "f<typeof x.#p>(x);"  tsc [1003,13,0] Identifier expected.  |  go accepts
+      ts "let x: typeof a.#b;"  tsc [1003,18,0] Identifier expected.  |  go accepts
+      ts "let x: typeof x.#p;"  tsc [1003,18,0] Identifier expected.  |  go accepts
+      ts "let a: typeof x.#y;"  tsc [1003,18,0] Identifier expected.  |  go accepts
+      ts "f<typeof a.b.#c>(x);"  tsc [1003,15,0] Identifier expected.  |  go accepts
+modifier-before-rest-parameter: verdict 57, first 0, distinct sources 19
+         57  typescript-go accepts, tsc rejects
+      ts "let g: (public ...a) => void"  tsc [1005,15,3] ')' expected.  |  go accepts
+      ts "f<(readonly ...a) => void>(x);"  tsc [1005,12,3] ')' expected.  |  go accepts
+      ts "let x: (readonly ...a) => void;"  tsc [1110,17,3] Type expected.  |  go accepts
+      ts "f<(public ...a: A[]) => void>(x);"  tsc [1005,10,3] ')' expected.  |  go accepts
+      ts "type X = (public ...a: A[]) => R;"  tsc [1005,17,3] ')' expected.  |  go accepts
+      ts "let x: (public ...a: A[]) => void;"  tsc [1005,15,3] ')' expected.  |  go accepts
+as-or-satisfies-then-operator: verdict 27, first 0, distinct sources 9
+         27  tsc accepts, typescript-go rejects
+      ts "a + b as T * c"  tsc accepts  |  go [1005,11,1] ';' expected.
+      ts "a + b as T * c;"  tsc accepts  |  go [1005,11,1] ';' expected.
+      ts "export const v = a + b as any * c"  tsc accepts  |  go [1005,30,1] ',' expected.
+      ts "export const v = a < b as any + c"  tsc accepts  |  go [1005,30,1] ',' expected.
+      ts "export const v = a + b as any ** c"  tsc accepts  |  go [1005,30,2] ',' expected.
+      ts "export const v = a ** b as any ** c"  tsc accepts  |  go [1005,31,2] ',' expected.
+export-type-without-name: verdict 0, first 21, distinct sources 7
+         12  both reject: TS1005 -> TS1128
+          9  both reject: TS1359 -> TS1128
+      ts "export type = 1"  tsc [1005,12,1] '{' expected.  |  go [1128,0,6] Declaration or statement expected.
+      ts "export type = A;"  tsc [1005,12,1] '{' expected.  |  go [1128,0,6] Declaration or statement expected.
+      ts "export type = x;"  tsc [1005,12,1] '{' expected.  |  go [1128,0,6] Declaration or statement expected.
+      ts "export type = 1;"  tsc [1005,12,1] '{' expected.  |  go [1128,0,6] Declaration or statement expected.
+      ts "export type default = 1"  tsc [1359,12,7] Identifier expected. 'default' is a reserved word that cannot be used here.  |  go [1128,0,6] Declaration or statement expected.
+      ts "export type default from \"x\";"  tsc [1359,12,7] Identifier expected. 'default' is a reserved word that cannot be used here.  |  go [1128,0,6] Declaration or statement expected.
+reference-directive: verdict 9, first 9, distinct sources 6
+          9  tsc accepts, typescript-go rejects
+          9  both reject: TS1453 -> TS1453
+      ts "/// <reference"  tsc accepts  |  go [1084,0,14] Invalid 'reference' directive syntax.
+      ts "/// <reference\nlet v = 1;"  tsc accepts  |  go [1084,0,14] Invalid 'reference' directive syntax.
+      ts "//\n///\n// @\n/// <\n/// <reference\n"  tsc accepts  |  go [1084,18,14] Invalid 'reference' directive syntax.
+      ts "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"  tsc [1453,22,3] `resolution-mode` should be either `require` or `import`.  |  go [1453,44,3] `resolution-mode` should be either `require` or `import`.
+      ts "/// <reference types=\"node\" resolution-mode=\"bogus\"/>\nlet x;"  tsc [1453,22,4] `resolution-mode` should be either `require` or `import`.  |  go [1453,45,5] `resolution-mode` should be either `require` or `import`.
+      ts "/// <reference path=\"a.ts\" resolution-mode=\"import\"/>\n/// <reference types=\"t\" resolution-mo…  tsc [1453,76,1] `resolution-mode` should be either `require` or `import`.  |  go [1453,96,6] `resolution-mode` should be either `require` or `import`.
+invalid-character-span (TS1127 length 0 against 1): verdict 0, first 15, distinct sources 5
+         15  both reject: TS1127 -> TS1127
+      ts "x = \\"  tsc [1127,4,0] Invalid character.  |  go [1127,4,1] Invalid character.
+      ts "x = a\\x41"  tsc [1127,5,0] Invalid character.  |  go [1127,5,1] Invalid character.
+      ts "x = a\\u{zz}"  tsc [1127,5,0] Invalid character.  |  go [1127,5,1] Invalid character.
+      ts "x = a\\u00zz"  tsc [1127,5,0] Invalid character.  |  go [1127,5,1] Invalid character.
+      ts "x = a\\u0020b"  tsc [1127,5,0] Invalid character.  |  go [1127,5,1] Invalid character.
+numeric-literal-prefix-without-digits (TS1351 against TS1125, TS1177, TS1178): verdict 0, first 9, distinct sources 3
+          3  both reject: TS1351 -> TS1125
+          3  both reject: TS1351 -> TS1177
+          3  both reject: TS1351 -> TS1178
+      ts "x = 0x"  tsc [1351,5,1] An identifier or keyword cannot immediately follow a numeric literal.  |  go [1125,6,0] Hexadecimal digit expected.
+      ts "x = 0b"  tsc [1351,5,1] An identifier or keyword cannot immediately follow a numeric literal.  |  go [1177,6,0] Binary digit expected.
+      ts "x = 0o"  tsc [1351,5,1] An identifier or keyword cannot immediately follow a numeric literal.  |  go [1178,6,0] Octal digit expected.
+await-as-declaration-name: verdict 6, first 0, distinct sources 3
+          6  tsc accepts, typescript-go rejects
+      ts "export type await = 1"  tsc accepts  |  go [1109,0,6] Expression expected.
+      ts "export interface await {}"  tsc accepts  |  go [1109,0,6] Expression expected.
+      ts "export default interface await {}"  tsc accepts  |  go [1003,25,5] Identifier expected.

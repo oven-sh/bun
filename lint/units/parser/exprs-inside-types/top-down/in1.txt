@@ -1,0 +1,57 @@
+# A computed property name in object type / interface
+type A = { [Symbol.iterator](): void }
+type A = { [k]: 1 }
+type A = { ["x"]: 1 }
+type A = { [1]: 1 }
+type A = { [`x`]: 1 }
+type A = { [a.b.c]?: 1 }
+type A = { readonly [a.b]: 1 }
+type A = { [a + b]: 1 }
+type A = { [f()]: 1 }
+type A = { [a ? b : c]: 1 }
+type A = { [-1]: 1 }
+type A = { [-a]: 1 }
+type A = { [+1]: 1 }
+type A = { [!a]: 1 }
+type A = { [a, b]: 1 }
+type A = { [function(){}]: 1 }
+type A = { [class {}]: 1 }
+type A = { [() => 1]: 1 }
+type A = { [a => a]: 1 }
+type A = { [async () => { await 1 }]: 1 }
+type A = { [new X]: 1 }
+type A = { [new X()]: 1 }
+type A = { [a!]: 1 }
+type A = { [a as any]: 1 }
+type A = { [<any>a]: 1 }
+type A = { [(a)]: 1 }
+type A = { [(a, b)]: 1 }
+type A = { [a < b]: 1 }
+type A = { [a<b>(c)]: 1 }
+type A = { [a = 1]: 1 }
+type A = { [yield]: 1 }
+type A = { [await x]: 1 }
+type A = { [import.meta.url]: 1 }
+type A = { [import("x")]: 1 }
+type A = { [`a${b}`]: 1 }
+type A = { [`a${b + c}`]: 1 }
+type A = { [void 0]: 1 }
+type A = { [typeof a]: 1 }
+type A = { [typeof a === "b"]: 1 }
+type A = { [this.x]: 1 }
+type A = { [super.x]: 1 }
+type A = { [/re/]: 1 }
+type A = { [a in b]: 1 }
+type A = { [a.b in c]: 1 }
+type A = { [A[]]: 1 }
+type A = { [A | B]: 1 }
+type A = { [keyof T]: 1 }
+type A = { [x extends y ? 1 : 2]: 1 }
+type A = { [{a: 1}.a]: 1 }
+type A = { [[a][0]]: 1 }
+type A = { get [a.b](): 1 }
+type A = { [a.b]<T>(x: T): 1 }
+interface I { [Symbol.iterator](): void; [a + b]: 1 }
+type A = { [a\n.b]: 1 }
+type A = { [K in keyof T]: 1 }
+type A = { [k: string]: 1 }

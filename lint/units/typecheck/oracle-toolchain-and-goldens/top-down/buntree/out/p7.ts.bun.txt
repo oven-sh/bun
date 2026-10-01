@@ -1,0 +1,13 @@
+file p7.ts bytes=147 statements=5
+s_function @11
+s_local @52
+  b_identifier @58 c
+  e_number @62
+s_local @86
+  b_identifier @90 v
+  e_number @94
+s_local @109
+  b_identifier @113 w
+  e_number @132
+s_expr @144
+  e_identifier @144 x

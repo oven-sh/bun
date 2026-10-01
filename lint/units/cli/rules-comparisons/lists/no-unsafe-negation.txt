@@ -1,0 +1,107 @@
+no-unsafe-negation: 57 valid, 45 invalid, 0 different
+VALID:
+"a in b"
+"a in b === false"
+"!(a in b)"
+"(!a) in b"
+"a instanceof b"
+"a instanceof b === false"
+"!(a instanceof b)"
+"(!a) instanceof b"
+"if (! a < b) {}"
+"while (! a > b) {}"
+"foo = ! a <= b;"
+"foo = ! a >= b;"
+"! a <= b"
+"((!a)) in b"
+"( !a ) in b"
+"(/* c */!a) in b"
+"(!a /* c */) in b"
+"( // c\n!a\n// d\n) in b"
+"(!(a)) in b"
+"(!f(x)) instanceof C"
+"(!a)\nin b"
+"!a < b"
+"!a > b"
+"!a <= b"
+"!a >= b"
+"!a == b"
+"!a + b in c"
+"a in !b"
+"a instanceof !b"
+"(!a, c) in b"
+"(c, !a) in b"
+"(!\")\") in b"
+"(!\"(\") in b"
+"(!/\\)/) in b"
+"(!/[(]/) in b"
+"(!`)`) in b"
+"(!`(${ c })(`) in b"
+"(!`${ \"(\" }`) in b"
+"(!f(/* ( */)) in b"
+"(!f(// (\n)) in b"
+"(!a /* ( */ ) in b"
+"!x/2/(1) in b"
+"(!x/2/(1)) in b"
+"(!function(){ return \")\" }) in b"
+"(!class { m() { return \"(\" } }) in b"
+"(!a++) in b"
+"(!a?.b) in c"
+"(!new C()) in b"
+"(!<div>(</div>) in b"
+"(!<a b=\"(\" c='\"' />) in c"
+"(!<a>{\"(\"}</a>) in c"
+"x == NaN != NaN"
+"-a in b"
+"~a in b"
+"typeof a in b"
+"void a in b"
+"+a in b"
+INVALID:
+"!a in b" => 1:1[in]
+"(!a in b)" => 1:2[in]
+"!(a) in b" => 1:1[in]
+"!a instanceof b" => 1:1[instanceof]
+"(!a instanceof b)" => 1:2[instanceof]
+"!(a) instanceof b" => 1:1[instanceof]
+"if (!a in b) {}" => 1:5[in]
+"if (! a   in b) {}" => 1:5[in]
+"if (!a.b.c in d) {}" => 1:5[in]
+"if (!f(x) instanceof C) {}" => 1:5[instanceof]
+"!a in b in c" => 1:1[in]
+"x = !a in b" => 1:5[in]
+"foo(!a in b)" => 1:5[in]
+"foo(!(a) in b)" => 1:5[in]
+"[!a in b]" => 1:2[in]
+"!!a in b" => 1:1[in]
+"!(!a) in b" => 1:1[in]
+"!a in (b)" => 1:1[in]
+"!a in (b in c)" => 1:1[in]
+"!a.in in b" => 1:1[in]
+"!a[\"in\"] in b" => 1:1[in]
+"!\")\" in b" => 1:1[in]
+"!\"(\" in b" => 1:1[in]
+"!/\\)/ in b" => 1:1[in]
+"!/[(]/ in b" => 1:1[in]
+"!`)` in b" => 1:1[in]
+"!`(${ c })(` in b" => 1:1[in]
+"!`${ \")\" }` in b" => 1:1[in]
+"!f(/* ) */) in b" => 1:1[in]
+"!f(// )\n) in b" => 1:1[in]
+"!a /* ) */ in b" => 1:1[in]
+"!a in /* ( */ b" => 1:1[in]
+"!function(){ return /\\(/ }() in b" => 1:1[in]
+"!class { static x = \")\" } in b" => 1:1[in]
+"!a++ in b" => 1:1[in]
+"!a?.b in c" => 1:1[in]
+"!new C in b" => 1:1[in]
+"!<div>)</div> in b" => 1:1[in]
+"!<a b=\")\" /> in c" => 1:1[in]
+"!a in<b/>" => 1:1[in]
+"for (var k = (!a in b);;) {}" => 1:15[in]
+"é = !a in b" => 1:5[in]
+"\"😀\" + (!a in b)" => 1:9[in]
+"!a\nin b" => 1:1[in]
+"!\na in b" => 1:1[in]
+DIFFERENT:
+

@@ -1,0 +1,6 @@
+[
+ ["snapshot-arrow-body", "let v = a ? (x): number => { type U = 1; interface I {} declare const d: number; function o(): void; function o() {} return x } : b;"],
+ ["snapshot-class-members", "let v = a ? (x): C => { class K { m(): void; m() {} [k: string]: any; declare p: number } return new K } : b;"],
+ ["snapshot-not-arrow", "let v = a ? (x) : y => { type U = 1; return y };"],
+ ["snapshot-nested", "let v = a ? (x): any => (b ? (y): any => { type T = 1; return y } : c) : d;"]
+]

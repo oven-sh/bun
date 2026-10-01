@@ -1,0 +1,82 @@
+# parameter properties
+class C { constructor(public a) {} }
+class C { constructor(public a: T) {} }
+class C { constructor(public a?: T) {} }
+class C { constructor(public a = 1) {} }
+class C { constructor(private readonly a: T) {} }
+class C { constructor(readonly a: T) {} }
+class C { constructor(override a: T) {} }
+class C { constructor(public override readonly a: T) {} }
+class C { constructor(readonly public a: T) {} }
+class C { constructor(public public a: T) {} }
+class C { constructor(public private a: T) {} }
+class C { constructor(public {a}) {} }
+class C { constructor(public {a}: T) {} }
+class C { constructor(public [a]: T) {} }
+class C { constructor(public ...a: T[]) {} }
+class C { constructor(...public a: T[]) {} }
+class C { constructor(readonly ...a) {} }
+class C { constructor(public) {} }
+class C { constructor(public, a) {} }
+class C { constructor(public: T) {} }
+class C { constructor(public = 1) {} }
+class C { constructor(public?) {} }
+class C { constructor(readonly) {} }
+class C { constructor(public readonly) {} }
+class C { constructor(public readonly: T) {} }
+class C { constructor(public readonly = 1) {} }
+class C { constructor(public readonly readonly) {} }
+class C { constructor(public a, private b) {} }
+class C { constructor(public\na) {} }
+class C { constructor(public a\n: T) {} }
+class C { constructor(public this) {} }
+class C { constructor(public this: T) {} }
+class C { constructor(static a) {} }
+class C { constructor(declare a) {} }
+class C { constructor(abstract a) {} }
+class C { constructor(accessor a) {} }
+class C { constructor(async a) {} }
+class C { constructor(export a) {} }
+class C { constructor(public static a) {} }
+class C { constructor(public async) {} }
+class C { constructor(public await) {} }
+class C { constructor(public of) {} }
+class C { constructor(public type) {} }
+class C { constructor(public get) {} }
+class C { constructor(public declare) {} }
+class C { constructor(public abstract) {} }
+class C { constructor(public accessor) {} }
+class C { constructor(public static) {} }
+class C { constructor(public constructor) {} }
+class C { constructor(public any) {} }
+class C { constructor(public as) {} }
+class C { constructor(public is) {} }
+class C { constructor(public undefined) {} }
+class C { constructor(public a); constructor(public a) {} }
+class C { constructor(public a) }
+declare class C { constructor(public a) }
+deco: class C { constructor(@d public a) {} }
+deco: class C { constructor(public @d a) {} }
+deco: class C { constructor(@d public readonly a: T) {} }
+class C { m(public a) {} }
+class C { static m(public a) {} }
+class C { set x(public a) {} }
+function f(public a) {}
+function f(readonly a) {}
+function f(public) {}
+function f(readonly) {}
+function f(public readonly) {}
+export const v = function (public a) {}
+export const v = (public a) => 1
+export const v = { m(public a) {} }
+export const v = { constructor(public a) {} }
+class C { "constructor"(public a) {} }
+class C { ["constructor"](public a) {} }
+class C { static constructor(public a) {} }
+class C { constructor(public a) {} constructor(public b) {} }
+type F = (public a) => void
+type F = new (public a) => void
+interface I { m(public a): void }
+interface I { new (public a): I }
+declare function f(public a): void
+abstract class C { abstract m(public a): void }

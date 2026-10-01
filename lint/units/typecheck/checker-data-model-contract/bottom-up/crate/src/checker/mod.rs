@@ -1,0 +1,25 @@
+// Upstream package internal/checker. File names: checker.go is cut as c01..c52 (../../checker-core-scratch/data/split.tsv), the other files keep their names.
+pub mod arena;
+pub mod c01_data;
+pub mod c02_checker_generated;
+pub mod c21_resolved_symbols_diagnostics;
+pub mod c22_symbols_merge;
+pub mod c27_resolve_alias;
+pub mod c30_type_keys;
+pub mod c32_type_resolution;
+pub mod c35_resolve_members;
+pub mod c36_properties_apparent_types;
+pub mod c37_instantiation;
+pub mod c41_new_types;
+pub mod checker;
+pub mod core_lists;
+pub mod flags_generated;
+pub mod flow;
+pub mod inference;
+pub mod mapper;
+pub mod nodebuilder;
+pub mod program;
+pub mod relater;
+pub mod standins;
+pub mod types;
+pub mod utilities;

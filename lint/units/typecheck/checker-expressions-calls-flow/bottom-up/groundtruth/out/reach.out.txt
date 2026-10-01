@@ -1,0 +1,38 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+reach.ts(11,59): error TS1235: A namespace declaration is only allowed at the top level of a namespace or module. [len=9]
+reach.ts(11,95): error TS1235: A namespace declaration is only allowed at the top level of a namespace or module. [len=9]
+reach.ts(12,16): error TS2366: Function lacks ending return statement and return type does not include 'undefined'. [len=6]
+SUGGESTION reach.ts(5,3): suggestion TS7027: Unreachable code detected. [len=16]
+SUGGESTION reach.ts(5,9): suggestion TS6133: 'dead1' is declared but its value is never read. [len=5]
+SUGGESTION reach.ts(7,29): suggestion TS6133: 'hoisted' is declared but its value is never read. [len=7]
+SUGGESTION reach.ts(7,38): suggestion TS7027: Unreachable code detected. [len=16]
+SUGGESTION reach.ts(7,44): suggestion TS6133: 'dead2' is declared but its value is never read. [len=5]
+SUGGESTION reach.ts(7,64): suggestion TS6133: 'stillFine' is declared but its value is never read. [len=9]
+SUGGESTION reach.ts(8,25): suggestion TS7027: Unreachable code detected. [len=16]
+SUGGESTION reach.ts(8,31): suggestion TS6133: 'dead3' is declared but its value is never read. [len=5]
+SUGGESTION reach.ts(9,32): suggestion TS7027: Unreachable code detected. [len=16]
+SUGGESTION reach.ts(9,38): suggestion TS6133: 'dead4' is declared but its value is never read. [len=5]
+SUGGESTION reach.ts(10,63): suggestion TS6133: 'live' is declared but its value is never read. [len=4]
+SUGGESTION reach.ts(10,85): suggestion TS7027: Unreachable code detected. [len=16]
+SUGGESTION reach.ts(10,91): suggestion TS6133: 'dead5' is declared but its value is never read. [len=5]
+SUGGESTION reach.ts(11,26): suggestion TS7027: Unreachable code detected. [len=12]
+SUGGESTION reach.ts(11,31): suggestion TS6196: 'E' is declared but never used. [len=1]
+SUGGESTION reach.ts(11,50): suggestion TS6196: 'CE' is declared but never used. [len=2]
+SUGGESTION reach.ts(11,59): suggestion TS7027: Unreachable code detected. [len=35]
+SUGGESTION reach.ts(11,69): suggestion TS6133: 'N' is declared but its value is never read. [len=1]
+SUGGESTION reach.ts(11,105): suggestion TS6133: 'T' is declared but its value is never read. [len=1]
+SUGGESTION reach.ts(13,67): suggestion TS7027: Unreachable code detected. [len=5]
+SUGGESTION reach.ts(15,1): suggestion TS7028: Unused label. [len=6]
+AFTER check
+STATE flowInvocationCount=9 flowAnalysisDisabled=false
+STATE flowLoopCache=1 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=2
+STATE flowNodeReachable=8 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=110 SymbolCount=124 SignatureCount=12

@@ -1,0 +1,26 @@
+== js-control: program Ir 5118681953 Bc 707210597 ; bun_js_parser symbols Ir 2904091413 Bc 312264098
+   function <bun_js_parser::p::P<false, false>>::parse_paren_expr                       Ir    30402320 Bc    3613960
+   function <bun_js_parser::p::P<false, false>>::parse_prefix                           Ir   147062920 Bc   13964440
+   parse_prefix.rs                                      51:(192360,192360)  64:(935040,0)
+   parse/mod.rs parse_paren_expr                        439:(467520,0)  451:(209760,209760)  514:(779200,155840)  519:(200,200)  601:(800,0)  651:(311280,0)  652:(311280,0)
+   parse_suffix.rs                                      411:(73900,73900)  414:(69360,0)
+== tsx: program Ir 2094544629 Bc 333948041 ; bun_js_parser symbols Ir 1177413167 Bc 137557479
+   function <bun_js_parser::p::P<true, false>>::parse_paren_expr                        Ir    11104000 Bc    1162000
+   function <bun_js_parser::p::P<true, false>>::parse_prefix                            Ir    40386000 Bc    4108000
+   parse_prefix.rs                                      51:(42000,42000)  64:(228000,0)  934:(12000,0)  936:(24000,0)
+   parse/mod.rs parse_paren_expr                        439:(126000,0)  451:(58000,50000)  471:(42000,42000)  473:(24000,0)  479:(42000,42000)  514:(174000,66000)  519:(20000,20000)  571:(40000,20000)  572:(12000,6000)  601:(60000,0)  615:(44000,22000)  651:(44000,0)  652:(46000,0)
+   parse_skip_typescript.rs inlined into parse_paren_expr 24:(24000,0)  45:(48000,0)  1247:(12000,0)  1249:(30000,6000)
+   parse_suffix.rs                                      411:(14000,14000)  414:(20000,0)  421:(30000,10000)
+== src-js: program Ir 7494096459 Bc 1122597607 ; bun_js_parser symbols Ir 4441234076 Bc 512392086
+   function <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr                 Ir       63100 Bc       5200
+   function <bun_js_parser::p::P<true, false>>::parse_paren_expr                        Ir     7118980 Bc     767360
+   function <bun_js_parser::p::P<true, false>>::parse_prefix                            Ir   180003420 Bc   17391600
+   parse_prefix.rs                                      51:(41880,41880)  64:(171480,0)
+   parse/mod.rs parse_paren_expr                        439:(87480,0)  451:(44260,37180)  471:(30100,30100)  473:(4480,0)  479:(30100,30100)  514:(119160,45000)  519:(13680,13680)  571:(27360,13680)  572:(80,40)  601:(40080,0)  615:(31600,15800)  651:(31600,0)  652:(31760,0)
+   parse/mod.rs parse_async_prefix_expr                 1684:(1160,0)  1685:(3480,0)
+   parse_skip_typescript.rs inlined into parse_paren_expr 24:(160,0)  45:(8960,0)  1247:(80,0)  1249:(200,40)
+   parse_suffix.rs                                      411:(32960,32960)  414:(37840,0)  421:(56760,18920)  426:(280,280)  430:(1120,0)
+== bun-types: program Ir 494827244 Bc 94906459 ; bun_js_parser symbols Ir 314408729 Bc 44553098
+   function <bun_js_parser::p::P<true, false>>::parse_prefix                            Ir     1404820 Bc     139760
+== typescript-lib: program Ir 1648899253 Bc 330844816 ; bun_js_parser symbols Ir 1106631069 Bc 160854698
+   function <bun_js_parser::p::P<true, false>>::parse_prefix                            Ir     7518400 Bc     751840

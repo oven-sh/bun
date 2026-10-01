@@ -1,0 +1,150 @@
+# K4-0 noLib, command line mode (--noEmit --noLib --singleThreaded)
+01 data model                    fn=  10 lines=   21 cum_fn=  10 cum_lines=   21
+02 utilities                     fn=   7 lines=  217 cum_fn=  17 cum_lines=  238
+03 type keys, object types       fn=  25 lines=  233 cum_fn=  42 cum_lines=  471
+04 resolution stack              fn=   0 lines=    0 cum_fn=  42 cum_lines=  471
+05 init and globals              fn=  26 lines=  581 cum_fn=  68 cum_lines= 1052
+06 symbol merging                fn=   3 lines=   21 cum_fn=  71 cum_lines= 1073
+07 name resolution               fn=   3 lines=  354 cum_fn=  74 cum_lines= 1427
+08 aliases and modules           fn=   0 lines=    0 cum_fn=  74 cum_lines= 1427
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn=  92 cum_lines= 1745
+10 tuples                        fn=   5 lines=   21 cum_fn=  97 cum_lines= 1766
+11 declared types                fn=   0 lines=    0 cum_fn=  97 cum_lines= 1766
+12 type nodes to types           fn=   0 lines=    0 cum_fn=  97 cum_lines= 1766
+13 constraints                   fn=   0 lines=    0 cum_fn=  97 cum_lines= 1766
+14 base types                    fn=   0 lines=    0 cum_fn=  97 cum_lines= 1766
+15 members                       fn=   1 lines=   26 cum_fn=  98 cum_lines= 1792
+16 lookup                        fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+17 apparent types                fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+18 signatures                    fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+19 instantiation                 fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+20 types of symbols              fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+21 widening                      fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+22 type printer                  fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+23 relations                     fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+24 elaboration                   fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+25 expressions to contextual     fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+26 flow, reachability            fn=   0 lines=    0 cum_fn=  98 cum_lines= 1792
+27 keyof to template             fn=   1 lines=   67 cum_fn=  99 cum_lines= 1859
+28 iteration, async              fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+29 JSX                           fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+30 decorators                    fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+31 declaration checks            fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+32 unused, unreachable           fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+33 grammar                       fn=   0 lines=    0 cum_fn=  99 cum_lines= 1859
+  other: pkg:binder fn=32 lines=901
+last layer entered: 27 keyof to template
+
+# K4a lib es5, harness defaults (--noEmit --singleThreaded --skipDefaultLibCheck --noErrorTruncation --lib es5)
+01 data model                    fn=  15 lines=   31 cum_fn=  15 cum_lines=   31
+02 utilities                     fn=  14 lines=  283 cum_fn=  29 cum_lines=  314
+03 type keys, object types       fn=  29 lines=  263 cum_fn=  58 cum_lines=  577
+04 resolution stack              fn=   3 lines=   31 cum_fn=  61 cum_lines=  608
+05 init and globals              fn=  23 lines=  569 cum_fn=  84 cum_lines= 1177
+06 symbol merging                fn=   6 lines=   59 cum_fn=  90 cum_lines= 1236
+07 name resolution               fn=   6 lines=  389 cum_fn=  96 cum_lines= 1625
+08 aliases and modules           fn=   3 lines=  109 cum_fn=  99 cum_lines= 1734
+09 literal, union, intersection  fn=  25 lines=  388 cum_fn= 124 cum_lines= 2122
+10 tuples                        fn=   5 lines=   21 cum_fn= 129 cum_lines= 2143
+11 declared types                fn=  10 lines=  151 cum_fn= 139 cum_lines= 2294
+12 type nodes to types           fn=   3 lines=   98 cum_fn= 142 cum_lines= 2392
+13 constraints                   fn=   0 lines=    0 cum_fn= 142 cum_lines= 2392
+14 base types                    fn=   2 lines=   59 cum_fn= 144 cum_lines= 2451
+15 members                       fn=  14 lines=  248 cum_fn= 158 cum_lines= 2699
+16 lookup                        fn=   2 lines=   13 cum_fn= 160 cum_lines= 2712
+17 apparent types                fn=   3 lines=   65 cum_fn= 163 cum_lines= 2777
+18 signatures                    fn=   6 lines=   65 cum_fn= 169 cum_lines= 2842
+19 instantiation                 fn=   0 lines=    0 cum_fn= 169 cum_lines= 2842
+20 types of symbols              fn=   9 lines=  315 cum_fn= 178 cum_lines= 3157
+21 widening                      fn=   3 lines=   53 cum_fn= 181 cum_lines= 3210
+22 type printer                  fn=  20 lines=  508 cum_fn= 201 cum_lines= 3718
+23 relations                     fn=  19 lines=  569 cum_fn= 220 cum_lines= 4287
+24 elaboration                   fn=   5 lines=   67 cum_fn= 225 cum_lines= 4354
+25 expressions to contextual     fn=  14 lines=  334 cum_fn= 239 cum_lines= 4688
+26 flow, reachability            fn=   4 lines=   89 cum_fn= 243 cum_lines= 4777
+27 keyof to template             fn=   2 lines=  103 cum_fn= 245 cum_lines= 4880
+28 iteration, async              fn=   0 lines=    0 cum_fn= 245 cum_lines= 4880
+29 JSX                           fn=   0 lines=    0 cum_fn= 245 cum_lines= 4880
+30 decorators                    fn=   1 lines=   38 cum_fn= 246 cum_lines= 4918
+31 declaration checks            fn=  11 lines=  492 cum_fn= 257 cum_lines= 5410
+32 unused, unreachable           fn=   3 lines=   93 cum_fn= 260 cum_lines= 5503
+33 grammar                       fn=   8 lines=  505 cum_fn= 268 cum_lines= 6008
+  other: pkg:binder fn=52 lines=1160
+last layer entered: 33 grammar
+
+# K4b default libs, harness defaults (--noEmit --singleThreaded --skipDefaultLibCheck --noErrorTruncation)
+01 data model                    fn=  18 lines=   41 cum_fn=  18 cum_lines=   41
+02 utilities                     fn=  24 lines=  380 cum_fn=  42 cum_lines=  421
+03 type keys, object types       fn=  30 lines=  270 cum_fn=  72 cum_lines=  691
+04 resolution stack              fn=   3 lines=   31 cum_fn=  75 cum_lines=  722
+05 init and globals              fn=  26 lines=  637 cum_fn= 101 cum_lines= 1359
+06 symbol merging                fn=  16 lines=  242 cum_fn= 117 cum_lines= 1601
+07 name resolution               fn=   9 lines=  439 cum_fn= 126 cum_lines= 2040
+08 aliases and modules           fn=   6 lines=  224 cum_fn= 132 cum_lines= 2264
+09 literal, union, intersection  fn=  28 lines=  415 cum_fn= 160 cum_lines= 2679
+10 tuples                        fn=   5 lines=   21 cum_fn= 165 cum_lines= 2700
+11 declared types                fn=  11 lines=  165 cum_fn= 176 cum_lines= 2865
+12 type nodes to types           fn=  12 lines=  312 cum_fn= 188 cum_lines= 3177
+13 constraints                   fn=   0 lines=    0 cum_fn= 188 cum_lines= 3177
+14 base types                    fn=   2 lines=   59 cum_fn= 190 cum_lines= 3236
+15 members                       fn=  14 lines=  248 cum_fn= 204 cum_lines= 3484
+16 lookup                        fn=   3 lines=   63 cum_fn= 207 cum_lines= 3547
+17 apparent types                fn=   3 lines=   65 cum_fn= 210 cum_lines= 3612
+18 signatures                    fn=  11 lines=  163 cum_fn= 221 cum_lines= 3775
+19 instantiation                 fn=   0 lines=    0 cum_fn= 221 cum_lines= 3775
+20 types of symbols              fn=  10 lines=  359 cum_fn= 231 cum_lines= 4134
+21 widening                      fn=   3 lines=   53 cum_fn= 234 cum_lines= 4187
+22 type printer                  fn=  20 lines=  508 cum_fn= 254 cum_lines= 4695
+23 relations                     fn=  19 lines=  569 cum_fn= 273 cum_lines= 5264
+24 elaboration                   fn=   5 lines=   67 cum_fn= 278 cum_lines= 5331
+25 expressions to contextual     fn=  32 lines= 1144 cum_fn= 310 cum_lines= 6475
+26 flow, reachability            fn=  12 lines=  270 cum_fn= 322 cum_lines= 6745
+27 keyof to template             fn=   8 lines=  191 cum_fn= 330 cum_lines= 6936
+28 iteration, async              fn=   0 lines=    0 cum_fn= 330 cum_lines= 6936
+29 JSX                           fn=   0 lines=    0 cum_fn= 330 cum_lines= 6936
+30 decorators                    fn=   1 lines=   38 cum_fn= 331 cum_lines= 6974
+31 declaration checks            fn=  13 lines=  678 cum_fn= 344 cum_lines= 7652
+32 unused, unreachable           fn=   3 lines=   93 cum_fn= 347 cum_lines= 7745
+33 grammar                       fn=   8 lines=  505 cum_fn= 355 cum_lines= 8250
+  other: pkg:binder fn=68 lines=1336
+last layer entered: 33 grammar
+
+# K4c command line defaults, libs checked (--noEmit --singleThreaded)
+01 data model                    fn=  71 lines=  279 cum_fn=  71 cum_lines=  279
+02 utilities                     fn=  46 lines=  598 cum_fn= 117 cum_lines=  877
+03 type keys, object types       fn=  51 lines=  458 cum_fn= 168 cum_lines= 1335
+04 resolution stack              fn=   4 lines=   56 cum_fn= 172 cum_lines= 1391
+05 init and globals              fn=  33 lines=  716 cum_fn= 205 cum_lines= 2107
+06 symbol merging                fn=  16 lines=  242 cum_fn= 221 cum_lines= 2349
+07 name resolution               fn=  10 lines=  450 cum_fn= 231 cum_lines= 2799
+08 aliases and modules           fn=  11 lines=  395 cum_fn= 242 cum_lines= 3194
+09 literal, union, intersection  fn=  69 lines= 1071 cum_fn= 311 cum_lines= 4265
+10 tuples                        fn=  32 lines=  351 cum_fn= 343 cum_lines= 4616
+11 declared types                fn=  18 lines=  241 cum_fn= 361 cum_lines= 4857
+12 type nodes to types           fn=  35 lines=  652 cum_fn= 396 cum_lines= 5509
+13 constraints                   fn=  24 lines=  515 cum_fn= 420 cum_lines= 6024
+14 base types                    fn=  12 lines=  255 cum_fn= 432 cum_lines= 6279
+15 members                       fn=  39 lines=  958 cum_fn= 471 cum_lines= 7237
+16 lookup                        fn=  18 lines=  196 cum_fn= 489 cum_lines= 7433
+17 apparent types                fn=   9 lines=  112 cum_fn= 498 cum_lines= 7545
+18 signatures                    fn=  53 lines=  667 cum_fn= 551 cum_lines= 8212
+19 instantiation                 fn=  24 lines=  491 cum_fn= 575 cum_lines= 8703
+20 types of symbols              fn=  28 lines=  666 cum_fn= 603 cum_lines= 9369
+21 widening                      fn=   4 lines=   69 cum_fn= 607 cum_lines= 9438
+22 type printer                  fn=  64 lines= 1889 cum_fn= 671 cum_lines=11327
+23 relations                     fn=  97 lines= 3121 cum_fn= 768 cum_lines=14448
+24 elaboration                   fn=   5 lines=   67 cum_fn= 773 cum_lines=14515
+25 expressions to contextual     fn=  79 lines= 2259 cum_fn= 852 cum_lines=16774
+26 flow, reachability            fn=  13 lines=  280 cum_fn= 865 cum_lines=17054
+27 keyof to template             fn=  57 lines= 1263 cum_fn= 922 cum_lines=18317
+28 iteration, async              fn=  15 lines=  321 cum_fn= 937 cum_lines=18638
+29 JSX                           fn=   0 lines=    0 cum_fn= 937 cum_lines=18638
+30 decorators                    fn=   1 lines=   38 cum_fn= 938 cum_lines=18676
+31 declaration checks            fn=  84 lines= 2701 cum_fn=1022 cum_lines=21377
+32 unused, unreachable           fn=   4 lines=   98 cum_fn=1026 cum_lines=21475
+33 grammar                       fn=  46 lines= 1249 cum_fn=1072 cum_lines=22724
+  other: Z-SERVICES fn=5 lines=72
+  other: checker:nodebuilder_hover.go fn=1 lines=3
+  other: pkg:binder fn=68 lines=1336
+last layer entered: 33 grammar
+

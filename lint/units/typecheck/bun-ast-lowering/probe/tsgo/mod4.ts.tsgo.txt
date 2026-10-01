@@ -1,0 +1,27 @@
+file /mod4.ts scriptKind=3 variant=0 dts=false textLen=59
+externalModuleIndicator KindFunctionDeclaration[0,40)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=14 identifiers=2 text=3 reparsedClones=0
+root KindSourceFile [0,59) f=0x0
+  .Statements: list [0,58) n=2
+    - KindFunctionDeclaration [0,40) f=0x0
+      .Body: KindBlock [37,40) f=0x2000
+        .Statements: list [39,39) n=0
+      .Parameters: list [36,36) n=0
+      .modifiers.flags=0xc20
+      .modifiers: list [0,20) n=3
+        - KindExportKeyword [0,6) f=0x0
+        - KindDefaultKeyword [6,14) f=0x0
+        - KindAsyncKeyword [14,20) f=0x0
+      .name: KindIdentifier [29,35) f=0x0 Text="named"
+    - KindVariableStatement [40,58) f=0x0
+      .DeclarationList: KindVariableDeclarationList [47,57) f=0x1
+        .Declarations: list [51,57) n=1
+          - KindVariableDeclaration [51,57) f=0x0
+            .Initializer: KindNumericLiteral [55,57) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [51,53) f=0x0 Text="z"
+      .modifiers.flags=0x20
+      .modifiers: list [40,47) n=1
+        - KindExportKeyword [40,47) f=0x0
+  .EndOfFileToken: KindEndOfFile [58,59) f=0x0

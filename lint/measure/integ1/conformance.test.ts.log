@@ -1,0 +1,429 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/lint/conformance.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:424:22)
+-------------------------------
+
+
+# Unhandled error between tests
+-------------------------------
+94 |   return names.some(name => beyondCodeUnitOrder.test(name)) ? names.sort(compareStrings) : names.sort();
+95 | }
+96 | 
+97 | // The error baselines that are directly in a directory, in the order of their names.
+98 | export function listErrorBaselines(directory: string, origin: Origin): BaselineFile[] {
+99 |   const names = readdirSync(directory).filter(name => name.endsWith(".errors.txt"));
+                     ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/baselines/typescript-go/compiler'
+      at listErrorBaselines (/workspace/bun/test/cli/lint/conformance/runner/roundtrip.ts:99:17)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:541:10)
+-------------------------------
+
+
+# Unhandled error between tests
+-------------------------------
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:666:22)
+-------------------------------
+
+
+# Unhandled error between tests
+-------------------------------
+1129 |   });
+1130 | });
+1131 | 
+1132 | describe("expectations.json", () => {
+1133 |   const { formatExpectations, parseExpectations, sampleListed } = runner;
+1134 |   const text = readFileSync(join(home, "expectations.json"), "utf8");
+                      ^
+error: ENOENT: no such file or directory, open '/workspace/bun/test/cli/lint/conformance/expectations.json'
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1134:16)
+-------------------------------
+
+197 |   return failures;
+198 | }
+199 | 
+200 | describe("reference", () => {
+201 |   test("the pinned answers are those of the commits that UPSTREAM names", () => {
+202 |     const commits = readFileSync(join(home, "UPSTREAM"), "utf8").match(/\b[0-9a-f]{40}\b/g) ?? [];
+                          ^
+error: ENOENT: no such file or directory, open '/workspace/bun/test/cli/lint/conformance/UPSTREAM'
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:202:21)
+(fail) reference > the pinned answers are those of the commits that UPSTREAM names [7.25ms]
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:221:14)
+(fail) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [8.42ms]
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:123:18)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:243:12)
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [526.68ms]
+(pass) reference > the case and space tables are those of Go [2043.82ms]
+(pass) directives > the vectors of the reference parser [1553.11ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:373:61)
+(fail) variations > 72 of the 126 declared options vary [13.76ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > no setting [9.46ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > one value [2.62ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > two values [2.63ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a value twice [7.17ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > one value by two names keeps the first name [6.55ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > the cross product, keys sorted in the name [7.63ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > the last occurrence wins [6.29ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value [1.67ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value but one [27.43ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value but one leaves nothing to vary [5.63ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a value that is taken out again [1.97ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a name in upper case [95.98ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > an option that does not vary [2.04ms]
+399 |   ] as [string, string, string[]][])("%s", (_label, text, want) => {
+400 |     expect(names(text).sort()).toEqual(want.slice().sort());
+401 |   });
+402 | 
+403 |   test("a set of variations that is empty stops the case", () => {
+404 |     expect(() => names("// @strict: -true, -false, *\n")).toThrow("resulted in an empty set");
+                                                                ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "resulted in an empty set"
+Received message: "getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)"
+
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:404:59)
+(fail) variations > a set of variations that is empty stops the case [5.98ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:409:18)
+(fail) variations > 25 variations are the most [4.80ms]
+(pass) expectations > the file has one form [19.44ms]
+(pass) expectations > a listed name that does not pass is a failure, and a name that passes enters and never leaves [195.44ms]
+(pass) expectations > the names that pass and are not listed are printed with the one command that adds them [8.55ms]
+(pass) expectations > a check that reports nothing adds no name: list C takes no more names of a directory than list E has [5.55ms]
+(pass) plain format > one located diagnostic [102.84ms]
+(pass) plain format > empty text is an empty list [2.51ms]
+(pass) plain format > a chain: two spaces per level, siblings and a way back up [79.07ms]
+(pass) plain format > a line that is deeper than one level below the line before keeps its spaces [4.59ms]
+(pass) plain format > names: spaces, parentheses, a drive, a line break of Windows [4.61ms]
+(pass) plain format > a line that starts with a category has no file [2.75ms]
+(pass) plain format > the code of a rule [2.93ms]
+(pass) plain format > a text with a crash report is refused whole [2.27ms]
+(pass) plain format > a text with a code frame is refused whole [1.15ms]
+(pass) plain format > a text with an empty line is refused whole [0.59ms]
+(pass) plain format > a text with a chain line first is refused whole [0.82ms]
+(pass) plain format > a text with one space is refused whole [0.62ms]
+(pass) plain format > a text with spaces only is refused whole [0.62ms]
+(pass) plain format > a text with no line break at the end is refused whole [0.39ms]
+(pass) plain format > a text with no code is refused whole [0.39ms]
+(pass) plain format > a text with a summary is refused whole [0.60ms]
+(pass) plain format > a text with line zero is refused whole [0.57ms]
+(pass) plain format > a text with an unknown category is refused whole [0.39ms]
+(pass) plain format > a text with a debug log is refused whole [0.73ms]
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+error: ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:892:28)
+(fail) plain format > the first section of the baselines of one of 250 cases is the plain format [7.08ms]
+(pass) default check > the probe: a command that is no file [195.66ms]
+(pass) default check > the probe: a command that dies [664.26ms]
+(pass) default check > the probe: a command that takes the flag and does nothing [2860.32ms]
+(pass) default check > the probe: a command that runs its operand [5012.60ms]
+(pass) default check > the probe: a command that lints [6695.30ms]
+(pass) default check > a command that runs its operand gets no instance [3448.41ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [2529.00ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [5330.81ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [9205.92ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [9329.28ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [6006.36ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [2185.33ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [1912.25ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [1904.05ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal [1251.32ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [2770.39ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [1736.77ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [2443.44ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [4548.86ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [3319.19ms]
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+    path: "/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler",
+ syscall: "scandir",
+   errno: -2,
+    code: "ENOENT"
+
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at instanceOf (/workspace/bun/test/cli/lint/conformance.test.ts:106:16)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:173:22)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:197:10)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1111:18)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1114:4)
+(fail) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [32.21ms]
+78 | 
+79 | // The base name of every case to its path below the cases, from the names of the directories alone.
+80 | const cases = lazy(() => {
+81 |   const out = new Map<string, string>();
+82 |   const walk = (rel: string) => {
+83 |     for (const entry of readdirSync(`${corpusRoot}/cases/${rel}`, { withFileTypes: true })) {
+                             ^
+ENOENT: no such file or directory, scandir '/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler'
+    path: "/workspace/bun/test/cli/lint/conformance/corpus/cases/compiler",
+ syscall: "scandir",
+   errno: -2,
+    code: "ENOENT"
+
+      at walk (/workspace/bun/test/cli/lint/conformance.test.ts:83:25)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:88:3)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at instanceOf (/workspace/bun/test/cli/lint/conformance.test.ts:106:16)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:173:22)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:197:10)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1123:28)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1129:4)
+(fail) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [9.94ms]
+
+22 tests failed:
+(fail) reference > the pinned answers are those of the commits that UPSTREAM names [7.25ms]
+(fail) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [8.42ms]
+(fail) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [526.68ms]
+(fail) variations > 72 of the 126 declared options vary [13.76ms]
+(fail) variations > no setting [9.46ms]
+(fail) variations > one value [2.62ms]
+(fail) variations > two values [2.63ms]
+(fail) variations > a value twice [7.17ms]
+(fail) variations > one value by two names keeps the first name [6.55ms]
+(fail) variations > the cross product, keys sorted in the name [7.63ms]
+(fail) variations > the last occurrence wins [6.29ms]
+(fail) variations > every value [1.67ms]
+(fail) variations > every value but one [27.43ms]
+(fail) variations > every value but one leaves nothing to vary [5.63ms]
+(fail) variations > a value that is taken out again [1.97ms]
+(fail) variations > a name in upper case [95.98ms]
+(fail) variations > an option that does not vary [2.04ms]
+(fail) variations > a set of variations that is empty stops the case [5.98ms]
+(fail) variations > 25 variations are the most [4.80ms]
+(fail) plain format > the first section of the baselines of one of 250 cases is the plain format [7.08ms]
+(fail) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [32.21ms]
+(fail) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [9.94ms]
+
+ 45 pass
+ 22 fail
+ 4 errors
+ 62 expect() calls
+Ran 67 tests across 1 file. [29.14s]

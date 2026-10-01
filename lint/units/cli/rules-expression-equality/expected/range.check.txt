@@ -1,0 +1,4 @@
+checked 43 reported nodes, 0 mismatches
+MISMATCH "a.b = ( /* c */ a).b" eslint [ 6, 20 ] "(/*c*/a).b" ours [ 16, 20, 1 ] "(a).b"
+checked 107 reported nodes, 1 mismatches
+checked 22 reported nodes, 0 mismatches

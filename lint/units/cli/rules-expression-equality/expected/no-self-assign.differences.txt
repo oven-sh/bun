@@ -1,0 +1,16 @@
+same answer: 217; different: 5
+  "a[0x10n] = a[16n]"
+      eslint     1:12 'a[16n]' is assigned to itself.
+      structural (none)
+  "a[/x/gi] = a[/x/ig]"
+      eslint     1:12 'a[/x/ig]' is assigned to itself.
+      structural (none)
+  "a[/x/ig] = a['/x/gi']"
+      eslint     1:12 'a['/x/gi']' is assigned to itself.
+      structural (none)
+  "({a, a} = {a})"
+      eslint     1:12 'a' is assigned to itself. | 1:12 'a' is assigned to itself.
+      structural 1:12 'a' is assigned to itself.
+  "a[/x/yg] = a[/x/gy]"
+      eslint     1:12 'a[/x/gy]' is assigned to itself.
+      structural (none)

@@ -1,0 +1,3 @@
+class C { accessor a = 1 }
+class C { static accessor a = 1 }
+class C { @dec accessor a = 1 }

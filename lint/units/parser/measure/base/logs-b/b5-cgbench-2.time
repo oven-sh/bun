@@ -1,0 +1,8 @@
+QUEUED 1790702384560 2026-09-29T17:19:44+00:00
+CMD /workspace/notes/lint/tools/cgbench.sh /workspace/notes/lint/units/parser/measure/base/bin/bun-profile /workspace/notes/lint/units/parser/measure/base/cg-b b-run2 20
+START 1790703088787 2026-09-29T17:31:28+00:00 load=354.82 327.60 328.53
+END 1790703205135 2026-09-29T17:33:25+00:00 load=190.57 274.83 309.14
+EXIT 0
+WAIT_MS 704227
+RUN_MS 116348
+DONE

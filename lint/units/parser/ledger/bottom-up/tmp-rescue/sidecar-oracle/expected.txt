@@ -1,0 +1,312 @@
+== var-annotation  "let a: string = \"\", [b]: T[] = [], {c}: { c: U } = o;"
+   VariableDeclaration[4,18) name[4,5) .type = StringKeyword[7,13) "string"
+   VariableDeclaration[20,33) name[20,23) .type = ArrayType[25,28) "T[]"
+   VariableDeclaration[35,52) name[35,38) .type = TypeLiteral[40,48) "{ c: U }"
+   PropertySignature[42,46) name[42,43) .type = TypeReference[45,46) "U"
+== var-definite  "let d!: number;"
+   VariableDeclaration[4,14) name[4,5) .type = NumberKeyword[8,14) "number"
+   VariableDeclaration[4,14) tokens ! at 5
+== var-nested-gt  "let x: A<B<C>>= y"
+   VariableDeclaration[4,17) name[4,5) .type = TypeReference[7,14) "A<B<C>>"
+== for-of-annotation  "for (const k: K of ks) {}"
+   VariableDeclaration[11,15) name[11,12) .type = TypeReference[14,15) "K"
+== catch-annotation  "try {} catch (e: unknown) {}"
+   VariableDeclaration[14,24) name[14,15) .type = UnknownKeyword[17,24) "unknown"
+== fn-params  "function f(a: A, b?: B, ...c: C[]) {}"
+   FunctionDeclaration[0,37) params pos 11 end 33 body[35,37)
+   Parameter[11,15) name[11,12) .type = TypeReference[14,15) "A"
+   Parameter[17,22) name[17,18) .type = TypeReference[21,22) "B"
+   Parameter[17,22) tokens ? at 18
+   Parameter[24,33) name[27,28) .type = ArrayType[30,33) "C[]"
+   Parameter[24,33) tokens ... at 24
+== fn-this  "function f(this: Window, a: A) {}"
+   FunctionDeclaration[0,33) params pos 11 end 29 body[31,33)
+   Parameter[11,23) name[11,15) .type = TypeReference[17,23) "Window"
+   Parameter[11,23) THIS-PARAM name[11,15) type TypeReference[17,23) index 0
+   Parameter[25,29) name[25,26) .type = TypeReference[28,29) "A"
+== fn-this-no-type  "function f(this) {}"
+   FunctionDeclaration[0,19) params pos 11 end 15 body[17,19)
+   Parameter[11,15) THIS-PARAM name[11,15) type none index 0
+== fn-return  "function f(): void {}"
+   FunctionDeclaration[0,21) name[9,10) .type = VoidKeyword[14,18) "void"
+   FunctionDeclaration[0,21) params pos 11 end 11 body[19,21)
+== fn-predicate  "function f(x: any): x is string { return true }"
+   FunctionDeclaration[0,47) name[9,10) .type = FirstTypeNode[20,31) "x is string"
+   FunctionDeclaration[0,47) params pos 11 end 17 body[32,47)
+   Parameter[11,17) name[11,12) .type = AnyKeyword[14,17) "any"
+== fn-asserts  "function f(x: any): asserts x is string {}"
+   FunctionDeclaration[0,42) name[9,10) .type = FirstTypeNode[20,39) "asserts x is string"
+   FunctionDeclaration[0,42) params pos 11 end 17 body[40,42)
+   Parameter[11,17) name[11,12) .type = AnyKeyword[14,17) "any"
+== fn-asserts-bare  "function f(x: any): asserts x {}"
+   FunctionDeclaration[0,32) name[9,10) .type = FirstTypeNode[20,29) "asserts x"
+   FunctionDeclaration[0,32) params pos 11 end 17 body[30,32)
+   Parameter[11,17) name[11,12) .type = AnyKeyword[14,17) "any"
+== method-this-predicate  "class C { m(): this is D { return true } }"
+   ClassDeclaration[0,42) class keyword at 0
+   MethodDeclaration[10,40) name[10,11) .type = FirstTypeNode[15,24) "this is D"
+   MethodDeclaration[10,40) params pos 12 end 12 body[25,40)
+== fn-type-params  "function f<const T extends U = V, W>(a: T) {}"
+     FunctionDeclaration.typeParameters: list pos 11 end 35 count 2 :: TypeParameter[11,32)"const T extends U = V" , TypeParameter[34,35)"W"
+   FunctionDeclaration[0,45) params pos 37 end 41 body[43,45)
+   Parameter[37,41) name[37,38) .type = TypeReference[40,41) "T"
+== fn-expr-type-params  "const g = function <T>(a: T): T { return a }"
+   FunctionExpression[10,44) .type = TypeReference[30,31) "T"
+     FunctionExpression.typeParameters: list pos 20 end 21 count 1 :: TypeParameter[20,21)"T"
+   FunctionExpression[10,44) params pos 23 end 27 body[32,44)
+   Parameter[23,27) name[23,24) .type = TypeReference[26,27) "T"
+== fn-overload  "function f(a: string): void;\nfunction f(a: any) {}"
+   FunctionDeclaration[0,28) name[9,10) .type = VoidKeyword[23,27) "void"
+   FunctionDeclaration[0,28) params pos 11 end 20 no body
+   Parameter[11,20) name[11,12) .type = StringKeyword[14,20) "string"
+   FunctionDeclaration[29,50) params pos 40 end 46 body[48,50)
+   Parameter[40,46) name[40,41) .type = AnyKeyword[43,46) "any"
+== declare-fn  "declare function f<T>(a: T): T;"
+   FunctionDeclaration[0,31) name[17,18) .type = TypeReference[29,30) "T"
+     FunctionDeclaration.typeParameters: list pos 19 end 20 count 1 :: TypeParameter[19,20)"T"
+   FunctionDeclaration[0,31) params pos 22 end 26 no body
+   Parameter[22,26) name[22,23) .type = TypeReference[25,26) "T"
+== arrow-params  "const f = (a: A, b?: B, ...c: C[]): R => a"
+   ArrowFunction[10,42) .type = TypeReference[36,37) "R"
+   ArrowFunction[10,42) params pos 11 end 33 body[41,42) => at 38
+   Parameter[11,15) name[11,12) .type = TypeReference[14,15) "A"
+   Parameter[17,22) name[17,18) .type = TypeReference[21,22) "B"
+   Parameter[17,22) tokens ? at 18
+   Parameter[24,33) name[27,28) .type = ArrayType[30,33) "C[]"
+   Parameter[24,33) tokens ... at 24
+== arrow-pattern-params  "const f = ({ a, b = 1 }: P, [c]: Q = []) => a"
+   ArrowFunction[10,45) params pos 11 end 39 body[44,45) => at 41
+   Parameter[11,26) name[11,23) .type = TypeReference[25,26) "P"
+   Parameter[28,39) name[28,31) .type = TypeReference[33,34) "Q"
+== arrow-type-params  "const f = <T,>(a: T): T => a"
+   ArrowFunction[10,28) .type = TypeReference[22,23) "T"
+     ArrowFunction.typeParameters: list pos 11 end 13 count 1 trailingComma :: TypeParameter[11,12)"T"
+   ArrowFunction[10,28) params pos 15 end 19 body[27,28) => at 24
+   Parameter[15,19) name[15,16) .type = TypeReference[18,19) "T"
+== arrow-type-params-extends  "const f = <T extends U>(a: T) => a"
+     ArrowFunction.typeParameters: list pos 11 end 22 count 1 :: TypeParameter[11,22)"T extends U"
+   ArrowFunction[10,34) params pos 24 end 28 body[33,34) => at 30
+   Parameter[24,28) name[24,25) .type = TypeReference[27,28) "T"
+== arrow-async  "const f = async (a: A): Promise<A> => a"
+   ArrowFunction[10,39) .type = TypeReference[24,34) "Promise<A>"
+   ArrowFunction[10,39) params pos 17 end 21 body[38,39) => at 35
+   Parameter[17,21) name[17,18) .type = TypeReference[20,21) "A"
+== arrow-async-type-params  "const f = async <T>(a: T) => a"
+     ArrowFunction.typeParameters: list pos 17 end 18 count 1 :: TypeParameter[17,18)"T"
+   ArrowFunction[10,30) params pos 20 end 24 body[29,30) => at 26
+   Parameter[20,24) name[20,21) .type = TypeReference[23,24) "T"
+== async-call-type-args  "const r = async<T>(a)"
+     CallExpression.typeArguments: list pos 16 end 17 count 1 :: TypeReference[16,17)"T"
+   CallExpression[10,21) -> Identifier[10,15)
+== arrow-in-conditional-true  "const r = c ? (a: A): B => a : d"
+   ArrowFunction[14,28) .type = TypeReference[22,23) "B"
+   ArrowFunction[14,28) params pos 15 end 19 body[27,28) => at 24
+   Parameter[15,19) name[15,16) .type = TypeReference[18,19) "A"
+== paren-in-conditional  "const r = c ? (a) : b => d"
+   ParenthesizedExpression[14,17) -> Identifier[15,16)
+   ArrowFunction[20,26) params pos 19 end 21 body[25,26) => at 22
+== arrow-in-conditional-nested  "const r = c ? (a): B => e ? (f) : g => h : d"
+   ParenthesizedExpression[14,17) -> Identifier[15,16)
+   ArrowFunction[19,44) params pos 18 end 20 body[24,44) => at 21
+   ArrowFunction[28,40) .type = TypeReference[34,35) "g"
+   ArrowFunction[28,40) params pos 29 end 30 body[39,40) => at 36
+== arrow-predicate  "const f = (a: any): a is A<B>=> true"
+   ArrowFunction[10,36) .type = FirstTypeNode[20,29) "a is A<B>"
+   ArrowFunction[10,36) params pos 11 end 17 body[32,36) => at 29
+   Parameter[11,17) name[11,12) .type = AnyKeyword[14,17) "any"
+== class-type-params  "class C<in out T, const U> {}"
+     ClassDeclaration.typeParameters: list pos 8 end 25 count 2 :: TypeParameter[8,16)"in out T" , TypeParameter[18,25)"const U"
+   ClassDeclaration[0,29) class keyword at 0
+== class-expr-type-params  "const c = class<T> {}"
+     ClassExpression.typeParameters: list pos 16 end 17 count 1 :: TypeParameter[16,17)"T"
+   ClassExpression[10,21) class keyword at 10
+== class-extends-targs  "class C extends B<T, U> {}"
+   ClassDeclaration[0,26) class keyword at 0
+   HeritageClause[8,23) token ExtendsKeyword :: ExpressionWithTypeArguments[16,23) expr Identifier[16,17) targs pos 18 end 22
+     ExpressionWithTypeArguments.typeArguments: list pos 18 end 22 count 2 :: TypeReference[18,19)"T" , TypeReference[21,22)"U"
+   ExpressionWithTypeArguments[16,23) -> Identifier[16,17)
+== class-extends-targs-newline  "class C extends B<T>\n{}"
+   ClassDeclaration[0,23) class keyword at 0
+   HeritageClause[8,20) token ExtendsKeyword :: ExpressionWithTypeArguments[16,20) expr Identifier[16,17) targs pos 18 end 19
+     ExpressionWithTypeArguments.typeArguments: list pos 18 end 19 count 1 :: TypeReference[18,19)"T"
+   ExpressionWithTypeArguments[16,20) -> Identifier[16,17)
+== class-extends-call  "class C extends mixin<T>(B) {}"
+   ClassDeclaration[0,30) class keyword at 0
+   HeritageClause[8,27) token ExtendsKeyword :: ExpressionWithTypeArguments[16,27) expr CallExpression[16,27)
+   ExpressionWithTypeArguments[16,27) -> CallExpression[16,27)
+     CallExpression.typeArguments: list pos 22 end 23 count 1 :: TypeReference[22,23)"T"
+   CallExpression[16,27) -> Identifier[16,21)
+== class-extends-dotted  "class C extends a.b.D<T> implements I<T>, J.K {}"
+   ClassDeclaration[0,48) class keyword at 0
+   HeritageClause[8,24) token ExtendsKeyword :: ExpressionWithTypeArguments[16,24) expr PropertyAccessExpression[16,21) targs pos 22 end 23
+     ExpressionWithTypeArguments.typeArguments: list pos 22 end 23 count 1 :: TypeReference[22,23)"T"
+   ExpressionWithTypeArguments[16,24) -> PropertyAccessExpression[16,21)
+   HeritageClause[25,45) token FirstFutureReservedWord :: ExpressionWithTypeArguments[36,40) expr Identifier[36,37) targs pos 38 end 39 , ExpressionWithTypeArguments[42,45) expr PropertyAccessExpression[42,45)
+     ExpressionWithTypeArguments.typeArguments: list pos 38 end 39 count 1 :: TypeReference[38,39)"T"
+   ExpressionWithTypeArguments[36,40) -> Identifier[36,37)
+   ExpressionWithTypeArguments[42,45) -> PropertyAccessExpression[42,45)
+== class-implements  "class C implements I, J<K> {}"
+   ClassDeclaration[0,29) class keyword at 0
+   HeritageClause[8,26) token FirstFutureReservedWord :: ExpressionWithTypeArguments[19,20) expr Identifier[19,20) , ExpressionWithTypeArguments[22,26) expr Identifier[22,23) targs pos 24 end 25
+   ExpressionWithTypeArguments[19,20) -> Identifier[19,20)
+     ExpressionWithTypeArguments.typeArguments: list pos 24 end 25 count 1 :: TypeReference[24,25)"K"
+   ExpressionWithTypeArguments[22,26) -> Identifier[22,23)
+== class-field  "class C { a: A = 1; static b?: B; c!: C; readonly [k]: D; declare e: E; accessor f: F }"
+   ClassDeclaration[0,87) class keyword at 0
+   PropertyDeclaration[10,19) name[10,11) .type = TypeReference[13,14) "A"
+   PropertyDeclaration[20,33) name[27,28) .type = TypeReference[31,32) "B"
+   PropertyDeclaration[20,33) tokens ? at 28
+   PropertyDeclaration[34,40) name[34,35) .type = TypeReference[38,39) "C"
+   PropertyDeclaration[34,40) tokens ! at 35
+   PropertyDeclaration[41,57) name[50,53) .type = TypeReference[55,56) "D"
+   PropertyDeclaration[58,71) name[66,67) .type = TypeReference[69,70) "E"
+   PropertyDeclaration[72,85) name[81,82) .type = TypeReference[84,85) "F"
+== class-method  "class C { m<T>(this: C, a: T): T { return a } get x(): X { return 1 } set x(v: X) {} constructor(private p: P, q?: Q) {} }"
+   ClassDeclaration[0,122) class keyword at 0
+   MethodDeclaration[10,45) name[10,11) .type = TypeReference[31,32) "T"
+     MethodDeclaration.typeParameters: list pos 12 end 13 count 1 :: TypeParameter[12,13)"T"
+   MethodDeclaration[10,45) params pos 15 end 28 body[33,45)
+   Parameter[15,22) name[15,19) .type = TypeReference[21,22) "C"
+   Parameter[15,22) THIS-PARAM name[15,19) type TypeReference[21,22) index 0
+   Parameter[24,28) name[24,25) .type = TypeReference[27,28) "T"
+   GetAccessor[46,69) name[50,51) .type = TypeReference[55,56) "X"
+   GetAccessor[46,69) params pos 52 end 52 body[57,69)
+   SetAccessor[70,84) params pos 76 end 80 body[82,84)
+   Parameter[76,80) name[76,77) .type = TypeReference[79,80) "X"
+   Constructor[85,120) params pos 97 end 116 body[118,120)
+   Parameter[97,109) name[105,106) .type = TypeReference[108,109) "P"
+   Parameter[111,116) name[111,112) .type = TypeReference[115,116) "Q"
+   Parameter[111,116) tokens ? at 112
+== class-index-signature  "class C { [key: string]: number; static readonly [k: symbol]: any }"
+   ClassDeclaration[0,67) class keyword at 0
+   IndexSignature[10,32) .type = NumberKeyword[25,31) "number"
+   IndexSignature[10,32) params Parameter[11,22) name[11,14) type StringKeyword[16,22) type NumberKeyword[25,31) modifiers 
+   Parameter[11,22) name[11,14) .type = StringKeyword[16,22) "string"
+   IndexSignature[33,65) .type = AnyKeyword[62,65) "any"
+   IndexSignature[33,65) params Parameter[50,59) name[50,51) type SymbolKeyword[53,59) type AnyKeyword[62,65) modifiers StaticKeyword,ReadonlyKeyword
+   Parameter[50,59) name[50,51) .type = SymbolKeyword[53,59) "symbol"
+== object-method  "const o = { m<T>(a: T): T { return a } }"
+   MethodDeclaration[12,38) name[12,13) .type = TypeReference[24,25) "T"
+     MethodDeclaration.typeParameters: list pos 14 end 15 count 1 :: TypeParameter[14,15)"T"
+   MethodDeclaration[12,38) params pos 17 end 21 body[26,38)
+   Parameter[17,21) name[17,18) .type = TypeReference[20,21) "T"
+== call-type-args  "f<A<B>>(x)"
+     CallExpression.typeArguments: list pos 2 end 6 count 1 :: TypeReference[2,6)"A<B>"
+   CallExpression[0,10) -> Identifier[0,1)
+== call-type-args-dotted  "a.b.c<T>(x)"
+     CallExpression.typeArguments: list pos 6 end 7 count 1 :: TypeReference[6,7)"T"
+   CallExpression[0,11) -> PropertyAccessExpression[0,5)
+== call-type-args-shift  "f<<T>(a: T) => void>(g)"
+     CallExpression.typeArguments: list pos 2 end 19 count 1 :: FunctionType[2,19)"<T>(a: T) => void"
+   CallExpression[0,23) -> Identifier[0,1)
+   Parameter[6,10) name[6,7) .type = TypeReference[9,10) "T"
+== optional-call-type-args  "a?.<T>(x)"
+     CallExpression.typeArguments: list pos 4 end 5 count 1 :: TypeReference[4,5)"T"
+   CallExpression[0,9) -> Identifier[0,1) ?. at 1
+== optional-chain-call-type-args  "a?.b<T>(x)"
+     CallExpression.typeArguments: list pos 5 end 6 count 1 :: TypeReference[5,6)"T"
+   CallExpression[0,10) -> PropertyAccessExpression[0,4)
+== instantiation-then-optional-call  "a<U>?.<T>(x)"
+     CallExpression.typeArguments: list pos 7 end 8 count 1 :: TypeReference[7,8)"T"
+   CallExpression[0,12) -> ExpressionWithTypeArguments[0,4) ?. at 4
+     ExpressionWithTypeArguments.typeArguments: list pos 2 end 3 count 1 :: TypeReference[2,3)"U"
+   ExpressionWithTypeArguments[0,4) -> Identifier[0,1)
+== new-type-args  "new F<A<B>>()"
+     NewExpression.typeArguments: list pos 6 end 10 count 1 :: TypeReference[6,10)"A<B>"
+   NewExpression[0,13) -> Identifier[4,5)
+== new-type-args-no-parens  "new F<T>;"
+     NewExpression.typeArguments: list pos 6 end 7 count 1 :: TypeReference[6,7)"T"
+   NewExpression[0,8) -> Identifier[4,5)
+== new-optional-chain  "new a?.<T>()"
+   diag TS1209 at 5+2: Invalid optional chain from new expression. Did you mean to call 'a()'?
+     CallExpression.typeArguments: list pos 8 end 9 count 1 :: TypeReference[8,9)"T"
+   CallExpression[0,12) -> NewExpression[0,5) ?. at 5
+   NewExpression[0,5) -> Identifier[4,5)
+== tagged-type-args  "f<T>`x${1}`"
+     TaggedTemplateExpression.typeArguments: list pos 2 end 3 count 1 :: TypeReference[2,3)"T"
+   TaggedTemplateExpression[0,11) -> Identifier[0,1)
+== instantiation  "const g = f<A<B>>;"
+     ExpressionWithTypeArguments.typeArguments: list pos 12 end 16 count 1 :: TypeReference[12,16)"A<B>"
+   ExpressionWithTypeArguments[10,17) -> Identifier[10,11)
+== instantiation-nonnull-call  "f<T>!(x)"
+   ParenthesizedExpression[5,8) -> Identifier[6,7)
+== instantiation-paren-call  "(f<T>)(x)"
+   CallExpression[0,9) -> ParenthesizedExpression[0,6)
+   ParenthesizedExpression[0,6) -> ExpressionWithTypeArguments[1,5)
+     ExpressionWithTypeArguments.typeArguments: list pos 3 end 4 count 1 :: TypeReference[3,4)"T"
+   ExpressionWithTypeArguments[1,5) -> Identifier[1,2)
+== decorator-type-args  "@d<T> class C {}"
+   diag TS1146 at 2+0: Declaration expected.
+   Decorator[0,2) -> Identifier[1,2)
+   TypeAssertionExpression[2,16) operand ClassExpression[6,16) .type = TypeReference[3,4) "T"
+   ClassExpression[6,16) class keyword at 6
+== decorator-call-type-args  "@a.b<T>(1) class C {}"
+   ClassDeclaration[0,21) class keyword at 11
+   Decorator[0,10) -> CallExpression[1,10)
+     CallExpression.typeArguments: list pos 5 end 6 count 1 :: TypeReference[5,6)"T"
+   CallExpression[1,10) -> PropertyAccessExpression[1,4)
+== decorator-member  "class C { @d<T>() m() {} }"
+   ClassDeclaration[0,26) class keyword at 0
+   MethodDeclaration[10,24) params pos 20 end 20 body[22,24)
+   Decorator[10,17) -> CallExpression[11,17)
+     CallExpression.typeArguments: list pos 13 end 14 count 1 :: TypeReference[13,14)"T"
+   CallExpression[11,17) -> Identifier[11,12)
+== cast-simple  "const v = <T>x;"
+   TypeAssertionExpression[10,14) operand Identifier[13,14) .type = TypeReference[11,12) "T"
+== cast-paren  "const v = <T>(x);"
+   TypeAssertionExpression[10,16) operand ParenthesizedExpression[13,16) .type = TypeReference[11,12) "T"
+   ParenthesizedExpression[13,16) -> Identifier[14,15)
+== cast-keyword  "const v = <any>(x);"
+   TypeAssertionExpression[10,18) operand ParenthesizedExpression[15,18) .type = AnyKeyword[11,14) "any"
+   ParenthesizedExpression[15,18) -> Identifier[16,17)
+== cast-two-names  "const v = <A, B>(x);"
+   diag TS1005 at 12+1: '>' expected.
+   diag TS1005 at 15+1: ',' expected.
+   TypeAssertionExpression[10,12) operand Identifier[12,12) .type = TypeReference[11,12) "A"
+   ParenthesizedExpression[16,19) -> Identifier[17,18)
+== cast-array  "const v = <A[]>(x).y;"
+   TypeAssertionExpression[10,20) operand PropertyAccessExpression[15,20) .type = ArrayType[11,14) "A[]"
+   ParenthesizedExpression[15,18) -> Identifier[16,17)
+== cast-nested  "const v = <T><U>x!;"
+   TypeAssertionExpression[10,18) operand TypeAssertionExpression[13,18) .type = TypeReference[11,12) "T"
+   TypeAssertionExpression[13,18) operand NonNullExpression[16,18) .type = TypeReference[14,15) "U"
+   NonNullExpression[16,18) -> Identifier[16,17)
+== cast-then-member  "const v = <T>x.y + 1;"
+   TypeAssertionExpression[10,16) operand PropertyAccessExpression[13,16) .type = TypeReference[11,12) "T"
+== as  "const v = x as A as B;"
+   AsExpression[10,21) operand AsExpression[10,16) .type = TypeReference[20,21) "B"
+   AsExpression[10,16) operand Identifier[10,11) .type = TypeReference[15,16) "A"
+== as-const  "const v = [1] as const;"
+   AsExpression[10,22) operand ArrayLiteralExpression[10,13) .type = TypeReference[17,22) "const"
+== satisfies  "const v = { a: 1 } satisfies S;"
+   SatisfiesExpression[10,30) operand ObjectLiteralExpression[10,18) .type = TypeReference[29,30) "S"
+== type-alias  "type A<T = X> = T[];"
+     TypeAliasDeclaration.typeParameters: list pos 7 end 12 count 1 :: TypeParameter[7,12)"T = X"
+   TypeAliasDeclaration[0,20) name[5,6) .type = ArrayType[16,19)
+== export-type-alias  "export type A = B"
+   TypeAliasDeclaration[0,17) name[12,13) .type = TypeReference[16,17)
+== interface  "interface I<T> extends J<T>, K { a: T }"
+     InterfaceDeclaration.typeParameters: list pos 12 end 13 count 1 :: TypeParameter[12,13)"T"
+   InterfaceDeclaration[0,39) name[10,11) members 1
+   HeritageClause[15,30) token ExtendsKeyword :: ExpressionWithTypeArguments[23,27) expr Identifier[23,24) targs pos 25 end 26 , ExpressionWithTypeArguments[29,30) expr Identifier[29,30)
+     ExpressionWithTypeArguments.typeArguments: list pos 25 end 26 count 1 :: TypeReference[25,26)"T"
+   ExpressionWithTypeArguments[23,27) -> Identifier[23,24)
+   ExpressionWithTypeArguments[29,30) -> Identifier[29,30)
+   PropertySignature[33,37) name[33,34) .type = TypeReference[36,37) "T"
+== jsx-type-args  "const e = <Foo<string> a=\"1\" />;"
+     JsxSelfClosingElement.typeArguments: list pos 15 end 21 count 1 :: StringKeyword[15,21)"string"
+   JsxSelfClosingElement[10,31) -> Identifier[11,14)
+== jsx-type-args-nested  "const e = <Foo<A<B>>>x</Foo>;"
+     JsxOpeningElement.typeArguments: list pos 15 end 19 count 1 :: TypeReference[15,19)"A<B>"
+   JsxOpeningElement[10,21) -> Identifier[11,14)
+== jsx-dotted  "const e = <a.B<T> />;"
+     JsxSelfClosingElement.typeArguments: list pos 15 end 16 count 1 :: TypeReference[15,16)"T"
+   JsxSelfClosingElement[10,20) -> PropertyAccessExpression[11,14)
+== tsx-arrow-type-params  "const f = <T,>(a: T) => a"
+     ArrowFunction.typeParameters: list pos 11 end 13 count 1 trailingComma :: TypeParameter[11,12)"T"
+   ArrowFunction[10,25) params pos 15 end 19 body[24,25) => at 21
+   Parameter[15,19) name[15,16) .type = TypeReference[18,19) "T"
+== tsx-arrow-extends  "const f = <T extends U>(a: T) => a"
+     ArrowFunction.typeParameters: list pos 11 end 22 count 1 :: TypeParameter[11,22)"T extends U"
+   ArrowFunction[10,34) params pos 24 end 28 body[33,34) => at 30
+   Parameter[24,28) name[24,25) .type = TypeReference[27,28) "T"

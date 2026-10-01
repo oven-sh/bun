@@ -1,0 +1,406 @@
+A2  "import type A, { B } from \"x\";"
+     bun: Expected "from" but found "," @13
+     tsc check: TS1363@7+13 A type-only import can specify a default import or named bindings, but not both.
+     tsc emit: "export {};\n"
+A2  "import type A, * as B from \"x\";"
+     bun: Expected "from" but found "," @13
+     tsc check: TS1363@7+14 A type-only import can specify a default import or named bindings, but not both.
+     tsc emit: "export {};\n"
+AA  "import type A from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type { A } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type * as A from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type from \"x\";"
+     bun: ok "import type from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type, { A } from \"x\";"
+     bun: ok "import type, { A } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type, * as A from \"x\";"
+     bun: ok "import type, * as A from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type from from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type as from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type type from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type A = require(\"x\");"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import type A = B.C;"
+     bun: ok ""
+     tsc check: TS1392@0+20 An import alias cannot use 'import type' ; (noise 2503)
+     tsc emit: "\"use strict\";\n"
+AA  "import type = require(\"x\");"
+     bun: ok "const type = require(\"x\");\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type = B.C;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar type = B.C;\n"
+AA  "import type type = require(\"x\");"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type from = require(\"x\");"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type as = require(\"x\");"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type\nA from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type A\nfrom \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type\n{ A } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type from\n\"x\";"
+     bun: ok "import type from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type {} from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type { } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import type \"x\";"
+     bun: Expected "from" but found ""x"" @12
+     tsc parse: TS1005@12+3 '=' expected.
+AAg "import type A from \"x\" with { type: \"json\" };"
+     bun: ok ""
+     tsc check: TS2857@23+21 Import attributes cannot be used with type-only imports or exports. ; (noise 2318,2307)
+     tsc emit: "export {};\n"
+AA  "import type { A } from \"x\" with { \"resolution-mode\": \"import\" };"
+     bun: ok ""
+     tsc check: (noise 2318,2307)
+     tsc emit: "export {};\n"
+AAg "import type A from \"x\" assert { type: \"json\" };"
+     bun: ok ""
+     tsc check: TS2880@23+6 Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'. ; TS2822@23+23 Import assertions cannot be used with type-only imports or exports. ; (noise 2318,2307)
+     tsc emit: "export {};\n"
+AA  "import A = require(\"x\");"
+     bun: ok "const A = require(\"x\");\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import A = B.C;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar A = B.C;\n"
+AA  "import A = B;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar A = B;\n"
+RR  "import A = require(\"x\").y;"
+     bun: Expected ";" but found "." @23
+     tsc parse: TS1005@23+1 ';' expected.
+A2  "import A = require(x);"
+     bun: Expected string but found "x" @19
+     tsc check: TS1141@19+1 String literal expected.
+     tsc emit: "export {};\n"
+RR  "import A = require();"
+     bun: Expected string but found ")" @19 | Expected ")" but found ";" @20
+     tsc parse: TS1109@19+1 Expression expected.
+AA  "import A = B.C.D;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar A = B.C.D;\n"
+RR  "import A = B.default;"
+     bun: Expected identifier but found "default" @13
+     tsc parse: TS1359@13+7 Identifier expected. 'default' is a reserved word that cannot be used here.
+RR  "import A = B.if;"
+     bun: Expected identifier but found "if" @13
+     tsc parse: TS1359@13+2 Identifier expected. 'if' is a reserved word that cannot be used here. ; TS1005@15+1 '(' expected.
+RR  "import A = this;"
+     bun: Expected identifier but found "this" @11
+     tsc parse: TS1359@11+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+RR  "import A = this.B;"
+     bun: Expected identifier but found "this" @11
+     tsc parse: TS1359@11+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+RR  "import A = \"x\";"
+     bun: Expected identifier but found ""x"" @11
+     tsc parse: TS1003@11+3 Identifier expected.
+RR  "import A = B<C>;"
+     bun: Expected ";" but found "<" @12 | Unexpected ; @15
+     tsc parse: TS1005@12+1 ';' expected. ; TS1109@15+1 Expression expected.
+RR  "import A = typeof B;"
+     bun: Expected identifier but found "typeof" @11 | Expected ";" but found "B" @18
+     tsc parse: TS1359@11+6 Identifier expected. 'typeof' is a reserved word that cannot be used here.
+RR  "import A = import(\"x\");"
+     bun: Expected identifier but found "import" @11 | Expected ";" but found "(" @17 | Expected ";" but found ")" @21
+     tsc parse: TS1359@11+6 Identifier expected. 'import' is a reserved word that cannot be used here.
+AAg "import await = require(\"x\");"
+     bun: ok "const await = require(\"x\");\n"
+     tsc check: TS1262@7+5 Identifier expected. 'await' is a reserved word at the top-level of a module. ; (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import eval = require(\"x\");"
+     bun: ok "const eval = require(\"x\");\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import let = require(\"x\");"
+     bun: ok "const let = require(\"x\");\n"
+     tsc check: TS1214@7+3 Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode. ; (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type = B;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar type = B;\n"
+AA  "import as = B;"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nvar as = B;\n"
+AA  "export import A = require(\"x\");"
+     bun: ok "export const A = require(\"x\");\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export import A = B.C;"
+     bun: ok "export const A = B.C;\n"
+     tsc check: (noise 2304,2503)
+     tsc emit: "export var A = B.C;\n"
+AAg "export import type A = B.C;"
+     bun: ok ""
+     tsc check: TS1392@0+27 An import alias cannot use 'import type' ; (noise 2304,2503)
+     tsc emit: "export {};\n"
+AA  "export import type A = require(\"x\");"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "export type A = require(\"x\");"
+     bun: Expected ";" but found "(" @23 | Expected ";" but found ")" @27
+     tsc parse: TS1005@23+1 ';' expected.
+RR  "import type A = B.if;"
+     bun: Expected identifier but found "if" @18
+     tsc parse: TS1359@18+2 Identifier expected. 'if' is a reserved word that cannot be used here. ; TS1005@20+1 '(' expected.
+AA  "namespace N { import A = B.C; }"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\n"
+AA  "namespace N { export import A = B.C; }"
+     bun: ok "var N;\n((N) => {\n  N.A = B.C;\n})(N ||= {});\n"
+     tsc check: (noise 2304,2503)
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    N.A = B.C;\n})(N || (N = {}));\n"
+AAg "namespace N { import A = require(\"x\"); }"
+     bun: ok ""
+     tsc check: TS1147@33+3 Import declarations in a namespace cannot reference a module.
+     tsc emit: "\"use strict\";\n"
+AAg "namespace N { import type A = B.C; }"
+     bun: ok ""
+     tsc check: TS1392@14+20 An import alias cannot use 'import type' ; (noise 2503)
+     tsc emit: "\"use strict\";\n"
+A2  "namespace N { import A from \"x\"; }"
+     bun: Expected "=" but found "from" @23 | Expected identifier but found ""x"" @28
+     tsc check: TS1147@28+3 Import declarations in a namespace cannot reference a module.
+     tsc emit: "\"use strict\";\n"
+A2  "namespace N { import \"x\"; }"
+     bun: Expected identifier but found ""x"" @21
+     tsc check: TS1147@21+3 Import declarations in a namespace cannot reference a module.
+     tsc emit: "\"use strict\";\n"
+A2  "namespace N { import(\"x\"); }"
+     bun: Expected identifier but found "(" @20
+     tsc check: TS2711@14+11 A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318,2307)
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    import(\"x\");\n})(N || (N = {}));\n"
+A1  "namespace N { import.meta; }"
+     bun: Expected identifier but found "." @20
+     tsc check: (noise 2318)
+     tsc emit: "var N;\n(function (N) {\n    import.meta;\n})(N || (N = {}));\nexport {};\n"
+A2  "namespace N { export * from \"x\"; }"
+     bun: Unexpected * @21
+     tsc check: TS1194@28+3 Export declarations are not permitted in a namespace.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+A2  "namespace N { export { a }; }"
+     bun: Unexpected { @21
+     tsc check: TS1194@14+13 Export declarations are not permitted in a namespace. ; TS2303@23+1 Circular definition of import alias 'a'.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+A2  "namespace N { export { a } from \"x\"; }"
+     bun: Unexpected { @21
+     tsc check: TS1194@32+3 Export declarations are not permitted in a namespace.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+A2  "namespace N { export default 1; }"
+     bun: Unexpected default @21
+     tsc check: TS1319@14+17 A default export can only be used in an ECMAScript-style module.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    export default 1;\n})(N || (N = {}));\n"
+AAg "namespace N { export = 1; }"
+     bun: ok "var N;\n((N) => {\n  module.exports = 1;\n})(N ||= {});\n"
+     tsc check: TS1063@14+11 An export assignment cannot be used in a namespace.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    export = 1;\n})(N || (N = {}));\n"
+AAg "namespace N { export as namespace X; }"
+     bun: ok ""
+     tsc check: TS1316@14+22 Global module exports may only appear at top level.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+AAg "namespace N { export type { a }; }"
+     bun: ok ""
+     tsc check: TS1194@14+18 Export declarations are not permitted in a namespace. ; TS2303@28+1 Circular definition of import alias 'a'.
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+AA  "namespace N { export type T = 1; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "function f() { import A = B.C; }"
+     bun: Unexpected A @22
+     tsc check: TS1232@15+6 An import declaration can only be used at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+A2  "function f() { import type A from \"x\"; }"
+     bun: Unexpected type @22
+     tsc check: TS1232@15+6 An import declaration can only be used at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\nfunction f() { import type A from \"x\"; }\n"
+A2  "{ import A = B.C; }"
+     bun: Unexpected A @9
+     tsc check: TS1232@2+6 An import declaration can only be used at the top level of a namespace or module. ; (noise 2503)
+     tsc emit: "\"use strict\";\n{ }\n"
+AA  "export = A;"
+     bun: ok "module.exports = A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export = 1;"
+     bun: ok "module.exports = 1;\n"
+     tsc emit: "export {};\n"
+AA  "export = { a: 1 };"
+     bun: ok "module.exports = { a: 1 };\n"
+     tsc emit: "export {};\n"
+AA  "export = function () {};"
+     bun: ok "module.exports = function() {};\n"
+     tsc emit: "export {};\n"
+AA  "export = class {};"
+     bun: ok "module.exports = class {\n};\n"
+     tsc emit: "export {};\n"
+AA  "export = A.B;"
+     bun: ok "module.exports = A.B;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export = A as any;"
+     bun: ok "module.exports = A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export =\nA;"
+     bun: ok "module.exports = A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export\n= A;"
+     bun: ok "module.exports = A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AAg "export = A; export = B;"
+     bun: ok "module.exports = A;\nmodule.exports = B;\n"
+     tsc check: TS2300@9+1 Duplicate identifier 'export='. ; TS2300@21+1 Duplicate identifier 'export='. ; (noise 2304)
+     tsc emit: "export {};\n"
+AAg "export = A; export const b = 1;"
+     bun: ok "export const b = 1;\nmodule.exports = A;\n"
+     tsc check: TS2309@0+11 An export assignment cannot be used in a module with other exported elements. ; (noise 2304)
+     tsc emit: "export const b = 1;\n"
+AAg "export default 1; export = A;"
+     bun: ok "export default 1;\nmodule.exports = A;\n"
+     tsc check: TS2309@18+11 An export assignment cannot be used in a module with other exported elements. ; (noise 2304)
+     tsc emit: "export default 1;\n"
+AAg "export as namespace X;"
+     bun: ok ""
+     tsc check: TS1314@0+22 Global module exports may only appear in module files.
+     tsc emit: "\"use strict\";\n"
+AAg "export as namespace X"
+     bun: ok ""
+     tsc check: TS1314@0+21 Global module exports may only appear in module files.
+     tsc emit: "\"use strict\";\n"
+RR  "export as namespace X.Y;"
+     bun: Expected ";" but found "." @21
+     tsc parse: TS1005@21+1 ';' expected.
+RR  "export as namespace \"X\";"
+     bun: Expected identifier but found ""X"" @20
+     tsc parse: TS1003@20+3 Identifier expected.
+RR  "export as namespace if;"
+     bun: Expected identifier but found "if" @20
+     tsc parse: TS1359@20+2 Identifier expected. 'if' is a reserved word that cannot be used here. ; TS1005@22+1 '(' expected.
+AAg "export as\nnamespace X;"
+     bun: ok ""
+     tsc check: TS1314@0+22 Global module exports may only appear in module files.
+     tsc emit: "\"use strict\";\n"
+AAg "export as namespace\nX;"
+     bun: ok ""
+     tsc check: TS1314@0+22 Global module exports may only appear in module files.
+     tsc emit: "\"use strict\";\n"
+RR  "export as X;"
+     bun: Expected "namespace" but found "X" @10
+     tsc parse: TS1005@10+1 'namespace' expected.
+RR  "export as namespace;"
+     bun: Expected identifier but found ";" @19
+     tsc parse: TS1003@19+1 Identifier expected.
+AA  "import defer * as ns from \"x\";"
+     bun: ok "import defer * as ns from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+A2  "import defer A from \"x\";"
+     bun: Expected "from" but found "A" @13
+     tsc check: TS18058@7+7 Default imports are not allowed in a deferred import.
+     tsc emit: "export {};\n"
+A2  "import defer { A } from \"x\";"
+     bun: Expected "from" but found "{" @13
+     tsc check: TS18059@7+11 Named imports are not allowed in a deferred import.
+     tsc emit: "export {};\n"
+A1  "import defer \"x\";"
+     bun: Expected "from" but found ""x"" @13
+     tsc check: (noise 2882)
+     tsc emit: "import \"x\";\n"
+AA  "import defer from \"x\";"
+     bun: ok "import defer from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import defer, { A } from \"x\";"
+     bun: ok "import defer, { A } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import defer = require(\"x\");"
+     bun: ok "const defer = require(\"x\");\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+A2  "import.defer(\"x\");"
+     bun: Expected "meta" but found "defer" @7 | Expected ")" but found ";" @17
+     tsc check: TS2711@0+17 A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318,2307)
+     tsc emit: "\"use strict\";\nimport.defer(\"x\");\n"
+RR  "import source A from \"x\";"
+     bun: Expected "from" but found "A" @14
+     tsc parse: TS1005@14+1 '=' expected. ; TS1005@16+4 ';' expected.
+AA  "import source from \"x\";"
+     bun: ok "import source from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+A2  "import.source(\"x\");"
+     bun: Expected "meta" but found "source" @7 | Expected ")" but found ";" @18
+     tsc check: TS18061@7+6 'source' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?
+     tsc emit: "\"use strict\";\nimport.source(\"x\");\n"
+AA  "import type defer from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import type defer * as ns from \"x\";"
+     bun: Expected "from" but found "*" @18
+     tsc parse: TS1005@18+1 '=' expected. ; TS1005@23+2 ';' expected. ; TS1434@26+4 Unexpected keyword or identifier.
+RR  "import defer type A from \"x\";"
+     bun: Expected "from" but found "type" @13
+     tsc parse: TS1005@18+1 'from' expected. ; TS1005@20+4 ';' expected.

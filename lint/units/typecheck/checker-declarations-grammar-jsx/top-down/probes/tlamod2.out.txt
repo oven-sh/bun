@@ -1,0 +1,6 @@
+PARSE tlamod.ts parse=[] js=[] bind=[]
+RESOLUTIONDEPTH 0 []
+global: error TS2318: Cannot find global type 'AsyncDisposable'.
+global: error TS2318: Cannot find global type 'Disposable'.
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=4 Options=1 SourceFiles=1
+COUNTS TypeCount=92 SymbolCount=28 SignatureCount=4 TotalInstantiationCount=1

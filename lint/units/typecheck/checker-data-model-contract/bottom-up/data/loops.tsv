@@ -1,0 +1,89 @@
+checker/checker.go:1715	(*Checker).maybeMappedType	for without condition	
+checker/checker.go:1959	(*Checker).isBlockScopedNameDeclaredBeforeUse	for with condition only	container != nil && container != declaration
+checker/checker.go:1975	(*Checker).isBlockScopedNameDeclaredBeforeUse	for with condition only	n != nil && n != container
+checker/checker.go:2150	(*Checker).getTypeOnlyAliasDeclarationEx	for with condition only	symbol.Flags&ast.SymbolFlagsAlias != 0 && symbol.Flags&meaning == 0
+checker/checker.go:3832	(*Checker).checkTestingKnownTruthyTypes	for with condition only	ast.IsBinaryExpression(condExpr) && (condExpr.AsBinaryExpression().OperatorToken.Kind == ast.KindBarBarToken || condExpr.AsBinaryExpression(...
+checker/checker.go:3909	(*Checker).isSymbolUsedInBinaryExpressionChain	for with condition only	ast.IsBinaryExpression(node) && node.AsBinaryExpression().OperatorToken.Kind == ast.KindAmpersandAmpersandToken
+checker/checker.go:3932	(*Checker).isSymbolUsedInConditionBody	for with condition only	testedExpression != nil && childExpression != nil
+checker/checker.go:7175	(*Checker).reportUnusedVariable	for with condition only	ast.IsBindingElement(location) || ast.IsBindingPattern(location)
+checker/checker.go:7808	getUniqueTypeParameterName	for with condition only	len(baseName) > 1 && baseName[len(baseName)-1] >= '0' && baseName[len(baseName)-1] <= '9'
+checker/checker.go:7812	getUniqueTypeParameterName	for without condition	
+checker/checker.go:7951	(*Checker).checkSuperExpression	for with condition only	container != nil && ast.IsArrowFunction(container)
+checker/checker.go:8276	(*Checker).isForInVariableForNumericPropertyNames	for with condition only	node != nil
+checker/checker.go:9652	(*Checker).getTypeArgumentsFromNodes	for with condition only	len(typeArguments) < len(typeParameters)
+checker/checker.go:10426	(*Checker).isAritySmaller	for with condition only	targetParameterCount < len(parameters)
+checker/checker.go:11229	(*Checker).checkIdentifier	for with condition only	flowContainer != declarationContainer && (ast.IsFunctionExpressionOrArrowFunction(flowContainer) || ast.IsObjectLiteralOrClassExpressionMeth...
+checker/checker.go:11557	(*Checker).isMethodAccessForCall	for with condition only	ast.IsParenthesizedExpression(node.Parent)
+checker/checker.go:11943	(*Checker).checkPropertyAccessibilityAtLocation	for with condition only	container != nil
+checker/checker.go:12057	(*Checker).forEachEnclosingClass	for with condition only	containingClass != nil
+checker/checker.go:12177	(*Checker).checkThisExpression	for without condition	
+checker/checker.go:12280	(*Checker).getThisContainer	for without condition	
+checker/checker.go:12328	(*Checker).isInParameterInitializerBeforeContainingFunction	for with condition only	node.Parent != nil && !ast.IsFunctionLike(node.Parent)
+checker/checker.go:12436	(*Checker).checkBinaryLikeExpression	for with condition only	ast.IsParenthesizedExpression(parent) || ast.IsLogicalOrCoalescingBinaryExpression(parent)
+checker/checker.go:14591	(*Checker).checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol	for without condition	
+checker/checker.go:15915	(*Checker).resolveEntityName	for with condition only	symbol.Flags&meaning == 0 && !dontResolveAlias && symbol.Flags&ast.SymbolFlagsAlias != 0
+checker/checker.go:15992	(*Checker).tryGetQualifiedNameAsValue	for with condition only	ast.IsQualifiedName(n.Parent)
+checker/checker.go:16413	(*Checker).resolveAliasWithDeprecationCheck	for with condition only	symbol.Flags&ast.SymbolFlagsAlias != 0
+checker/checker.go:16467	(*Checker).getSymbolFlagsEx	for with condition only	symbol.Flags&ast.SymbolFlagsAlias != 0
+checker/checker.go:17219	(*Checker).getInferredTypeParameterConstraint	for with condition only	parent != nil && ast.IsParenthesizedTypeNode(parent)
+checker/checker.go:23835	(*Checker).getAliasSymbolForTypeNode	for with condition only	ast.IsParenthesizedTypeNode(host) || ast.IsTypeOperatorNode(host) && host.AsTypeOperatorNode().Operator == ast.KindReadonlyKeyword
+checker/checker.go:23880	(*Checker).getOuterTypeParameters	for without condition	
+checker/checker.go:24432	(*Checker).getConditionalType	for without condition	
+checker/checker.go:25078	(*Checker).getConditionalFlowTypeOfType	for with condition only	node != nil && !ast.IsStatement(node) && node.Kind != ast.KindJSDoc
+checker/checker.go:25963	(*Checker).removeRedundantLiteralTypes	for with condition only	i > 0
+checker/checker.go:25984	(*Checker).removeStringLiteralsMatchedByTemplateLiterals	for with condition only	i > 0
+checker/checker.go:26038	(*Checker).removeConstrainedTypeVariables	for with condition only	i > 0
+checker/checker.go:26075	(*Checker).removeSubtypes	for with condition only	i > 0
+checker/checker.go:26420	(*Checker).removeRedundantSupertypes	for with condition only	i > 0
+checker/checker.go:26443	(*Checker).extractRedundantTemplateLiterals	for with condition only	i > 0
+checker/checker.go:26475	(*Checker).intersectUnionsOfPrimitiveTypes	for with condition only	i < len(types)
+checker/checker.go:27894	(*Checker).getUniqAssociatedNamesFromTupleType	for without condition	
+checker/checker.go:27989	(*Checker).getNormalizedType	for without condition	
+checker/checker.go:28437	(*Checker).markLinkedReferences	for with condition only	ast.IsPropertyAccessOrQualifiedName(topProp)
+checker/checker.go:31935	(*Checker).getSymbolOfNameOrPropertyAccessExpression	for with condition only	ast.IsRightSideOfQualifiedNameOrPropertyAccess(name)
+checker/checker.go:32168	(*Checker).getThisTypeOfObjectLiteralFromContextualType	for with condition only	t != nil
+checker/emitresolver.go:287	(*EmitResolver).markLinkedAliases	for with condition only	exportSymbol != nil
+checker/flow.go:130	(*Checker).getTypeAtFlowNode	for without condition	
+checker/flow.go:210	getBranchLabelAntecedents	for with condition only	i != 0
+checker/flow.go:1842	(*Checker).containsMatchingReference	for with condition only	ast.IsAccessExpression(source)
+checker/flow.go:1852	(*Checker).optionalChainContainsReference	for with condition only	ast.IsOptionalChain(source)
+checker/flow.go:2523	(*Checker).isReachableFlowNodeWorker	for without condition	
+checker/flow.go:2612	(*Checker).isPostSuperFlowNodeWorker	for without condition	
+checker/flow.go:2754	(*Checker).extendAssignmentPosition	for with condition only	node != nil && node.Pos() > declaration.Pos()
+checker/grammarchecks.go:141	(*Checker).checkGrammarDecorator	for without condition	
+checker/grammarchecks.go:1465	(*Checker).checkGrammarBreakOrContinueStatement	for with condition only	current != nil
+checker/nodebuilderimpl.go:322	getAccessStack	for with condition only	!ast.IsIdentifier(state)
+checker/nodebuilderimpl.go:1379	(*NodeBuilderImpl).setTextRange	for with condition only	original != nil && original != location
+checker/nodebuilderimpl.go:1425	(*NodeBuilderImpl).typeParameterToName	for with condition only	true
+checker/nodebuilderimpl.go:1939	(*Checker).getExpandedParameters	for with condition only	true
+checker/nodebuilderimpl.go:3073	(*NodeBuilderImpl).typeReferenceToTypeNode	for with condition only	i < length
+checker/nodebuilderimpl.go:3110	(*NodeBuilderImpl).typeReferenceToTypeNode	for with condition only	typeParameterCount > 0
+checker/nodecopy.go:282	(*NodeBuilderImpl).getEnclosingDeclarationIgnoringFakeScope	for with condition only	enc != nil && b.links.Get(enc).fakeScopeForSignatureDeclaration != nil
+checker/relater.go:401	createDiagnosticChainFromErrorChain	for with condition only	chain != nil && chain.message.ElidedInCompatibilityPyramid()
+checker/relater.go:2323	(*Checker).getEffectiveConstraintOfIntersection	for with condition only	constraint != nil && constraint.flags&(TypeFlagsTypeParameter|TypeFlagsIndex|TypeFlagsConditional) != 0
+checker/relater.go:2459	(*Checker).inferFromLiteralPartsToTemplateLiteral	for without condition	
+checker/relater.go:4915	addToDottedName	for without condition	
+checker/relater.go:4934	(*Relater).getChainMessage	for without condition	
+checker/relater.go:4976	chainDepth	for with condition only	chain != nil
+checker/services.go:66	(*Checker).getSymbolsInScope	for with condition only	location != nil
+checker/services.go:327	runWithInferenceBlockedFromSourceNode	for without condition	
+checker/services.go:361	runWithoutResolvedSignatureCaching	for with condition only	ancestorNode != nil
+checker/services.go:445	(*Checker).tryGetTarget	for without condition	
+checker/services.go:665	getPossibleSymbolReferencePositions	for with condition only	position >= 0 && position < endPos
+checker/symbolaccessibility.go:602	(*Checker).compareSymbolChainsWorker	for with condition only	idx < len(a)
+checker/symboltracker.go:16	NewSymbolTrackerImpl	for without condition	
+checker/utilities.go:149	isExportAssignmentExpressionName	for with condition only	current.Parent != nil && ast.IsPropertyAccessOrQualifiedName(current.Parent)
+checker/utilities.go:163	isTypeReferenceIdentifier	for with condition only	node.Parent.Kind == ast.KindQualifiedName
+checker/utilities.go:223	getContainingQualifiedNameNode	for with condition only	ast.IsQualifiedName(node.Parent)
+checker/utilities.go:870	isNodeDescendantOf	for with condition only	node != nil
+checker/utilities.go:1108	isInRightSideOfImportOrExportAssignment	for with condition only	node.Parent.Kind == ast.KindQualifiedName
+checker/utilities.go:1133	isImportTypeQualifierPart	for with condition only	ast.IsQualifiedName(parent)
+checker/utilities.go:1146	isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference	for with condition only	node.Parent.Kind == ast.KindPropertyAccessExpression || node.Parent.Kind == ast.KindQualifiedName
+checker/utilities.go:1161	expressionResultIsUnused	for without condition	
+checker/utilities.go:1190	getSuperContainer	for without condition	
+checker/utilities.go:1855	walkUpOuterExpressions	for with condition only	parent != nil && ast.IsOuterExpression(parent, ast.OEKAll)
+binder/binder.go:1774	(*Binder).setContinueTarget	for with condition only	label != nil && node.Parent.Kind == ast.KindLabeledStatement
+binder/binder.go:2106	(*Binder).bindCaseBlock	for with condition only	len(clauses[i].Statements()) == 0 && i+1 < len(clauses)
+binder/binder.go:2772	isTopLevelLogicalExpression	for with condition only	ast.IsParenthesizedExpression(node.Parent) || ast.IsPrefixUnaryExpression(node.Parent) && node.Parent.AsPrefixUnaryExpression().Operator == ...
+binder/nameresolver.go:36	(*NameResolver).Resolve	for with condition only	location != nil
+binder/referenceresolver.go:114	(*referenceResolver).isTypeOnlyAliasDeclaration	for with condition only	node != nil

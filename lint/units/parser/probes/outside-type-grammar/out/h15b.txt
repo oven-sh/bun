@@ -1,0 +1,315 @@
+AA  "namespace as {}"
+     bun: ok "namespace;\n"
+     tsc emit: "\"use strict\";\n"
+AA  "namespace as { a }"
+     bun: ok "namespace;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    a;\n})(as || (as = {}));\n"
+AA  "namespace as { a: 1 }"
+     bun: ok "namespace;\n"
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    a: 1;\n})(as || (as = {}));\n"
+AA  "namespace as { let x: number }"
+     bun: ok "namespace;\n"
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    let x;\n})(as || (as = {}));\n"
+B  "namespace as { foo(): void }"
+     bun: ok "namespace;\n"
+     tsc parse: TS1005@20+1 ';' expected. ; TS1109@27+1 Expression expected.
+B  "namespace as {} X {}"
+     bun: ok ""
+     tsc parse: TS1434@16+1 Unexpected keyword or identifier.
+AA  "namespace as {} X\n{}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nX;\n{ }\n"
+AA  "namespace as {}\nfoo()"
+     bun: ok "namespace;\nfoo();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfoo();\n"
+AA  "namespace as {};"
+     bun: ok "namespace;\n"
+     tsc emit: "\"use strict\";\n;\n"
+A1  "namespace as { export const a = 1 }"
+     bun: Unexpected = @30
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    as.a = 1;\n})(as || (as = {}));\n"
+AA  "namespace as {} + 1"
+     bun: ok "namespace + 1;\n"
+     tsc emit: "\"use strict\";\n+1;\n"
+B  "namespace as any"
+     bun: ok "namespace;\n"
+     tsc parse: TS1005@13+3 '{' expected.
+B  "namespace as any;"
+     bun: ok "namespace;\n"
+     tsc parse: TS1005@13+3 '{' expected.
+B  "namespace as any X {}"
+     bun: ok ""
+     tsc parse: TS1005@13+3 '{' expected. ; TS1434@17+1 Unexpected keyword or identifier.
+A1  "namespace as.b {}"
+     bun: Unexpected . @12 | Expected ";" but found "{" @15 | Unexpected } @16
+     tsc emit: "\"use strict\";\n"
+A1  "namespace as.b.c { export const a = 1 }"
+     bun: Unexpected . @12 | Expected ";" but found "{" @17 | Unexpected } @38
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    var b;\n    (function (b) {\n        var c;\n        (function (c) {\n            c.a = 1;\n        })(c = b.c || (b.c = {}));\n    })(b = as.b || (as.b = {}));\n})(as || (as = {}));\n"
+AA  "namespace satisfies {}"
+     bun: ok "namespace;\n"
+     tsc emit: "\"use strict\";\n"
+B  "namespace satisfies any"
+     bun: ok "namespace;\n"
+     tsc parse: TS1005@20+3 '{' expected.
+AAg "module as {}"
+     bun: ok ""
+     tsc check: TS1540@7+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+     tsc emit: "\"use strict\";\n"
+AAg "module as { a }"
+     bun: ok ""
+     tsc check: TS1540@7+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    a;\n})(as || (as = {}));\n"
+B  "module as any"
+     bun: ok ""
+     tsc parse: TS1005@10+3 '{' expected.
+A2  "module as.b {}"
+     bun: Unexpected . @9 | Expected ";" but found "{" @12 | Unexpected } @13
+     tsc check: TS1540@7+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead. ; TS1540@10+1 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+     tsc emit: "\"use strict\";\n"
+AA  "export namespace as {}"
+     bun: ok "namespace;\n"
+     tsc emit: "export {};\n"
+AA  "export namespace as { a }"
+     bun: ok "namespace;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export var as;\n(function (as) {\n    a;\n})(as || (as = {}));\n"
+B  "export namespace as any"
+     bun: ok "namespace;\n"
+     tsc parse: TS1005@20+3 '{' expected.
+AAg "export module as {}"
+     bun: ok ""
+     tsc check: TS1540@14+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+     tsc emit: "export {};\n"
+A1  "export interface as {}"
+     bun: Expected identifier but found end of file @22
+     tsc emit: "export {};\n"
+A1  "export interface as { a: 1 }"
+     bun: Expected identifier but found end of file @28
+     tsc emit: "export {};\n"
+A1  "export interface as {}\nfoo()"
+     bun: Unexpected "interface" @7
+     tsc check: (noise 2304)
+     tsc emit: "foo();\nexport {};\n"
+RR  "export interface as any"
+     bun: Expected identifier but found end of file @23
+     tsc parse: TS1005@20+3 '{' expected.
+A1  "declare namespace as {}"
+     bun: Unexpected "namespace" @8
+     tsc emit: "\"use strict\";\n"
+A2  "declare namespace as { a }"
+     bun: Unexpected "namespace" @8
+     tsc check: TS1036@23+1 Statements are not allowed in ambient contexts. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "declare module as {}"
+     bun: Unexpected "module" @8
+     tsc check: TS1540@15+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+     tsc emit: "\"use strict\";\n"
+A1  "declare interface as {}"
+     bun: Expected identifier but found end of file @23
+     tsc emit: "\"use strict\";\n"
+A1  "declare interface as { a: 1 }"
+     bun: Expected identifier but found end of file @29
+     tsc emit: "\"use strict\";\n"
+A1  "declare type as = 1"
+     bun: Unexpected = @16 | Unexpected "type" @8
+     tsc emit: "\"use strict\";\n"
+RR  "declare type as any"
+     bun: Unexpected "type" @8
+     tsc parse: TS1005@16+3 '=' expected.
+B  "declare type as any X = 1"
+     bun: ok ""
+     tsc parse: TS1005@16+3 '=' expected. ; TS1005@20+1 ';' expected.
+A1  "interface as {}"
+     bun: Expected identifier but found end of file @15
+     tsc emit: "\"use strict\";\n"
+AA  "interface as {}\nfoo()"
+     bun: ok "interface;\nfoo();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfoo();\n"
+AA  "interface as { a: 1 }\nfoo()"
+     bun: ok "interface;\nfoo();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfoo();\n"
+B  "interface as {} Foo {}"
+     bun: ok ""
+     tsc parse: TS1434@16+3 Unexpected keyword or identifier.
+B  "interface as any Foo {}"
+     bun: ok ""
+     tsc parse: TS1005@13+3 '{' expected. ; TS1434@17+3 Unexpected keyword or identifier.
+B  "interface as any\nfoo()"
+     bun: ok "interface;\nfoo();\n"
+     tsc parse: TS1005@13+3 '{' expected.
+RR  "interface as any"
+     bun: Expected identifier but found end of file @16
+     tsc parse: TS1005@13+3 '{' expected.
+RR  "interface as any;"
+     bun: Expected identifier but found ";" @16 | Expected "{" but found end of file @17
+     tsc parse: TS1005@13+3 '{' expected.
+A1  "interface as extends B {}"
+     bun: Unexpected extends @13 | Expected "?" but found "{" @23 | Unexpected } @24 | Unexpected end of file @25
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A1  "interface as<T> {}"
+     bun: Expected "(" but found "{" @16 | Unexpected } @17 | Expected identifier but found end of file @18
+     tsc emit: "\"use strict\";\n"
+A1  "interface as<T> extends B<T> { a: T }"
+     bun: Expected "(" but found "extends" @16 | Expected ")" but found "{" @29 | Expected "{" but found ":" @32
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+B  "interface as <T>() => void\nfoo()"
+     bun: ok "interface;\nfoo();\n"
+     tsc parse: TS1005@16+1 '{' expected.
+B  "interface as <T>() => void Foo {}"
+     bun: ok ""
+     tsc parse: TS1005@16+1 '{' expected. ; TS1005@31+1 ';' expected.
+A1  "interface satisfies {}"
+     bun: Expected identifier but found end of file @22
+     tsc emit: "\"use strict\";\n"
+B  "type as any"
+     bun: ok "type;\n"
+     tsc parse: TS1005@8+3 '=' expected.
+B  "type as any;"
+     bun: ok "type;\n"
+     tsc parse: TS1005@8+3 '=' expected.
+B  "type as any\nfoo()"
+     bun: ok "type;\nfoo();\n"
+     tsc parse: TS1005@8+3 '=' expected.
+B  "type as any X = 1"
+     bun: ok ""
+     tsc parse: TS1005@8+3 '=' expected. ; TS1005@12+1 ';' expected.
+B  "type as <T>() => void"
+     bun: ok "type;\n"
+     tsc parse: TS1005@11+1 '=' expected.
+B  "type as <T>() => void X = 1"
+     bun: ok ""
+     tsc parse: TS1005@11+1 '=' expected. ; TS1005@22+1 ';' expected.
+A1  "type as <T> = T"
+     bun: Expected "(" but found "=" @12 | Expected ")" but found end of file @15
+     tsc emit: "\"use strict\";\n"
+A1  "type as<T> = T"
+     bun: Expected "(" but found "=" @11 | Expected ")" but found end of file @14
+     tsc emit: "\"use strict\";\n"
+A2  "type as<in T> = T"
+     bun: The modifier "in" is not valid here @8 | Expected "(" but found "=" @14 | Expected ")" but found end of file @17
+     tsc check: TS2637@8+4 Variance annotations are only supported in type aliases for object, function, constructor, and mapped types.
+     tsc emit: "\"use strict\";\n"
+A2  "type as<out T> = T"
+     bun: The modifier "out" is not valid here @8 | Expected "(" but found "=" @15 | Expected ")" but found end of file @18
+     tsc check: TS2637@8+5 Variance annotations are only supported in type aliases for object, function, constructor, and mapped types.
+     tsc emit: "\"use strict\";\n"
+A2  "type as<const T> = T"
+     bun: Expected "(" but found "=" @17 | Expected ")" but found end of file @20
+     tsc check: TS1277@8+5 'const' modifier can only appear on a type parameter of a function, method or class
+     tsc emit: "\"use strict\";\n"
+A1  "type as<T,> = T"
+     bun: Expected "(" but found "=" @12 | Expected ")" but found end of file @15
+     tsc emit: "\"use strict\";\n"
+A1  "type as<> = 1"
+     bun: Expected identifier but found ">" @8 | Expected ">" but found end of file @13
+     tsc emit: "\"use strict\";\n"
+A2  "type as = as"
+     bun: Unexpected = @8
+     tsc check: TS2456@5+2 Type alias 'as' circularly references itself.
+     tsc emit: "\"use strict\";\n"
+A1  "type as = 1\ntype satisfies = as"
+     bun: Unexpected = @8 | Unexpected = @27
+     tsc emit: "\"use strict\";\n"
+A1  "type satisfies = 1"
+     bun: Unexpected = @15
+     tsc emit: "\"use strict\";\n"
+A1  "type satisfies<T> = T"
+     bun: Expected "(" but found "=" @18 | Expected ")" but found end of file @21
+     tsc emit: "\"use strict\";\n"
+B  "type satisfies any"
+     bun: ok "type;\n"
+     tsc parse: TS1005@15+3 '=' expected.
+A1  "type /* c */ as = 1"
+     bun: Unexpected = @16
+     tsc emit: "\"use strict\";\n"
+A1  "type as /* c */ = 1"
+     bun: Unexpected = @16
+     tsc emit: "\"use strict\";\n"
+AA  "type\nas = 1"
+     bun: ok "type;\nas = 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntype;\nas = 1;\n"
+A1  "type as\n= 1"
+     bun: Unexpected = @8
+     tsc emit: "\"use strict\";\n"
+B  "let type = 1; type as any;"
+     bun: ok "let type = 1;\n"
+     tsc parse: TS1005@22+3 '=' expected.
+A1  "let type: any; type as = 1;"
+     bun: Unexpected = @23
+     tsc emit: "\"use strict\";\nlet type;\n"
+A1  "function f() { type as = 1; return 1 as as }"
+     bun: Unexpected = @23
+     tsc emit: "\"use strict\";\nfunction f() {  return 1; }\n"
+AAg "function f() { namespace as {} }"
+     bun: ok "function f() {\n  namespace;\n}\n"
+     tsc check: TS1235@15+9 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\nfunction f() {  }\n"
+A1  "function f() { interface as {} }"
+     bun: Expected identifier but found "}" @31 | Expected "{" but found end of file @32
+     tsc emit: "\"use strict\";\nfunction f() {  }\n"
+A1  "{ type as = 1 }"
+     bun: Unexpected = @10
+     tsc emit: "\"use strict\";\n{\n}\n"
+A2  "if (x) type as = 1;"
+     bun: Unexpected = @15
+     tsc check: TS1156@12+2 'type' declarations can only be declared inside a block. ; (noise 2304)
+     tsc emit: "\"use strict\";\nif (x)\n    ;\n"
+B  "if (x) type as any;"
+     bun: ok "if (x)\n  type;\n"
+     tsc parse: TS1005@15+3 '=' expected.
+A2  "label: type as = 1;"
+     bun: Unexpected = @15
+     tsc check: TS1344@0+5 'A label is not allowed here.
+     tsc emit: "\"use strict\";\nlabel: ;\n"
+B  "export type as = 1"
+     bun: ok ""
+     tsc parse: TS1005@12+2 '{' expected.
+RR  "export type as any"
+     bun: Expected "=" but found "any" @15 | Unexpected end of file @18
+     tsc parse: TS1005@12+2 '{' expected.
+AA  "export type satisfies = 1"
+     bun: ok ""
+     tsc emit: "export {};\n"
+A1  "export default interface as {}"
+     bun: Expected identifier but found end of file @30
+     tsc emit: "export {};\n"
+A1  "export declare namespace as {}"
+     bun: Unexpected "namespace" @15
+     tsc emit: "export {};\n"
+A1  "export declare interface as {}"
+     bun: Expected identifier but found end of file @30
+     tsc emit: "export {};\n"
+A1  "export declare type satisfies = 1"
+     bun: Unexpected = @30 | Unexpected "type" @15
+     tsc emit: "export {};\n"
+AA  "abstract as any"
+     bun: ok "abstract;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nabstract;\n"
+B  "abstract as any class C {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1005@16+5 ';' expected.
+A1  "declare as any"
+     bun: Unexpected end of file @14
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\n"
+B  "declare as any const x = 1"
+     bun: ok ""
+     tsc parse: TS1005@15+5 ';' expected.
+AA  "global as any"
+     bun: ok "global;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nglobal;\n"
+AA  "global as {}"
+     bun: ok "global;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nglobal;\n"

@@ -1,0 +1,16 @@
+declare const s: string, n: number, t: [number, string], sp: { a: 1 } | undefined, bad: number;
+const o1 = { a: 1, ...sp, b: "x", ...bad };
+const o2: { a: number } = { a: 1, b: 2 };
+const o3 = { [s]: 1, [n]: "x", ["lit"]: true, get g() { return 1; }, set g(v) {}, m() { return this.a; }, a: 1 };
+const o4: { a: number; a2: string } = { a: "x", a2: 1 };
+const r1: number = o3.lit;
+const a1 = [1, "a", ...t, ...s, ...n];
+const a2: [number, number] = [1, "a"];
+const a3 = [1, 2] as const; a3.push(3);
+const a4: number[] = [1, , "x"];
+const t1 = `a${n}b` as const; const t2: "a1b" = t1;
+const t3: `x${number}` = `x${s}`;
+const re = /a(/;
+const c1 = <const>{ x: [1, { y: "z" }] }; c1.x[1].y = "q";
+const e1 = { ...n, ...null, ...undefined, ...{ get x() { return 1; } } };
+const o5 = { a: 1, a: 2 };

@@ -1,0 +1,22 @@
+[
+  {"name": "O1", "text": "var f = (a as any) => 1;"},
+  {"name": "O2", "text": "var f = (a!) => 1;"},
+  {"name": "O3", "text": "var f = ((a)) => 1;"},
+  {"name": "O4", "text": "var f = (<T>a) => 1;"},
+  {"name": "O5", "text": "var f = (a satisfies T, b) => 1;"},
+  {"name": "O6", "text": "<T, U>(x);"},
+  {"name": "O7", "text": "class A { abstract abstract x; }"},
+  {"name": "O8", "text": "class A { accessor accessor x; static static y; }"},
+  {"name": "O9", "text": "var o = { m?() {} };"},
+  {"name": "O10", "text": "a<T>!;"},
+  {"name": "O11", "text": "x as T!;"},
+  {"name": "O12", "text": "a++!;"},
+  {"name": "O13", "text": "new <T>x();"},
+  {"name": "O14", "text": "class A { constructor(private {a}) {} }"},
+  {"name": "O15", "text": "let [x!] = y;"},
+  {"name": "O16", "text": "for (let x! of y) {}"},
+  {"name": "O17", "text": "class A { x!(): void {} }"},
+  {"name": "O18", "text": "class A { get x?() { return 1 } }"},
+  {"name": "O19", "text": "function f(a!: number) {}"},
+  {"name": "O20", "text": "class A { static? : 1 }"}
+]

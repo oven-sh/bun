@@ -1,0 +1,97 @@
+# H15 statement keywords: type
+type as = 1
+type as<T> = T
+type satisfies = 1
+type of = 1
+type async = 1
+type await = 1
+type yield = 1
+type type = 1
+type interface = 1
+type declare = 1
+type as T
+type as T;
+type as\n= 1
+type\nas = 1
+type as <T>(x: T) => void
+type satisfies T
+type in x
+type = 1
+type => 1
+type.x = 1
+type\nFoo = 1
+# interface
+interface as {}
+interface satisfies {}
+interface as<T> {}
+interface as extends B {}
+interface as T\nfoo()
+interface as {}\nfoo()
+interface as {} + 1
+interface;
+interface\nFoo {}
+interface + 1
+export default interface\nFoo {}
+export interface\nFoo {}
+interface of {}
+interface type {}
+interface await {}
+# namespace / module
+namespace as {}
+namespace satisfies {}
+module as {}
+namespace as.b {}
+namespace of {}
+namespace as {}\nfoo()
+namespace as { export const x = 1 }
+module as { export const x = 1 }
+namespace as T
+module "foo" {}
+module "foo";
+namespace "foo" {}
+{ namespace N {} }
+function f() { namespace N { export const a = 1 } }
+if (x) namespace N {}
+namespace\nN {}
+namespace N\n{}
+# declare
+declare type as = 1
+declare interface as {}
+declare namespace as {}
+declare module as {}
+declare as T
+declare as {}
+declare const as: number
+declare let as: number
+declare var of
+declare function as(): void
+declare class as {}
+declare enum as {}
+declare type\nFoo = 1
+declare\ntype Foo = 1
+declare abstract class C {}
+abstract declare class C {}
+abstract class C {}
+abstract\nclass C {}
+abstract interface I {}
+abstract type T = 1
+abstract namespace N {}
+abstract enum E {}
+abstract function f() {}
+abstract const x = 1
+declare declare class C {}
+declare async function f(): void
+declare export class C {}
+declare import a = b
+declare global {}
+declare global\n{}
+declare\nglobal {}
+# global
+global {}
+global\n{}
+global as T
+global x {}
+namespace N { global {} }
+declare module "m" { global { var x: number } }
+declare namespace N { global {} }
+global export

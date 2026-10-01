@@ -1,0 +1,136 @@
+# arrow parameters: this
+(this: A) => x
+(this) => x
+(this, a) => x
+(a, this) => x
+async (this: A) => x
+(this: A): this is B => true
+function f(this: A) {}
+function f(this) {}
+function f(a, this: A) {}
+function f(this: A, a) {}
+function f(this?: A) {}
+function f(this = 1) {}
+function f(...this) {}
+class C { m(this: C) {} }
+class C { constructor(this: C) {} }
+class C { set x(this: C) {} }
+class C { get x(this: C) { return 1 } }
+({ m(this: A) {} })
+const f = function (this: A) {}
+# arrow parameters: optional
+(a?) => x
+(a?: T) => x
+(a? = 1) => x
+(a?: T = 1) => x
+(a?, b?) => x
+(a, b?) => x
+(a?, b) => x
+({a}?) => x
+([a]?) => x
+({a}?: T) => x
+(...a?) => x
+(...a?: T[]) => x
+async (a?) => x
+async (a?: T) => x
+<T>(a?) => x
+<T>(a?: T) => x
+f((a?) => x)
+y = (a?) => x
+(a?): T => x
+(a ? b : c)
+(a ? b : c) => x
+(a?.b) => x
+# arrow parameters: modifiers
+(public a: A) => x
+(private a) => x
+(readonly a: A) => x
+(public readonly a) => x
+(public) => x
+(readonly) => x
+(public, a) => x
+(public: A) => x
+(public = 1) => x
+(public?) => x
+(public as) => x
+(public as T)
+(override a) => x
+(static a) => x
+(async a) => x
+(declare a) => x
+(abstract a) => x
+(accessor a) => x
+(export a) => x
+(const a) => x
+(in a) => x
+(out a) => x
+# arrow: initializers
+(a: A = 1) => x
+(a = 1) => x
+(a: A = 1 = 2) => x
+(a = b = 2) => x
+(a: A = b = 2) => x
+({a}: A = {a: 1}) => x
+([a]: A = [1]) => x
+(a as any = 1) => x
+(a = 1 as any) => x
+(a: A = 1 as any) => x
+(a: A = <T>(b)) => x
+# arrow: return types
+(): T => x
+(): if => x
+(a): T => x
+(a, b): T => x
+(a): a is T => true
+(a): asserts a => {}
+(a): asserts a is T => {}
+async (a): Promise<T> => x
+(a): (b) => c => d
+(a): { b: c } => d
+# conditional ambiguity
+a ? (b) : c => d
+a ? (b) : c => d : e
+a ? (b): c => d : e
+a ? (b, c) : d => e
+a ? (b = 1) : c => d
+a ? (b = 1) : c => d : e
+a ? ({b}) : c => d
+a ? ({b}) : c => d : e
+a ? ([b]) : c => d
+a ? ((b)) : c => d
+a ? ((b)) : c => d : e
+a ? (b?) : c => d
+a ? (b?) : c => d : e
+a ? (b: T) : c => d
+a ? (b: T) : c => d : e
+a ? (await) : b
+a ? (this) : b
+a ? (this): b => c : d
+a ? (this: T): b => c : d
+a ? <T>(b) : c => d
+a ? <T>(b) : c => d : e
+a ? <T>(b): c => d : e
+a ? <T>(b) => c : d
+a ? <T,>(b): c => d : e
+a ? async (b) : c => d
+a ? async (b) : c => d : e
+a ? async (b): c => d : e
+a ? async <T>(b): c => d : e
+a ? b => (c) : d => e
+a ? b => (c) : d => e : f
+a ? (b) => (c) : d => e
+a ? (b) => (c) : d => e : f
+a ? () : b => c : d
+a ? (): b => c : d
+a ? () => b : c
+a ? (b) : (c) : d => e
+a ? (b) : (c) => d
+a ? function () {} : (b): c => d
+a ? (b) : c ? (d) : e => f : g
+a ? (b ? (c) : d => e : f) : g
+a ? ((b): c => d) : e
+a ? [(b): c => d] : e
+a ? { x: (b): c => d } : e
+a ? f((b): c => d) : e
+a ? (b): c => d ? e : f : g
+a ? (b) : c => d ? e : f

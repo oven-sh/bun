@@ -1,0 +1,382 @@
+A1c	modifier	"accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	modifier	"accessor x = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	modifier	"accessor x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	modifier	"accessor x!: T;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	modifier	"accessor \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found ""x"" @9	tsc: parses
+A1c	modifier	"accessor 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "1" @9	tsc: parses
+A1c	modifier	"accessor [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @9	tsc: parses
+A1c	modifier	"accessor #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "#x" @9	tsc: parses
+A1c	modifier	"accessor accessor;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "accessor" @9	tsc: parses
+A1c	modifier	"static accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @16	tsc: parses
+A1c	member	"public accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @16	tsc: parses
+A1c	member	"override accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @18	tsc: parses
+A1c	member	"static accessor x = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "x" @16	tsc: parses
+A1c	member	"accessor #x = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "#x" @9	tsc: parses
+A1c	member	"accessor [x] = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "[" @9	tsc: parses
+A1c	member	"accessor \"x\" = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found ""x"" @9	tsc: parses
+A1c	member	"accessor 1 = 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "1" @9	tsc: parses
+A1c	member	"accessor static;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @9	tsc: parses
+A1c	member	"accessor x\n= 1;"	[class,abstractClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	member	"[k: string]: T, "	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "," @14	tsc: parses
+A1c	member	"[await: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Unexpected : @6	tsc: parses
+A1c	member	"static accessor x: T;"	[abstractClass]	bun: Expected ";" but found "x" @16	tsc: parses
+A1c	member	"abstract accessor x: T;"	[abstractClass]	bun: Expected ";" but found "x" @18	tsc: parses
+A1c	member	"accessor x!: T;"	[abstractClass]	bun: Expected ";" but found "x" @9	tsc: parses
+A1c	classHead	"abstract declare class C {}"	[-]	bun: Expected ";" but found "declare" @9	tsc: parses
+A1c	classHead	"class await {}"	[-]	bun: Cannot use "await" as an identifier here @12	tsc: parses
+A1s	heritage	"class C extends super.b {}"	[-]	bun: Unexpected "super" @16	tsc: parses also TS2660
+A1s	paramProp	"public x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"private x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @8	tsc: parses also TS2369
+A1s	paramProp	"protected x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @10	tsc: parses also TS2369
+A1s	paramProp	"readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @9	tsc: parses also TS2369
+A1s	paramProp	"override x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @9	tsc: parses also TS2369
+A1s	paramProp	"public readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"private readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @8	tsc: parses also TS2369
+A1s	paramProp	"protected readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @10	tsc: parses also TS2369
+A1s	paramProp	"public override x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @7	tsc: parses also TS2369
+A1s	paramProp	"public override readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @7	tsc: parses also TS2369
+A1s	paramProp	"override readonly x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @9	tsc: parses also TS2369
+A1s	paramProp	"public x"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x?"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x?: T"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x = 1"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x: T = 1"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"readonly x = 1"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @9	tsc: parses also TS2369
+A1s	paramProp	"private x?, protected y?"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @8	tsc: parses also TS2369
+A1s	paramProp	"public x: T, private y: U, protected z: V, readonly w: W"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x,"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public x: T,"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"this: T, public x: U"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @16	tsc: parses also TS2369
+A1s	paramProp	"readonly readonly"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @9	tsc: parses also TS2369
+A1s	paramProp	"override override"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @9	tsc: parses also TS2369
+A1s	paramProp	"public readonly"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"public override"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @7	tsc: parses also TS2369
+A1s	paramProp	"public readonly: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"public readonly?: T"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"public readonly = 1"	[method,staticMethod,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"public readonly readonly"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	paramProp	"public x\n: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: parses also TS2369
+A1s	paramProp	"public /* c */ x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @15	tsc: parses also TS2369
+A1s	paramProp	"@d public x: T"	[method,staticMethod,setter]	bun: Expected ")" but found "x" @10	tsc: parses also TS2369
+A1s	paramProp	"@d() private x: T"	[method,staticMethod,setter]	bun: Expected ")" but found "x" @13	tsc: parses also TS2369
+A1s	paramProp	"@d readonly x"	[method,staticMethod,setter]	bun: Expected ")" but found "x" @12	tsc: parses also TS2369
+A1s	paramProp	"@d public readonly x: T"	[method,staticMethod,setter]	bun: Expected ")" but found "readonly" @10	tsc: parses also TS2369
+A1s	paramProp	"@d @e public x: T"	[method,staticMethod,setter]	bun: Expected ")" but found "x" @13	tsc: parses also TS2369
+A1s	paramProp	"@d x: T, @e public y: U"	[method,staticMethod]	bun: Expected ")" but found "y" @19	tsc: parses also TS2369
+A1s	paramProp	"public await"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "await" @7	tsc: parses also TS2369
+A1s	paramProp	"public type"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "type" @7	tsc: parses also TS2369
+A1s	paramProp	"public of"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "of" @7	tsc: parses also TS2369
+A1s	paramProp	"public async"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "async" @7	tsc: parses also TS2369
+A1s	paramProp	"public as"	[method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "as" @7	tsc: parses also TS2369
+A1s	paramProp	"public is"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "is" @7	tsc: parses also TS2369
+A1s	paramProp	"public get"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "get" @7	tsc: parses also TS2369
+A1s	paramProp	"public set"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "set" @7	tsc: parses also TS2369
+A1s	paramProp	"public declare"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "declare" @7	tsc: parses also TS2369
+A1s	paramProp	"public abstract"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "abstract" @7	tsc: parses also TS2369
+A1s	paramProp	"public accessor"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "accessor" @7	tsc: parses also TS2369
+A1s	paramProp	"public constructor"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "constructor" @7	tsc: parses also TS2369
+A1s	paramProp	"public any"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "any" @7	tsc: parses also TS2369
+A1s	paramProp	"public string"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "string" @7	tsc: parses also TS2369
+A1s	paramProp	"public undefined"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "undefined" @7	tsc: parses also TS2369
+A2	modifier	"abstract abstract x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @18	tsc: TS1253 @0+8 Abstract properties can only appear within an abstract class.
+A2	modifier	"accessor x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @9	tsc: TS1276 @10+1 An 'accessor' property cannot be declared optional.
+A2	modifier	"accessor m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor m(): void;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration. also TS2391
+A2	modifier	"accessor [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @9	tsc: TS1071 @0+8 'accessor' modifier cannot appear on an index signature.
+A2	modifier	"accessor get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "get" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "set" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor *m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "*" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "constructor" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @9	tsc: TS1029 @9+6 'static' modifier must precede 'accessor' modifier.
+A2	modifier	"accessor readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "readonly" @9	tsc: TS1243 @9+8 'readonly' modifier cannot be used with 'accessor' modifier.
+A2	modifier	"accessor async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "async" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "accessor" @9	tsc: TS1030 @9+8 'accessor' modifier already seen.
+A2	modifier	"accessor accessor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "accessor" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	modifier	"accessor static { }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @9	tsc: TS1184 @0+8 Modifiers cannot appear here.
+A2	modifier	"async x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @7	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async x = 1;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "=" @8	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ";" @7	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @8	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async x!: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "!" @7	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @9	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @7	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @9	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @8	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "x" @10	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "x" @10	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be an async function @6	tsc: TS1089 @0+5 'async' modifier cannot appear on a constructor declaration.
+A2	modifier	"async static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "x" @13	tsc: TS1029 @6+6 'static' modifier must precede 'async' modifier.
+A2	modifier	"async readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @16	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"async async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "m" @12	tsc: TS1030 @6+5 'async' modifier already seen.
+A2	modifier	"async async x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "x" @12	tsc: TS1030 @6+5 'async' modifier already seen.
+A2	modifier	"async async;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ";" @11	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	modifier	"static async x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found ":" @14	tsc: TS1042 @7+5 'async' modifier cannot be used here.
+A2	modifier	"export x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export x = 1;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export x!: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export m(): void;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind. also TS2391
+A2	modifier	"export \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found ""x"" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "1" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "#x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @7	tsc: TS1071 @0+6 'export' modifier cannot appear on an index signature.
+A2	modifier	"export get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "get" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "set" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "constructor" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "readonly" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "async" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export export x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "export" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export export;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "export" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export export() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "export" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"static export x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @14	tsc: TS1031 @7+6 'export' modifier cannot appear on class elements of this kind.
+A2	modifier	"export static { }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @7	tsc: TS1184 @0+6 Modifiers cannot appear here.
+A2	modifier	"const x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const x = 1;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const x!: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const m(): void;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword. also TS2391
+A2	modifier	"const \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found ""x"" @6	tsc: TS1248 @6+3 A class member cannot have the 'const' keyword.
+A2	modifier	"const 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "1" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @6	tsc: TS1248 @6+3 A class member cannot have the 'const' keyword.
+A2	modifier	"const #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "#x" @6	tsc: TS1248 @6+2 A class member cannot have the 'const' keyword.
+A2	modifier	"const [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @6	tsc: TS1071 @0+5 'const' modifier cannot appear on an index signature.
+A2	modifier	"const get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "get" @6	tsc: TS1248 @10+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "set" @6	tsc: TS1248 @10+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const *m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "*" @6	tsc: TS1248 @7+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "constructor" @6	tsc: TS1248 @0+17 A class member cannot have the 'const' keyword.
+A2	modifier	"const static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @6	tsc: TS1248 @13+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "readonly" @6	tsc: TS1248 @15+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "async" @6	tsc: TS1248 @12+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const const x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "const" @6	tsc: TS1248 @12+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const const;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "const" @6	tsc: TS1248 @6+5 A class member cannot have the 'const' keyword.
+A2	modifier	"const const() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "const" @6	tsc: TS1248 @6+5 A class member cannot have the 'const' keyword.
+A2	modifier	"static const x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @13	tsc: TS1248 @13+1 A class member cannot have the 'const' keyword.
+A2	modifier	"const static { }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @6	tsc: TS1184 @0+5 Modifiers cannot appear here.
+A2	modifier	"in x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in x = 1;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in x!: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in m(): void;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias also TS2391
+A2	modifier	"in \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found ""x"" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "1" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "#x" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @3	tsc: TS1071 @0+2 'in' modifier cannot appear on an index signature.
+A2	modifier	"in get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "get" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "set" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in *m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "*" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "constructor" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "readonly" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "async" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in in x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "in" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in in;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "in" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in in() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "in" @3	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"static in x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @10	tsc: TS1274 @7+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"in static { }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @3	tsc: TS1184 @0+2 Modifiers cannot appear here.
+A2	modifier	"out x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out x = 1;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out x;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out x?: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out x!: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out m(): void;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "m" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias also TS2391
+A2	modifier	"out \"x\": T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found ""x"" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out 1: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "1" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out [x]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out #x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "#x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "[" @4	tsc: TS1071 @0+3 'out' modifier cannot appear on an index signature.
+A2	modifier	"out get x() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "get" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out set x(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "set" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out *m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "*" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "constructor" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out static x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out readonly x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "readonly" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out async m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "async" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out out x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "out" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out out;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "out" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out out() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "out" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"static out x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @11	tsc: TS1274 @7+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	modifier	"out static { }"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "static" @4	tsc: TS1184 @0+3 Modifiers cannot appear here.
+A2	modifier	"get constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be a getter @4	tsc: TS1341 @4+11 Class constructor may not be an accessor.
+A2	modifier	"set m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Setter m must have exactly 1 argument (there are 0) @5	tsc: TS1049 @4+1 A 'set' accessor must have exactly one parameter.
+A2	modifier	"set constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be a setter @4	tsc: TS1049 @4+11 A 'set' accessor must have exactly one parameter.
+A2	modifier	"set\nm() {}"	[class,abstractClass,declareClass,classExpr]	bun: Setter m must have exactly 1 argument (there are 0) @5	tsc: TS1049 @4+1 A 'set' accessor must have exactly one parameter.
+A2	modifier	"set set() {}"	[class,abstractClass,declareClass,classExpr]	bun: Setter set must have exactly 1 argument (there are 0) @7	tsc: TS1049 @4+3 A 'set' accessor must have exactly one parameter.
+A2	modifier	"accessor x = 1;"	[declareClass]	bun: Expected ";" but found "x" @9	tsc: TS1039 @13+1 Initializers are not allowed in ambient contexts.
+A2	modifier	"accessor x!: T;"	[declareClass]	bun: Expected ";" but found "x" @9	tsc: TS1255 @10+1 A definite assignment assertion '!' is not permitted in this context.
+A2	member	"async static m() {}"	[class,abstractClass,declareClass,classExpr]	bun: Expected "(" but found "m" @13	tsc: TS1029 @6+6 'static' modifier must precede 'async' modifier.
+A2	member	"accessor public x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'accessor' modifier.
+A2	member	"readonly accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @18	tsc: TS1243 @9+8 'accessor' modifier cannot be used with 'readonly' modifier.
+A2	member	"declare accessor x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "x" @17	tsc: TS1243 @8+8 'accessor' modifier cannot be used with 'declare' modifier.
+A2	member	"accessor declare x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "declare" @9	tsc: TS1243 @9+7 'declare' modifier cannot be used with 'accessor' modifier.
+A2	member	"abstract accessor x: T;"	[class,declareClass,classExpr]	bun: Expected ";" but found "x" @18	tsc: TS1253 @0+8 Abstract properties can only appear within an abstract class.
+A2	member	"accessor abstract x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "abstract" @9	tsc: TS1253 @9+8 Abstract properties can only appear within an abstract class.
+A2	member	"accessor override x: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "override" @9	tsc: TS1029 @9+8 'override' modifier must precede 'accessor' modifier.
+A2	member	"x: asserts a;"	[class,abstractClass,declareClass,classExpr]	bun: Expected ";" but found "a" @11	tsc: TS1228 @3+9 A type predicate is only allowed in return type position for functions and methods.
+A2	member	"*constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be a generator function @1	tsc: TS1368 @1+11 Class constructor may not be a generator.
+A2	member	"get constructor() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be a getter @4	tsc: TS1341 @4+11 Class constructor may not be an accessor.
+A2	member	"set constructor(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: Class constructor cannot be a setter @4	tsc: TS1341 @4+11 Class constructor may not be an accessor.
+A2	member	"#constructor() {}"	[class,abstractClass,declareClass,classExpr]	bun: Invalid method name "#constructor" @0	tsc: TS18012 @0+12 '#constructor' is a reserved word.
+A2	member	"get x(a) { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: Getter x must have zero arguments @6	tsc: TS1054 @4+1 A 'get' accessor cannot have parameters.
+A2	member	"set x() {}"	[class,abstractClass,declareClass,classExpr]	bun: Setter x must have exactly 1 argument (there are 0) @5	tsc: TS1049 @4+1 A 'set' accessor must have exactly one parameter.
+A2	member	"set x(a, b) {}"	[class,abstractClass,declareClass,classExpr]	bun: Setter x must have exactly 1 argument (there are 2) @9	tsc: TS1049 @4+1 A 'set' accessor must have exactly one parameter.
+A2	member	"[k: string];"	[class,abstractClass,declareClass,classExpr]	bun: Expected ":" but found ";" @11	tsc: TS1021 @0+12 An index signature must have a type annotation.
+A2	member	"[k?: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Unexpected : @3	tsc: TS1019 @2+1 An index signature parameter cannot have a question mark.
+A2	member	"[k: string, l: number]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "]" but found "," @10	tsc: TS1096 @1+1 An index signature must have exactly one parameter.
+A2	member	"[...k: string[]]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Unexpected ... @1	tsc: TS1017 @1+3 An index signature cannot have a rest parameter.
+A2	member	"[k,]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "]" but found "," @2	tsc: TS1022 @1+1 An index signature parameter must have a type annotation.
+A2	member	"[]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Unexpected ] @1	tsc: TS1096 @0+6 An index signature must have exactly one parameter.
+A2	member	"[k: string = 1]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "]" but found "=" @11	tsc: TS1020 @1+1 An index signature parameter cannot have an initializer. also TS2371
+A2	member	"[public k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: Expected "]" but found "k" @8	tsc: TS1018 @8+1 An index signature parameter cannot have an accessibility modifier. also TS2369
+A2	member	"static { return }"	[class,abstractClass,declareClass,classExpr]	bun: A return statement cannot be used here @9	tsc: TS18041 @9+6 A 'return' statement cannot be used inside a class static block.
+A2	member	"abstract abstract x: T;"	[abstractClass]	bun: Expected ";" but found "x" @18	tsc: TS1030 @9+8 'abstract' modifier already seen.
+A2	member	"accessor accessor x: T;"	[abstractClass]	bun: Expected ";" but found "accessor" @9	tsc: TS1030 @9+8 'accessor' modifier already seen.
+A2	member	"accessor static x: T;"	[abstractClass]	bun: Expected ";" but found "static" @9	tsc: TS1029 @9+6 'static' modifier must precede 'accessor' modifier.
+A2	member	"accessor readonly x: T;"	[abstractClass]	bun: Expected ";" but found "readonly" @9	tsc: TS1243 @9+8 'readonly' modifier cannot be used with 'accessor' modifier.
+A2	member	"accessor x?: T;"	[abstractClass]	bun: Expected ";" but found "x" @9	tsc: TS1276 @10+1 An 'accessor' property cannot be declared optional.
+A2	member	"accessor m() {}"	[abstractClass]	bun: Expected ";" but found "m" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	member	"accessor get x() { return 1 }"	[abstractClass]	bun: Expected ";" but found "get" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	member	"async constructor() {}"	[abstractClass]	bun: Class constructor cannot be an async function @6	tsc: TS1089 @0+5 'async' modifier cannot appear on a constructor declaration.
+A2	member	"async get x() { return 1 }"	[abstractClass]	bun: Expected "(" but found "x" @10	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	member	"accessor [k: string]: T;"	[abstractClass]	bun: Expected ";" but found "[" @9	tsc: TS1071 @0+8 'accessor' modifier cannot appear on an index signature.
+A2	member	"const x = 1;"	[abstractClass]	bun: Expected ";" but found "x" @6	tsc: TS1248 @6+1 A class member cannot have the 'const' keyword.
+A2	member	"export x;"	[abstractClass]	bun: Expected ";" but found "x" @7	tsc: TS1031 @0+6 'export' modifier cannot appear on class elements of this kind.
+A2	member	"static accessor x = 1;"	[declareClass]	bun: Expected ";" but found "x" @16	tsc: TS1039 @20+1 Initializers are not allowed in ambient contexts.
+A2	member	"accessor #x = 1;"	[declareClass]	bun: Expected ";" but found "#x" @9	tsc: TS1039 @14+1 Initializers are not allowed in ambient contexts.
+A2	member	"accessor [x] = 1;"	[declareClass]	bun: Expected ";" but found "[" @9	tsc: TS1039 @15+1 Initializers are not allowed in ambient contexts.
+A2	member	"accessor \"x\" = 1;"	[declareClass]	bun: Expected ";" but found ""x"" @9	tsc: TS1039 @15+1 Initializers are not allowed in ambient contexts.
+A2	member	"accessor 1 = 1;"	[declareClass]	bun: Expected ";" but found "1" @9	tsc: TS1039 @13+1 Initializers are not allowed in ambient contexts.
+A2	member	"accessor x\n= 1;"	[declareClass]	bun: Expected ";" but found "x" @9	tsc: TS1039 @13+1 Initializers are not allowed in ambient contexts.
+A2	classHead	"class C<> {}"	[-]	bun: Expected identifier but found ">" @8	tsc: TS1098 @7+2 Type parameter list cannot be empty.
+A2	classHead	"class {}"	[-]	bun: Expected identifier but found "{" @6	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"class<T> {}"	[-]	bun: Expected identifier but found "<" @5	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"abstract class {}"	[-]	bun: Expected identifier but found "{" @15	tsc: TS1211 @0+8 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"abstract abstract class C {}"	[-]	bun: Expected ";" but found "abstract" @9	tsc: TS1030 @9+8 'abstract' modifier already seen.
+A2	classHead	"async class C {}"	[-]	bun: Expected ";" but found "class" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	classHead	"static class C {}"	[-]	bun: Expected ";" but found "class" @7	tsc: TS1044 @0+6 'static' modifier cannot appear on a module or namespace element.
+A2	classHead	"public class C {}"	[-]	bun: Expected ";" but found "class" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	classHead	"private class C {}"	[-]	bun: Expected ";" but found "class" @8	tsc: TS1044 @0+7 'private' modifier cannot appear on a module or namespace element.
+A2	classHead	"readonly class C {}"	[-]	bun: Expected ";" but found "class" @9	tsc: TS1024 @0+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	classHead	"accessor class C {}"	[-]	bun: Expected ";" but found "class" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	classHead	"const c = class\nimplements\n{};"	[-]	bun: Expected "{" but found ";" @29	tsc: TS1213 @16+10 Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	classHead	"class extends {}"	[-]	bun: Expected identifier but found "extends" @6	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"class extends B {}"	[-]	bun: Expected identifier but found "extends" @6	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"class implements I {}"	[-]	bun: Expected "{" but found "I" @17	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	classHead	"class extends extends B {}"	[-]	bun: Expected identifier but found "extends" @6	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+A2	heritage	"class C implements I extends B {}"	[-]	bun: Expected "?" but found "{" @31	tsc: TS1173 @21+7 'extends' clause must precede 'implements' clause.
+A2	heritage	"class C extends B, D {}"	[-]	bun: Expected "{" but found "," @17	tsc: TS1174 @19+1 Classes can only extend a single class.
+A2	heritage	"class C extends B extends D {}"	[-]	bun: Expected "{" but found "extends" @18	tsc: TS1172 @18+7 'extends' clause already seen.
+A2	heritage	"class C implements I implements J {}"	[-]	bun: Expected "{" but found "implements" @21	tsc: TS1175 @21+10 'implements' clause already seen.
+A2	heritage	"class C extends B implements I implements J {}"	[-]	bun: Expected "{" but found "implements" @31	tsc: TS1175 @31+10 'implements' clause already seen.
+A2	heritage	"class C extends B implements I extends D {}"	[-]	bun: Expected "?" but found "{" @41	tsc: TS1172 @31+7 'extends' clause already seen.
+A2	heritage	"class C extends {}"	[-]	bun: Expected "{" but found end of file @18	tsc: TS1097 @15+0 'extends' list cannot be empty.
+A2	heritage	"class C implements {}"	[-]	bun: Expected "{" but found end of file @21	tsc: TS1097 @18+0 'implements' list cannot be empty.
+A2	heritage	"class C extends B implements {}"	[-]	bun: Expected "{" but found end of file @31	tsc: TS1097 @28+0 'implements' list cannot be empty.
+A2	heritage	"class C extends implements I {}"	[-]	bun: Expected "{" but found "I" @27	tsc: TS1097 @15+0 'extends' list cannot be empty.
+A2	heritage	"class C implements I, {}"	[-]	bun: Expected "{" but found end of file @24	tsc: TS1009 @20+1 Trailing comma not allowed.
+A2	heritage	"class C extends implements {}"	[-]	bun: "implements" is a reserved word and cannot be used in strict mode @16	tsc: TS1097 @15+0 'extends' list cannot be empty.
+A2	paramProp	"static x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	paramProp	"declare x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @8	tsc: TS1090 @0+7 'declare' modifier cannot appear on a parameter.
+A2	paramProp	"abstract x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	paramProp	"async x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "x" @6	tsc: TS1090 @0+5 'async' modifier cannot appear on a parameter.
+A2	paramProp	"export x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected identifier but found "export" @0	tsc: TS1090 @0+6 'export' modifier cannot appear on a parameter.
+A2	paramProp	"in x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected identifier but found "in" @0	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	paramProp	"out x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	paramProp	"accessor x: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	paramProp	"public static x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @14	tsc: TS1090 @7+6 'static' modifier cannot appear on a parameter.
+A2	paramProp	"static public x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "public" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	paramProp	"public declare x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @15	tsc: TS1090 @7+7 'declare' modifier cannot appear on a parameter.
+A2	paramProp	"public abstract x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	paramProp	"public async x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @13	tsc: TS1090 @7+5 'async' modifier cannot appear on a parameter.
+A2	paramProp	"public accessor x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @16	tsc: TS1275 @7+8 'accessor' modifier can only appear on a property declaration.
+A2	paramProp	"public ...x: T[]"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+16 A parameter property cannot be declared using a rest parameter.
+A2	paramProp	"public ...x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+11 A parameter property cannot be declared using a rest parameter.
+A2	paramProp	"readonly ...x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "..." @9	tsc: TS1317 @0+13 A parameter property cannot be declared using a rest parameter.
+A2	paramProp	"public { x }: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @7	tsc: TS1187 @0+15 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public { x }"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @7	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public [x]: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "[" @7	tsc: TS1187 @0+13 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public [x]"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "[" @7	tsc: TS1187 @0+10 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"readonly { x }"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @9	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"readonly [x]"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "[" @9	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"private { x } = {}"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @8	tsc: TS1187 @0+18 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public { x }: T = {}"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @7	tsc: TS1187 @0+20 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"override { x }"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @9	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"override [x]"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "[" @9	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public public"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "public" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"private private"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "private" is a reserved word and cannot be used in strict mode @8	tsc: TS1213 @8+7 Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"readonly public"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "public" is a reserved word and cannot be used in strict mode @9	tsc: TS1213 @9+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public private"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "private" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+7 Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public public: T"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "public" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public readonly public"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "public" is a reserved word and cannot be used in strict mode @16	tsc: TS1213 @16+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"@d public ...x: T[]"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected ")" but found "..." @10	tsc: TS1317 @0+19 A parameter property cannot be declared using a rest parameter.
+A2	paramProp	"@d public { x }: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor,method,staticMethod,setter,fn,objMethod]	bun: Expected identifier but found "{" @10	tsc: TS1187 @0+18 A parameter property may not be declared using a binding pattern.
+A2	paramProp	"public yield"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "yield" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+5 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public arguments"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Declarations with the name "arguments" cannot be used in strict mode @7	tsc: TS1210 @7+9 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	paramProp	"public eval"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: Declarations with the name "eval" cannot be used in strict mode @7	tsc: TS1210 @7+4 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'eval'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	paramProp	"public static"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "static" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+6 Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public let"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "let" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+3 Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public implements"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "implements" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+10 Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public interface"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "interface" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+9 Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"public package"	[ctor,ctorExpr,ctorDerived,abstractCtor,stringCtor,method,staticMethod,setter,fn,arrow,objMethod]	bun: "package" is a reserved word and cannot be used in strict mode @7	tsc: TS1213 @7+7 Identifier expected. 'package' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	paramProp	"readonly public x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'readonly' modifier. also TS2369
+A2	paramProp	"override public x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'override' modifier. also TS2369
+A2	paramProp	"readonly override x: T"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @9	tsc: TS1029 @9+8 'override' modifier must precede 'readonly' modifier. also TS2369
+A2	paramProp	"public x?: T = 1"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: TS1015 @7+1 Parameter cannot have question mark and initializer. also TS2369
+A2	paramProp	"public public x"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "public" @7	tsc: TS1028 @7+6 Accessibility modifier already seen. also TS2369
+A2	paramProp	"public private x"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "private" @7	tsc: TS1028 @7+7 Accessibility modifier already seen. also TS2369
+A2	paramProp	"readonly readonly x"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "readonly" @9	tsc: TS1030 @9+8 'readonly' modifier already seen. also TS2369
+A2	paramProp	"override override x"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "override" @9	tsc: TS1030 @9+8 'override' modifier already seen. also TS2369
+A2	paramProp	"public x: T!"	[method,staticMethod,setter,fn,arrow,objMethod]	bun: Expected ")" but found "x" @7	tsc: TS17019 @10+2 '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'T'? also TS2369
+A2	paramProp	"public x?"	[setter]	bun: Expected ")" but found "x" @7	tsc: TS1051 @8+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	paramProp	"public x?: T"	[setter]	bun: Expected ")" but found "x" @7	tsc: TS1051 @8+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	paramProp	"public x = 1"	[setter]	bun: Expected ")" but found "x" @7	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	paramProp	"public x: T = 1"	[setter]	bun: Expected ")" but found "x" @7	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	paramProp	"readonly x = 1"	[setter]	bun: Expected ")" but found "x" @9	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	paramProp	"private x?, protected y?"	[setter]	bun: Expected ")" but found "x" @8	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter. also TS2369
+A2	paramProp	"public x: T, private y: U, protected z: V, readonly w: W"	[setter]	bun: Expected ")" but found "x" @7	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter. also TS2369
+A2	paramProp	"public, private"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @8	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramProp	"public, private, protected, readonly, override"	[setter]	bun: Setter p must have exactly 1 argument (there are 5) @8	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramProp	"public readonly?: T"	[setter]	bun: Expected ")" but found "readonly" @7	tsc: TS1051 @15+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	paramProp	"public readonly = 1"	[setter]	bun: Expected ")" but found "readonly" @7	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	paramProp	"public\n, y"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @9	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramProp	"@d x: T, @e public y: U"	[setter,fn,objMethod]	bun: Expected ")" but found "y" @19	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter. also TS2369
+A2	paramProp	"@d public x: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramProp	"@d() private x: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramProp	"@d readonly x"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramProp	"@d public readonly x: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramProp	"@d @e public x: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramProp	"@d public"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramProp	"@d public: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramProp	"@d ...x: T[]"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramProp	"@d { x }: T"	[fn,objMethod]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+B	modifier	"get [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @6+1 ']' expected.
+B	modifier	"set [k: string]: T;"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @6+1 ']' expected.
+B	member	"x: a is B;"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1442 @5+2 Expected '=' for property initializer.
+B	member	"m!() {}"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1441 @2+1 Cannot start a function call in a type annotation.
+B	member	"m!(): void;"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1441 @2+1 Cannot start a function call in a type annotation.
+B	member	"constructor?() {}"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @11+1 '(' expected.
+B	member	"constructor!() {}"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @11+1 '(' expected.
+B	member	"get x?() { return 1 }"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"set x?(v) {}"	[class,abstractClass,declareClass,classExpr]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	classHead	"export abstract\nclass C {}"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	heritage	"class C extends <any>B {}"	[-]	bun: accepts	tsc: TS1109 @16+1 Expression expected.
+B	heritage	"class C extends B<T>.D {}"	[-]	bun: accepts	tsc: TS1477 @17+3 An instantiation expression cannot be followed by a property access.
+B	heritage	"class C extends void 0 {}"	[-]	bun: accepts	tsc: TS1109 @16+4 Expression expected.
+B	heritage	"class C extends await B {}"	[-]	bun: accepts	tsc: TS1005 @22+1 ',' expected.
+B	heritage	"class C extends typeof B {}"	[-]	bun: accepts	tsc: TS1109 @16+6 Expression expected.
+B	heritage	"class C extends -B {}"	[-]	bun: accepts	tsc: TS1109 @16+1 Expression expected.
+B	paramProp	"...public x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @10+1 ',' expected.
+B	paramProp	"...readonly x"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @12+1 ',' expected.
+B	paramProp	"public\nx: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @7+1 ',' expected.
+B	paramProp	"readonly\nx: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @9+1 ',' expected.
+B	paramProp	"public\nreadonly\nx: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @7+8 ',' expected.
+B	paramProp	"public // c\nx: T"	[ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]	bun: accepts	tsc: TS1005 @12+1 ',' expected.

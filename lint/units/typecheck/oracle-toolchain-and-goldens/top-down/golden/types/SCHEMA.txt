@@ -1,0 +1,63 @@
+struct IntrinsicType intrinsicName:string
+struct LiteralType value:interface{} freshType:*checker.Type regularType:*checker.Type
+struct UniqueESSymbolType name:string
+struct ObjectType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type
+struct TypeReference resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type node:*ast.Node resolvedTypeArguments:[]*checker.Type
+struct InterfaceType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type node:*ast.Node resolvedTypeArguments:[]*checker.Type allTypeParameters:[]*checker.Type outerTypeParameterCount:int thisType:*checker.Type baseTypesResolved:bool declaredMembersResolved:bool resolvedBaseConstructorType:*checker.Type resolvedBaseTypes:[]*checker.Type declaredMembers:ast.SymbolTable declaredCallSignatures:[]*checker.Signature declaredConstructSignatures:[]*checker.Signature declaredIndexInfos:[]*checker.IndexInfo
+struct TupleType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type node:*ast.Node resolvedTypeArguments:[]*checker.Type allTypeParameters:[]*checker.Type outerTypeParameterCount:int thisType:*checker.Type baseTypesResolved:bool declaredMembersResolved:bool resolvedBaseConstructorType:*checker.Type resolvedBaseTypes:[]*checker.Type declaredMembers:ast.SymbolTable declaredCallSignatures:[]*checker.Signature declaredConstructSignatures:[]*checker.Signature declaredIndexInfos:[]*checker.IndexInfo elementInfos:[]checker.TupleElementInfo minLength:int fixedLength:int combinedFlags:checker.ElementFlags readonly:bool
+struct InstantiationExpressionType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type node:*ast.Node
+struct MappedType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type declaration:*ast.MappedTypeNode typeParameter:*checker.Type constraintType:*checker.Type nameType:*checker.Type templateType:*checker.Type modifiersType:*checker.Type resolvedApparentType:*checker.Type containsError:bool
+struct ReverseMappedType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type source:*checker.Type mappedType:*checker.Type constraintType:*checker.Type
+struct EvolvingArrayType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type target:*checker.Type mapper:*checker.TypeMapper instantiations:map[checker.CacheHashKey]*checker.Type elementType:*checker.Type finalArrayType:*checker.Type
+struct UnionType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type types:[]*checker.Type propertyCache:ast.SymbolTable propertyCacheWithoutFunctionPropertyAugment:ast.SymbolTable resolvedProperties:[]*ast.Symbol resolvedReducedType:*checker.Type regularType:*checker.Type origin:*checker.Type keyPropertyName:string constituentMap:map[*checker.Type]*checker.Type
+struct IntersectionType resolvedBaseConstraint:*checker.Type members:ast.SymbolTable properties:[]*ast.Symbol signatures:[]*checker.Signature callSignatureCount:int indexInfos:[]*checker.IndexInfo objectTypeWithoutAbstractConstructSignatures:*checker.Type types:[]*checker.Type propertyCache:ast.SymbolTable propertyCacheWithoutFunctionPropertyAugment:ast.SymbolTable resolvedProperties:[]*ast.Symbol resolvedApparentType:*checker.Type uniqueLiteralFilledInstantiation:*checker.Type
+struct TypeParameter resolvedBaseConstraint:*checker.Type constraint:*checker.Type target:*checker.Type mapper:*checker.TypeMapper isThisType:bool resolvedDefaultType:*checker.Type
+struct IndexType resolvedBaseConstraint:*checker.Type target:*checker.Type indexFlags:checker.IndexFlags
+struct IndexedAccessType resolvedBaseConstraint:*checker.Type objectType:*checker.Type indexType:*checker.Type accessFlags:checker.AccessFlags
+struct TemplateLiteralType resolvedBaseConstraint:*checker.Type texts:[]string types:[]*checker.Type
+struct StringMappingType resolvedBaseConstraint:*checker.Type target:*checker.Type
+struct SubstitutionType resolvedBaseConstraint:*checker.Type baseType:*checker.Type constraint:*checker.Type
+struct ConditionalType resolvedBaseConstraint:*checker.Type root:*checker.ConditionalRoot checkType:*checker.Type extendsType:*checker.Type resolvedTrueType:*checker.Type resolvedFalseType:*checker.Type resolvedInferredTrueType:*checker.Type resolvedDefaultConstraint:*checker.Type resolvedConstraintOfDistributive:*checker.Type mapper:*checker.TypeMapper combinedMapper:*checker.TypeMapper
+struct Signature flags:checker.SignatureFlags minArgumentCount:int32 resolvedMinArgumentCount:int32 declaration:*ast.Node typeParameters:[]*checker.Type parameters:[]*ast.Symbol thisParameter:*ast.Symbol resolvedReturnType:*checker.Type resolvedTypePredicate:*checker.TypePredicate target:*checker.Signature mapper:*checker.TypeMapper isolatedSignatureType:*checker.Type composite:*checker.CompositeSignature
+struct IndexInfo keyType:*checker.Type valueType:*checker.Type isReadonly:bool declaration:*ast.Node indexSymbol:*ast.Symbol components:[]*ast.Node
+struct TypeAlias symbol:*ast.Symbol typeArguments:[]*checker.Type
+struct TypePredicate kind:checker.TypePredicateKind parameterIndex:int32 parameterName:string t:*checker.Type
+struct ConditionalRoot node:*ast.ConditionalTypeNode checkType:*checker.Type extendsType:*checker.Type isDistributive:bool inferTypeParameters:[]*checker.Type outerTypeParameters:[]*checker.Type instantiations:map[checker.CacheHashKey]*checker.Type alias:*checker.TypeAlias
+struct CompositeSignature isUnion:bool signatures:[]*checker.Signature
+struct TupleElementInfo flags:checker.ElementFlags labeledDeclaration:*ast.Node
+struct SimpleTypeMapper source:*checker.Type target:*checker.Type
+struct ArrayTypeMapper sources:[]*checker.Type targets:[]*checker.Type
+struct ArrayToSingleTypeMapper sources:[]*checker.Type target:*checker.Type
+struct DeferredTypeMapper sources:[]*checker.Type targets:[]func()*checker.Type
+struct FunctionTypeMapper fn:func(*checker.Type)*checker.Type
+struct MergedTypeMapper m1:*checker.TypeMapper m2:*checker.TypeMapper
+struct CompositeTypeMapper c:*checker.Checker m1:*checker.TypeMapper m2:*checker.TypeMapper
+struct InferenceTypeMapper c:*checker.Checker n:*checker.InferenceContext fixing:bool
+struct Symbol Flags:ast.SymbolFlags CheckFlags:ast.CheckFlags Name:string Declarations:[]*ast.Node ValueDeclaration:*ast.Node Members:ast.SymbolTable Exports:ast.SymbolTable Parent:*ast.Symbol ExportSymbol:*ast.Symbol
+links nodeLinks flags:checker.NodeCheckFlags declarationRequiresScopeChange:core.Tristate hasReportedStatementInAmbientContext:bool
+links signatureLinks resolvedSignature:*checker.Signature effectsSignature:*checker.Signature decoratorSignature:*checker.Signature
+links symbolNodeLinks resolvedSymbol:*ast.Symbol
+links typeNodeLinks resolvedType:*checker.Type outerTypeParameters:[]*checker.Type
+links enumMemberLinks value:evaluator.Result
+links assertionLinks exprType:*checker.Type
+links arrayLiteralLinks indicesComputed:bool firstSpreadIndex:int lastSpreadIndex:int
+links switchStatementLinks exhaustiveState:checker.ExhaustiveState switchTypesComputed:bool witnessesComputed:bool switchTypes:[]*checker.Type witnesses:[]string
+links jsxElementLinks jsxFlags:checker.JsxFlags resolvedJsxElementAttributesType:*checker.Type jsxNamespace:*ast.Symbol jsxImplicitImportContainer:*ast.Symbol firstJSXTagInFile:*ast.Node
+links computedNameLinks hasName:*bool name:string
+links symbolReferenceLinks referenceKinds:ast.SymbolFlags
+links valueSymbolLinks resolvedType:*checker.Type writeType:*checker.Type target:*ast.Symbol mapper:*checker.TypeMapper nameType:*checker.Type containingType:*checker.Type functionOrConstructorChecked:bool
+links mappedSymbolLinks keyType:*checker.Type syntheticOrigin:*ast.Symbol
+links deferredSymbolLinks parent:*checker.Type constituents:[]*checker.Type writeConstituents:[]*checker.Type
+links aliasSymbolLinks immediateTarget:*ast.Symbol aliasTarget:*ast.Symbol referenced:bool typeOnlyDeclaration:*ast.Node
+links moduleSymbolLinks resolvedExports:ast.SymbolTable typeOnlyExportStarMap:map[string]*ast.Node exportsChecked:bool
+links lateBoundLinks lateSymbol:*ast.Symbol
+links exportTypeLinks target:*ast.Symbol originatingImport:*ast.Node
+links membersAndExportsLinks checker.MembersAndExportsLinks
+links typeAliasLinks declaredType:*checker.Type typeParameters:[]*checker.Type instantiations:map[checker.CacheHashKey]*checker.Type isConstructorDeclaredProperty:bool
+links declaredTypeLinks declaredType:*checker.Type interfaceChecked:bool indexSignaturesChecked:bool typeParametersChecked:bool enumChecked:bool
+links spreadLinks leftSpread:*ast.Symbol rightSpread:*ast.Symbol
+links varianceLinks variances:[]checker.VarianceFlags
+links ReverseMappedSymbolLinks propertyType:*checker.Type mappedType:*checker.Type constraintType:*checker.Type
+links markedAssignmentSymbolLinks lastAssignmentPos:int32 hasDefiniteAssignment:bool
+links symbolContainerLinks extendedContainersByFile:map[ast.NodeId][]*ast.Symbol extendedContainers:*[]*ast.Symbol accessibleChainCache:map[checker.accessibleChainCacheKey][]*ast.Symbol
+links sourceFileLinks typeChecked:bool unusedChecked:bool externalHelpersModule:*ast.Symbol requestedExternalEmitHelpers:checker.ExternalEmitHelpers deferredNodes:collections.OrderedSet[*github.com/microsoft/typescript-go/internal/ast.Node] identifierCheckNodes:[]*ast.Node localJsxNamespace:string localJsxFragmentNamespace:string localJsxFactory:*ast.Node localJsxFragmentFactory:*ast.Node jsxFragmentType:*checker.Type

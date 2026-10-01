@@ -1,0 +1,18 @@
+# Sections of the relinked base (tools/link.py base0 with the rlib rebuilt from a copy of src/js_parser) against the release build
+# of the worktree (measure/base/bin/bun-profile): .text, .rodata, .data and every debug section are byte-identical;
+# symsizes.py of the relinked base:
+bun_js_parser text         863  1,400,578
+P<false, false>            281    412,043
+P<true, false>             319    475,751
+P<false, true>              91    133,680
+P<true, true>              131    191,248
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,583
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+# link time without a ThinLTO cache: 767 s; lock wait before it: about 24 min.

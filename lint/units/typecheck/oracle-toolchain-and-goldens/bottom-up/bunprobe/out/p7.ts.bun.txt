@@ -1,0 +1,13 @@
+file p7.ts bytes=147
+s_function 11
+s_local 52
+  b_identifier 58 name="c"
+  e_number 62 value=1
+s_local 86
+  b_identifier 90 name="v"
+  e_number 94 value=1
+s_local 109
+  b_identifier 113 name="w"
+  e_number 132 value=1
+s_expr 144
+  e_identifier 144 name="x"

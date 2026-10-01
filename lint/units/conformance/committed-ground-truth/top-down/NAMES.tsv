@@ -1,0 +1,22 @@
+# Names below test/cli/lint/ that neither the runner of CI nor `bun test` takes for a test, and the one that both must take.
+# The two rules (read at e3566be889; tried with the installed bun 1.4.3 in a scratch directory, see HOWTO.txt):
+#   CI          scripts/runner.node.ts:2459-2494: the base name ends in .js .jsx .ts .tsx with an optional c or m, and contains ".test" or "spec." anywhere, case as written; a file whose directory path matches /node_modules|node.js/ or whose base name starts with "." is hidden (:2496).
+#   bun test    src/runtime/cli/test/Scanner.rs:239-256 and :426: the base name in lower case (:332) has an extension of a JavaScript-like loader, and what is before the extension ends in ".test", "_test", ".spec" or "_spec"; a directory whose name starts with "." or is node_modules is not entered (:339).
+#   So a name is safe when: no ".test" and no "spec." in the base name, and the lower-case stem does not end in _test or _spec.
+#   Helpers that a test spawns: test/CLAUDE.md:98 asks for *-fixture.ts; .gitattributes marks *-fixture* linguist-generated (.gitattributes:36); prettier (package.json:80) formats test/**/*.{test,spec}.* and skips every name with "fixture".
+# taken by: what takes the CURRENT name for a test.
+current name (notes or assembled set)	taken by	final name below test/cli/lint/	what changes
+test/cli/lint/conformance.test.ts (assembled)	CI, bun test: intended	conformance.test.ts	the one test file of the unit
+runner/compiler_test.ts (assembled; instance-materialisation/prototype/compiler_test.ts)	bun test (stem ends in _test)	conformance/runner/compilertest.ts	the imports in runner/materialize.ts:4 and runner/index.ts:12; the entry of the module map of the assembler
+check-contract-default-spawn/top-down/fakes/lints.ts	nobody, but it is a spawned helper	conformance/fixtures/fake-lint-fixture.ts	the path in conformance.test.ts (const fakeLinter)
+check-contract-default-spawn/top-down/fakes/runs.ts, crashes.ts, silent.ts	nobody	not committed; if the probe cases of spawn.test.ts are kept: conformance/fixtures/fake-runs-operand-fixture.ts, fake-crashes-fixture.ts, fake-silent-fixture.ts	-
+check-contract-default-spawn/top-down/spawn.test.ts, manifest.test.ts, plain.test.ts	CI, bun test	no file: cases that are kept become describe blocks of conformance.test.ts	-
+check-contract-default-spawn/prototype/spawn.test.ts and its fixtures/fake-*.ts	CI, bun test	no file	-
+oracle-and-expectations/bottom-up/prototype/expectations.test.ts	CI, bun test	no file: the block "expectations" of conformance.test.ts covers the module	-
+shared-foundation-merge/top-down/proof/foundation.test.ts	CI, bun test	no file: it tests the module set of the other merge	-
+test-file-and-sweep/bottom-up/prototype/*.test.ts (proto, proto2, overhead, semantics, stall, throws)	CI, bun test	no file	-
+test-file-and-sweep/top-down/replay-check.ts, fake-spawn-check.ts	nobody	not committed (arguments of sweep.ts --check on the machine of a developer)	-
+the pin script (prototype: committed-ground-truth/top-down/probes/pin.ts)	nobody	conformance/pin.ts	new
+enumerator/prototype/gen_options_table.ts	nobody	conformance/gen_options_table.ts	the three input paths become arguments; the output path is runner/options_table.json
+# Checked: the other 33 names of the assembled set (runner/*.ts, runner/options_table.json, runner/UPSTREAM_PORTED, sweep.ts, expectations.json, post-emit-order.txt) are taken by neither rule; test_case_parser.ts and vfstest.ts are safe (no dot before "test", no underscore before a final "test").
+# Checked: 0 of the 22185 vendored paths of the corpus are taken by either rule (lower case, both patterns). The guard of sync.sh (prototype line "runner_hit") knows ".test", "spec." and "_test." only: it has to learn "_spec." and compare in lower case.

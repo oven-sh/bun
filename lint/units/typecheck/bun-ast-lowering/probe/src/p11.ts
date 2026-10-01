@@ -1,0 +1,10 @@
+a < b > c;
+a < b > (c);
+a ?? b;
+a ** b ** c;
+a = b = c;
+a ? b : c ? d : e;
+a || b && c | d ^ e & f == g < h << i + j * k;
+a in b, a instanceof b;
+x = a >> b >>> c >= d;
+x >>= 1; x >>>= 2; x >= 3;

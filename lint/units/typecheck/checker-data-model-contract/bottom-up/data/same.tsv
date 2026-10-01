@@ -1,0 +1,14 @@
+checker/checker.go:6249	(*Checker).getIteratedTypeOrElementType	filteredTypes	arrayTypes	[]*checker.Type
+checker/checker.go:10785	(*Checker).getInstantiationExpressionType	callSignatures	resolved.CallSignatures()	[]*checker.Signature
+checker/checker.go:10785	(*Checker).getInstantiationExpressionType	constructSignatures	resolved.ConstructSignatures()	[]*checker.Signature
+checker/checker.go:19701	(*Checker).getTypeWithThisArgument	newTypes	types	[]*checker.Type
+checker/checker.go:21275	(*Checker).getUnionSignatures	signatures	masterList	[]*checker.Signature
+checker/checker.go:21960	(*Checker).getReducedUnionType	reducedTypes	unionType.Types()	[]*checker.Type
+checker/checker.go:22345	(*Checker).instantiateTypeWorker	newTypeArguments	resolvedTypeArguments	[]*checker.Type
+checker/checker.go:22366	(*Checker).instantiateTypeWorker	newTypes	types	[]*checker.Type
+checker/checker.go:26685	(*Checker).filterType	types	filtered	[]*checker.Type
+checker/checker.go:28176	(*Checker).getNormalizedUnionOrIntersectionType	normalizedTypes	types	[]*checker.Type
+checker/checker.go:28204	(*Checker).getNormalizedTupleType	elements	normalizedElements	[]*checker.Type
+checker/inference.go:1551	(*Checker).getCommonSupertype	primaryTypes	types	[]*checker.Type
+checker/relater.go:1518	(*Checker).compareSignaturesRelated	source.typeParameters	target.typeParameters	[]*checker.Type
+checker/relater.go:2930	(*Relater).unionOrIntersectionRelatedTo	constraints	source.Types()	[]*checker.Type

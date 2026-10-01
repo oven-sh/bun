@@ -1,0 +1,47 @@
+# conditional binding
+type T = A | B extends C ? D : E
+type T = A & B extends C ? D : E
+type T = keyof A extends C ? D : E
+type T = readonly A[] extends C ? D : E
+type T = unique symbol extends C ? D : E
+type T = A extends B ? C : D | E
+type T = A extends B ? C : D & E
+type T = A extends B ? C : D extends E ? F : G
+type T = A extends B extends C ? D : E ? F : G
+type T = A extends (B extends C ? D : E) ? F : G
+type T = A | B extends C ? D : E | F extends G ? H : I
+type T = (A extends B ? C : D)[]
+type T = A extends B ? C : D[]
+type T = A extends infer U extends string ? U : never
+type T = A extends [infer U extends string ? 1 : 2] ? U : never
+type T = A extends (infer U extends string ? 1 : 2) ? U : never
+type T = A extends (infer U extends string) ? U : never
+type T = A extends infer U extends string ? 1 : 2 ? U : never
+type T = A extends B\n? C : D
+type T = A\nextends B ? C : D
+# leading operators
+type T = | A
+type T = & A
+type T = | A | B
+type T = & A & B
+type T = | & A
+type T = & | A
+type T = | | A
+type T = & & A
+type T = A | | B
+type T = A | & B
+type T = A & | B
+type T = A & & B
+type T = |
+type T = A |
+type T = A &
+# function type in union
+type T = A | () => void
+type T = () => void | A
+type T = A & () => void
+type T = | () => void
+type T = A | new () => B
+type T = A | <T>() => void
+type T = A | (() => void)
+type T = keyof () => void
+type T = A | abstract new () => B

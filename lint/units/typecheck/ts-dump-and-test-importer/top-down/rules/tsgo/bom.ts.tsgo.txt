@@ -1,0 +1,14 @@
+file /bom.ts scriptKind=3 variant=0 dts=false textLen=15
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=7 identifiers=1 text=2 reparsedClones=0
+root KindSourceFile [0,15) f=0x0
+  .Statements: list [0,14) n=1
+    - KindVariableStatement [0,14) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,13) f=0x2
+        .Declarations: list [5,13) n=1
+          - KindVariableDeclaration [5,13) f=0x0
+            .Initializer: KindNumericLiteral [11,13) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [5,9) f=0x0 Text="bom"
+  .EndOfFileToken: KindEndOfFile [14,15) f=0x0

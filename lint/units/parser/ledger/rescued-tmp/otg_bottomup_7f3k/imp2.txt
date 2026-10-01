@@ -1,0 +1,130 @@
+# local exports with keyword / string names
+export type { default };
+export type { "a" };
+export type { if };
+export { default };
+export { "a" };
+export { if };
+export { if as A };
+export { default as A };
+export { default as default };
+export { type default };
+export { type default as A };
+export { type "a" };
+export { type if as A };
+export { type this };
+export { type null };
+export { type true };
+let a; export { a as default };
+let a; export { a as "b" };
+let a; export { a as if };
+type T = 1; export { type T as default };
+type T = 1; export { type T as if };
+type T = 1; export type { T as default };
+# import names
+import { arguments } from "m";
+import { eval } from "m";
+import arguments from "m";
+import * as eval from "m";
+import type { arguments } from "m";
+import { a as arguments } from "m";
+import { type arguments } from "m";
+# import type forms
+import type Foo from "m";
+import type Foo, { A } from "m";
+import type Foo, * as ns from "m";
+import type, { A } from "m"; type; A;
+import type from "m"; type;
+import type from from "m";
+import type * as ns from "m";
+import type {} from "m";
+import type { A, B as C } from "m";
+import type = require("m");
+import type Foo = require("m");
+import type Foo = A.B;
+import type type from "m";
+import type type = require("m");
+import type as from "m";
+import type as, { A } from "m";
+import type, * as ns from "m"; type; ns;
+import type\nFoo from "m";
+import type "m";
+import type;
+import type Foo;
+import type Foo from;
+import type A.B from "m";
+import type, Foo from "m";
+import type typeof from "m";
+import type of from "m";
+import type from, { A } from "m";
+import type from = require("m");
+export import type Foo = A.B;
+export import Foo = A.B;
+export import type Foo = require("m");
+import Foo, type { A } from "m";
+import Foo, { type A } from "m"; Foo;
+import defer * as ns from "m"; ns;
+import defer "x";
+import defer from "m"; defer;
+import.defer("x");
+import A from "x" with { a: 1 };
+import A from "x" with { a: "b" }; A;
+import type A from "x" with { a: "b" };
+import type A from "x" with { "resolution-mode": "import" };
+import A from "x"\nwith { type: "json" };
+import A from "x" assert { type: "json" }; A;
+namespace N { import("x"); }
+namespace N { import.meta; }
+namespace N { import A = B.C; }
+namespace N { export import A = B.C; }
+namespace N { import type A = B.C; }
+namespace N { import A from "m"; }
+declare namespace N { import A from "m"; }
+declare module "x" { import A from "m"; export { A } }
+export abstract declare class C {}
+export declare abstract class C {}
+export abstract class C {}
+export default abstract class C {}
+export default abstract class {}
+export default declare class C {}
+export default interface I {}
+export default type T = 1;
+export default enum E {}
+export default namespace N {}
+export default abstract declare class C {}
+export default async function f() {}
+export declare const a: number;
+export declare function f(): void;
+export declare namespace N {}
+export declare module "m" {}
+export declare global {}
+export declare type T = 1;
+export declare interface I {}
+export declare enum E {}
+export declare import A = B;
+export declare export class C {}
+export declare default class C {}
+export declare;
+export declare\nclass C {}
+export abstract\nclass C {}
+export type\nT = 1
+export interface\nI {}
+export namespace\nN {}
+export as namespace Foo;
+export as namespace Foo
+export as namespace if;
+export as namespace Foo.Bar;
+export as Foo;
+export as namespace;
+namespace N { export as namespace Foo; }
+export type T = 1
+export type as = 1
+export type type = 1
+export interface as {}
+export namespace as {}
+export module as {}
+export namespace as { export const x = 1 }
+export declare type as = 1
+export declare namespace as {}
+export async function as() {}
+export type of = 1

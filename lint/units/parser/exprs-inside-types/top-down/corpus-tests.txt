@@ -1,0 +1,132 @@
+## TypeScript tests/cases (compiler + conformance): 12444 files, 1009 with parse diagnostics
+    220 in   108 files  A computed name of a type member: entity-name
+            e.g. asyncYieldStarContextualType.ts: [Symbol.iterator](): Generator<E, T, unknown>
+            e.g. circularlyConstrainedMappedTypeContainingConditionalNoInfiniteInstantiationDepth.ts: [nominalTypeHack]?: T;
+            e.g. complexRecursiveCollections.ts: [Symbol.iterator](): IterableIterator<[keyof T, T[keyof T]]>;
+            e.g. complexRecursiveCollections.ts: [Symbol.iterator](): IterableIterator<[K, V]>;
+            e.g. complexRecursiveCollections.ts: [Symbol.iterator](): IterableIterator<T>;
+            e.g. complexRecursiveCollections.ts: [Symbol.iterator](): IterableIterator<T>;
+      2 in     1 files  A computed name of a type member: entity-name (file has parse errors)
+            e.g. intTypeCheck.ts: [p];
+            e.g. intTypeCheck.ts: [p];
+     21 in     7 files  A computed name of a type member: literal
+            e.g. declarationEmitComputedPropertyName1.ts: ["a_b_c"]: string;
+            e.g. declarationEmitComputedPropertyName1.ts: ["sss"]: string;
+            e.g. declarationEmitComputedPropertyName1.ts: ["foo bar"]: string;
+            e.g. declarationEmitComputedPropertyName1.ts: ["a_b_c"]: string;
+            e.g. declarationEmitComputedPropertyName1.ts: ["a_b_c"]: string;
+            e.g. declarationEmitComputedPropertyName1.ts: ["d_e_f"]: string;
+     11 in    10 files  A computed name of a type member: other-no-scope
+            e.g. indexSignatureWithInitializer.ts: [x = '']: string;
+            e.g. noMappedGetSet.ts: get [K in WAT](): string
+            e.g. computedPropertyNames35_ES5.ts: [foo<T>()](): void;
+            e.g. computedPropertyNames35_ES6.ts: [foo<T>()](): void;
+            e.g. computedPropertyNamesDeclarationEmit3_ES5.ts: ["" + ""](): void;
+            e.g. computedPropertyNamesDeclarationEmit3_ES6.ts: ["" + ""](): void;
+     12 in     4 files  B parameter initializer in a type signature: no scope
+            e.g. defaultArgsInOverloads.ts: fun(a = 3);
+            e.g. defaultArgsInOverloads.ts: (a = 3) => number
+            e.g. defaultValueInFunctionTypes.ts: (a: number = 1) => number
+            e.g. defaultValueInFunctionTypes.ts: (a : string = "") => any
+            e.g. callSignatureWithOptionalParameterAndInitializer.ts: (x? = 1);
+            e.g. callSignatureWithOptionalParameterAndInitializer.ts: foo(x: number, y?: number = 1);
+      2 in     1 files  B parameter initializer in a type signature: no scope (file has parse errors)
+            e.g. destructuringParameterDeclaration2.ts: b0(z = 10, [[a, b], d, {u}] = [[1, 2], "string", { u: false }]);
+            e.g. destructuringParameterDeclaration2.ts: b0(z = 10, [[a, b], d, {u}] = [[1, 2], "string", { u: false }]);
+      1 in     1 files  C binding element initializer in a type signature: no scope
+            e.g. defaultValueInFunctionTypes.ts: first = 0
+    105 in    14 files  C binding pattern as parameter name in a type signature
+            e.g. contextualComputedNonBindablePropertyType.ts: ({ key }: { key: key }) => void
+            e.g. declarationEmitBindingPatternsUnused.ts: ({ name: alias }: Named) => void
+            e.g. declarationEmitBindingPatternsUnused.ts: ({ name: alias }: Named) => typeof alias
+            e.g. declarationEmitBindingPatternsUnused.ts: ({ name: alias }: Named, p: typeof alias) => void
+            e.g. declarationEmitBindingPatternsUnused.ts: new ({ name: alias }: Named) => void
+            e.g. declarationEmitBindingPatternsUnused.ts: new ({ name: alias }: Named) => typeof alias
+      4 in     1 files  C binding pattern as parameter name in a type signature (file has parse errors)
+            e.g. destructuringParameterDeclaration2.ts: b0(z = 10, [[a, b], d, {u}] = [[1, 2], "string", { u: false }]);
+            e.g. destructuringParameterDeclaration2.ts: d3([a, b, c]?);
+            e.g. destructuringParameterDeclaration2.ts: d4({x, y, z}?);
+            e.g. destructuringParameterDeclaration2.ts: e0([a, b, c]);
+      6 in     2 files  C' computed key in a binding pattern of a type signature
+            e.g. renamingDestructuredPropertyInFunctionType.ts: ["a"]: string
+            e.g. renamingDestructuredPropertyInFunctionType.ts: [2]: string
+            e.g. renamingDestructuredPropertyInFunctionType.ts: ["a"]: string
+            e.g. renamingDestructuredPropertyInFunctionType.ts: [2]: string
+            e.g. renamingDestructuredPropertyInFunctionType3.ts: [sym]: string
+            e.g. renamingDestructuredPropertyInFunctionType3.ts: [sym]: string
+      3 in     2 files  D property signature initializer: no scope
+            e.g. errorOnInitializerInInterfaceProperty.ts: bar: number = 5;
+            e.g. errorOnInitializerInObjectTypeLiteralProperty.ts: bar: number = 5;
+            e.g. errorOnInitializerInObjectTypeLiteralProperty.ts: bar: number = 5;
+      4 in     1 files  E accessor WITH body in a type literal or interface
+            e.g. accessorBodyInTypeContext.ts: get foo() { return 0 }
+            e.g. accessorBodyInTypeContext.ts: set foo(v: any) { }
+            e.g. accessorBodyInTypeContext.ts: get foo() { return 0 }
+            e.g. accessorBodyInTypeContext.ts: set foo(v: any) { }
+     70 in    14 files  E accessor signature (no body) in a type literal or interface
+            e.g. circularAccessorAnnotations.ts: get foo(): typeof c1.foo;
+            e.g. circularAccessorAnnotations.ts: set foo(value: typeof c2.foo);
+            e.g. circularAccessorAnnotations.ts: get foo(): string;
+            e.g. circularAccessorAnnotations.ts: set foo(value: typeof c3.foo);
+            e.g. circularAccessorAnnotations.ts: get foo(): T1["foo"];
+            e.g. circularAccessorAnnotations.ts: set foo(value: T2["foo"]);
+      6 in     3 files  F import type attribute value: string literal
+            e.g. importTypeAssertionDeprecation.ts: import("./types", { assert: { "resolution-mode": "import" } }).MyType
+            e.g. importTypeAssertionDeprecation.ts: import("./types", { assert: { "resolution-mode": "require" } }).MyType
+            e.g. importTypeAssertionDeprecationIgnored.ts: import("./types", { assert: { "resolution-mode": "import" } }).MyType
+            e.g. importTypeAssertionDeprecationIgnored.ts: import("./types", { assert: { "resolution-mode": "require" } }).MyType
+            e.g. typeOnlyESMImportFromCJS.ts: typeof import("./module.mts", { with: { "resolution-mode": "import" } })
+            e.g. typeOnlyESMImportFromCJS.ts: typeof import("./module.mts", { with: { "resolution-mode": "require" } })
+     32 in     6 files  F import type attribute value: string literal (file has parse errors)
+            e.g. importAttributes10.ts: typeof import("./a.json", { with: { type: "json" }, })
+            e.g. importAttributes10.ts: typeof import("./a.json", { with: { type: "json", } })
+            e.g. importAttributes10.ts: typeof import("./a.json", { with: { type: "json" },
+            e.g. importAttributes10.ts: typeof import("./a.json", { with: { type: "json",, } })
+            e.g. resolutionModeImportType1.ts: typeof import("foo", { with: { "resolution-mode": "import" } }).x
+            e.g. resolutionModeImportType1.ts: typeof import("foo", { with: { "resolution-mode": "require" } }).x
+      1 in     1 files  I index signature parameter initializer: no scope
+            e.g. indexSignatureWithInitializer1.ts: [a: number = 1]: number;
+     43 in    12 files  I index signature parameter with ?, ..., modifier, pattern or count != 1
+            e.g. giant.ts: [p2: string, p3: number];
+            e.g. giant.ts: [p2: string, p3: number];
+            e.g. giant.ts: [p2: string, p3: number];
+            e.g. giant.ts: [p2: string, p3: number];
+            e.g. giant.ts: [p2: string, p3: number];
+            e.g. giant.ts: [p2: string, p3: number];
+      5 in     2 files  I index signature parameter with ?, ..., modifier, pattern or count != 1 (file has parse errors)
+            e.g. intTypeCheck.ts: [p2: string, p3: number];
+            e.g. intTypeCheck.ts: [p2: string, p3: number];
+            e.g. intTypeCheck.ts: [p2: string, p3: number];
+            e.g. intTypeCheck.ts: [p2: string, p3: number];
+            e.g. optionalPropertiesSyntax.ts: [idx?: number]: any;
+    425 in   220 files  J class implements: entity name
+            e.g. ClassDeclaration25.ts: IList<U>
+            e.g. abstractPropertyBasics.ts: A
+            e.g. abstractPropertyNegative.ts: A
+            e.g. arrayAssignmentTest1.ts: I1
+            e.g. arrayAssignmentTest2.ts: I1
+            e.g. arrayAssignmentTest5.ts: IMode
+     14 in     8 files  J class implements: entity name (file has parse errors)
+            e.g. bases.ts: I
+            e.g. constructorWithIncompleteTypeAnnotation.ts: IF
+            e.g. declarationEmitHasTypesRefOnNamespaceUse.ts: NS.Dep
+            e.g. interfaceDeclaration4.ts: Foo.I1
+            e.g. interfaceDeclaration4.ts: I4
+            e.g. interfaceDeclaration4.ts: Foo.I1
+   1166 in   423 files  J interface heritage: entity name
+            e.g. addMoreCallSignaturesToBaseSignature.ts: Foo
+            e.g. addMoreCallSignaturesToBaseSignature2.ts: Foo
+            e.g. addMoreOverloadsToBaseSignature.ts: Foo
+            e.g. anyIsAssignableToObject.ts: P
+            e.g. anyIsAssignableToVoid.ts: P
+            e.g. arrayAssignmentTest5.ts: IToken
+     43 in    18 files  J interface heritage: entity name (file has parse errors)
+            e.g. declarationEmitPathMappingMonorepo2.ts: StyledComponentProps<"root">
+            e.g. declarationEmitUsingAlternativeContainingModules1.ts: QueryOptions< TQueryFnData, TError, TQueryData, TQueryKey, TPageParam >
+            e.g. declarationEmitUsingAlternativeContainingModules1.ts: QueryObserverBaseResult<TData, TError>
+            e.g. declarationEmitUsingAlternativeContainingModules2.ts: QueryOptions< TQueryFnData, TError, TQueryData, TQueryKey, TPageParam >
+            e.g. declarationEmitUsingAlternativeContainingModules2.ts: QueryObserverBaseResult<TData, TError>
+            e.g. excessiveStackDepthFlatArray.ts: Array<T>
+      2 in     2 files  J interface heritage: other no scope
+            e.g. declarationEmitInterfaceWithNonEntityNameExpressionHeritage.ts: (typeof A)
+            e.g. interfaceMayNotBeExtendedWitACall.ts: color()

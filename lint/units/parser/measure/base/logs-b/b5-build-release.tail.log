@@ -1,0 +1,36 @@
+6_64-unknown-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'rust-target/x86_64-unknown-linux-gnu/deps/libbun_boringssl-febf94bb94e7cc05.rlib(bun_boringssl-febf94bb94e7cc05.bun_boringssl.62eabc2282853866-cgu.0.rcgu.o at 3464)' is 'x86_64-unknown-linux-gnu' whereas 'obj/vendor/boringssl/crypto/bytestring/asn1_compat.cc.o' is 'x86_64-pc-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'rust-target/x86_64-unknown-linux-gnu/deps/libbun_boringssl-febf94bb94e7cc05.rlib(bun_boringssl-febf94bb94e7cc05.bun_boringssl.62eabc2282853866-cgu.0.rcgu.o at 3464)' is 'x86_64-unknown-linux-gnu' whereas 'obj/vendor/boringssl/crypto/pem/pem_oth.cc.o' is 'x86_64-pc-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'obj/vendor/mimalloc/src/static.c.o' is 'x86_64-pc-linux-gnu' whereas '../../../../../root/.bun/build-cache/webkit-f20ce7744553c910-lto/lib/libWTF.a(CompilationThread.cpp.o at 515962)' is 'x86_64-unknown-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'rust-target/x86_64-unknown-linux-gnu/deps/libbun_boringssl-febf94bb94e7cc05.rlib(bun_boringssl-febf94bb94e7cc05.bun_boringssl.62eabc2282853866-cgu.0.rcgu.o at 3464)' is 'x86_64-unknown-linux-gnu' whereas 'obj/vendor/boringssl/crypto/x509/v3_int.cc.o' is 'x86_64-pc-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: '../../../../../root/.bun/build-cache/webkit-f20ce7744553c910-lto/lib/libJavaScriptCore.a(UnifiedSource-runtime-26.cpp.o at 159751260)' is 'x86_64-unknown-linux-gnu' whereas 'obj/src/jsc/bindings/webcore/streams/JSReadableStreamReaderBase.cpp.o' is 'x86_64-pc-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'rust-target/x86_64-unknown-linux-gnu/deps/libbun_boringssl-febf94bb94e7cc05.rlib(bun_boringssl-febf94bb94e7cc05.bun_boringssl.62eabc2282853866-cgu.0.rcgu.o at 3464)' is 'x86_64-unknown-linux-gnu' whereas 'obj/vendor/boringssl/crypto/asn1/a_octet.cc.o' is 'x86_64-pc-linux-gnu'
+
+
+ld.lld: warning: Linking two modules of different target triples: 'rust-target/x86_64-unknown-linux-gnu/deps/libbun_boringssl-febf94bb94e7cc05.rlib(bun_boringssl-febf94bb94e7cc05.bun_boringssl.62eabc2282853866-cgu.0.rcgu.o at 3464)' is 'x86_64-unknown-linux-gnu' whereas 'obj/vendor/boringssl/crypto/x509/a_digest.cc.o' is 'x86_64-pc-linux-gnu'
+
+[1494/1501] strip bun
+[1495/1501] check bun-profile --revision
+[check] bun-profile 1.4.3-canary.1+e3566be88 (18ms)
+[1496/1501] check bun-profile exports, dynamic deps, initializers, hardening
+[check] bun-profile 688 exported symbols (150ms)
+[check] bun-profile 3 shared libraries (2ms)
+[check] bun-profile 393 imported symbols (155ms)
+[check] bun-profile 10 static initializers (805ms)
+[check] bun-profile 3 hardening properties (2ms)
+[check] bun-profile 11 debug sections (1ms)
+[1497/1501] check bun-profile link inputs for duplicate definitions
+[check] bun-profile 0 duplicate strong symbols (5.5s)
+[build] done

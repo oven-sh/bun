@@ -1,0 +1,195 @@
+{"loader":"ts","code":"import 1","bun":["7+1 Unexpected 1"]}
+{"loader":"ts","code":"import ;","bun":["7+1 Unexpected ;"]}
+{"loader":"ts","code":"x = 1 + (a) => a","bun":["12+2 Expected \";\" but found \"=>\""]}
+{"loader":"ts","code":"x = 1 + a => a","bun":["10+2 Expected \";\" but found \"=>\""]}
+{"loader":"tsx","code":"x = <div {1}></div>","bun":["10+1 Unexpected 1","11+1 Expected \">\" but found \"}\""]}
+{"loader":"tsx","code":"x = <div {a}></div>","bun":["OK"]}
+{"loader":"tsx","code":"x = <div {\"a\"}></div>","bun":["OK"]}
+{"loader":"tsx","code":"x = <div>","bun":["9+0 Unexpected end of file"]}
+{"loader":"tsx","code":"x = <div></div","bun":["14+0 Expected \">\" but found end of file"]}
+{"loader":"tsx","code":"x = <div a={}></div>","bun":["12+1 Unexpected }"]}
+{"loader":"ts","code":"x = {get *a() {}}","bun":["9+1 Expected \"}\" but found \"*\"","10+1 Expected \";\" but found \"a\"","14+1 Expected \"=>\" but found \"{\""]}
+{"loader":"ts","code":"x = {*get a() {}}","bun":["10+1 Expected \"(\" but found \"a\"","11+1 Expected identifier but found \"(\""]}
+{"loader":"ts","code":"class A { static *[Symbol.iterator]*() {} }","bun":["35+1 Expected \"(\" but found \"*\"","36+1 Expected identifier but found \"(\""]}
+{"loader":"ts","code":"let f: (1) => void;","bun":["11+2 Expected \";\" but found \"=>\"","18+1 Unexpected ;"]}
+{"loader":"ts","code":"let f: ({1x}) => void;","bun":["9+0 Syntax Error"]}
+{"loader":"ts","code":"let f: ({...1}) => void;","bun":["OK"]}
+{"loader":"ts","code":"let f: (a, ) => void;","bun":["OK"]}
+{"loader":"ts","code":"let f: (a b) => void;","bun":["10+1 Expected \")\" but found \"b\"","11+1 Expected \";\" but found \")\"","13+2 Unexpected =>"]}
+{"loader":"ts","code":"type T = { a: 1 b: 2 }","bun":["16+1 Unexpected b"]}
+{"loader":"ts","code":"type T = { ; }","bun":["11+1 Unexpected ;"]}
+{"loader":"ts","code":"type T = { + }","bun":["13+1 Unexpected }"]}
+{"loader":"ts","code":"type T = { 1 + }","bun":["13+1 Unexpected +"]}
+{"loader":"ts","code":"type T = [function: number]","bun":["OK"]}
+{"loader":"ts","code":"type T = [if: number]","bun":["10+2 Unexpected if"]}
+{"loader":"ts","code":"type T = [a?: number, b]","bun":["OK"]}
+{"loader":"ts","code":"type T = [const: number]","bun":["10+5 Unexpected \"const\""]}
+{"loader":"ts","code":"x = (a?)","bun":["7+1 Unexpected )"]}
+{"loader":"ts","code":"x = (a?, b)","bun":["7+1 Unexpected ,"]}
+{"loader":"ts","code":"x = ({a = 1})","bun":["8+1 Unexpected \"=\""]}
+{"loader":"ts","code":"x = (a: number)","bun":["6+1 Unexpected \":\""]}
+{"loader":"ts","code":"x = (...a)","bun":["0+0 Unexpected \"...\""]}
+{"loader":"ts","code":"x = (a, ...b)","bun":["0+0 Unexpected \"...\""]}
+{"loader":"ts","code":"x = ()","bun":["6+0 Expected \"=>\" but found end of file"]}
+{"loader":"ts","code":"x = a ?? b || c","bun":["11+2 Unexpected ||"]}
+{"loader":"ts","code":"x = a && b ?? c","bun":["11+2 Unexpected ??"]}
+{"loader":"ts","code":"@dec","bun":["4+0 Expected \"class\" but found end of file"]}
+{"loader":"ts","code":"@dec enum E {}","bun":["5+4 Expected \"class\" but found \"enum\""]}
+{"loader":"ts","code":"@dec function f() {}","bun":["5+8 Expected \"class\" but found \"function\""]}
+{"loader":"ts","code":"@dec abstract\nclass A {}","bun":["5+8 Unexpected \"abstract\""]}
+{"loader":"ts","code":"@dec declare\nclass A {}","bun":["5+7 Unexpected \"declare\""]}
+{"loader":"ts","code":"@dec declare function f();","bun":["13+8 Expected \"class\" but found \"function\""]}
+{"loader":"ts","code":"export foo","bun":["7+3 Unexpected foo"]}
+{"loader":"ts","code":"export 1","bun":["7+1 Unexpected 1"]}
+{"loader":"ts","code":"namespace N { export default 1 }","bun":["21+7 Unexpected default"]}
+{"loader":"ts","code":"namespace N { export * from 'x' }","bun":["21+1 Unexpected *"]}
+{"loader":"ts","code":"namespace N { export { a } from 'x' }","bun":["21+1 Unexpected {"]}
+{"loader":"ts","code":"namespace N { import 'x' }","bun":["21+3 Expected identifier but found \"'x'\""]}
+{"loader":"ts","code":"namespace N { import * as a from 'x' }","bun":["21+1 Expected identifier but found \"*\""]}
+{"loader":"ts","code":"namespace N { import { a } from 'x' }","bun":["21+1 Expected identifier but found \"{\""]}
+{"loader":"ts","code":"namespace N { import a from 'x' }","bun":["23+4 Expected \"=\" but found \"from\"","28+3 Expected identifier but found \"'x'\""]}
+{"loader":"ts","code":"if (x) { import a from 'x' }","bun":["16+1 Unexpected a"]}
+{"loader":"ts","code":"if (x) { export { a } }","bun":["9+6 Unexpected export"]}
+{"loader":"ts","code":"if (x) { export default 1 }","bun":["9+6 Unexpected export"]}
+{"loader":"ts","code":"if (x) { export const a = 1 }","bun":["9+6 Unexpected export"]}
+{"loader":"ts","code":"for await (;;) {}","bun":["11+1 Unexpected ;"]}
+{"loader":"ts","code":"for await (x in y) {}","bun":["13+2 Expected \"of\" but found \"in\""]}
+{"loader":"ts","code":"class A { constructor() { #a } }","bun":["29+1 Expected \"in\" but found \"}\""]}
+{"loader":"ts","code":"class A { #a; m() { #a } }","bun":["23+1 Expected \"in\" but found \"}\""]}
+{"loader":"ts","code":"class A { #a; m() { #a + 1 } }","bun":["23+1 Expected \"in\" but found \"+\""]}
+{"loader":"ts","code":"await a ** b","bun":["8+2 Unexpected **"]}
+{"loader":"ts","code":"x = void a ** b","bun":["11+2 Unexpected **"]}
+{"loader":"ts","code":"x = delete a ** b","bun":["13+2 Unexpected **"]}
+{"loader":"ts","code":"x = +a ** b; y = ~a ** b; z = !a ** b","bun":["7+2 Unexpected **"]}
+{"loader":"ts","code":"x = a!\n!b","bun":["OK"]}
+{"loader":"ts","code":"switch (x) { case 1: ) }","bun":["21+1 Unexpected )"]}
+{"loader":"ts","code":"a\n)","bun":["2+1 Unexpected )"]}
+{"loader":"ts","code":"if (x) )","bun":["7+1 Unexpected )"]}
+{"loader":"ts","code":"x = )","bun":["4+1 Unexpected )"]}
+{"loader":"ts","code":"{ ) }","bun":["2+1 Unexpected )"]}
+{"loader":"ts","code":")","bun":["0+1 Unexpected )"]}
+{"loader":"ts","code":"default","bun":["0+7 Unexpected default"]}
+{"loader":"ts","code":"x = `${)}`","bun":["7+1 Unexpected )"]}
+{"loader":"ts","code":"class A { ) }","bun":["10+1 Expected identifier but found \")\"","13+0 Expected \"}\" but found end of file"]}
+{"loader":"ts","code":"x = { ) }","bun":["6+1 Expected identifier but found \")\"","9+0 Expected \"}\" but found end of file"]}
+{"loader":"ts","code":"x = [ ) ]","bun":["6+1 Unexpected )"]}
+{"loader":"ts","code":"f( ; )","bun":["3+1 Unexpected ;"]}
+{"loader":"ts","code":"let [ 1 ] = x","bun":["6+1 Expected identifier but found \"1\""]}
+{"loader":"ts","code":"let { 1 } = x","bun":["8+1 Expected \":\" but found \"}\"","10+1 Expected identifier but found \"=\"","12+1 Expected \"}\" but found \"x\""]}
+{"loader":"ts","code":"function f( 1 ) {}","bun":["12+1 Expected identifier but found \"1\""]}
+{"loader":"ts","code":"function f<1>() {}","bun":["11+1 Expected identifier but found \"1\""]}
+{"loader":"ts","code":"f<1,>()","bun":["OK"]}
+{"loader":"ts","code":"let x: Array<>","bun":["13+1 Unexpected >"]}
+{"loader":"ts","code":"let x: [ , ]","bun":["9+1 Unexpected ,"]}
+{"loader":"ts","code":"enum E { 1 }","bun":["9+1 Expected identifier but found \"1\""]}
+{"loader":"ts","code":"enum E { + }","bun":["9+1 Expected identifier but found \"+\""]}
+{"loader":"ts","code":"class A extends B implements { }","bun":["32+0 Expected \"{\" but found end of file"]}
+{"loader":"ts","code":"class A implements B extends C { }","bun":["31+1 Expected \"?\" but found \"{\"","33+1 Unexpected }","34+0 Unexpected end of file"]}
+{"loader":"ts","code":"interface I implements B { }","bun":["OK"]}
+{"loader":"ts","code":"import { 1 } from 'x'","bun":["9+1 Expected identifier but found \"1\"","13+4 Expected \"as\" but found \"from\"","18+0 Expected \"from\" but found \"'x'\""]}
+{"loader":"ts","code":"import { a } from 'x' with { 1: 'a' }","bun":["29+1 Expected identifier but found \"1\"","32+3 Expected \":\" but found \"'a'\"","36+1 Expected string but found \"}\"","37+0 Expected \"}\" but found end of file"]}
+{"loader":"ts","code":"export { 1 }","bun":["9+1 Expected identifier but found \"1\"","12+0 Expected \"}\" but found end of file","11+0 Expected identifier but found \"\""]}
+{"loader":"ts","code":"let x = a as const as","bun":["21+0 Unexpected end of file"]}
+{"loader":"ts","code":"abstract\nclass A {}","bun":["OK"]}
+{"loader":"ts","code":"export interface\nI {}","bun":["7+9 Unexpected \"interface\""]}
+{"loader":"ts","code":"export abstract\nclass A {}","bun":["OK"]}
+{"loader":"ts","code":"declare foo","bun":["8+3 Unexpected \"foo\""]}
+{"loader":"ts","code":"declare type\nT = 1","bun":["8+4 Unexpected \"type\""]}
+{"loader":"ts","code":"export default interface = 2","bun":["15+9 Unexpected \"interface\""]}
+{"loader":"ts","code":"x = a?.[0]`t`","bun":["10+3 Template literals cannot have an optional chain as a tag"]}
+{"loader":"ts","code":"x = a?.b`t`","bun":["8+3 Template literals cannot have an optional chain as a tag"]}
+{"loader":"ts","code":"x = new a?.b()","bun":["OK"]}
+{"loader":"ts","code":"class A { 'constructor'() {} get constructor() {} }","bun":["33+11 Class constructor cannot be a getter"]}
+{"loader":"ts","code":"class A { async constructor() {} }","bun":["16+11 Class constructor cannot be an async function"]}
+{"loader":"ts","code":"class A { *constructor() {} }","bun":["11+11 Class constructor cannot be a generator function"]}
+{"loader":"ts","code":"class A { static prototype() {} }","bun":["17+9 Invalid static method name \"prototype\""]}
+{"loader":"ts","code":"class A { #constructor() {} }","bun":["10+12 Invalid method name \"#constructor\""]}
+{"loader":"ts","code":"class A { #constructor = 1 }","bun":["10+12 Invalid field name \"#constructor\""]}
+{"loader":"ts","code":"x = { get a(b) {} , set c() {} }","bun":["12+1 Getter a must have zero arguments","25+0 Setter c must have exactly 1 argument (there are 0)"]}
+{"loader":"ts","code":"function f() { return\n1 }","bun":["OK"]}
+{"loader":"ts","code":"x = async\n() => 1","bun":["13+2 Expected \";\" but found \"=>\""]}
+{"loader":"ts","code":"export async\nfunction f() {}","bun":["7+5 Unexpected newline after \"async\""]}
+{"loader":"ts","code":"for (let of x) {}","bun":["12+1 Expected \";\" but found \"x\"","13+1 Unexpected )"]}
+{"loader":"ts","code":"for (let in x) {}","bun":["OK"]}
+{"loader":"ts","code":"x = a => {}\n()","bun":["14+0 Expected \"=>\" but found end of file"]}
+{"loader":"ts","code":"label: function* g() {}","bun":["7+0 Cannot use a declaration in a single-statement context"]}
+{"loader":"ts","code":"function f(a = super.b) {}","bun":["15+5 Unexpected \"super\""]}
+{"loader":"ts","code":"x = this","bun":["OK"]}
+{"loader":"ts","code":"class A { [this.x] = 1 }","bun":["OK"]}
+{"loader":"ts","code":"x = await => 1; async function f() { let await = 1 }","bun":["10+2 Unexpected =>"]}
+{"loader":"ts","code":"function* g() { let yield = 1 }","bun":["20+5 Cannot use \"yield\" or \"await\" here."]}
+{"loader":"ts","code":"async function f() { function g(a = await 1) {} }","bun":["42+1 \"await\" can only be used inside an \"async\" function","43+1 Expected \";\" but found \")\""]}
+{"loader":"ts","code":"async function f(a = await 1) {}","bun":["21+5 The keyword \"await\" cannot be used here","27+1 Expected \")\" but found \"1\"","28+1 Expected \";\" but found \")\""]}
+{"loader":"ts","code":"function* g(a = yield 1) {}","bun":["16+5 The keyword \"yield\" cannot be used here","22+1 Expected \")\" but found \"1\"","23+1 Expected \";\" but found \")\""]}
+{"loader":"ts","code":"x = import(...a)","bun":["11+3 Unexpected ..."]}
+{"loader":"ts","code":"x = new import('a')","bun":["8+6 Cannot use an \"import\" expression here without parentheses"]}
+{"loader":"ts","code":"import('a') = 1","bun":["0+0 Invalid assignment target"]}
+{"loader":"ts","code":"function f(...a,) {}","bun":["15+1 Expected \")\" but found \",\""]}
+{"loader":"ts","code":"function f(...a, b) {}","bun":["15+1 Expected \")\" but found \",\"","17+1 Expected \")\" but found \"b\"","18+1 Expected \";\" but found \")\""]}
+{"loader":"ts","code":"let [...a,] = x","bun":["9+1 Unexpected \",\" after rest pattern"]}
+{"loader":"ts","code":"let {...a,} = x","bun":["9+1 Unexpected \",\" after rest pattern"]}
+{"loader":"ts","code":"[...a,] = x","bun":["5+1 Unexpected \",\" after rest pattern"]}
+{"loader":"ts","code":"({...a,} = x)","bun":["6+1 Unexpected \",\" after rest pattern"]}
+{"loader":"ts","code":"using x = 1, {a} = b","bun":["13+1 Expected identifier but found \"{\"","13+0 This declaration must be initialized","14+1 Expected \";\" but found \"a\"","15+1 Unexpected }"]}
+{"loader":"ts","code":"export using x = 1","bun":["7+5 Unexpected using"]}
+{"loader":"ts","code":"declare using x: any","bun":["8+0 Cannot use \"declare\" with a \"using\" declaration"]}
+{"loader":"ts","code":"class A { declare x = 1 }","bun":["OK"]}
+{"loader":"ts","code":"class A { accessor x() {} }","bun":["19+1 auto-accessor properties cannot have a method body"]}
+{"loader":"ts","code":"class A { @dec constructor() {} }","bun":["10+0 TypeScript does not allow decorators on class constructors"]}
+{"loader":"ts","code":"x = @dec.a?.b class {}","bun":["10+2 Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator"]}
+{"loader":"ts","code":"x = @dec().b class {}","bun":["10+1 A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator"]}
+{"loader":"ts","code":"x = delete this.#a","bun":["16+2 Expected identifier but found \"#a\""]}
+{"loader":"ts","code":"class A { #a; m() { delete this.#a } }","bun":["27+2 Deleting the private name \"#a\" is forbidden"]}
+{"loader":"ts","code":"const x","bun":["6+0 The constant \"x\" must be initialized"]}
+{"loader":"ts","code":"let x, y: number\nconst z","bun":["23+0 The constant \"z\" must be initialized"]}
+{"loader":"ts","code":"for (var x = 1 in y) {}","bun":["OK"]}
+{"loader":"ts","code":"for (let x, y of z) {}","bun":["9+0 for-of loops must have a single declaration"]}
+{"loader":"ts","code":"switch (x) { default: default: }","bun":["22+7 Multiple default clauses are not allowed"]}
+{"loader":"ts","code":"break","bun":["0+4 Cannot use \"break\" here"]}
+{"loader":"ts","code":"continue","bun":["0+7 Cannot use \"continue\" here"]}
+{"loader":"ts","code":"a: a: x","bun":["OK"]}
+{"loader":"ts","code":"return","bun":["OK"]}
+{"loader":"ts","code":"let x = 08; let y = 0o8; let z = 1_000_; let w = 0_1","bun":["20+0 Syntax Error"]}
+{"loader":"ts","code":"let x = \"\\08\"","bun":["9+2 Invalid legacy octal literal"]}
+{"loader":"ts","code":"x = a ? (b) : c => d : e","bun":["OK"]}
+{"loader":"ts","code":"if (x) function f() {}","bun":["OK"]}
+{"loader":"ts","code":"while (x) const y = 1","bun":["10+0 Cannot use a declaration in a single-statement context"]}
+{"loader":"ts","code":"x = {a: 1, a: 2, __proto__: 1, __proto__: 2}","bun":["31+9 Cannot specify the \"__proto__\" property more than once per object"]}
+{"loader":"ts","code":"function f(a, a) { 'use strict' }","bun":["14+1 \"a\" cannot be bound multiple times in the same parameter list"]}
+{"loader":"ts","code":"let a; let a;","bun":["11+1 \"a\" has already been declared"]}
+{"loader":"ts","code":"export { x }; export { x }","bun":["OK"]}
+{"loader":"ts","code":"x = 1 = 2","bun":["4+0 Invalid assignment target"]}
+{"loader":"ts","code":"1++","bun":["0+0 Invalid assignment target"]}
+{"loader":"ts","code":"for (1 of x) {}","bun":["5+0 Invalid assignment target"]}
+{"loader":"ts","code":"[a + 1] = x","bun":["1+0 Invalid assignment target"]}
+{"loader":"ts","code":"({a: 1} = x)","bun":["5+0 Invalid assignment target"]}
+{"loader":"ts","code":"x = class { static { await } }","bun":["21+5 The keyword \"await\" cannot be used here"]}
+{"loader":"ts","code":"x = 0777; 'use strict'","bun":["OK"]}
+{"loader":"ts","code":"with (a) b","bun":["OK"]}
+{"loader":"ts","code":"x = yield","bun":["OK"]}
+{"loader":"ts","code":"let x: import('a', { with: { a: 1 } })","bun":["OK"]}
+{"loader":"ts","code":"let x: import('a').b<>","bun":["21+1 Unexpected >"]}
+{"loader":"ts","code":"type T<> = 1","bun":["OK"]}
+{"loader":"ts","code":"class A<> {}","bun":["8+1 Expected identifier but found \">\"","10+1 Expected \">\" but found \"{\""]}
+{"loader":"ts","code":"new A<>()","bun":["OK"]}
+{"loader":"ts","code":"f<>()","bun":["OK"]}
+{"loader":"ts","code":"function f(): asserts {}","bun":["OK"]}
+{"loader":"ts","code":"function f(x): x is {}","bun":["OK"]}
+{"loader":"ts","code":"let x: asserts y","bun":["15+1 Expected \";\" but found \"y\""]}
+{"loader":"ts","code":"let x: y is z","bun":["OK"]}
+{"loader":"ts","code":"let a: abstract () => void","bun":["16+1 Expected \";\" but found \"(\"","17+1 Unexpected )"]}
+{"loader":"ts","code":"let a: new","bun":["10+0 Expected \"(\" but found end of file"]}
+{"loader":"ts","code":"let a: keyof","bun":["12+0 Unexpected end of file"]}
+{"loader":"ts","code":"let a: A | ","bun":["11+0 Unexpected end of file"]}
+{"loader":"ts","code":"let a: A & ","bun":["11+0 Unexpected end of file"]}
+{"loader":"ts","code":"let a: A[][","bun":["11+0 Unexpected end of file"]}
+{"loader":"ts","code":"let a: A[1","bun":["10+0 Expected \"]\" but found end of file"]}
+{"loader":"ts","code":"let a: { [K in ] }","bun":["15+1 Unexpected ]"]}
+{"loader":"ts","code":"let a: { [K in B as ]: 1 }","bun":["20+1 Unexpected ]"]}
+{"loader":"ts","code":"let a: { readonly [K in B]-: 1 }","bun":["OK"]}
+{"loader":"ts","code":"let a: { -x: 1 }","bun":["OK"]}
+{"loader":"ts","code":"let a: { get }","bun":["OK"]}
+{"loader":"ts","code":"let a: { get x }","bun":["OK"]}
+{"loader":"ts","code":"let a: { new }","bun":["OK"]}
+{"loader":"ts","code":"let a: { (): }","bun":["13+1 Unexpected }"]}
+{"loader":"ts","code":"let a: { <T>: 1 }","bun":["12+1 Expected identifier but found \":\"","16+1 Unexpected }"]}

@@ -1,0 +1,52 @@
+# rustc -Ztime-passes for the prototype crate alone (18.9k lines, 13.9k of them generated), dependencies prebuilt.
+# Wall seconds inside rustc, on the shared machine at load average 500 to 650.
+
+## cargo rustc --lib, dev profile, CARGO_INCREMENTAL=0 (cold front end and codegen)
+time:   0.127; rss:  129MB ->  162MB (  +32MB)	coherence_checking
+time:   0.645; rss:  129MB ->  205MB (  +76MB)	type_check_crate
+time:   0.783; rss:  205MB ->  238MB (  +33MB)	MIR_borrow_checking
+time:   0.162; rss:  249MB ->  264MB (  +14MB)	monomorphization_collector_graph_walk
+time:   0.287; rss:  240MB ->  266MB (  +25MB)	generate_crate_metadata
+time:   0.230; rss:  266MB ->  306MB (  +40MB)	codegen_to_LLVM_IR
+time:   0.267; rss:  266MB ->  306MB (  +40MB)	codegen_crate
+time:   0.278; rss:  271MB ->  232MB (  -40MB)	LLVM_passes
+time:   2.521; rss:   27MB ->   87MB (  +60MB)	total
+
+## the same up to metadata only (what cargo check does)
+time:   0.101; rss:  129MB ->  161MB (  +32MB)	coherence_checking
+time:   0.425; rss:  204MB ->  242MB (  +38MB)	MIR_borrow_checking
+time:   0.457; rss:  129MB ->  204MB (  +75MB)	type_check_crate
+time:   1.347; rss:   27MB ->   70MB (  +44MB)	total
+
+## cargo rustc --lib --release (opt-level 3, thin local LTO, 16 codegen units)
+time:   0.167; rss:  129MB ->  162MB (  +32MB)	coherence_checking
+time:   0.642; rss:  129MB ->  205MB (  +76MB)	type_check_crate
+time:   0.526; rss:  205MB ->  242MB (  +37MB)	MIR_borrow_checking
+time:   0.125; rss:  272MB ->  281MB (   +9MB)	monomorphization_collector_graph_walk
+time:   0.552; rss:  244MB ->  281MB (  +38MB)	generate_crate_metadata
+time:   0.215; rss:  282MB ->  306MB (  +24MB)	codegen_to_LLVM_IR
+time:   1.676; rss:  281MB ->  306MB (  +25MB)	codegen_crate
+time:   1.822; rss:  287MB ->  235MB (  -51MB)	LLVM_passes
+time:   1.507; rss:  233MB ->  244MB (  +11MB)	LLVM_thinlto
+time:   1.786; rss:  243MB ->  234MB (   -9MB)	finish_ongoing_codegen
+time:   5.948; rss:   26MB ->  100MB (  +74MB)	total
+
+## dev profile with a warm incremental cache after touch src/lib.rs
+time:   0.733; rss:  195MB ->  262MB (  +67MB)	codegen_to_LLVM_IR
+time:   3.746; rss:  195MB ->  262MB (  +67MB)	codegen_crate
+time:   3.651; rss:  225MB ->  263MB (  +39MB)	LLVM_passes
+time:   0.103; rss:  262MB ->  275MB (  +13MB)	incr_comp_persist_result_cache
+time:   0.103; rss:  262MB ->  275MB (  +13MB)	serialize_dep_graph
+time:   4.523; rss:   27MB ->   81MB (  +54MB)	total
+
+## whole cargo commands after touch src/lib.rs (wall includes the wait for the machine)
+cargo check: wall 2.9 s; cargo build: wall 10.0 s; cargo build --release: wall 6.9 s, user 6.3 s; cargo test --no-run: wall 7.6 s; cargo clippy: wall 5.6 s
+cargo miri test (-Zmiri-tree-borrows), first run with its own target directory: wall 191 s, the tests 25 to 29 s
+
+## sizes of the generated files
+ 11137 crate/src/ast/ast_generated.rs
+   240 crate/src/ast/flags_generated.rs
+  1944 crate/src/ast/kind_generated.rs
+   559 crate/src/ast/node_methods_generated.rs
+ 13880 total
+472574 total

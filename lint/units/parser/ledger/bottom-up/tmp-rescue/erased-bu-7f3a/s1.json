@@ -1,0 +1,5 @@
+[
+ {"name":"mixed","text":"type A = 1;\nconst a0 = 1;\ninterface B {}\nfunction f(x: number): void;\nfunction f(x: any) {\n  type C = 2;\n  if (x) { interface D {} }\n  try { type E = 3 } catch { type F = 4 } finally { type G = 5 }\n  switch (x) { case 1: type I = 7; break; default: declare const j: number; }\n  lbl: type K = 8;\n}\nnamespace NS { export const v = 1; type L = 9; export function h(): void; export function h() {} }\nclass Cls {\n  m(): void;\n  m() {}\n  static { type M = 10; }\n  declare p: number;\n  q = 1;\n  abstract r: string;\n  [k: string]: unknown;\n}\nnamespace a.b { interface X {} }\nexport declare const z: number;\n"},
+ {"name":"ambient","text":"declare namespace N { const x: number; function h(): void; interface I {} namespace M { type T = 1 } }\ndeclare global { interface W {} var y: string; type U = 2 }\ndeclare module \"m\" { export const y: string; global { interface G {} } }\n@dec export declare class K { m(): void }\nnamespace O { export declare const c: number; export declare function g(): void }"},
+ {"name":"declare-semi","text":"declare;\nfoo()"}
+]

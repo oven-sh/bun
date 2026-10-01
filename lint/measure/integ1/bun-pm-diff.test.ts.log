@@ -1,0 +1,59 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/install/bun-pm-diff.test.ts:
+(pass) bun pm diff > two registry versions: summary, notable package.json changes, unified hunks [349.04ms]
+(pass) bun pm diff > name@a..b and a bare second version mean the same thing [1184.56ms]
+(pass) bun pm diff > --name-only and --stat [474.99ms]
+(pass) bun pm diff > ':path' on a spec, a bare ':path', or trailing paths narrow the diff to those files [1190.98ms]
+(pass) bun pm diff > -U changes the context around a hunk [666.28ms]
+(pass) bun pm diff > one name: the version in this project's lockfile → latest [628.33ms]
+(pass) bun pm diff > one folder: the registry side is named by that folder's package.json, not the project's [256.03ms]
+(pass) bun pm diff > a folder against a tarball, no registry involved [320.60ms]
+(pass) bun pm diff > no arguments inside a package folder: what is published → this folder [428.76ms]
+(pass) bun pm diff > patch output marks a side that ends without a newline [327.71ms]
+(pass) bun pm diff > an unparseable -U is an error, not a silent default [145.85ms]
+(pass) bun pm diff > on a terminal: per-file headers, a line-number gutter, no patch syntax [279.31ms]
+(pass) bun pm diff > identical sides say so [196.47ms]
+(pass) bun pm diff > --json: one document with labels, per-file status/counts/patch, plain-text notes and totals [283.28ms]
+(pass) bun pm diff > the registry token is sent to the registry, never to a foreign dist.tarball host [278.67ms]
+(pass) bun pm diff > dist-tags, ranges and open-ended a.. spellings resolve like install would [960.71ms]
+(pass) bun pm diff > scoped packages use their scope's registry and token [1527.45ms]
+(pass) bun pm diff > errors: unknown package, no matching version; a third argument is a file filter [1231.68ms]
+(pass) bun pm diff (canonical re-print) > a reformat-only release collapses to 'formatting only' [700.28ms]
+(pass) bun pm diff (canonical re-print) > CRLF files: the terminal view diffs them as LF, and a pure line-ending flip collapses [1105.16ms]
+(pass) bun pm diff (canonical re-print) > package.json text in the summary is shown literally, angle brackets and all [1021.46ms]
+(pass) bun pm diff (canonical re-print) > summary calls out new builtin imports, risky APIs, and skips source maps [1009.10ms]
+(pass) bun pm diff (hostile and awkward inputs) > package bytes never drive the terminal: ESC/CR/C1 and bidi controls are drawn, and called out [437.46ms]
+(pass) bun pm diff (hostile and awkward inputs) > a comment-only change is not 'formatting only', and neither is a TypeScript type change [534.56ms]
+(pass) bun pm diff (hostile and awkward inputs) > changes are decided on meaning and shown as written: folds hide, control flow shows, dead code is flagged [847.29ms]
+(pass) bun pm diff (hostile and awkward inputs) > JSX inside .js still normalizes [352.20ms]
+(pass) bun pm diff (canonical re-print) > --minify folds equivalent syntax; --unminify renames locals in lockstep even in readable files; -w [2837.52ms]
+(pass) bun pm diff (canonical re-print) > two minified builds with different mangled names diff down to the real change [3037.04ms]
+(pass) bun pm diff (hostile and awkward inputs) > how the source wrapped a literal is not remembered: `{a, b}` on one line vs three is the same [1462.75ms]
+(pass) bun pm diff (hostile and awkward inputs) > folders: symlinked files are read through, symlinked folders skipped, unreadable files are an error [920.17ms]
+(pass) bun pm diff (hostile and awkward inputs) > line tints follow the terminal background (COLORFGBG light → light palette; truecolor when offered) [1999.14ms]
+(pass) bun pm diff (hostile and awkward inputs) > mode changes: newly executable files are shown and called out [1231.51ms]
+(pass) bun pm diff (hostile and awkward inputs) > tarball shapes: .tar, a root folder not called package/, ~/ paths, and `./x.tar 1.0.1` [1586.38ms]
+(pass) bun pm diff (engine invariants) > locals are matched by how they are used, not by what they are called [1047.31ms]
+(pass) bun pm diff (engine invariants) > locals pinned by direct eval keep their names; the edit next to them still shows [1931.20ms]
+(pass) bun pm diff (engine invariants) > a package.json name that is not an npm name is never printed or looked up [1554.49ms]
+(pass) bun pm diff (engine invariants) > positional names never capture a free variable, even one already ending in `_` [2330.59ms]
+(skip) bun pm diff (engine invariants) > a file over the normalization size limit is diffed as text and says so
+(pass) bun pm diff (engine invariants) > CSS and JSON: a real change shows, unparsable input falls back to text with a 'not parsed' badge [2450.76ms]
+(pass) bun pm diff (engine invariants) > minified: banner, renamed locals and spelling all compose onto the un-minified display [2694.10ms]
+(pass) bun pm diff (hostile and awkward inputs) > a tarball entry larger than 64 MiB is read whole [5886.76ms]
+(pass) bun pm diff (engine invariants) > un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters [646.70ms]
+(pass) bun pm diff (engine invariants) > --json is one stable document [344.58ms]
+(pass) bun pm diff (engine invariants) > package.json callouts: main, bin, exports, engines, license, types — changed, added, removed [944.13ms]
+(pass) bun pm diff (engine invariants) > a folder with a package.json is read as `bun pm pack` would publish it: files, .npmignore, bins [1603.23ms]
+(pass) bun pm diff (engine invariants) > a scope too big for the LCS table takes the windowed path and still folds a consistent rename [5826.72ms]
+(pass) bun pm diff (engine invariants) > hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side [7399.74ms]
+
+1 tests skipped:
+(skip) bun pm diff (engine invariants) > a file over the normalization size limit is diffed as text and says so
+
+ 46 pass
+ 1 skip
+ 0 fail
+ 2 snapshots, 258 expect() calls
+Ran 47 tests across 1 file. [27.90s]

@@ -1,0 +1,102 @@
+file /q_q4_tla_complex.js scriptKind=1 variant=1 dts=false textLen=323
+externalModuleIndicator KindExportDeclaration[0,10)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=135 identifiers=39 text=46 reparsedClones=7
+jsDiagnostic [196,202) TS8010 cat=1 "Type annotations can only be used in TypeScript files."
+root KindSourceFile [0,323) f=0x10000
+  .Statements: list [0,322) n=8
+    - KindExportDeclaration [0,10) f=0x10000
+      .ExportClause: KindNamedExports [6,9) f=0x12000
+        .Elements: list [8,8) n=0
+    - KindJSTypeAliasDeclaration [15,35) f=0x210008
+      .Type: KindNumberKeyword [25,31) f=0x410008
+      .name: KindIdentifier [33,35) f=0x410008 Text="T2"
+      .jsdoc: KindJSDoc [10,38) f=0x410000 parent=KindVariableStatement[10,79)
+        .Comment: list [11,15) n=0
+        .Tags: list [15,35) n=1
+          - KindJSDocTypedefTag [15,35) f=0x410000
+            .TagName: KindIdentifier [16,23) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [24,32) f=0x410000
+              .Type: KindNumberKeyword [25,31) f=0x410000
+            .name: KindIdentifier [33,35) f=0x410000 Text="T2"
+    - KindVariableStatement [10,79) f=0x210000
+      .DeclarationList: KindVariableDeclarationList [10,78) f=0x10002
+        .Declarations: list [66,78) n=1
+          - KindVariableDeclaration [66,78) f=0x10000
+            .Initializer: KindAwaitExpression [70,78) f=0x10000
+              .Expression: KindIdentifier [76,78) f=0x10000 Text="x"
+            .Type: KindStringKeyword [50,56) f=0x410008
+            .name: KindIdentifier [66,68) f=0x10000 Text="a"
+      .jsdoc: KindJSDoc [10,38) f=0x410000 SHARED
+      .jsdoc: KindJSDoc [38,60) f=0x410000
+        .Comment: list [39,43) n=0
+        .Tags: list [43,58) n=1
+          - KindJSDocTypeTag [43,58) f=0x410000
+            .TagName: KindIdentifier [44,48) f=0x410000 Text="type"
+            .TypeExpression: KindJSDocTypeExpression [49,57) f=0x410000
+              .Type: KindStringKeyword [50,56) f=0x410000
+    - KindJSTypeAliasDeclaration [87,122) f=0x210008
+      .Type: KindFunctionType [103,122) f=0x10008
+        .Parameters: list [103,122) n=1
+          - KindParameter [103,122) f=0x10008
+            .Type: KindNumberKeyword [111,117) f=0x410008
+            .name: KindIdentifier [119,120) f=0x410008 Text="p"
+        .Type: KindAnyKeyword [-1,-1) f=0x0
+      .name: KindIdentifier [97,99) f=0x410008 Text="Cb"
+      .jsdoc: KindJSDoc [79,124) f=0x410000 parent=KindExpressionStatement[79,156)
+        .Comment: list [80,87) n=0
+        .Tags: list [87,122) n=1
+          - KindJSDocCallbackTag [87,122) f=0x410000
+            .TagName: KindIdentifier [88,96) f=0x410000 Text="callback"
+            .TypeExpression: KindJSDocSignature [103,122) f=0x410000
+              .Parameters: list [103,122) n=1
+                - KindJSDocParameterTag [103,122) f=0x410000
+                  .TagName: KindIdentifier [104,109) f=0x410000 Text="param"
+                  .TypeExpression: KindJSDocTypeExpression [110,118) f=0x410000
+                    .Type: KindNumberKeyword [111,117) f=0x410000
+                  .name: KindIdentifier [119,120) f=0x410000 Text="p"
+            .name: KindIdentifier [97,99) f=0x410000 Text="Cb"
+    - KindExpressionStatement [79,156) f=0x212000
+      .Expression: KindAwaitExpression [79,155) f=0x12000
+        .Expression: KindParenthesizedExpression [130,155) f=0x12000
+          .Expression: KindParenthesizedExpression [132,154) f=0x212000
+            .Expression: KindAsExpression [152,153) f=0x12000
+              .Expression: KindIdentifier [152,153) f=0x12000 Text="y"
+              .Type: KindAnyKeyword [143,146) f=0x410008
+    - KindFunctionDeclaration [156,217) f=0x210000
+      .Body: KindBlock [203,217) f=0x10000
+        .Statements: list [205,215) n=1
+          - KindReturnStatement [205,215) f=0x10000
+            .Expression: KindIdentifier [212,214) f=0x10000 Text="p"
+      .Parameters: list [193,202) n=1
+        - KindParameter [193,202) f=0x10000
+          .Type: KindStringKeyword [195,202) f=0x10000
+          .name: KindIdentifier [193,194) f=0x10000 Text="p"
+      .name: KindIdentifier [190,192) f=0x10000 Text="f"
+      .jsdoc: KindJSDoc [156,181) f=0x410000
+        .Comment: list [157,161) n=0
+        .Tags: list [161,179) n=1
+          - KindJSDocParameterTag [161,179) f=0x410000
+            .TagName: KindIdentifier [162,167) f=0x410000 Text="param"
+            .TypeExpression: KindJSDocTypeExpression [168,176) f=0x410000
+              .Type: KindNumberKeyword [169,175) f=0x410000
+            .name: KindIdentifier [177,178) f=0x410000 Text="p"
+    - KindVariableStatement [217,263) f=0x12000
+      .DeclarationList: KindVariableDeclarationList [217,262) f=0x12000
+        .Declarations: list [221,262) n=1
+          - KindVariableDeclaration [221,262) f=0x12000
+            .Initializer: KindAwaitExpression [225,262) f=0x12000
+              .Expression: KindParenthesizedExpression [231,262) f=0x212000
+                .Expression: KindSatisfiesExpression [260,261) f=0x12000
+                  .Expression: KindNumericLiteral [260,261) f=0x12000 Text="1" TokenFlags=0x0
+                  .Type: KindNumberKeyword [248,254) f=0x410008
+            .name: KindIdentifier [221,223) f=0x12000 Text="v"
+    - KindClassDeclaration [263,322) f=0x10000
+      .Members: list [273,320) n=1
+        - KindPropertyDeclaration [273,320) f=0x10000
+          .Initializer: KindAwaitExpression [311,319) f=0x10000
+            .Expression: KindIdentifier [317,319) f=0x10000 Text="z"
+          .name: KindIdentifier [273,309) f=0x10000 Text="m"
+      .name: KindIdentifier [269,271) f=0x10000 Text="C"
+  .EndOfFileToken: KindEndOfFile [322,323) f=0x10000

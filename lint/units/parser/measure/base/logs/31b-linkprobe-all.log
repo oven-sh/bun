@@ -1,0 +1,320 @@
+# HEAD e3566be889 dirty: []
+   Compiling linkprobe v0.0.0 (/workspace/notes/lint/units/parser/measure/linkprobe)
+error: linking with `/usr/lib/llvm-23/bin/clang++` failed: exit status: 1
+  |
+  = note:  "/usr/lib/llvm-23/bin/clang++" "-m64" "/tmp/parser-base/tgt-linkprobe/debug/build/linkprobe/a0c2a02b7f060988/out/rustcqTciWk/symbols.o" "<18 object files omitted>" "-Wl,--as-needed" "-Wl,-Bstatic" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_crash_handler/a3f115d9ecd4f715/out/libbun_crash_handler-a3f115d9ecd4f715.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_zlib/b6c7bed4e1226001/out/libbun_zlib-b6c7bed4e1226001.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_zlib_sys/a375ff3bdad10082/out/libbun_zlib_sys-a375ff3bdad10082.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_base64/9e1fa0569dae0fd8/out/libbun_base64-9e1fa0569dae0fd8.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_io/1d9dd573a420df6b/out/libbun_io-1d9dd573a420df6b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_spawn_sys/91e24076870027a9/out/libbun_spawn_sys-91e24076870027a9.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_analytics/596d481b40449a14/out/libbun_analytics-596d481b40449a14.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_windows_sys/937b812fcbcf1319/out/libbun_windows_sys-937b812fcbcf1319.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_threading/2e0fce6dc092fb58/out/libbun_threading-2e0fce6dc092fb58.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_safety/37423033ad938e7f/out/libbun_safety-37423033ad938e7f.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_uws_sys/d57d91e374178ff6/out/libbun_uws_sys-d57d91e374178ff6.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_boringssl_sys/f1e383e9fc28ece1/out/libbun_boringssl_sys-f1e383e9fc28ece1.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_http_types/ab16d36a9e928816/out/libbun_http_types-ab16d36a9e928816.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_options_types/dea0e8cd8fa8ab9c/out/libbun_options_types-dea0e8cd8fa8ab9c.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_install_types/05f64d7b3c9297cf/out/libbun_install_types-05f64d7b3c9297cf.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_dotenv/768157e46e5c2ad6/out/libbun_dotenv-768157e46e5c2ad6.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_which/8f2bba1be39fd3d9/out/libbun_which-8f2bba1be39fd3d9.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_url/31c6e2b4a58f797a/out/libbun_url-31c6e2b4a58f797a.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_semver/54278bbc5fecda6d/out/libbun_semver-54278bbc5fecda6d.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_perf/6730c1850f24b1b8/out/libbun_perf-6730c1850f24b1b8.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_sys/213b2b96e1176e6b/out/libbun_sys-213b2b96e1176e6b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/scopeguard/aa85effd20f79728/out/libscopeguard-aa85effd20f79728.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/rustix/83a6fc10cfd4db18/out/librustix-83a6fc10cfd4db18.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/linux-raw-sys/d1c5af792ddbd73b/out/liblinux_raw_sys-d1c5af792ddbd73b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bitflags/6293891259e3a039/out/libbitflags-6293891259e3a039.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/enumset/6fc0b577a7691098/out/libenumset-6fc0b577a7691098.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_paths/03c23ab745062f4b/out/libbun_paths-03c23ab745062f4b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_errno/83c4e690bc4d7209/out/libbun_errno-83c4e690bc4d7209.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_libuv_sys/16004fd091e2e97c/out/libbun_libuv_sys-16004fd091e2e97c.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/enum-map/25d8177951f358d5/out/libenum_map-25d8177951f358d5.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_collections/184f47b6986549e2/out/libbun_collections-184f47b6986549e2.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/rustc-hash/f115f812307e81a6/out/librustc_hash-f115f812307e81a6.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/smallvec/e07bbfb1cd45670e/out/libsmallvec-e07bbfb1cd45670e.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_ptr/f85aaecb5000f1fb/out/libbun_ptr-f85aaecb5000f1fb.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/hashbrown/63c65d1afd780b2e/out/libhashbrown-63c65d1afd780b2e.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/thiserror/6ce4b5aceb10119a/out/libthiserror-6ce4b5aceb10119a.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_output_tags/11542177dcd70b8b/out/libbun_output_tags-11542177dcd70b8b.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/itoa/c4626e3ac9be8d87/out/libitoa-c4626e3ac9be8d87.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/strum/c8630eb4cdabbe0d/out/libstrum-c8630eb4cdabbe0d.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_hash/43b52dec7a3ea587/out/libbun_hash-43b52dec7a3ea587.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_highway/5a52ccfb68dfe8ba/out/libbun_highway-5a52ccfb68dfe8ba.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bstr/f9add3dde5ce238a/out/libbstr-f9add3dde5ce238a.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/memchr/3f385c05b7f3872e/out/libmemchr-3f385c05b7f3872e.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bytemuck/f90dcbda42edf4e3/out/libbytemuck-f90dcbda42edf4e3.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_alloc/f790799b6449bf7f/out/libbun_alloc-f790799b6449bf7f.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_wyhash/a7f283d67c9ba250/out/libbun_wyhash-a7f283d67c9ba250.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/libc/3abe01c992c31dac/out/liblibc-3abe01c992c31dac.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/allocator-api2/2525dda0ede6264a/out/liballocator_api2-2525dda0ede6264a.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_mimalloc_sys/85e1b9f5c803f704/out/libbun_mimalloc_sys-85e1b9f5c803f704.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/bun_opaque/84f3e34e5f678b37/out/libbun_opaque-84f3e34e5f678b37.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/const_format/c7933993a0405362/out/libconst_format-c7933993a0405362.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/konst/28eb20add12818ff/out/libkonst-28eb20add12818ff.rlib" "/tmp/parser-base/tgt-linkprobe/debug/build/konst_macro_rules/0f91110e8d770e86/out/libkonst_macro_rules-0f91110e8d770e86.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/tmp/parser-base/tgt-linkprobe/debug/build/linkprobe/a0c2a02b7f060988/out/rustcqTciWk/raw-dylibs" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/tmp/parser-base/tgt-linkprobe/debug/build/linkprobe/a0c2a02b7f060988/out/linkprobe-a0c2a02b7f060988" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs" "-fuse-ld=lld" "-Qunused-arguments" "-Wl,--error-limit=0"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: ld.lld: error: undefined symbol: mi_heap_new
+          >>> referenced by MimallocArena.rs:102 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:102)
+          >>>               /tmp/parser-base/tgt-linkprobe/debug/build/linkprobe/a0c2a02b7f060988/out/linkprobe-a0c2a02b7f060988.5v9ccccwglcm0hpq807d9umpn.0g6jcxz.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::new)
+          >>> referenced by MimallocArena.rs:102 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:102)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::new) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by MimallocArena.rs:102 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:102)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::new) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced 2 more times
+          
+          ld.lld: error: undefined symbol: highway_index_of_any_char
+          >>> referenced by lib.rs:544 (/workspace/wt/parser/src/highway/lib.rs:544)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.14rcnl64vkx97bwx8n5bv9xqg.1o2tlvu.rcgu.o:(bun_core::string::immutable::index_of_any) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by lib.rs:544 (/workspace/wt/parser/src/highway/lib.rs:544)
+          >>>               bun_react_compiler-6e3d924b81afe32a.2pb1nb5iy6spg3s9a1mq8tosz.0wj4krp.rcgu.o:(bun_core::string::immutable::index_of_any) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by lib.rs:544 (/workspace/wt/parser/src/highway/lib.rs:544)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::index_of_any) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: highway_memrmem
+          >>> referenced by lib.rs:323 (/workspace/wt/parser/src/highway/lib.rs:323)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.14rcnl64vkx97bwx8n5bv9xqg.1o2tlvu.rcgu.o:(bun_core::string::immutable::last_index_of) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by lib.rs:323 (/workspace/wt/parser/src/highway/lib.rs:323)
+          >>>               bun_ast-490ef6b793f8ba59.36ixzgu095j4ma3gb0umdtwtp.1dh0xk3.rcgu.o:(bun_core::string::immutable::last_index_of) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__validate_ascii
+          >>> referenced by lib.rs:1466 (/workspace/wt/parser/src/bun_core/lib.rs:1466)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.1f1xcammeci1wht141pwhbpou.1o2tlvu.rcgu.o:(bun_core::strings_impl::is_all_ascii) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by lib.rs:1466 (/workspace/wt/parser/src/bun_core/lib.rs:1466)
+          >>>               bun_ast-490ef6b793f8ba59.3liqtrlg2zeefpwmgzuxk4qiv.1dh0xk3.rcgu.o:(bun_core::strings_impl::is_all_ascii) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          >>> referenced by lib.rs:1466
+          >>>               bun_core-b88a211a9b6f869b.ar7tyvtmf8kvdt2l9cq6h15gz.02s1dsc.rcgu.o:(bun_core::strings_impl::is_all_ascii) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__validate_ascii_with_errors
+          >>> referenced by lib.rs:1482 (/workspace/wt/parser/src/bun_core/lib.rs:1482)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.1f1xcammeci1wht141pwhbpou.1o2tlvu.rcgu.o:(bun_core::strings_impl::first_non_ascii_usize) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by lib.rs:1482 (/workspace/wt/parser/src/bun_core/lib.rs:1482)
+          >>>               bun_react_compiler-6e3d924b81afe32a.2pb1nb5iy6spg3s9a1mq8tosz.0wj4krp.rcgu.o:(bun_core::strings_impl::first_non_ascii_usize) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by lib.rs:1482 (/workspace/wt/parser/src/bun_core/lib.rs:1482)
+          >>>               bun_ast-490ef6b793f8ba59.3liqtrlg2zeefpwmgzuxk4qiv.1dh0xk3.rcgu.o:(bun_core::strings_impl::first_non_ascii_usize) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          >>> referenced 1 more times
+          
+          ld.lld: error: undefined symbol: Bun__StackCheck__getMaxStack
+          >>> referenced by util.rs:2193 (/workspace/wt/parser/src/bun_core/util.rs:2193)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.4w4xluib6gy3ggfu9shuq310a.1o2tlvu.rcgu.o:(<bun_core::util::StackCheck>::init) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by util.rs:2193 (/workspace/wt/parser/src/bun_core/util.rs:2193)
+          >>>               bun_ast-490ef6b793f8ba59.efwmnhe4viiv77uarmpfvo3bx.1dh0xk3.rcgu.o:(<bun_core::util::StackCheck>::init) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: __bun_dispatch__TranspilerCacheImpl__Jsc__get
+          >>> referenced by transpiler_cache.rs:52 (/workspace/wt/parser/src/ast/transpiler_cache.rs:52)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.6evpwd16fl4nzf40yksfldawc.1o2tlvu.rcgu.o:(<bun_ast::transpiler_cache::TranspilerCacheImpl>::get) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_realloc_aligned
+          >>> referenced by MimallocArena.rs:326 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:326)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::remap) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by MimallocArena.rs:326 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:326)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::remap) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by MimallocArena.rs:326 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:326)
+          >>>               bun_ast-490ef6b793f8ba59.6tdto4n43urwdq5chamu7hmfu.1dh0xk3.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::remap) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_malloc
+          >>> referenced by MimallocArena.rs:560 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:560)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by mimalloc.rs:209 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:209)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.89zlpj8593q39eclqp6cjb96r.1o2tlvu.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by MimallocArena.rs:560 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:560)
+          >>>               bun_base64-9e1fa0569dae0fd8.emmo8tv70eyr5503x9ec6qayf.1u7x5hy.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_base64/9e1fa0569dae0fd8/out/libbun_base64-9e1fa0569dae0fd8.rlib
+          >>> referenced 5 more times
+          
+          ld.lld: error: undefined symbol: mi_heap_malloc_aligned
+          >>> referenced by MimallocArena.rs:558 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:558)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by mimalloc.rs:207 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:207)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.89zlpj8593q39eclqp6cjb96r.1o2tlvu.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by MimallocArena.rs:558 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:558)
+          >>>               bun_base64-9e1fa0569dae0fd8.emmo8tv70eyr5503x9ec6qayf.1u7x5hy.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_base64/9e1fa0569dae0fd8/out/libbun_base64-9e1fa0569dae0fd8.rlib
+          >>> referenced 5 more times
+          
+          ld.lld: error: undefined symbol: mi_malloc_usable_size
+          >>> referenced by MimallocArena.rs:566 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:566)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by MimallocArena.rs:566 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:566)
+          >>>               bun_base64-9e1fa0569dae0fd8.emmo8tv70eyr5503x9ec6qayf.1u7x5hy.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_base64/9e1fa0569dae0fd8/out/libbun_base64-9e1fa0569dae0fd8.rlib
+          >>> referenced by MimallocArena.rs:566 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:566)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced 1 more times
+          
+          ld.lld: error: undefined symbol: mi_is_in_heap_region
+          >>> referenced by basic.rs:15 (/workspace/wt/parser/src/bun_alloc/basic.rs:15)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by basic.rs:15 (/workspace/wt/parser/src/bun_alloc/basic.rs:15)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by basic.rs:15 (/workspace/wt/parser/src/bun_alloc/basic.rs:15)
+          >>>               bun_ast-490ef6b793f8ba59.6tdto4n43urwdq5chamu7hmfu.1dh0xk3.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_free_size
+          >>> referenced by basic.rs:19 (/workspace/wt/parser/src/bun_alloc/basic.rs:19)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by basic.rs:19 (/workspace/wt/parser/src/bun_alloc/basic.rs:19)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by basic.rs:19 (/workspace/wt/parser/src/bun_alloc/basic.rs:19)
+          >>>               bun_ast-490ef6b793f8ba59.6tdto4n43urwdq5chamu7hmfu.1dh0xk3.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_free_size_aligned
+          >>> referenced by basic.rs:17 (/workspace/wt/parser/src/bun_alloc/basic.rs:17)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.851dtylto879hrzsnvycrzail.1o2tlvu.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by basic.rs:17 (/workspace/wt/parser/src/bun_alloc/basic.rs:17)
+          >>>               bun_react_compiler-6e3d924b81afe32a.9ae84up06ahe00vsaih9vbu3o.0wj4krp.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by basic.rs:17 (/workspace/wt/parser/src/bun_alloc/basic.rs:17)
+          >>>               bun_ast-490ef6b793f8ba59.6tdto4n43urwdq5chamu7hmfu.1dh0xk3.rcgu.o:(<&bun_alloc::mimalloc_arena::MimallocArena as core::alloc::Allocator>::deallocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_newline_or_non_ascii_or_hash_or_at
+          >>> referenced by lib.rs:745 (/workspace/wt/parser/src/highway/lib.rs:745)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.83qdta4lh9jr0g51ic8p14fh0.1o2tlvu.rcgu.o:(<bun_js_parser::lexer::Lexer>::scan_single_line_comment) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: mi_malloc
+          >>> referenced by mimalloc.rs:184 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:184)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.89zlpj8593q39eclqp6cjb96r.1o2tlvu.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by mimalloc.rs:184 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:184)
+          >>>               bun_react_compiler-6e3d924b81afe32a.0mdfg3i7yyvc6xsxey8vdp4u7.0wj4krp.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by mimalloc.rs:184 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:184)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::grow) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          >>> referenced 1 more times
+          
+          ld.lld: error: undefined symbol: mi_malloc_aligned
+          >>> referenced by mimalloc.rs:182 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:182)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.89zlpj8593q39eclqp6cjb96r.1o2tlvu.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          >>> referenced by mimalloc.rs:182 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:182)
+          >>>               bun_react_compiler-6e3d924b81afe32a.0mdfg3i7yyvc6xsxey8vdp4u7.0wj4krp.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_react_compiler/6e3d924b81afe32a/out/libbun_react_compiler-6e3d924b81afe32a.rlib
+          >>> referenced by mimalloc.rs:182 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:182)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::grow) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          >>> referenced 1 more times
+          
+          ld.lld: error: undefined symbol: highway_index_of_interesting_character_in_string_literal
+          >>> referenced by lib.rs:407 (/workspace/wt/parser/src/highway/lib.rs:407)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.83qdta4lh9jr0g51ic8p14fh0.1o2tlvu.rcgu.o:(bun_js_parser::lexer::index_of_interesting_character_in_string_literal) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_interesting_character_in_multiline_comment
+          >>> referenced by lib.rs:435 (/workspace/wt/parser/src/highway/lib.rs:435)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.83qdta4lh9jr0g51ic8p14fh0.1o2tlvu.rcgu.o:(bun_js_parser::lexer::skip_to_interesting_character_in_multiline_comment) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: Bun__JSC__operationMathPow
+          >>> referenced by nodes.rs:1217 (/workspace/wt/parser/src/ast/nodes.rs:1217)
+          >>>               bun_js_parser-b95d0be1f76e9fdb.70w16lbvsj3pkb7q5jp0lwfsy.1o2tlvu.rcgu.o:(bun_ast::nodes::math::pow) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: __bun_macro_context_call
+          >>> referenced by lib.rs:155
+          >>>               bun_js_parser-b95d0be1f76e9fdb.bndvqz2s4q4k3ekc1ov6j3h6b.1o2tlvu.rcgu.o:(<bun_js_parser::Macro::MacroContext>::call) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: __bun_macro_context_get_remap
+          >>> referenced by lib.rs:208
+          >>>               bun_js_parser-b95d0be1f76e9fdb.bndvqz2s4q4k3ekc1ov6j3h6b.1o2tlvu.rcgu.o:(<bun_js_parser::Macro::MacroContext>::get_remap) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_js_parser/b95d0be1f76e9fdb/out/libbun_js_parser-b95d0be1f76e9fdb.rlib
+          
+          ld.lld: error: undefined symbol: bun_cpu_features
+          >>> referenced by CPUFeatures.rs:99
+          >>>               bun_crash_handler-a3f115d9ecd4f715.bxmlqn28kdr3ndh8hvkenp8ii.1d428an.rcgu.o:(<bun_crash_handler::cpu_features::CPUFeatures>::get) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_crash_handler/a3f115d9ecd4f715/out/libbun_crash_handler-a3f115d9ecd4f715.rlib
+          
+          ld.lld: error: undefined symbol: mi_process_info
+          >>> referenced by lib.rs:2246
+          >>>               bun_crash_handler-a3f115d9ecd4f715.edjnd9welgdcskrnlh4abhyw2.1d428an.rcgu.o:(bun_crash_handler::draft::print_metadata::<bun_crash_handler::StderrWriter>) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_crash_handler/a3f115d9ecd4f715/out/libbun_crash_handler-a3f115d9ecd4f715.rlib
+          
+          ld.lld: error: undefined symbol: compress2
+          >>> referenced by lib.rs:2619
+          >>>               bun_crash_handler-a3f115d9ecd4f715.edjnd9welgdcskrnlh4abhyw2.1d428an.rcgu.o:(bun_crash_handler::draft::encode_trace_string::<bun_io::write::FmtAdapter>) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_crash_handler/a3f115d9ecd4f715/out/libbun_crash_handler-a3f115d9ecd4f715.rlib
+          
+          ld.lld: error: undefined symbol: URL__getFileURLString
+          >>> referenced by lib.rs:89
+          >>>               bun_url-31c6e2b4a58f797a.64bi28gep33l4quistaoaw4uj.0nwwq9q.rcgu.o:(bun_url::whatwg::file_url_from_string) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_url/31c6e2b4a58f797a/out/libbun_url-31c6e2b4a58f797a.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_zalloc
+          >>> referenced by mimalloc.rs:225 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:225)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate_zeroed) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_zalloc_aligned
+          >>> referenced by mimalloc.rs:223 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:223)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate_zeroed) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_zalloc
+          >>> referenced by mimalloc.rs:194 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:194)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate_zeroed) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_zalloc_aligned
+          >>> referenced by mimalloc.rs:192 (/workspace/wt/parser/src/mimalloc_sys/mimalloc.rs:192)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::allocate_zeroed) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_expand
+          >>> referenced by ast_alloc.rs:462 (/workspace/wt/parser/src/bun_alloc/ast_alloc.rs:462)
+          >>>               bun_ast-490ef6b793f8ba59.0emm000saon0epehurr9mlahm.1dh0xk3.rcgu.o:(<bun_alloc::ast_alloc::AstAlloc as core::alloc::Allocator>::grow) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_main
+          >>> referenced by MimallocArena.rs:126 (/workspace/wt/parser/src/bun_alloc/MimallocArena.rs:126)
+          >>>               bun_ast-490ef6b793f8ba59.6tdto4n43urwdq5chamu7hmfu.1dh0xk3.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::borrowing_default) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: JSC__jsToNumber
+          >>> referenced by expr.rs:2923
+          >>>               bun_ast-490ef6b793f8ba59.ekajbvmi2sxz675p0qj32xa3y.1dh0xk3.rcgu.o:(bun_ast::expr::string_to_equivalent_number_value) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_ast/490ef6b793f8ba59/out/libbun_ast-490ef6b793f8ba59.rlib
+          
+          ld.lld: error: undefined symbol: getRSS
+          >>> referenced by lib.rs:4769
+          >>>               bun_sys-213b2b96e1176e6b.a1jz3443yota1g6mki5fq2e5q.0gztvhs.rcgu.o:(bun_sys::self_process_memory_usage) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_sys/213b2b96e1176e6b/out/libbun_sys-213b2b96e1176e6b.rlib
+          
+          ld.lld: error: undefined symbol: getPeakRSS
+          >>> referenced by lib.rs:4778
+          >>>               bun_sys-213b2b96e1176e6b.a1jz3443yota1g6mki5fq2e5q.0gztvhs.rcgu.o:(bun_sys::self_process_peak_memory_usage) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_sys/213b2b96e1176e6b/out/libbun_sys-213b2b96e1176e6b.rlib
+          
+          ld.lld: error: undefined symbol: is_executable_file
+          >>> referenced by lib.rs:2935
+          >>>               bun_sys-213b2b96e1176e6b.ae3ly1lieh41iumy2j392co1w.0gztvhs.rcgu.o:(bun_sys::posix_impl::is_executable_file_path) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_sys/213b2b96e1176e6b/out/libbun_sys-213b2b96e1176e6b.rlib
+          
+          ld.lld: error: undefined symbol: highway_last_index_of_char
+          >>> referenced by lib.rs:244 (/workspace/wt/parser/src/highway/lib.rs:244)
+          >>>               bun_paths-03c23ab745062f4b.5wzksslbvavurk9ifodd2wgoy.13dmizi.rcgu.o:(bun_core::string::immutable::last_index_of_char) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_paths/03c23ab745062f4b/out/libbun_paths-03c23ab745062f4b.rlib
+          
+          ld.lld: error: undefined symbol: highway_memrmem16
+          >>> referenced by lib.rs:383 (/workspace/wt/parser/src/highway/lib.rs:383)
+          >>>               bun_paths-03c23ab745062f4b.6t5eyy9gcbvzt17xuke68vhf1.13dmizi.rcgu.o:(bun_core::string::immutable::last_index_of_char_t::<u8>) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_paths/03c23ab745062f4b/out/libbun_paths-03c23ab745062f4b.rlib
+          
+          ld.lld: error: undefined symbol: Bun__linux_trace_init
+          >>> referenced by util.rs:5253
+          >>>               bun_core-b88a211a9b6f869b.1tcb682doa4aoeai29dal3o92.02s1dsc.rcgu.o:(<bun_core::util::perf::Linux>::is_supported::{closure#0}) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: highway_contains_newline_or_non_ascii_or_quote
+          >>> referenced by lib.rs:489 (/workspace/wt/parser/src/highway/lib.rs:489)
+          >>>               bun_core-b88a211a9b6f869b.2x2zy4okhumd7gbp0khcn75vy.02s1dsc.rcgu.o:(bun_core::fmt::quoted_writer::<core::fmt::Formatter>) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: Bun__WTFStringImpl__destroy
+          >>> referenced by lib.rs:793 (/workspace/wt/parser/src/bun_alloc/lib.rs:793)
+          >>>               bun_core-b88a211a9b6f869b.53y4c0gy8b8yg0e7l46yqgg6t.02s1dsc.rcgu.o:(<bun_alloc::WTFStringImplStruct>::deref) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: WTF__dtoa
+          >>> referenced by fmt.rs:3200
+          >>>               bun_core-b88a211a9b6f869b.5q6imgrxsfhxk33w4z54mt71l.02s1dsc.rcgu.o:(<bun_core::fmt::FormatDouble>::dtoa) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: WTF__parseDouble
+          >>> referenced by fmt.rs:1009
+          >>>               bun_core-b88a211a9b6f869b.5q6imgrxsfhxk33w4z54mt71l.02s1dsc.rcgu.o:(bun_core::fmt::parse_double) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__convert_utf16le_to_utf8_with_errors
+          >>> referenced by lib.rs:1669
+          >>>               bun_core-b88a211a9b6f869b.2x2xn1i6n1o5nkdxrhp2vdxp8.02s1dsc.rcgu.o:(bun_core::strings_impl::convert_utf16_to_utf8_append::{closure#0}) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          >>> referenced by lib.rs:1797
+          >>>               bun_core-b88a211a9b6f869b.ar7tyvtmf8kvdt2l9cq6h15gz.02s1dsc.rcgu.o:(bun_core::strings_impl::copy_utf16_into_utf8_with_utf8_len) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: Bun__linux_trace_emit
+          >>> referenced by util.rs:5279
+          >>>               bun_core-b88a211a9b6f869b.as56mih0alq11oid902wlpoxo.02s1dsc.rcgu.o:(<bun_core::util::perf::Linux>::end) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__convert_utf8_to_utf16le_with_errors
+          >>> referenced by immutable.rs:2578 (string/immutable.rs:2578)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::to_utf16_alloc) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          >>> referenced by simdutf.rs:103
+          >>>               bun_simdutf_sys-87784e52d20aaca0.4mligqs3gknidg9un82o7rfvs.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::convert::utf8::to::utf16::with_errors::le) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_char
+          >>> referenced by lib.rs:232 (/workspace/wt/parser/src/highway/lib.rs:232)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::index_of_char_usize) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_space_or_newline_or_non_ascii
+          >>> referenced by lib.rs:766 (/workspace/wt/parser/src/highway/lib.rs:766)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::index_of_space_or_newline_or_non_ascii) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: bun_restore_stdio
+          >>> referenced by output.rs:675
+          >>>               bun_core-b88a211a9b6f869b.e5i7ojmxbhjuavyg253eozns8.02s1dsc.rcgu.o:(bun_core::output::stdio::restore) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: highway_index_of_needs_escape_for_javascript_string
+          >>> referenced by lib.rs:504 (/workspace/wt/parser/src/highway/lib.rs:504)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::index_of_needs_escape_for_java_script_string) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: highway_memmem
+          >>> referenced by lib.rs:289 (/workspace/wt/parser/src/highway/lib.rs:289)
+          >>>               bun_core-b88a211a9b6f869b.dof99numpxsfg9g3kp49ba6p5.02s1dsc.rcgu.o:(bun_core::string::immutable::memmem) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: on_before_reload_process_posix
+          >>> referenced by util.rs:4350
+          >>>               bun_core-b88a211a9b6f869b.es781v2ttccma3dis2e1cde3r.02s1dsc.rcgu.o:(bun_core::util::reload_process) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_core/b88a211a9b6f869b/out/libbun_core-b88a211a9b6f869b.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__utf16_length_from_utf8
+          >>> referenced by simdutf.rs:190
+          >>>               bun_simdutf_sys-87784e52d20aaca0.47yqrld3laecnfc0x2sal35yf.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::length::utf16::from::utf8) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__utf8_length_from_utf16le_with_replacement
+          >>> referenced by simdutf.rs:169
+          >>>               bun_simdutf_sys-87784e52d20aaca0.d5k2qafq0b1a34094yntsh8zw.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__utf8_length_from_utf16le
+          >>> referenced by simdutf.rs:161
+          >>>               bun_simdutf_sys-87784e52d20aaca0.d5k2qafq0b1a34094yntsh8zw.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::length::utf8::from::utf16::le) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__validate_utf8
+          >>> referenced by simdutf.rs:77
+          >>>               bun_simdutf_sys-87784e52d20aaca0.832vx3z9b0njfvblour75aubo.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::validate::utf8) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: simdutf__base64_encode
+          >>> referenced by simdutf.rs:226
+          >>>               bun_simdutf_sys-87784e52d20aaca0.dye5795aa6f5vjuiktfst1lqb.094zv52.rcgu.o:(bun_simdutf_sys::simdutf::base64::encode) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_simdutf_sys/87784e52d20aaca0/out/libbun_simdutf_sys-87784e52d20aaca0.rlib
+          
+          ld.lld: error: undefined symbol: mi_heap_destroy
+          >>> referenced by MimallocArena.rs:201
+          >>>               bun_alloc-f790799b6449bf7f.1s5sajboc139f4ydbvcetvde2.1rjxp56.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::reset) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_alloc/f790799b6449bf7f/out/libbun_alloc-f790799b6449bf7f.rlib
+          >>> referenced by MimallocArena.rs:452
+          >>>               bun_alloc-f790799b6449bf7f.cby8mwjsqsha1vgbpf10t1dn8.1rjxp56.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena as core::ops::drop::Drop>::drop) in archive /tmp/parser-base/tgt-linkprobe/debug/build/bun_alloc/f790799b6449bf7f/out/libbun_alloc-f790799b6449bf7f.rlib
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+
+error: could not compile `linkprobe` (lib test) due to 1 previous error
+warning: unused dependency `bun_js_parser`
+  --> Cargo.toml:16:1
+   |
+16 | bun_js_parser = { path = "/workspace/wt/parser/src/js_parser" }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `bun_js_parser`
+help: to still use for development builds, move to `dev-dependencies`
+warning: `linkprobe` (manifest) generated 1 warning

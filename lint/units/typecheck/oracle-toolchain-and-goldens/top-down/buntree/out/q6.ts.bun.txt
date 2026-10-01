@@ -1,0 +1,10 @@
+file q6.ts bytes=51 statements=2
+s_local @0
+  b_identifier @4 abc
+  e_number @15
+s_local @18
+  b_identifier @22 é
+  e_string @27
+  b_identifier @33 漢
+  e_template @39
+    e_identifier @45 é

@@ -1,0 +1,72 @@
+file /jsx.tsx scriptKind=4 variant=1 dts=false textLen=121
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=56 identifiers=16 text=22 reparsedClones=0
+root KindSourceFile [0,121) f=0x0
+  .Statements: list [0,120) n=3
+    - KindVariableStatement [0,57) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,56) f=0x2
+        .Declarations: list [5,56) n=1
+          - KindVariableDeclaration [5,56) f=0x0
+            .Initializer: KindJsxElement [10,56) f=0x0
+              .Children: list [35,50) n=5
+                - KindJsxText [35,40) f=0x0 Text="text " TokenFlags=0x0
+                - KindJsxExpression [40,43) f=0x0
+                  .Expression: KindIdentifier [41,42) f=0x0 Text="e"
+                - KindJsxText [43,44) f=0x0 Text=" " TokenFlags=0x0
+                - KindJsxSelfClosingElement [44,49) f=0x0
+                  .Attributes: KindJsxAttributes [47,47) f=0x0
+                    .Properties: list [47,47) n=0
+                  .TagName: KindIdentifier [45,47) f=0x0 Text="br"
+                - KindJsxText [49,50) f=0x0 Text=" " TokenFlags=0x0
+              .ClosingElement: KindJsxClosingElement [50,56) f=0x0
+                .TagName: KindIdentifier [52,55) f=0x0 Text="div"
+              .OpeningElement: KindJsxOpeningElement [10,35) f=0x0
+                .Attributes: KindJsxAttributes [15,34) f=0x0
+                  .Properties: list [15,34) n=3
+                    - KindJsxAttribute [15,21) f=0x0
+                      .Initializer: KindStringLiteral [18,21) f=0x0 Text="x" TokenFlags=0x0
+                      .name: KindIdentifier [15,17) f=0x0 Text="a"
+                    - KindJsxAttribute [21,27) f=0x0
+                      .Initializer: KindJsxExpression [24,27) f=0x0
+                        .Expression: KindNumericLiteral [25,26) f=0x0 Text="1" TokenFlags=0x0
+                      .name: KindIdentifier [21,23) f=0x0 Text="b"
+                    - KindJsxSpreadAttribute [27,34) f=0x0
+                      .Expression: KindIdentifier [32,33) f=0x0 Text="p"
+                .TagName: KindIdentifier [12,15) f=0x0 Text="div"
+            .name: KindIdentifier [5,8) f=0x0 Text="el"
+    - KindVariableStatement [57,92) f=0x0
+      .DeclarationList: KindVariableDeclarationList [57,91) f=0x2
+        .Declarations: list [63,91) n=1
+          - KindVariableDeclaration [63,91) f=0x0
+            .Initializer: KindJsxFragment [70,91) f=0x0
+              .Children: list [73,88) n=1
+                - KindJsxSelfClosingElement [73,88) f=0x0
+                  .Attributes: KindJsxAttributes [85,85) f=0x0
+                    .Properties: list [85,85) n=0
+                  .TagName: KindPropertyAccessExpression [74,77) f=0x0
+                    .Expression: KindIdentifier [74,75) f=0x0 Text="A"
+                    .name: KindIdentifier [76,77) f=0x0 Text="B"
+                  .TypeArguments: list [78,84) n=1
+                    - KindStringKeyword [78,84) f=0x0
+              .ClosingFragment: KindJsxClosingFragment [88,91) f=0x0
+              .OpeningFragment: KindJsxOpeningFragment [70,73) f=0x0
+            .name: KindIdentifier [63,68) f=0x0 Text="frag"
+    - KindVariableStatement [92,120) f=0x0
+      .DeclarationList: KindVariableDeclarationList [92,119) f=0x2
+        .Declarations: list [98,119) n=1
+          - KindVariableDeclaration [98,119) f=0x0
+            .Initializer: KindJsxSelfClosingElement [103,119) f=0x0
+              .Attributes: KindJsxAttributes [108,116) f=0x0
+                .Properties: list [108,116) n=1
+                  - KindJsxAttribute [108,116) f=0x0
+                    .Initializer: KindStringLiteral [113,116) f=0x0 Text="1" TokenFlags=0x0
+                    .name: KindJsxNamespacedName [108,112) f=0x0
+                      .Namespace: KindIdentifier [108,110) f=0x0 Text="c"
+                      .name: KindIdentifier [111,112) f=0x0 Text="d"
+              .TagName: KindJsxNamespacedName [105,108) f=0x0
+                .Namespace: KindIdentifier [105,106) f=0x0 Text="a"
+                .name: KindIdentifier [107,108) f=0x0 Text="b"
+            .name: KindIdentifier [98,101) f=0x0 Text="ns"
+  .EndOfFileToken: KindEndOfFile [120,121) f=0x0

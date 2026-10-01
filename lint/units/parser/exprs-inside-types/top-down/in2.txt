@@ -1,0 +1,69 @@
+# B parameter initializer in signatures
+let g: (a = 1) => void
+let g: (a: number = 1) => void
+let g: (a?: number, b = a) => void
+let g: new (a = 1) => X
+let g: abstract new (a = 1) => X
+type A = { (a = 1): void }
+type A = { new (a = 1): X }
+type A = { m(a = 1): void }
+type A = { m?(a = 1): void }
+type A = { set x(v = 1) }
+interface I { m(a = 1): void }
+let g: (a = () => { let z = 1; return z }) => void
+let g: (a = function f(q) { var w }) => void
+let g: (a = class C { m() {} }) => void
+let g: (a = b ? c : d, e = f) => void
+let g: (a = x < y, z > (w)) => void
+let g: (a = <T>(x: T) => x) => void
+let g: (a = await 1) => void
+let g: (a = yield) => void
+let g: (a = b in c) => void
+let g: (a = import("x")) => void
+let g: (a = import.meta) => void
+let g: (a = /re/g) => void
+let g: (a = `t${1}`) => void
+let g: (a = {b: 1, c() {}}) => void
+let g: (a = [1, 2]) => void
+let g: (...a = []) => void
+let g: (this = 1) => void
+let g: (a = 1, b: string) => void
+function f(x: (a = 1) => void) {}
+let h = (x: (a = 1) => void): ((b = 2) => void) => x
+let g: (a = 1)
+let g: (a = 1)[]
+# C binding patterns in signature parameters
+let g: ({a, b}: X) => void
+let g: ([a, b]: X) => void
+let g: ({a = 1}: X) => void
+let g: ([a = 1]: X) => void
+let g: ({a: {b} = {}}: X) => void
+let g: ({a, ...rest}: X) => void
+let g: ([a, ...rest]: X) => void
+let g: ({[k]: v}: X) => void
+let g: ({[k + 1]: v}: X) => void
+let g: ({"a": b, 1: c}: X) => void
+let g: ({a}: X = {a: 1}) => void
+let g: ({a} = {a: 1}) => void
+let g: ([a] = [1]) => void
+let g: ({a}) => void
+let g: ([a]) => void
+let g: ({a}, b) => void
+let g: ({a}?) => void
+let g: ({ [K in keyof T]: X })[keyof T]
+let g: ({ [k: string]: T })
+let g: ({ [Symbol.iterator]: T })
+let g: ({ [Symbol.iterator]: T }) => void
+let g: ({ a: 1 })
+let g: ({ a = 1 })
+type A = { m({a = 1}): void }
+# H parameter decorators and modifiers in signatures
+let g: (@dec a: number) => void
+let g: (@dec() a) => void
+let g: (@a.b.c(1) a, @d b) => void
+type A = { m(@dec a): void }
+let g: (public a: number) => void
+let g: (readonly a) => void
+let g: (@dec public a) => void
+let g: (@(x => x) a) => void
+let g: (@dec this) => void

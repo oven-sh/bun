@@ -1,0 +1,66 @@
+let as = 1
+let satisfies = 1
+const as = 1, satisfies = 2
+var as
+using as = x
+await using as = x
+export let as = 1
+function as() {}
+function satisfies<T>(): void {}
+class as {}
+abstract class as {}
+abstract class satisfies<T> extends B {}
+enum satisfies { a }
+import as from "m"; as;
+import satisfies from "m"; satisfies;
+import * as as from "m"; as;
+import { as as satisfies } from "m"; satisfies;
+export * as as from "m"
+export * as satisfies from "m"
+import type as from "m"
+import type satisfies from "m"
+import as = require("m")
+import satisfies = a.b
+async as => 1
+export const v = async as => 1
+export const v = async satisfies => 1
+for (let as of x) {}
+for (as of x) {}
+for (const satisfies in x) {}
+label: as
+as: for (;;) break as
+as = 1
+satisfies = 1
+as as as
+as satisfies as
+export default as
+export default satisfies
+declare global { interface as {} }
+declare module "m" { type as = 1; interface satisfies {} namespace as {} }
+namespace N { export type as = 1 }
+namespace N { export interface as {} }
+namespace N { export namespace as { export const x = 1 } }
+namespace N { namespace as { export const x = 1 } export const y = as.x }
+class C { as = 1; satisfies() {} }
+class C { declare as: T; abstract satisfies: T }
+class C { static as; readonly satisfies }
+interface I { as: T; satisfies(): void }
+type T = { as: 1 }
+export const v = { as, satisfies }
+export const v = x.as.satisfies
+function f(as, satisfies) {}
+function f(as: T, satisfies?: U) {}
+export const v = (as) => as
+export const v = (as: T) => as
+export const v = (as, satisfies) => as
+export const v = as => as
+type A = as
+type A = satisfies
+type A<as> = as
+function f<satisfies>() {}
+let x: as.b
+let x: typeof as
+export const v = <as>x
+export const v = x as as
+export const v = x satisfies satisfies
+export const v = x as as as as

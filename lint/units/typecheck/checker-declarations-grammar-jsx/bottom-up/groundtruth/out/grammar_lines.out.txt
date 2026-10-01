@@ -1,0 +1,334 @@
+--- 1: #bad in o;
+parse=[] js=[] bind=[]
+L(2,1)+4: error TS18016: Private identifiers are not allowed outside class bodies.
+--- 2: class GP1 { #a = 1; m() { return #a; } }
+parse=[] js=[] bind=[]
+L(2,34)+2: error TS1451: Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
+--- 3: class GP2 { static n = new.tgt; }
+parse=[] js=[] bind=[]
+L(2,24)+7: error TS17013: Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.
+L(2,28)+3: error TS17012: 'tgt' is not a valid meta-property for keyword 'new'. Did you mean 'target'?
+--- 4: class GP3 { ["a" + "b"]!: number; }
+parse=[] js=[] bind=[]
+L(2,13)+11: error TS1166: A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.
+--- 5: class GP4 { declare readonly ro = "x"; declare v = fn2(); }
+parse=[] js=[] bind=[]
+L(2,52)+3: error TS2304: Cannot find name 'fn2'.
+L(2,52)+5: error TS1039: Initializers are not allowed in ambient contexts.
+--- 6: class GP5 { constructor<T>(): void {} }
+parse=[] js=[] bind=[]
+L(2,25)+1: error TS1092: Type parameters cannot appear on a constructor declaration.
+--- 7: const tt = o?.a`x`;
+parse=[] js=[] bind=[]
+L(2,16)+3: error TS1358: Tagged template expressions are not permitted in an optional chain.
+--- 8: import.metaa;
+parse=[] js=[] bind=[]
+L(2,1)+12: error TS1343: The 'import.meta' meta-property is only allowed when the '--module' option is 'es2020', 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', or 'nodenext'.
+L(2,8)+5: error TS17012: 'metaa' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?
+--- 9: declare const amb = 1 + 1;
+parse=[] js=[] bind=[]
+L(2,21)+5: error TS1254: A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference.
+--- 10: declare let amb2 = 1;
+parse=[] js=[] bind=[]
+L(2,20)+1: error TS1039: Initializers are not allowed in ambient contexts.
+--- 11: const big = 10n;
+parse=[] js=[] bind=[]
+L(2,13)+3: error TS2737: BigInt literals are not available when targeting lower than ES2020.
+--- 12: function us(a = 1) { "use strict"; }
+parse=[] js=[] bind=[]
+L(2,13)+5: error TS1346: This parameter is not allowed with 'use strict' directive.
+  related g012.ts(2,22)+13: error TS1349: 'use strict' directive used here.
+L(2,22)+13: error TS1347: 'use strict' directive cannot be used with non-simple parameter list.
+  related g012.ts(2,13)+5: error TS1348: Non-simple parameter declared here.
+--- 13: const arrow = <T>(x: T)
+  => x;
+parse=[] js=[] bind=[]
+L(3,3)+2: error TS1200: Line terminator not permitted before arrow.
+--- 14: abstract class AB1 { abstract m() {} }
+parse=[] js=[] bind=[]
+L(2,31)+1: error TS1245: Method 'm' cannot have an implementation because it is marked abstract.
+--- 15: abstract class AB2 { private abstract p: number; }
+parse=[] js=[] bind=[]
+L(2,30)+8: error TS1243: 'private' modifier cannot be used with 'abstract' modifier.
+--- 16: abstract class AB3 { abstract static s: number; }
+parse=[] js=[] bind=[]
+L(2,31)+6: error TS1243: 'static' modifier cannot be used with 'abstract' modifier.
+--- 17: abstract class AB4 { async abstract q(): void; }
+parse=[] js=[] bind=[]
+L(2,22)+5: error TS1243: 'async' modifier cannot be used with 'abstract' modifier.
+L(2,42)+4: error TS1064: The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<void>'?
+--- 18: class AB5 { readonly readonly r = 1; }
+parse=[] js=[] bind=[]
+L(2,22)+8: error TS1030: 'readonly' modifier already seen.
+--- 19: class AB6 { public private u = 1; }
+parse=[] js=[] bind=[]
+L(2,20)+7: error TS1028: Accessibility modifier already seen.
+--- 20: class AB7 { static static t = 1; }
+parse=[TS1434] js=[] bind=[]
+L(2,20)+6: error TS7008: Member 'static' implicitly has an 'any' type.
+--- 21: class AB8 { abstract z(): void; }
+parse=[] js=[] bind=[]
+L(2,13)+8: error TS1244: Abstract methods can only appear within an abstract class.
+--- 22: interface IF1 { public a: number; }
+parse=[] js=[] bind=[]
+L(2,17)+6: error TS1070: 'public' modifier cannot appear on a type member.
+--- 23: interface IF2 { static b(): void; }
+parse=[] js=[] bind=[]
+L(2,17)+6: error TS1070: 'static' modifier cannot appear on a type member.
+--- 24: interface IF3 { [k: string]?: number; }
+parse=[TS1005 TS1131] js=[] bind=[]
+L(2,31)+6: error TS7008: Member 'number' implicitly has an 'any' type.
+--- 25: interface IF4 { [...r: string[]]: number; }
+parse=[] js=[] bind=[]
+L(2,18)+3: error TS1017: An index signature cannot have a rest parameter.
+--- 26: interface IF5 { [a: number, b: number]: number; }
+parse=[] js=[] bind=[]
+L(2,18)+1: error TS1096: An index signature must have exactly one parameter.
+--- 27: interface IF6 { [k: "lit"]: number; [x: string]; }
+parse=[] js=[] bind=[]
+L(2,18)+1: error TS1337: An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead.
+L(2,37)+12: error TS1021: An index signature must have a type annotation.
+--- 28: function params1(a?: number, b: number) {}
+parse=[] js=[] bind=[]
+L(2,30)+1: error TS1016: A required parameter cannot follow an optional parameter.
+--- 29: function params2(...c: number[], d: number) {}
+parse=[] js=[] bind=[]
+L(2,18)+3: error TS1014: A rest parameter must be last in a parameter list.
+--- 30: function params3(...e?: number[]) {}
+parse=[] js=[] bind=[]
+L(2,18)+15: error TS2370: A rest parameter must be of an array type.
+L(2,22)+1: error TS1047: A rest parameter cannot be optional.
+--- 31: function params4(...f: number[] = []) {}
+parse=[] js=[] bind=[]
+L(2,21)+1: error TS1048: A rest parameter cannot have an initializer.
+--- 32: let { ...rest1, tail } = o;
+parse=[] js=[] bind=[]
+L(2,10)+5: error TS2462: A rest element must be last in a destructuring pattern.
+--- 33: const ob1 = { a: 1, a: 2 };
+parse=[] js=[] bind=[]
+L(2,21)+1: error TS1117: An object literal cannot have multiple properties with the same name.
+--- 34: const ob2 = { get g() { return 1; }, get g() { return 2; } };
+parse=[] js=[] bind=[TS2300 TS2300]
+L(2,42)+1: error TS1118: An object literal cannot have multiple get/set accessors with the same name.
+--- 35: const ob3 = { m?() {} };
+parse=[] js=[] bind=[]
+L(2,16)+1: error TS1162: An object member cannot be declared optional.
+--- 36: const ob4 = { x = 1 };
+parse=[] js=[] bind=[]
+L(2,17)+1: error TS1312: Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.
+--- 37: const ob5 = { readonly q: 1 };
+parse=[] js=[] bind=[]
+L(2,15)+8: error TS1042: 'readonly' modifier cannot be used here.
+--- 38: const ob6 = { a: 1, get a() { return 1; } };
+parse=[] js=[] bind=[]
+L(2,25)+1: error TS1119: An object literal cannot have property and accessor with the same name.
+--- 39: export default abstract class {}
+parse=[] js=[] bind=[]
+--- 40: class { }
+parse=[] js=[] bind=[]
+L(2,1)+5: error TS1211: A class declaration without the 'default' modifier must have a name.
+--- 41: export async class EC {}
+parse=[] js=[] bind=[]
+L(2,8)+5: error TS1042: 'async' modifier cannot be used here.
+--- 42: async interface AI {}
+parse=[] js=[] bind=[]
+L(2,1)+5: error TS1042: 'async' modifier cannot be used here.
+--- 43: declare declare function dd(): void;
+parse=[] js=[] bind=[]
+L(2,9)+7: error TS1030: 'declare' modifier already seen.
+--- 44: export export const ee = 1;
+parse=[] js=[] bind=[]
+L(2,8)+6: error TS1030: 'export' modifier already seen.
+--- 45: function ovl(): void;
+function* ovl2();
+function ovl2() {}
+parse=[] js=[] bind=[]
+L(2,10)+3: error TS2391: Function implementation is missing or not immediately following the declaration.
+L(3,9)+1: error TS1222: An overload signature cannot be declared as a generator.
+L(3,11)+4: error TS7010: 'ovl2', which lacks return-type annotation, implicitly has an 'any' return type.
+--- 46: declare function* dg(): any;
+parse=[] js=[] bind=[]
+L(2,17)+1: error TS1221: Generators are not allowed in an ambient context.
+--- 47: class Acc { get a(x: number) { return 1; } set b() {} set c(...v: number[]) {} get d<T>() { return 1; } set e(v: number): void {} }
+parse=[] js=[] bind=[]
+L(2,17)+1: error TS1054: A 'get' accessor cannot have parameters.
+L(2,48)+1: error TS1049: A 'set' accessor must have exactly one parameter.
+L(2,48)+1: error TS7032: Property 'b' implicitly has type 'any', because its set accessor lacks a parameter type annotation.
+L(2,61)+3: error TS1053: A 'set' accessor cannot have rest parameter.
+L(2,84)+1: error TS1094: An accessor cannot have type parameters.
+L(2,109)+1: error TS1095: A 'set' accessor cannot have a return type annotation.
+--- 48: class Ext extends A1, B1 {}
+parse=[] js=[] bind=[]
+L(2,23)+2: error TS1174: Classes can only extend a single class.
+--- 49: class Ext2 extends A1 extends B1 {}
+parse=[] js=[] bind=[]
+L(2,23)+7: error TS1172: 'extends' clause already seen.
+--- 50: class Ext3 implements I1 implements I2 {}
+parse=[] js=[] bind=[]
+L(2,26)+10: error TS1175: 'implements' clause already seen.
+--- 51: class Ext4 implements I1 extends A1 {}
+parse=[] js=[] bind=[]
+L(2,26)+7: error TS1173: 'extends' clause must precede 'implements' clause.
+--- 52: interface Ext5 implements I1 {}
+parse=[] js=[] bind=[]
+L(2,16)+10: error TS1176: Interface declaration cannot have 'implements' clause.
+--- 53: interface Ext6 extends I1 extends I2 {}
+parse=[] js=[] bind=[]
+L(2,27)+7: error TS1172: 'extends' clause already seen.
+--- 54: for (var i1 = 0 in o) {}
+parse=[] js=[] bind=[]
+L(2,10)+2: error TS1189: The variable declaration of a 'for...in' statement cannot have an initializer.
+--- 55: for (let a1, b1 of o) {}
+parse=[] js=[] bind=[]
+L(2,14)+2: error TS1188: Only a single variable declaration is allowed in a 'for...of' statement.
+--- 56: for (const c1: number of o) {}
+parse=[] js=[] bind=[]
+L(2,12)+2: error TS2483: The left-hand side of a 'for...of' statement cannot use a type annotation.
+--- 57: for (async of o) {}
+parse=[] js=[] bind=[]
+L(2,6)+5: error TS1106: The left-hand side of a 'for...of' statement may not be 'async'.
+L(2,6)+5: error TS2304: Cannot find name 'async'.
+--- 58: for (using u1 in o) {}
+parse=[] js=[] bind=[]
+L(2,6)+8: error TS1493: The left-hand side of a 'for...in' statement cannot be a 'using' declaration.
+--- 59: using top = null;
+parse=[] js=[] bind=[]
+global: error TS2318: Cannot find global type 'Disposable'.
+--- 60: label1: continue label1;
+parse=[] js=[] bind=[]
+L(2,9)+16: error TS1115: A 'continue' statement can only jump to a label of an enclosing iteration statement.
+--- 61: function tp1<>() {}
+parse=[] js=[] bind=[]
+L(2,13)+2: error TS1098: Type parameter list cannot be empty.
+--- 62: f1<>();
+parse=[] js=[] bind=[]
+L(2,1)+2: error TS2304: Cannot find name 'f1'.
+L(2,3)+2: error TS1099: Type argument list cannot be empty.
+--- 63: const neq = o!;
+let da!: number = 1;
+let db!;
+parse=[] js=[] bind=[]
+L(3,7)+1: error TS1263: Declarations with initializers cannot also have definite assignment assertions.
+L(4,7)+1: error TS1264: Declarations with definite assignment assertions must also have type annotations.
+--- 64: var let1 = 1; let let = 2;
+parse=[] js=[] bind=[TS1212]
+L(2,19)+3: error TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+--- 65: const uninit;
+parse=[] js=[] bind=[]
+L(2,7)+6: error TS1155: 'const' declarations must be initialized.
+L(2,7)+6: error TS7005: Variable 'uninit' implicitly has an 'any' type.
+--- 66: const { d1 };
+parse=[] js=[] bind=[]
+L(2,7)+6: error TS1182: A destructuring declaration must have an initializer.
+L(2,9)+2: error TS7031: Binding element 'd1' implicitly has an 'any' type.
+--- 67: enum En1 { ["a"] = 1, 1 = 2, #p = 3 }
+parse=[] js=[] bind=[]
+L(2,23)+1: error TS2452: An enum member cannot have a numeric name.
+L(2,30)+2: error TS18024: An enum member cannot be named with a private identifier.
+--- 68: namespace "quoted" {}
+parse=[TS1003 TS1005] js=[] bind=[]
+--- 69: module ModKw {}
+parse=[] js=[] bind=[]
+L(2,8)+5: error TS1540: A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+--- 70: function dflt(this: void, new: number, ...rest) {}
+parse=[TS1359 TS1138] js=[] bind=[]
+L(2,26)+0: error TS7006: Parameter '(Missing)' implicitly has an 'any' type.
+L(2,32)+6: error TS7006: Parameter 'number' implicitly has an 'any' type.
+L(2,40)+7: error TS7019: Rest parameter 'rest' implicitly has an 'any[]' type.
+--- 71: class CtorParam { constructor(public ...r: number[]) {} m(public x: number) {} }
+parse=[] js=[] bind=[]
+L(2,31)+21: error TS1317: A parameter property cannot be declared using a rest parameter.
+L(2,59)+16: error TS2369: A parameter property is only allowed in a constructor implementation.
+--- 72: class CtorParam2 { constructor(public { a }: { a: number }) {} }
+parse=[] js=[] bind=[]
+L(2,32)+27: error TS1187: A parameter property may not be declared using a binding pattern.
+--- 73: const nmsp = class { constructor() {} get constructor() { return 1; } *constructor() {} };
+parse=[] js=[] bind=[TS2300 TS2300]
+L(2,43)+11: error TS1341: Class constructor may not be an accessor.
+L(2,72)+11: error TS1368: Class constructor may not be a generator.
+global: error TS2318: Cannot find global type 'IterableIterator'.
+--- 74: class Fld { "constructor" = 1; static prototype = 2; }
+parse=[] js=[] bind=[]
+L(2,13)+13: error TS18006: Classes may not have a field named 'constructor'.
+L(2,39)+9: error TS2322: Type 'number' is not assignable to type 'Fld'.
+L(2,39)+9: error TS2699: Static property 'prototype' conflicts with built-in property 'Function.prototype' of constructor function 'Fld'.
+--- 75: type TOp = keyof unique symbol;
+parse=[] js=[] bind=[]
+L(2,18)+13: error TS1335: 'unique symbol' types are not allowed here.
+--- 76: let uq: unique symbol;
+parse=[] js=[] bind=[]
+L(2,5)+2: error TS1332: A variable whose type is a 'unique symbol' type must be 'const'.
+--- 77: class UQ { a: unique symbol = o; static readonly b: unique symbol = o; }
+parse=[] js=[] bind=[]
+L(2,12)+1: error TS1331: A property of a class whose type is a 'unique symbol' type must be both 'static' and 'readonly'.
+--- 78: import x = require("y"); declare import z = require("w");
+parse=[] js=[] bind=[]
+L(2,1)+24: error TS1202: Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from "mod"', 'import {a} from "mod"', 'import d from "mod"', or another module format instead.
+L(2,20)+3: error TS2307: Cannot find module 'y' or its corresponding type declarations.
+L(2,26)+7: error TS1079: A 'declare' modifier cannot be used with an import declaration.
+L(2,53)+3: error TS2307: Cannot find module 'w' or its corresponding type declarations.
+--- 79: export type { type TA } from "./mod_a";
+parse=[] js=[] bind=[]
+L(2,15)+4: error TS2207: The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement.
+L(2,20)+2: error TS2614: Module '"./mod_a"' has no exported member 'TA'. Did you mean to use 'import TA from "./mod_a"' instead?
+--- 80: import type Dft, { TB } from "./mod_a";
+parse=[] js=[] bind=[]
+L(2,8)+16: error TS1363: A type-only import can specify a default import or named bindings, but not both.
+--- 81: import defer * as dns from "./mod_a"; import defer dd2 from "./mod_a";
+parse=[] js=[] bind=[]
+L(2,8)+14: error TS18060: Deferred imports are only supported when the '--module' flag is set to 'esnext' or 'preserve'.
+L(2,46)+9: error TS18058: Default imports are not allowed in a deferred import.
+--- 82: import("a", ...[]); import(); import<T>("a");
+parse=[] js=[] bind=[]
+L(2,1)+18: error TS1323: Dynamic imports are only supported when the '--module' flag is set to 'es2020', 'es2022', 'esnext', 'commonjs', 'amd', 'system', 'umd', 'node16', 'node18', 'node20', or 'nodenext'.
+L(2,1)+18: error TS2712: A dynamic import call in ES5 requires the 'Promise' constructor.  Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your '--lib' option.
+L(2,8)+3: error TS2307: Cannot find module 'a' or its corresponding type declarations.
+L(2,21)+8: error TS1323: Dynamic imports are only supported when the '--module' flag is set to 'es2020', 'es2022', 'esnext', 'commonjs', 'amd', 'system', 'umd', 'node16', 'node18', 'node20', or 'nodenext'.
+L(2,21)+8: error TS2712: A dynamic import call in ES5 requires the 'Promise' constructor.  Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your '--lib' option.
+L(2,31)+14: error TS1323: Dynamic imports are only supported when the '--module' flag is set to 'es2020', 'es2022', 'esnext', 'commonjs', 'amd', 'system', 'umd', 'node16', 'node18', 'node20', or 'nodenext'.
+L(2,31)+14: error TS2712: A dynamic import call in ES5 requires the 'Promise' constructor.  Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your '--lib' option.
+L(2,41)+3: error TS2307: Cannot find module 'a' or its corresponding type declarations.
+global: error TS2468: Cannot find global value 'Promise'.
+--- 83: yield 1;
+parse=[] js=[] bind=[]
+L(2,1)+5: error TS1163: A 'yield' expression is only allowed in a generator body.
+--- 84: function* g2() { function inner() { yield 2; } }
+parse=[] js=[] bind=[]
+L(2,37)+5: error TS1163: A 'yield' expression is only allowed in a generator body.
+global: error TS2318: Cannot find global type 'IterableIterator'.
+--- 85: const tpl = new.target;
+parse=[] js=[] bind=[]
+L(2,13)+10: error TS17013: Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.
+--- 86: @dec export class DecA {}
+parse=[] js=[] bind=[]
+--- 87: export @dec class DecB {}
+parse=[] js=[] bind=[]
+--- 88: @dec export @dec class DecC {}
+parse=[] js=[] bind=[]
+L(2,13)+4: error TS8038: Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+  related g088.ts(2,1)+4: error TS1486: Decorator used before 'export' here.
+--- 89: class DecM { @dec constructor() {} @dec static {} @dec [k: string]: any; }
+parse=[] js=[] bind=[]
+L(2,14)+1: error TS1206: Decorators are not valid here.
+L(2,36)+1: error TS1206: Decorators are not valid here.
+L(2,51)+1: error TS1206: Decorators are not valid here.
+--- 90: function decp(@dec p: number) {}
+parse=[] js=[] bind=[]
+L(2,15)+1: error TS1206: Decorators are not valid here.
+--- 91: class DecO { @dec m(): void; m(): void {} }
+parse=[] js=[] bind=[]
+L(2,14)+1: error TS1249: A decorator can only decorate a method implementation, not an overload.
+--- 92: declare namespace AmbS { function f1() {} ; const c = o; let v: number = 1; 1 + 1; }
+parse=[] js=[] bind=[]
+L(2,40)+1: error TS1183: An implementation cannot be declared in ambient contexts.
+L(2,43)+1: error TS1036: Statements are not allowed in ambient contexts.
+L(2,55)+1: error TS1254: A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference.
+L(2,74)+1: error TS1039: Initializers are not allowed in ambient contexts.
+--- 93: declare class AmbC { m() {} p = 1; get g() { return 1; } static { } }
+parse=[] js=[] bind=[]
+L(2,26)+1: error TS1183: An implementation cannot be declared in ambient contexts.
+L(2,33)+1: error TS1039: Initializers are not allowed in ambient contexts.
+L(2,44)+1: error TS1183: An implementation cannot be declared in ambient contexts.
+--- 94: declare function ambDefault(x = 1): void;
+parse=[] js=[] bind=[]
+L(2,29)+5: error TS2371: A parameter initializer is only allowed in a function or constructor implementation.

@@ -1,0 +1,32 @@
+# decl	end	function	layermap.py	settled
+2398	2457	c.checkSourceElementUnreachable	F-UNREACH	F-UNREACH
+2459	2477	c.isSourceElementUnreachable	F-UNREACH	F-UNREACH
+8833	8864	c.resolveDecorator	E-DECOR	E-DECOR
+8869	8873	c.isPotentiallyUncalledDecorator	E-DECOR	E-DECOR
+8876	8888	c.getDiagnosticHeadMessageForDecoratorResolution	E-DECOR	E-DECOR
+9273	9278	c.getDecoratorArgumentCount	E-DECOR	E-DECOR
+9283	9302	c.getLegacyDecoratorArgumentCount	E-DECOR	E-DECOR
+10171	10197	c.checkClassExpressionExternalHelpers	D-HELPERS	D-HELPERS
+10935	10943	c.checkAwaitExpression	E-AWAIT	E-AWAIT
+11997	12008	c.forEachProperty	E-ACCESS	R-REL
+12011	12016	c.getDeclaringClass	E-ACCESS	R-REL
+12019	12026	c.isValidOverrideOf	E-ACCESS	R-REL
+12030	12038	c.isPropertyInClassDerivedFrom	E-ACCESS	R-REL
+13208	13215	c.getExactOptionalUnassignableProperties	E-OPER	R-REL
+13217	13219	c.isExactOptionalPropertyMismatch	E-OPER	R-REL
+18151	18162	c.getTypeOfPrototypeProperty	T-JSDECL	T-SYMTYPE
+18173	18224	c.getWidenedTypeForAssignmentDeclaration	T-JSDECL	T-JSDECL
+18226	18250	c.getAssignmentDeclarationInitializerType	T-JSDECL	T-JSDECL
+18257	18264	c.hasParentWithTypeAnnotation	T-JSDECL	T-JSDECL
+18266	18278	c.containsSameNamedThisProperty	T-JSDECL	T-JSDECL
+18280	18296	c.getTypeFromPropertyDescriptor	T-JSDECL	T-JSDECL
+18301	18344	c.isConstructorDeclaredThisProperty	T-JSDECL	T-JSDECL
+18346	18350	c.isGlobalSymbolConstructor	T-JSDECL	T-SYMTYPE
+24805	24818	c.getGlobalImportMetaExpressionType	checker:checker.go	Z-SERVICES
+25075	25110	c.getConditionalFlowTypeOfType	K-SUBST	T-TYPENODE
+25112	25120	c.getImpliedConstraint	K-SUBST	T-TYPENODE
+25122	25124	isUnaryTupleTypeNode	K-SUBST	T-TYPENODE
+29124	29126	c.getTypeOfFirstParameterOfSignature	T-SIGSHAPE	T-SIGSHAPE
+29128	29133	c.getTypeOfFirstParameterOfSignatureWithFallback	T-SIGSHAPE	T-SIGSHAPE
+29924	29930	c.getContextualTypeForDecorator	E-DECOR	E-DECOR
+# functions whose layer changes against layermap.py: 12

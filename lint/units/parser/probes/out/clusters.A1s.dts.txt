@@ -1,0 +1,9 @@
+class A1s  dialect dts  config plain: 3 inputs in 2 clusters
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"  /  tsc TS2369   (1 inputs, 1 distinct)
+    tsc also: TS2369 x1, TS2304 x1
+    "declare function f(public a: A): void;"  [-]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" as an identifier here  /  tsc TS2480   (2 inputs, 1 distinct)
+    tsc also: TS2480 x2, TS2304 x2
+    "let"  [declareConst,declareLet]

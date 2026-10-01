@@ -1,0 +1,144 @@
+{
+ "base": "62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552",
+ "installed": {
+  "stage": "stage1",
+  "bun": "1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9",
+  "execPath": "/workspace/bun/build/release/bun",
+  "execSha256": "b36205654bfff3445a8ee9cab737992decb0237f7fb90419fd041aac542cb5aa",
+  "typescript": "6.0.2",
+  "corpus": "/tmp/ledger-bu/run/corpus.jsonl",
+  "rows": 331132,
+  "corpusSha256": "48a486502828091add24112ba838ff183884feea3348c28b61c5ff4b4f16136a",
+  "jobs": 6,
+  "started": "2026-09-30T01:57:18.115Z",
+  "crashes": 2,
+  "ms": 26754
+ },
+ "rows": 331132,
+ "same": 328065,
+ "verdictDiffers": 0,
+ "messageDiffers": 3065,
+ "crashRows": 2,
+ "examples": [
+  [
+   "message",
+   "type T = { foo(1): void }",
+   "[\"Unexpected 1\",1,16,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { a(1): A };",
+   "[\"Unexpected 1\",1,14,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (: A): B };",
+   "[\"Unexpected :\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "interface I { a(1): A }",
+   "[\"Unexpected 1\",1,17,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "interface I { (: A): B }",
+   "[\"Unexpected :\",1,16,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "let x: { a(1): A } | undefined;",
+   "[\"Unexpected 1\",1,12,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "let x: { (: A): B } | undefined;",
+   "[\"Unexpected :\",1,11,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (,): void };",
+   "[\"Unexpected ,\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (a,,b): void };",
+   "[\"Unexpected ,\",1,15,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (, a): void };",
+   "[\"Unexpected ,\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { ({ if }): void };",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,18,2]",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,18,1]"
+  ],
+  [
+   "message",
+   "type X = { ([a, , b]): void };",
+   "[\"Unexpected ,\",1,17,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { ({ a: }): void };",
+   "[\"Unexpected }\",1,18,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { ({ 1n: a }): void };",
+   "[\"Unexpected 1n\",1,15,2]",
+   "[\"Unexpected 1n\",1,15,1]"
+  ],
+  [
+   "message",
+   "type X = { ({ this }): void };",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,20,2]",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,20,1]"
+  ],
+  [
+   "message",
+   "type X = { ({ enum }): void };",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,20,2]",
+   "[\"Expected \\\":\\\" but found \\\"}\\\"\",1,20,1]"
+  ],
+  [
+   "message",
+   "type X = { ((a)): void };",
+   "[\"Unexpected (\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { ((a): A): void };",
+   "[\"Unexpected (\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (1): void };",
+   "[\"Unexpected 1\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ],
+  [
+   "message",
+   "type X = { (\"a\"): void };",
+   "[\"Unexpected \\\"a\\\"\",1,13,1]",
+   "[\"Backtrack\",-1,-1,1]"
+  ]
+ ]
+}

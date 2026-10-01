@@ -1,0 +1,111 @@
+kind	name	layer	sites
+option	AllowUnreachableCode	D-DRIVER	checkSourceElementWorker@2270, checkSourceElementUnreachable@2454
+option	AllowUnusedLabels	D-STMT	checkLabeledStatement@4227, checkLabeledStatement@4228
+option	EmitDecoratorMetadata	U-ALIASMARK	markLinkedReferences@28465, markDecoratorAliasReferenced@28810
+option	ErasableSyntaxOnly	D-TYPENODE	shouldCheckErasableSyntax@2659
+option	ExperimentalDecorators	E-DECOR	getDecoratorArgumentCount@9274
+option	GetEmitModuleKind	U-ALIASMARK	markEntityNameOrEntityExpressionAsReference@28997
+option	GetIsolatedModules	D-ENUMNS	checkModuleDeclaration@5246
+option	GetIsolatedModules	D-IMPEXP	checkExportAssignment@5722, checkAliasSymbol@6890
+option	GetIsolatedModules	U-ALIASMARK	markPropertyAliasReferenced@28557, markAliasReferenced@28935, markEntityNameOrEntityExpressionAsReference@28996
+option	GetJSXTransformEnabled	G-GRAMMAR	checkGrammarJsxName@1167
+option	GetJSXTransformEnabled	X-JSX	checkJsxFragment@115
+option	GetUseDefineForClassFields	D-CLASS	checkClassForStaticPropertyNameConflicts@4431, checkKindsOfPropertyMemberOverrides@4669
+option	GetUseDefineForClassFields	E-COLLIDE	setNodeLinksForPrivateIdentifierScope@10621
+option	ImportHelpers	D-HELPERS	checkExternalEmitHelpers@28700
+option	IsolatedModules	D-IMPEXP	checkAliasSymbol@6885
+option	Jsx	U-ALIASMARK	markJsxAliasReferenced@28631, markJsxAliasReferenced@28637
+option	Jsx	X-JSX	checkJsxPreconditions@162, getJSXFragmentType@508, getJSXFragmentType@515, getJsxElementChildrenPropertyName@1078
+option	JsxFactory	X-JSX	checkJsxFragment@115, checkJsxFragment@116, getJsxNamespace@1373, getJsxNamespace@1374
+option	JsxFragmentFactory	X-JSX	checkJsxFragment@115, getJSXFragmentType@508, getJsxFragmentFactoryEntity@1429, getJsxFragmentFactoryEntity@1430
+option	NoCheck	D-IMPEXP	checkImportDeclaration@5401
+option	NoFallthroughCasesInSwitch	D-STMT	checkSwitchStatement@4204
+option	NoImplicitOverride	D-CLASS	checkMemberForOverrideModifierWorker@4809, checkMemberForOverrideModifierWorker@4827
+option	NoImplicitReturns	D-FUNC	checkAllCodePathsInNonVoidFunctionReturnOrThrow@3771
+option	NoImplicitReturns	D-STMT	checkReturnStatement@4131
+option	NoUncheckedIndexedAccess	D-ITER	getIteratedTypeOrElementType@6205, getIteratedTypeOrElementType@6289
+option	NoUncheckedSideEffectImports	D-IMPEXP	checkImportDeclaration@5400
+option	NoUnusedLocals	D-UNUSED	unusedIsError@7197
+option	NoUnusedParameters	D-UNUSED	unusedIsError@7199
+option	ReactNamespace	X-JSX	getJsxNamespace@1378, getJsxNamespace@1379
+option	ShouldPreserveConstEnums	D-DRIVER	isSourceElementUnreachable@2466, isSourceElementUnreachable@2468
+option	ShouldPreserveConstEnums	D-ENUMNS	checkModuleDeclaration@5242
+option	ShouldPreserveConstEnums	U-ALIASMARK	markPropertyAliasReferenced@28557, markAliasReferenced@28936
+option	VerbatimModuleSyntax	D-ENUMNS	checkModuleDeclaration@5262, getIsolatedModulesLikeFlagName@5313
+option	VerbatimModuleSyntax	D-IMPEXP	checkExportAssignment@5700, checkExportAssignment@5710, checkExportAssignment@5716, checkAliasSymbol@6896, checkAliasSymbol@6900, checkAliasSymbol@6917, checkAliasSymbol@6929, checkAliasSymbol@6938
+option	VerbatimModuleSyntax	G-GRAMMAR	checkGrammarModifiers@402, checkGrammarImportCallExpression@2145
+cached	canCollectSymbolAliasAccessibilityData	U-ALIASMARK	markLinkedReferences@28313, markJsxAliasReferenced@28652, markAliasReferenced@28926, markEntityNameOrEntityExpressionAsReference@28990
+cached	emitStandardClassFields	D-FUNC	checkConstructorDeclaration@2864
+cached	exactOptionalPropertyTypes	X-JSX	elaborateIterableOrArrayLikeTargetElementwise@465
+cached	languageVersion	D-VAR	checkVariableDeclarationList@5865, checkVariableLikeDeclaration@5911
+cached	languageVersion	D-FUNC	checkSignatureDeclaration@2743, checkSignatureDeclaration@2746
+cached	languageVersion	D-STMT	checkForOfStatement@4049
+cached	languageVersion	D-DECOR	checkDecorators@6127
+cached	languageVersion	D-HELPERS	checkClassExpressionExternalHelpers@10180
+cached	languageVersion	E-COLLIDE	setNodeLinksForPrivateIdentifierScope@10619, setNodeLinksForPrivateIdentifierScope@10620, recordPotentialCollisionWithWeakMapSetInGeneratedCode@10630, checkCollisionWithGlobalPromiseInGeneratedCode@10649, recordPotentialCollisionWithReflectInGeneratedCode@10665
+cached	languageVersion	G-GRAMMAR	checkGrammarRegularExpressionLiteral@76, checkGrammarForUseStrictSimpleParameterList@723, checkGrammarForInOrForOfStatement@1208, checkGrammarAwaitOrAwaitUsing@1710, checkGrammarBigIntLiteral@2091
+cached	legacyDecorators	D-CLASS	checkClassDeclaration@4288
+cached	legacyDecorators	U-ALIASMARK	markLinkedReferences@28370, markLinkedReferences@28468
+cached	legacyDecorators	D-DECOR	checkDecorators@6115, checkDecorators@6122, checkDecorator@6170
+cached	legacyDecorators	E-DECOR	getDecoratorCallSignature@30279
+cached	legacyDecorators	D-HELPERS	checkClassExpressionExternalHelpers@10180, getHelperNames@28751
+cached	legacyDecorators	G-GRAMMAR	checkGrammarModifiers@242, checkGrammarModifiers@248
+cached	moduleKind	D-IMPEXP	checkImportDeclaration@5395, checkImportDeclaration@5398, checkModuleExportName@5473, checkImportAttributes@5502, checkImportEqualsDeclaration@5575, checkExportAssignment@5761, checkExportAssignment@5764, checkAliasSymbol@6931
+cached	moduleKind	E-COLLIDE	checkClassNameCollisionWithObject@10703
+cached	moduleKind	G-GRAMMAR	checkGrammarForInOrForOfStatement@1196, checkGrammarAwaitOrAwaitUsing@1691, checkGrammarImportClause@2116, checkGrammarImportCallExpression@2145, checkGrammarImportCallExpression@2150, checkGrammarImportCallExpression@2153, checkGrammarImportCallExpression@2164
+cached	noImplicitAny	D-FUNC	checkSignatureDeclaration@2757
+cached	noImplicitAny	X-JSX	checkJsxPreconditions@165, getIntrinsicTagSymbol@1250
+cached	strictBuiltinIteratorReturn	D-ITER	getBuiltinIteratorReturnType@6491
+cached	strictNullChecks	D-VAR	checkVariableLikeDeclaration@5957, checkVariableLikeDeclaration@5967
+cached	strictNullChecks	D-FUNC	checkAllCodePathsInNonVoidFunctionReturnOrThrow@3769
+cached	strictNullChecks	D-STMT	checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType@3823, checkReturnStatement@4118
+cached	strictNullChecks	D-CLASS	checkKindsOfPropertyMemberOverrides@4678, checkPropertyInitialization@5010
+cached	strictNullChecks	U-ALIASMARK	getEntityNameForDecoratorMetadataFromTypeList@28899
+cached	strictNullChecks	X-JSX	createJsxAttributesTypeFromAttributesProperty@712
+cached	strictNullChecks	T-JSDECL	getWidenedTypeForAssignmentDeclaration@18205
+cached	strictPropertyInitialization	D-CLASS	checkPropertyInitialization@5010
+program	GetEmitModuleFormatOfFile	D-ENUMNS	checkModuleDeclaration@5262
+program	GetEmitModuleFormatOfFile	D-IMPEXP	checkImportDeclaration@5373, checkImportDeclaration@5389, checkImportBinding@5461, checkExportDeclaration@5618, checkExportSpecifier@5659, checkExportAssignment@5700, checkAliasSymbol@6929, checkAliasSymbol@6931
+program	GetEmitModuleFormatOfFile	E-COLLIDE	checkCollisionWithRequireExportsInGeneratedCode@10555, checkCollisionWithGlobalObjectInGeneratedCode@10583, checkClassNameCollisionWithObject@10702
+program	GetEmitModuleFormatOfFile	G-GRAMMAR	checkGrammarModifiers@402, checkGrammarVariableDeclaration@1582
+program	GetImpliedNodeFormatForEmit	D-IMPEXP	checkExportAssignment@5761
+program	GetImportHelpersImportSpecifier	D-HELPERS	resolveHelpersModule@28799
+program	GetJSXRuntimeImportSpecifier	X-JSX	getJSXRuntimeImportSpecifier@1487
+program	GetProjectReferenceFromOutputDts	D-IMPEXP	checkAliasSymbol@6940
+program	GetSourceFileMetaData	G-GRAMMAR	checkGrammarForInOrForOfStatement@1198, checkGrammarAwaitOrAwaitUsing@1696
+minimum target	AsyncFunctions	D-FUNC	checkSignatureDeclaration@2746
+minimum target	AsyncGenerators	D-FUNC	checkSignatureDeclaration@2743
+minimum target	ClassAndClassElementDecorators	D-DECOR	checkDecorators@6127
+minimum target	ClassAndClassElementDecorators	D-HELPERS	checkClassExpressionExternalHelpers@10180
+minimum target	ClassAndClassElementDecorators	E-COLLIDE	setNodeLinksForPrivateIdentifierScope@10620
+minimum target	ForAwaitOf	D-STMT	checkForOfStatement@4049
+minimum target	ObjectSpreadRest	D-VAR	checkVariableLikeDeclaration@5911
+minimum target	PrivateNamesAndClassStaticBlocks	E-COLLIDE	setNodeLinksForPrivateIdentifierScope@10619
+minimum target	UsingAndAwaitUsing	D-VAR	checkVariableDeclarationList@5865
+script target	ES2016	G-GRAMMAR	checkGrammarForUseStrictSimpleParameterList@723
+script target	ES2017	E-COLLIDE	checkCollisionWithGlobalPromiseInGeneratedCode@10649
+script target	ES2017	G-GRAMMAR	checkGrammarForInOrForOfStatement@1208, checkGrammarAwaitOrAwaitUsing@1710
+script target	ES2020	G-GRAMMAR	checkGrammarBigIntLiteral@2091
+script target	ES2021	E-COLLIDE	recordPotentialCollisionWithWeakMapSetInGeneratedCode@10630, recordPotentialCollisionWithReflectInGeneratedCode@10665
+module kind	CommonJS	D-ENUMNS	checkModuleDeclaration@5262
+module kind	CommonJS	D-IMPEXP	checkImportDeclaration@5373, checkImportDeclaration@5389, checkImportBinding@5461, checkImportAttributes@5508, checkExportDeclaration@5618, checkExportSpecifier@5659, checkExportAssignment@5700, checkExportAssignment@5761, checkAliasSymbol@6929, checkAliasSymbol@6931
+module kind	CommonJS	E-COLLIDE	checkCollisionWithGlobalObjectInGeneratedCode@10583
+module kind	CommonJS	G-GRAMMAR	checkGrammarModifiers@402, checkGrammarForInOrForOfStatement@1199, checkGrammarAwaitOrAwaitUsing@1697, checkGrammarImportCallExpression@2145
+module kind	ES2015	D-IMPEXP	checkModuleExportName@5473, checkImportEqualsDeclaration@5575, checkExportAssignment@5761
+module kind	ES2015	U-ALIASMARK	markEntityNameOrEntityExpressionAsReference@28997
+module kind	ES2015	E-COLLIDE	checkCollisionWithRequireExportsInGeneratedCode@10555, checkClassNameCollisionWithObject@10702
+module kind	ES2015	G-GRAMMAR	checkGrammarImportCallExpression@2153
+module kind	ES2020	D-IMPEXP	checkModuleExportName@5473
+module kind	ES2022	G-GRAMMAR	checkGrammarForInOrForOfStatement@1204, checkGrammarAwaitOrAwaitUsing@1706
+module kind	ESNext	D-IMPEXP	checkImportEqualsDeclaration@5575, checkExportAssignment@5761
+module kind	ESNext	G-GRAMMAR	checkGrammarForInOrForOfStatement@1205, checkGrammarAwaitOrAwaitUsing@1707, checkGrammarImportClause@2116, checkGrammarImportCallExpression@2150, checkGrammarImportCallExpression@2164
+module kind	Node16	G-GRAMMAR	checkGrammarForInOrForOfStatement@1197, checkGrammarAwaitOrAwaitUsing@1692, checkGrammarImportCallExpression@2164
+module kind	Node18	D-IMPEXP	checkImportDeclaration@5395
+module kind	Node18	G-GRAMMAR	checkGrammarForInOrForOfStatement@1197, checkGrammarAwaitOrAwaitUsing@1693
+module kind	Node20	G-GRAMMAR	checkGrammarForInOrForOfStatement@1197, checkGrammarAwaitOrAwaitUsing@1694
+module kind	NodeNext	D-IMPEXP	checkImportDeclaration@5395
+module kind	NodeNext	G-GRAMMAR	checkGrammarForInOrForOfStatement@1197, checkGrammarAwaitOrAwaitUsing@1695, checkGrammarImportCallExpression@2164
+module kind	Preserve	D-IMPEXP	checkExportAssignment@5761, checkAliasSymbol@6931
+module kind	Preserve	G-GRAMMAR	checkGrammarForInOrForOfStatement@1206, checkGrammarAwaitOrAwaitUsing@1708, checkGrammarImportClause@2116, checkGrammarImportCallExpression@2150, checkGrammarImportCallExpression@2164
+module kind	System	D-IMPEXP	checkExportAssignment@5764
+module kind	System	G-GRAMMAR	checkGrammarForInOrForOfStatement@1207, checkGrammarVariableDeclaration@1582, checkGrammarAwaitOrAwaitUsing@1709

@@ -1,0 +1,35 @@
+# Measured on 2026-09-30 on the shared machine (16 processors, load average 450 to 800): so the column is processor time (user + system) of the one process, which the load changes little; wall time was 1.1 to 7 times that.
+# release = /workspace/bun/build/release/bun 1.4.3 (367d939d9). debug = /workspace/wt/cli/build/debug/bun-debug 1.4.3-debug+e3566be88, BUN_DEBUG_QUIET_LOGS=1.
+# Driver: probes/timing.ts over the assembled runner and the corpus in the committed layout (/tmp/cgt-td/repo). "test" = the assembled conformance.test.ts as a whole (reference layout, TFS_CHECK=replay).
+# tier: T = normal test, every build. R = normal test, release builds only. S = sweep.ts. Y = sync time. "-" = not measured, with the reason.
+check	reads	tier	amount (release)	release ms	amount (debug)	debug ms	debug per unit
+start of the process, empty script	-	T	1	about 20	1	400	-
+import of the 31 modules of the runner	runner/*.ts	T	1	31	1	1586	-
+loadCorpus and indexCases	corpus directory listings	T	12444 cases, 9730 baseline names	25	the same	2170 to 2400	-
+JSON.parse of the pins	reference_counts.json	T	2793 bytes (17239 in the compact form)	0.7	the same	17 for the larger form	-
+directive vectors	fixtures/directives-inputs.json, directives-expected.json	T	120 inputs	7	120 inputs	830 to 970	7 to 8 ms per input
+variations (11 inline cases)	-	T	11	about 1	11	160	-
+the rows of the list for eight groups of one of 256 cases (prototype/instances.test.ts, eight tests)	corpus cases, reference_instances.tsv	T	390 cases, 453 instances	120 wall, 9 to 28 per group	390 cases	15100 wall at load 570, 950 to 3050 per group (the grouping of the 12444 cases was computed again in each test: to be made once)	13 to 26 ms per case
+read of the list, its sha256 and its index by case	reference_instances.tsv	T	14915 rows, 743026 bytes	5	14915 rows	48 for the read and the digest; about 1000 for a pass over all rows with caseBaseName	-
+the compact form: buckets 0 to 7 of 256 with counts, digest and skips (prototype/pins.test.ts, eight tests)	corpus cases, reference_counts.json (eight rows), reference_skips.tsv	T	390 cases, 453 instances	70 wall, 6 to 16 per bucket	390 cases	8320 wall at load 880, 670 to 1840 per bucket; one of 40 cases in one piece (333 cases): 3880 to 8770	13 to 26 ms per case
+read of the skip list and its sha256	reference_skips.tsv	T	2118 rows	1	2118 rows	140	-
+round trip of a sample of baselines	corpus baselines	T	211 files, 606042 bytes	200	about 200 files (test: 12250); 26 files, 59491 bytes (driver: 6830)	see left	61 to 262 ms per file
+replay of a sample (oracle through the writer, and the empty check)	corpus cases and baselines	T	54 cases, 52 instances, two checks	55	52 instances (test: 3520); 16 instances (driver: 5360)	see left	34 to 170 ms per instance and check
+default check with the stand-in linter	fixtures/fake-lint-fixture.ts	T	3 processes	1835 wall in the test under load; a start is 18 ms median	3 processes	8200 wall	about 2.7 s per process
+expectations (inline cases) and the form of expectations.json	expectations.json	T	48 bytes	about 1	the same	130	-
+enumeration of every case with kinds and five digests	corpus cases, reference_counts.json, reference_instances.tsv	R	12444 cases, 14915 instances	1363	not run: 12444 cases at 13 to 26 ms	160000 to 320000 by the unit cost	-
+digest of the corpus (every file read, sha256)	corpus, reference_counts.json (corpus.sha256)	R	22186 files, 32485872 bytes	385 (wall 600)	not run; the walk with stat alone	14980	-
+the assembled test as a whole	-	T and R	49 tests	2440 (user 1870, sys 570); wall 11.6 s under load	48 tests, 1 skipped	57600 (user 56280, sys 1320); wall 43.8 s	-
+round trip of every baseline	corpus baselines	S	9730 files, 23480492 bytes	2539	-: release only	about 600000 by the unit cost	-
+replay of every run instance	corpus	S	12796 inputs of 12797 run instances, all pass	3947	-: release only	-	-
+the sweep with the replay check and its report	corpus	S	12797 instances	9500 wall (report of shared-foundation-merge, prove.sh)	-	-	-
+pin script with --reference and --reference-log	corpus, the clone's baseline directories, the 22.7 MB log	Y	everything	2800 (user 1980, sys 820)	-	-	-
+gen_options_table.ts	three Go source files as text	Y	126 declarations	390 wall	-	-	-
+sync.sh, twice, with two commits (validate.sh)	the two clones	Y	22186 files	about 120 s wall (HOWTO of needs-and-lint-channel)	-	-	-
+bottom layer against Go's answers (verify_go.ts)	go-vectors.jsonl (notes), Go build 26 s and run 3 s with go 1.24.4	Y, notes	16533083 checks	5930 (user 5540, sys 390)	-: about half an hour by the factor	-	-
+# Reading: a debug build runs this JavaScript 80 to 350 times slower than a release build (import 51, load 90, directives 130, enumeration 170 to 350, round trip and replay 60 to 300).
+# The assembled test is 2.4 s of processor time in a release build and 58 s in the debug build. Reading the fixtures of this unit (pins, skip list, directive vectors) is 9 ms in release and about 1 s in debug.
+# prototype/instances.test.ts with the corpus block of pins.test.ts (the blocks that replace the subtest list): release 12 tests, user 1.7 s, sys 0.5 s, wall 2.2 s; debug 9 tests and 1 skipped, user 26.1 s, wall 27 s at load 570.
+# prototype/pins.test.ts with the compact form: release 12 tests, user 2.2 s, sys 0.6 s; debug 10 tests and 2 skipped, user 19.9 s, wall 16 s at load 880.
+# One observation of wall time: the test that reads every file of the corpus took 14.7 s once (cold cache, load 600) and 0.36 to 0.6 s otherwise: it needs its own time limit (30 s), as the full enumeration has.
+# Not measured: an ASAN build without debug assertions, Windows, macOS.

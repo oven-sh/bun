@@ -1,0 +1,7 @@
+    Checking bun_ast v0.0.0 (/tmp/c2td/ws/ast)
+    Checking bun_lint v0.0.0 (/tmp/c2td/ws/lint)
+lint/vector_tests.rs:40:16: error: use of a disallowed method `std::fs::read`
+lint/vector_tests.rs:47:22: error: use of a disallowed method `str::lines`
+lint/vector_tests.rs:48:30: error: use of a disallowed method `str::split`
+error: could not compile `bun_lint` (lib test) due to 3 previous errors
+clippy-exit=101

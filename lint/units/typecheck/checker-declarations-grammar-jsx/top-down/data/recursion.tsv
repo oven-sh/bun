@@ -1,0 +1,284 @@
+# the largest call cycle of the checker has 1444 functions; a layer function in it can re-enter itself through any of them
+layer	function	where	kind
+D-DRIVER	checkSourceElements	checker.go:2238	in the large cycle
+D-DRIVER	checkSourceElement	checker.go:2247	in the large cycle
+D-DRIVER	checkSourceElementWorker	checker.go:2260	in the large cycle
+D-DRIVER	checkSourceElementUnreachable	checker.go:2398	in the large cycle
+D-DRIVER	isSourceElementUnreachable	checker.go:2459	in the large cycle
+D-TYPENODE	checkTypeParameter	checker.go:2611	in the large cycle
+D-TYPENODE	checkTypeReferenceNode	checker.go:2990	in the large cycle
+D-TYPENODE	checkTypeReferenceOrImport	checker.go:3006	in the large cycle
+D-TYPENODE	checkTypeArgumentConstraints	checker.go:3024	in the large cycle
+D-TYPENODE	getDeprecatedSuggestionNode	checker.go:3041	calls itself
+D-TYPENODE	checkTypePredicate	checker.go:3063	in the large cycle
+D-TYPENODE	checkIfTypePredicateVariableIsDeclaredInBindingPattern	checker.go:3119	calls itself
+D-TYPENODE	checkTypeQuery	checker.go:3138	in the large cycle
+D-TYPENODE	checkTypeLiteral	checker.go:3142	in the large cycle
+D-TYPENODE	checkObjectTypeForDuplicateDeclarations	checker.go:3150	in the large cycle
+D-TYPENODE	reportDuplicateMemberErrors	checker.go:3221	in the large cycle
+D-TYPENODE	checkArrayType	checker.go:3237	in the large cycle
+D-TYPENODE	checkTupleType	checker.go:3241	in the large cycle
+D-TYPENODE	checkUnionOrIntersectionType	checker.go:3278	in the large cycle
+D-TYPENODE	checkThisType	checker.go:3283	in the large cycle
+D-TYPENODE	checkTypeOperator	checker.go:3287	in the large cycle
+D-TYPENODE	checkConditionalType	checker.go:3292	in the large cycle
+D-TYPENODE	checkInferType	checker.go:3296	in the large cycle
+D-TYPENODE	checkTemplateLiteralType	checker.go:3323	in the large cycle
+D-TYPENODE	checkImportType	checker.go:3332	in the large cycle
+D-TYPENODE	checkNamedTupleMember	checker.go:3373	in the large cycle
+D-TYPENODE	checkIndexedAccessType	checker.go:3388	in the large cycle
+D-TYPENODE	checkMappedType	checker.go:3393	in the large cycle
+D-TYPENODE	checkTypeAliasDeclaration	checker.go:6966	in the large cycle
+D-TYPENODE	checkTypeParameters	checker.go:7092	in the large cycle
+D-TYPENODE	checkTypeParametersNotReferenced	checker.go:7112	in the large cycle; recursive closure visit over the tree
+D-VAR	checkVariableStatement	checker.go:5854	in the large cycle
+D-VAR	checkVariableDeclarationList	checker.go:5863	in the large cycle
+D-VAR	checkVariableDeclaration	checker.go:5871	in the large cycle
+D-VAR	checkVariableLikeDeclaration	checker.go:5880	in the large cycle
+D-VAR	errorNextVariableOrPropertyDeclarationMustHaveSameType	checker.go:6039	in the large cycle
+D-VAR	checkVarDeclaredNamesNotShadowed	checker.go:6051	in the large cycle
+D-FUNC	checkParameter	checker.go:2662	in the large cycle
+D-FUNC	checkPropertyDeclaration	checker.go:2709	in the large cycle
+D-FUNC	checkPropertySignature	checker.go:2724	in the large cycle
+D-FUNC	checkSignatureDeclaration	checker.go:2731	in the large cycle
+D-FUNC	checkAsyncFunctionReturnType	checker.go:2790	in the large cycle
+D-FUNC	checkMethodDeclaration	checker.go:2805	in the large cycle
+D-FUNC	checkClassStaticBlockDeclaration	checker.go:2826	in the large cycle
+D-FUNC	checkConstructorDeclaration	checker.go:2832	in the large cycle
+D-FUNC	findFirstSuperCall	checker.go:2897	recursive closure visit over the tree
+D-FUNC	nodeImmediatelyReferencesSuperOrThis	checker.go:2923	calls itself; walks the tree through ForEachChild with itself
+D-FUNC	checkAccessorDeclaration	checker.go:2938	in the large cycle
+D-FUNC	checkFunctionDeclaration	checker.go:3412	in the large cycle
+D-FUNC	checkFunctionOrMethodDeclaration	checker.go:3418	in the large cycle
+D-FUNC	checkFunctionOrConstructorSymbol	checker.go:3469	in the large cycle
+D-FUNC	checkFunctionOrConstructorSymbolWorker	checker.go:3477	in the large cycle
+D-FUNC	isImplementationCompatibleWithOverload	checker.go:3724	in the large cycle
+D-FUNC	checkAllCodePathsInNonVoidFunctionReturnOrThrow	checker.go:3736	in the large cycle
+D-FUNC	isUnwrappedReturnTypeUndefinedVoidOrAny	checker.go:3788	in the large cycle
+D-STMT	checkBlock	checker.go:3793	in the large cycle
+D-STMT	checkIfStatement	checker.go:3810	in the large cycle
+D-STMT	checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	checker.go:3822	in the large cycle
+D-STMT	checkTestingKnownTruthyTypes	checker.go:3829	in the large cycle
+D-STMT	checkTestingKnownTruthyType	checker.go:3838	in the large cycle
+D-STMT	isSymbolUsedInBinaryExpressionChain	checker.go:3898	in the large cycle; recursive closure visit over the tree
+D-STMT	isSymbolUsedInConditionBody	checker.go:3919	in the large cycle; recursive closure visit over the tree
+D-STMT	checkDoStatement	checker.go:3955	in the large cycle
+D-STMT	checkWhileStatement	checker.go:3961	in the large cycle
+D-STMT	checkForStatement	checker.go:3967	in the large cycle
+D-STMT	checkForInStatement	checker.go:3993	in the large cycle
+D-STMT	getIndexTypeOrString	checker.go:4035	in the large cycle
+D-STMT	checkForOfStatement	checker.go:4040	in the large cycle
+D-STMT	checkReturnStatement	checker.go:4094	in the large cycle
+D-STMT	checkReturnExpression	checker.go:4139	in the large cycle; calls itself
+D-STMT	checkWithStatement	checker.go:4164	in the large cycle
+D-STMT	checkSwitchStatement	checker.go:4179	in the large cycle
+D-STMT	checkLabeledStatement	checker.go:4215	in the large cycle
+D-STMT	checkThrowStatement	checker.go:4233	in the large cycle
+D-STMT	checkTryStatement	checker.go:4243	in the large cycle
+D-STMT	checkCatchClause	checker.go:4255	in the large cycle
+D-STMT	checkBindingElement	checker.go:4281	in the large cycle
+D-CLASS	checkClassDeclaration	checker.go:4286	in the large cycle
+D-CLASS	checkClassLikeDeclaration	checker.go:4301	in the large cycle
+D-CLASS	checkJSDocAugmentsTagMatchesExtends	checker.go:4404	in the large cycle
+D-CLASS	checkClassForStaticPropertyNameConflicts	checker.go:4430	in the large cycle
+D-CLASS	checkTypeParameterListsIdentical	checker.go:4453	in the large cycle
+D-CLASS	areTypeParametersIdentical	checker.go:4481	in the large cycle
+D-CLASS	checkBaseTypeAccessibility	checker.go:4518	in the large cycle
+D-CLASS	issueMemberSpecificError	checker.go:4531	in the large cycle
+D-CLASS	getTypeWithoutSignatures	checker.go:4556	in the large cycle; calls itself
+D-CLASS	checkKindsOfPropertyMemberOverrides	checker.go:4573	in the large cycle
+D-CLASS	checkMembersForOverrideModifier	checker.go:4741	in the large cycle
+D-CLASS	checkMemberForOverrideModifier	checker.go:4766	in the large cycle
+D-CLASS	checkMemberForOverrideModifierWorker	checker.go:4800	in the large cycle
+D-CLASS	getSuggestedSymbolForNonexistentClassMember	checker.go:4858	in the large cycle
+D-CLASS	checkIndexConstraints	checker.go:4862	in the large cycle
+D-CLASS	checkIndexConstraintForProperty	checker.go:4889	in the large cycle
+D-CLASS	checkIndexConstraintForIndexSignature	checker.go:4935	in the large cycle
+D-CLASS	checkClassOrInterfaceForDuplicateIndexSignatures	checker.go:4972	in the large cycle
+D-CLASS	checkTypeForDuplicateIndexSignatures	checker.go:4980	in the large cycle
+D-CLASS	checkPropertyInitialization	checker.go:5009	in the large cycle
+D-CLASS	isPropertyInitializedInStaticBlocks	checker.go:5036	in the large cycle
+D-CLASS	isPropertyInitializedInConstructor	checker.go:5053	in the large cycle
+D-CLASS	checkInterfaceDeclaration	checker.go:5067	in the large cycle
+D-CLASS	checkInheritedPropertiesAreIdentical	checker.go:5112	in the large cycle
+D-CLASS	isPropertyIdenticalTo	checker.go:5144	in the large cycle
+D-ENUMNS	checkEnumDeclaration	checker.go:5148	in the large cycle
+D-ENUMNS	checkEnumMember	checker.go:5199	in the large cycle
+D-ENUMNS	checkModuleDeclaration	checker.go:5208	in the large cycle
+D-ENUMNS	checkModuleAugmentationElement	checker.go:5316	calls itself
+D-IMPEXP	checkImportDeclaration	checker.go:5344	in the large cycle
+D-IMPEXP	checkImportBinding	checker.go:5455	in the large cycle
+D-IMPEXP	checkImportAttributes	checker.go:5487	in the large cycle
+D-IMPEXP	getTypeFromImportAttributes	checker.go:5523	in the large cycle
+D-IMPEXP	checkImportEqualsDeclaration	checker.go:5540	in the large cycle
+D-IMPEXP	checkExportDeclaration	checker.go:5583	in the large cycle
+D-IMPEXP	checkExternalModuleNameInGlobalScope	checker.go:5632	in the large cycle
+D-IMPEXP	checkExportSpecifier	checker.go:5641	in the large cycle
+D-IMPEXP	checkExportAssignment	checker.go:5673	in the large cycle
+D-IMPEXP	checkExternalModuleExports	checker.go:5783	in the large cycle
+D-IMPEXP	hasExportedMembersOfKind	checker.go:5828	in the large cycle
+D-IMPEXP	hasShadowedNamespace	checker.go:5837	in the large cycle
+D-IMPEXP	checkMissingDeclaration	checker.go:5850	in the large cycle
+D-IMPEXP	checkAliasSymbol	checker.go:6826	in the large cycle
+D-IMPEXP	checkExportsOnMergedDeclarations	checker.go:7000	in the large cycle
+D-IMPEXP	getDeclarationSpaces	checker.go:7051	in the large cycle; calls itself
+U-ALIASMARK	markLinkedReferences	checker.go:28312	in the large cycle
+U-ALIASMARK	markIdentifierAliasReferenced	checker.go:28520	in the large cycle
+U-ALIASMARK	markPropertyAliasReferenced	checker.go:28530	in the large cycle
+U-ALIASMARK	markExportAssignmentAliasReferenced	checker.go:28615	in the large cycle
+U-ALIASMARK	markJsxAliasReferenced	checker.go:28625	in the large cycle
+U-ALIASMARK	markImportEqualsAliasReferenced	checker.go:28671	in the large cycle
+U-ALIASMARK	markExportSpecifierAliasReferenced	checker.go:28677	in the large cycle
+U-ALIASMARK	markDecoratorAliasReferenced	checker.go:28809	in the large cycle
+U-ALIASMARK	markDecoratorMedataDataTypeNodeAsReferenced	checker.go:28865	in the large cycle
+U-ALIASMARK	getEntityNameForDecoratorMetadata	checker.go:28872	cycle with getEntityNameForDecoratorMetadataFromTypeList; calls itself
+U-ALIASMARK	getEntityNameForDecoratorMetadataFromTypeList	checker.go:28893	cycle with getEntityNameForDecoratorMetadata
+U-ALIASMARK	markAliasReferenced	checker.go:28925	in the large cycle
+U-ALIASMARK	markAliasSymbolAsReferenced	checker.go:28947	in the large cycle
+U-ALIASMARK	markExportAsReferenced	checker.go:28968	in the large cycle
+U-ALIASMARK	markEntityNameOrEntityExpressionAsReference	checker.go:28980	in the large cycle
+D-UNUSED	reportUnusedBindingElements	checker.go:7289	cycle with reportUnusedVariableDeclarations
+D-UNUSED	reportUnusedVariableDeclarations	checker.go:7298	cycle with reportUnusedBindingElements
+D-UNUSED	isUnreferencedVariableDeclaration	checker.go:7311	calls itself
+D-ITER	checkIteratedTypeOrElementType	checker.go:6185	in the large cycle
+D-ITER	getIteratedTypeOrElementType	checker.go:6196	in the large cycle
+D-ITER	getIterationTypeOfGeneratorFunctionReturnType	checker.go:6306	in the large cycle
+D-ITER	getIterationTypesOfGeneratorFunctionReturnType	checker.go:6314	in the large cycle
+D-ITER	getIterationTypeOfIterable	checker.go:6328	in the large cycle
+D-ITER	getIterationTypesOfIterable	checker.go:6355	in the large cycle
+D-ITER	getIterationTypesOfIterableWorker	checker.go:6377	in the large cycle; calls itself
+D-ITER	getIterationTypesOfIterableFast	checker.go:6447	in the large cycle
+D-ITER	combineIterationTypes	checker.go:6510	in the large cycle
+D-ITER	getIterationTypeUnion	checker.go:6518	in the large cycle
+D-ITER	getAsyncFromSyncIterationTypes	checker.go:6526	in the large cycle
+D-ITER	getIterationTypesOfIterableSlow	checker.go:6550	in the large cycle
+D-ITER	getIterationTypesOfIterator	checker.go:6575	in the large cycle
+D-ITER	getIterationTypesOfIteratorWorker	checker.go:6585	in the large cycle
+D-ITER	getIterationTypesOfIteratorFast	checker.go:6596	in the large cycle
+D-ITER	getIterationTypesOfIteratorSlow	checker.go:6623	in the large cycle
+D-ITER	getIterationTypesOfMethod	checker.go:6631	in the large cycle
+D-ITER	getIterationTypesOfIteratorResult	checker.go:6739	in the large cycle
+D-ITER	isYieldIteratorResult	checker.go:6772	in the large cycle
+D-ITER	isReturnIteratorResult	checker.go:6776	in the large cycle
+D-ITER	isIteratorResult	checker.go:6780	in the large cycle
+D-ITER	reportTypeNotIterableError	checker.go:6789	in the large cycle
+D-ITER	getIterationDiagnosticDetails	checker.go:6804	in the large cycle
+E-AWAIT	checkAwaitExpression	checker.go:10935	in the large cycle
+E-AWAIT	GetPromisedTypeOfPromise	checker.go:29042	in the large cycle
+E-AWAIT	getPromisedTypeOfPromiseEx	checker.go:29049	in the large cycle
+E-AWAIT	getTypeOfFirstParameterOfSignature	checker.go:29124	in the large cycle
+E-AWAIT	getTypeOfFirstParameterOfSignatureWithFallback	checker.go:29128	in the large cycle
+E-AWAIT	checkAwaitedType	checker.go:31355	in the large cycle
+E-AWAIT	getAwaitedType	checker.go:31376	in the large cycle
+E-AWAIT	getAwaitedTypeEx	checker.go:31380	in the large cycle
+E-AWAIT	getAwaitedTypeNoAlias	checker.go:31389	in the large cycle
+E-AWAIT	getAwaitedTypeNoAliasEx	checker.go:31393	in the large cycle; calls itself
+E-AWAIT	isAwaitedTypeNeeded	checker.go:31515	in the large cycle
+E-AWAIT	createAwaitedTypeIfNeeded	checker.go:31533	in the large cycle
+E-AWAIT	tryCreateAwaitedType	checker.go:31550	in the large cycle
+E-AWAIT	unwrapAwaitedType	checker.go:31562	in the large cycle; calls itself
+E-AWAIT	isThenableType	checker.go:31572	in the large cycle
+E-AWAIT	getAwaitedTypeOfPromise	checker.go:31581	in the large cycle
+E-AWAIT	getAwaitedTypeOfPromiseEx	checker.go:31585	in the large cycle
+D-DECOR	checkDecorators	checker.go:6112	in the large cycle
+D-DECOR	checkDecorator	checker.go:6151	in the large cycle
+E-DECOR	resolveDecorator	checker.go:8833	in the large cycle
+E-DECOR	isPotentiallyUncalledDecorator	checker.go:8869	in the large cycle
+E-DECOR	getDecoratorArgumentCount	checker.go:9273	in the large cycle
+E-DECOR	getContextualTypeForDecorator	checker.go:29924	in the large cycle
+E-DECOR	getEffectiveDecoratorArguments	checker.go:30265	in the large cycle
+E-DECOR	getDecoratorCallSignature	checker.go:30278	in the large cycle
+E-DECOR	getLegacyDecoratorCallSignature	checker.go:30285	in the large cycle
+E-DECOR	getESDecoratorCallSignature	checker.go:30352	in the large cycle
+E-DECOR	getClassMemberDecoratorContextOverrideType	checker.go:30556	in the large cycle
+E-DECOR	newClassMemberDecoratorContextTypeForNode	checker.go:30575	in the large cycle
+E-DECOR	newClassFieldDecoratorInitializerMutatorType	checker.go:30611	in the large cycle
+E-DECOR	newESDecoratorCallSignature	checker.go:30619	in the large cycle
+E-DECOR	newFunctionType	checker.go:30627	in the large cycle
+E-DECOR	newGetterFunctionType	checker.go:30632	in the large cycle
+E-DECOR	newSetterFunctionType	checker.go:30636	in the large cycle
+E-DECOR	getParentTypeOfClassElement	checker.go:30651	in the large cycle
+E-DECOR	getClassElementPropertyKeyType	checker.go:30659	in the large cycle
+D-HELPERS	checkClassExpressionExternalHelpers	checker.go:10171	in the large cycle
+D-HELPERS	checkExternalEmitHelpers	checker.go:28699	in the large cycle
+D-HELPERS	hasSignatureWithArityGreaterThan	checker.go:28737	in the large cycle
+D-HELPERS	resolveHelpersModule	checker.go:28796	in the large cycle
+G-GRAMMAR	checkGrammarModifiers	grammarchecks.go:214	in the large cycle
+G-GRAMMAR	checkGrammarFunctionLikeDeclaration	grammarchecks.go:758	in the large cycle
+G-GRAMMAR	checkGrammarClassLikeDeclaration	grammarchecks.go:767	in the large cycle
+G-GRAMMAR	checkGrammarIndexSignatureParameters	grammarchecks.go:796	in the large cycle
+G-GRAMMAR	checkGrammarIndexSignature	grammarchecks.go:840	in the large cycle
+G-GRAMMAR	checkGrammarClassDeclarationHeritageClauses	grammarchecks.go:892	in the large cycle
+G-GRAMMAR	checkGrammarObjectLiteralExpression	grammarchecks.go:998	in the large cycle
+G-GRAMMAR	checkGrammarForInvalidDynamicName	grammarchecks.go:1391	in the large cycle
+G-GRAMMAR	isNonBindableDynamicName	grammarchecks.go:1410	in the large cycle
+G-GRAMMAR	checkGrammarMethod	grammarchecks.go:1414	in the large cycle
+G-GRAMMAR	checkGrammarVariableDeclaration	grammarchecks.go:1539	in the large cycle
+G-GRAMMAR	checkGrammarForEsModuleMarkerInBindingName	grammarchecks.go:1596	calls itself
+G-GRAMMAR	checkGrammarNameInLetOrConstDeclarations	grammarchecks.go:1611	calls itself
+G-GRAMMAR	containerAllowsBlockScopedVariable	grammarchecks.go:1796	calls itself
+G-GRAMMAR	checkGrammarProperty	grammarchecks.go:1864	in the large cycle
+G-GRAMMAR	checkAmbientInitializer	grammarchecks.go:1925	in the large cycle
+G-GRAMMAR	isInitializerSimpleLiteralEnumReference	grammarchecks.go:1978	in the large cycle
+X-JSX	checkJsxElement	jsx.go:72	in the large cycle
+X-JSX	checkJsxExpression	jsx.go:89	in the large cycle
+X-JSX	checkJsxSelfClosingElement	jsx.go:101	in the large cycle
+X-JSX	checkJsxFragment	jsx.go:110	in the large cycle
+X-JSX	checkJsxAttributes	jsx.go:126	in the large cycle
+X-JSX	checkJsxOpeningLikeElementOrOpeningFragment	jsx.go:131	in the large cycle
+X-JSX	checkJsxPreconditions	jsx.go:160	in the large cycle
+X-JSX	checkJsxReturnAssignableToAppropriateBound	jsx.go:170	in the large cycle
+X-JSX	inferJsxTypeArguments	jsx.go:198	in the large cycle
+X-JSX	getContextualTypeForJsxExpression	jsx.go:205	in the large cycle
+X-JSX	getContextualTypeForJsxAttribute	jsx.go:215	in the large cycle
+X-JSX	getContextualJsxElementAttributesType	jsx.go:229	in the large cycle
+X-JSX	getContextualTypeForChildJsxExpression	jsx.go:242	in the large cycle
+X-JSX	discriminateContextualTypeByJSXAttributes	jsx.go:266	in the large cycle
+X-JSX	elaborateJsxComponents	jsx.go:296	in the large cycle
+X-JSX	elaborateIterableOrArrayLikeTargetElementwise	jsx.go:420	in the large cycle
+X-JSX	getSuggestedSymbolForNonexistentJSXAttribute	jsx.go:485	in the large cycle
+X-JSX	getJSXFragmentType	jsx.go:500	in the large cycle
+X-JSX	resolveJsxOpeningLikeElement	jsx.go:545	in the large cycle
+X-JSX	checkApplicableSignatureForJsxCallLikeElement	jsx.go:591	in the large cycle
+X-JSX	createJsxAttributesTypeFromAttributesProperty	jsx.go:710	in the large cycle
+X-JSX	checkJsxAttribute	jsx.go:869	in the large cycle
+X-JSX	checkJsxChildren	jsx.go:877	in the large cycle
+X-JSX	getUninstantiatedJsxSignaturesOfType	jsx.go:896	in the large cycle; calls itself
+X-JSX	getEffectiveFirstArgumentForJsxSignature	jsx.go:925	in the large cycle
+X-JSX	getJsxPropsTypeFromCallSignature	jsx.go:932	in the large cycle
+X-JSX	getJsxPropsTypeFromClassType	jsx.go:942	in the large cycle
+X-JSX	getJsxPropsTypeForSignatureFromMember	jsx.go:989	in the large cycle
+X-JSX	getJsxManagedAttributesFromLocatedAttributes	jsx.go:1018	in the large cycle
+X-JSX	instantiateAliasOrInterfaceWithDefaults	jsx.go:1030	in the large cycle
+X-JSX	getJsxLibraryManagedAttributes	jsx.go:1050	in the large cycle
+X-JSX	getJsxElementTypeSymbol	jsx.go:1057	in the large cycle
+X-JSX	getJsxElementPropertiesName	jsx.go:1073	in the large cycle
+X-JSX	getJsxElementChildrenPropertyName	jsx.go:1077	in the large cycle
+X-JSX	getNameFromJsxElementAttributesContainer	jsx.go:1091	in the large cycle
+X-JSX	getStaticTypeOfReferencedJsxConstructor	jsx.go:1114	in the large cycle
+X-JSX	getIntrinsicAttributesTypeFromStringLiteralType	jsx.go:1135	in the large cycle
+X-JSX	getJsxReferenceKind	jsx.go:1157	in the large cycle
+X-JSX	createSignatureForJSXIntrinsic	jsx.go:1171	in the large cycle
+X-JSX	getIntrinsicAttributesTypeFromJsxOpeningLikeElement	jsx.go:1188	in the large cycle
+X-JSX	getIntrinsicTagSymbol	jsx.go:1214	in the large cycle
+X-JSX	getJsxStatelessElementTypeAt	jsx.go:1257	in the large cycle
+X-JSX	getJsxElementClassTypeAt	jsx.go:1265	in the large cycle
+X-JSX	getJsxElementTypeAt	jsx.go:1273	in the large cycle
+X-JSX	getJsxElementTypeTypeAt	jsx.go:1277	in the large cycle
+X-JSX	getJsxType	jsx.go:1293	in the large cycle
+X-JSX	getJsxNamespaceAt	jsx.go:1304	in the large cycle
+X-JSX	markAsSynthetic	jsx.go:1443	calls itself; walks the tree through ForEachChild with itself
+X-JSX	getJsxNamespaceContainerForImplicitImport	jsx.go:1449	in the large cycle; recursive closure visit over the tree
+D-JSDOC	checkJSDocComments	checker.go:2547	in the large cycle
+D-JSDOC	checkJSDocComment	checker.go:2553	in the large cycle
+D-JSDOC	resolveJSDocMemberName	checker.go:2562	in the large cycle; calls itself
+D-JSDOC	checkJSDocType	checker.go:2587	in the large cycle
+D-JSDOC	checkJSDocTypeIsInJsFile	checker.go:2592	in the large cycle
+D-JSDOC	checkUnmatchedJSDocParameters	jsdoc.go:9	in the large cycle
+T-JSDECL	getTypeOfPrototypeProperty	checker.go:18151	in the large cycle
+T-JSDECL	getWidenedTypeForAssignmentDeclaration	checker.go:18173	in the large cycle
+T-JSDECL	getAssignmentDeclarationInitializerType	checker.go:18226	in the large cycle
+T-JSDECL	hasParentWithTypeAnnotation	checker.go:18257	in the large cycle
+T-JSDECL	containsSameNamedThisProperty	checker.go:18266	in the large cycle; recursive closure visit over the tree
+T-JSDECL	getTypeFromPropertyDescriptor	checker.go:18280	in the large cycle
+T-JSDECL	isGlobalSymbolConstructor	checker.go:18346	in the large cycle

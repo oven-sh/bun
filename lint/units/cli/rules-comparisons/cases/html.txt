@@ -1,0 +1,19 @@
+!a
+--> ) comment
+in b
+----
+(!a
+--> ( comment
+) in b
+----
+(!a
+/* c */ --> ( comment
+) in b
+----
+x = (!a
+--> (
+) in b
+----
+!f(
+--> )
+) in b

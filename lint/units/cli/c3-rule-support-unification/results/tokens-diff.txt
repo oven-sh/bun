@@ -1,0 +1,6 @@
+corpus 1 (eslint lib, 1500 node tests, 34 .jsx of bun's tests):
+1923 files: 1923 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 980070 tokens, 844 regular expressions, 935 JSX elements
+corpus 2 (eslint lib, tests, tools, packages; node parallel and sequential tests; bun's test/bundler, test/js/bun, test/js/web, test/cli, bench):
+6334 files: 5661 with the same tokens, 0 different, 0 where the scan failed, 673 Bun's parser rejects, 0 espree rejects; 4134565 tokens, 2362 regular expressions, 28 JSX elements
+corpus 3 (the files of corpus 2 that need JSX in .js, as .jsx):
+673 files: 582 with the same tokens, 0 different, 0 where the scan failed, 91 Bun's parser rejects, 0 espree rejects; 50159 tokens, 7 regular expressions, 739 JSX elements

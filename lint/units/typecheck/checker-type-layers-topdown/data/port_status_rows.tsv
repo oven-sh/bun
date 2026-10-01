@@ -1,0 +1,101 @@
+upstream path	lines	group	Rust module	state	commit
+internal/checker/checker.go	9721-9737	T-SIGSHAPE: c.getRestTypeOfSignature .. c.tryGetRestTypeOfSignature (2)	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	13611-13625	T-UIMEMBERS: c.getUnionIndexInfos (1)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	16495-17028	T-SYMTYPE: c.getTypeOfSymbolWithDeferredType .. c.getTypeOfFuncClassEnumModuleWorker (21)	checker/c28_types_of_symbols.rs	not started	89d5d5b
+internal/checker/checker.go	17030-17130	T-BASE: c.getBaseTypeVariableOfClass .. c.isMixinConstructorType (5)	checker/c28_types_of_symbols.rs	not started	89d5d5b
+internal/checker/checker.go	17132-17139	T-SIGSHAPE: signatureHasRestParameter .. c.getTypeOfParameter (2)	checker/c28_types_of_symbols.rs	not started	89d5d5b
+internal/checker/checker.go	17141-17411	T-CONSTRAINT: c.getConstraintOfType .. c.getConstraintOfDistributiveConditionalType (15)	checker/c29_constraints.rs	not started	89d5d5b
+internal/checker/checker.go	17413-17469	T-DECLARED: c.getDeclaredTypeOfClassOrInterface .. c.isThislessInterface (2)	checker/c29_constraints.rs	not started	89d5d5b
+internal/checker/checker.go	17777-18467	T-SYMTYPE: c.isNullOrUndefined .. c.reportImplicitAny (24)	checker/c31_binding_patterns_widening.rs	not started	89d5d5b
+internal/checker/checker.go	18469-18615	T-WIDEN: c.getWidenedType .. c.getUndefinedProperty (8)	checker/c31_binding_patterns_widening.rs	not started	89d5d5b
+internal/checker/checker.go	18617-18859	T-SYMTYPE: c.getTypeOfEnumMember .. c.getCombinedModifierFlagsCached (17)	checker/c31_binding_patterns_widening.rs	not started	89d5d5b
+internal/checker/checker.go	18960-19174	T-LOOKUP: c.getPropertiesOfType .. c.isApplicableIndexType (17)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19176-19279	T-MEMBERS: c.resolveStructuredTypeMembers .. findIndexInfo (5)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19281-19405	T-BASE: c.getBaseTypes .. c.getConstructorsForTypeArguments (6)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19407-19610	T-SIGINST: c.getSignatureInstantiation .. c.instantiateSignatureInContextOf (15)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19612-19710	T-BASE: c.resolveBaseTypesOfInterface .. c.getTypeWithThisArgument (7)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19712-19918	T-MEMBERS: c.addInheritedMembers .. c.getIndexSymbol (13)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	19920-20113	T-SIGDECL: c.getSignaturesOfSymbol .. isLateBindableAST (12)	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	20115-20238	T-SIGDECL: c.getReturnTypeOfSignature .. getEffectiveSetAccessorTypeAnnotationNode (9)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20240-20564	LATER: c.getReturnTypeFromBody .. c.createGeneratorType (12)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20566-20647	T-WIDEN: c.reportErrorsFromWidening .. c.reportWideningErrorsInType (3)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20649-20720	LATER: c.getTypePredicateFromBody .. c.checkIfExpressionRefinesParameter (3)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20722-20727	T-SIGINST: c.addOptionalTypeMarker (1)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20729-20762	T-SIGINST: c.instantiateSignature .. c.instantiateIndexInfo (3)	checker/c35_resolve_members.rs	not started	89d5d5b
+internal/checker/checker.go	20764-21006	T-MEMBERS: c.resolveAnonymousTypeMembers .. c.getDefaultConstructSignatures (10)	checker/c35_resolve_members.rs	not started	89d5d5b
+internal/checker/checker.go	21008-21164	T-MAPPED: c.resolveMappedTypeMembers .. c.getLowerBoundOfKeyType (3)	checker/c35_resolve_members.rs	not started	89d5d5b
+internal/checker/checker.go	21166-21511	T-UIMEMBERS: c.resolveUnionTypeMembers .. c.includeMixinType (13)	checker/c35_resolve_members.rs	not started	89d5d5b
+internal/checker/checker.go	21517-21526	T-LOOKUP: c.getPropertyOfObjectType (1)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	21528-21827	T-UIMEMBERS: c.getPropertyOfUnionOrIntersectionType .. c.createSymbolWithType (7)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	21829-22005	T-APPARENT: c.isMappedTypeGenericIndexedAccess .. isConflictingPrivateProperty (12)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	22007-22045	T-INSTANTIATE: c.getTypeArguments (1)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	22047-22161	T-CONSTRAINT: c.getEffectiveTypeArguments .. c.getDefaultOrUnknownFromTypeParameter (8)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	22163-22212	T-MEMBERS: c.getNamedMembers .. c.symbolIsValueEx (5)	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	22214-22597	T-INSTANTIATE: c.instantiateType .. c.instantiateAnonymousType (12)	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22599-22630	K-COND: c.getConditionalTypeInstantiation (1)	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22632-22636	T-INSTANTIATE: c.cloneTypeParameter (1)	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22638-22854	T-MAPPED: c.getHomomorphicTypeVariable .. c.forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType (15)	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22856-22911	T-INSTANTIATE: c.instantiateReverseMappedType .. instantiateList (7)	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22913-23408	T-TYPENODE: c.tryGetTypeFromTypeNode .. c.mayResolveTypeAlias (23)	checker/c38_type_nodes_references.rs	not started	89d5d5b
+internal/checker/checker.go	23410-23687	T-TUPLE: c.createNormalizedTypeReference .. c.getTupleElementType (27)	checker/c38_type_nodes_references.rs	not started	89d5d5b
+internal/checker/checker.go	23694-23777	T-TYPENODE: c.getTypeFromTypeAliasReference .. c.getTypeAliasInstantiation (2)	checker/c38_type_nodes_references.rs	not started	89d5d5b
+internal/checker/checker.go	23779-23876	T-DECLARED: isLocalTypeAlias .. c.canGetTypeParametersOfClassOrInterface (10)	checker/c38_type_nodes_references.rs	not started	89d5d5b
+internal/checker/checker.go	23879-24033	T-DECLARED: c.getOuterTypeParameters .. c.getDeclaredTypeOfEnum (8)	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24035-24038	T-ENUMVAL: c.getEnumMemberValue (1)	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24040-24059	T-DECLARED: c.createComputedEnumType .. c.getDeclaredTypeOfEnumMember (2)	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24061-24215	T-ENUMVAL: c.computeEnumMemberValues .. c.evaluateEnumMember (5)	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24217-24223	T-DECLARED: c.getDeclaredTypeOfAlias (1)	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24225-24390	T-TYPENODE: c.getTypeFromTypeQueryNode .. c.getTypeFromMappedTypeNode (13)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24392-24600	K-COND: c.getTypeFromConditionalTypeNode .. c.isDeferredType (5)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24602-24660	T-INSTANTIATE: c.getPermissiveInstantiation .. c.permissiveMapperWorker (5)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24662-24688	K-COND: c.getTrueTypeFromConditionalType .. c.getInferredTrueTypeFromConditionalType (3)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24690-24696	T-TYPENODE: c.getTypeFromInferTypeNode (1)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24698-24789	K-IMPORTTYPE: c.getTypeFromImportTypeNode .. c.resolveImportSymbolType (3)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24791-24803	T-TUPLE: c.createTypeFromGenericGlobalType .. c.getGlobalStrictFunctionType (2)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24805-24818	LATER: c.getGlobalImportMetaExpressionType (1)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24820-24989	T-TUPLE: c.createIterableType .. c.getTupleElementTypeOutOfStartCount (12)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	24991-25073	K-GENERIC: c.isGenericType .. c.getUniqueLiteralTypeForTypeParameter (9)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	25075-25124	K-SUBST: c.getConditionalFlowTypeOfType .. isUnaryTupleTypeNode (3)	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	25396-25675	K-LIT: c.getRegularTypeOfLiteralType .. c.isLiteralOfContextualType (25)	checker/c42_literal_types.rs	not started	89d5d5b
+internal/checker/checker.go	25677-25723	K-UNION: c.mapTypeWithAlias .. c.mapTypeEx (3)	checker/c42_literal_types.rs	not started	89d5d5b
+internal/checker/checker.go	25733-26145	K-UNION: c.getUnionOrIntersectionType .. c.removeSubtypes (13)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26147-26346	K-INTERSECT: c.intersectTypes .. c.getIntersectionTypeEx (3)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26348-26370	K-PRED: isUnionWithUndefined .. isNotNullType (6)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26374-26573	K-INTERSECT: c.addTypesToIntersection .. c.getCrossProductIntersections (8)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26575-26769	K-PRED: getConstituentCount .. compareTypeIds (20)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26771-26801	K-UNION: c.checkCrossProductUnion .. c.getCrossProductUnionSize (2)	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26803-26943	K-KEYOF: c.getIndexType .. c.checkComputedPropertyName (9)	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	26945-26955	K-SUBST: c.isNoInferType .. c.getSubstitutionIntersection (2)	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	26957-27044	K-KEYOF: c.shouldDeferIndexType .. c.getIndexTypeForMappedType (4)	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	27046-27515	K-INDEXED: c.getIndexedAccessType .. indexTypeLessThan (19)	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	27517-27549	K-SUBST: c.getNoInferType .. c.getOrCreateSubstitutionType (4)	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	27551-27725	T-CONSTRAINT: c.getBaseConstraintOrType .. c.getNextBaseConstraint (5)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27729-27793	K-PRED: c.maybeTypeOfKind .. isConstEnumSymbol (8)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27795-27827	T-UIMEMBERS: c.compareProperties .. compareTypesEqual (2)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27829-27853	LATER: c.markPropertyAsReferenced (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27855-27924	T-SIGSHAPE: c.expandSignatureParametersWithTupleMembers .. getNameFromIndexInfo (5)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27926-27986	K-PRED: c.isUnknownLikeUnionType .. c.typeHasCallOrConstructSignatures (5)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	27988-28023	LATER: c.getNormalizedType (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28025-28127	K-INDEXED: c.getSimplifiedType .. c.distributeIndexOverObjectType (5)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28129-28149	K-COND: c.getSimplifiedConditionalType (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28152-28161	K-INDEXED: c.isIntersectionEmpty .. c.getSimplifiedTypeOrConstraint (2)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28163-28248	LATER: c.getNormalizedUnionOrIntersectionType .. c.getSingleBaseForNonAugmentingSubtype (4)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28250-28276	T-MAPPED: c.getModifiersTypeFromMappedType (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28278-28280	K-PRED: c.extractTypesOfKind (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28282-28310	T-WIDEN: c.getRegularTypeOfObjectLiteral .. c.transformTypeOfMembers (2)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28312-29040	LATER: c.markLinkedReferences .. c.markTypeNodeAsReferenced (26)	checker/c46_mark_references.rs	not started	89d5d5b
+internal/checker/checker.go	29042-29122	LATER: c.GetPromisedTypeOfPromise .. c.getPromisedTypeOfPromiseEx (2)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29124-29133	T-SIGSHAPE: c.getTypeOfFirstParameterOfSignature .. c.getTypeOfFirstParameterOfSignatureWithFallback (2)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29135-29185	T-MAPPED: getMappedTypeModifiers .. isPartialMappedType (4)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29187-29196	LATER: c.getOptionalExpressionType (1)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29198-29227	T-SYMTYPE: c.removeOptionalTypeMarker .. c.removeMissingOrUndefinedType (4)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29229-29253	LATER: c.removeDefinitelyFalsyTypes .. c.getDefinitelyFalsyPartOfType (3)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29255-29266	T-CONSTRAINT: c.getConstraintDeclaration (1)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29268-29407	K-TEMPLATE: c.getTemplateLiteralType .. c.getStringMappingTypeForGenericType (6)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29414-29447	K-INDEXED: c.substituteIndexedMappedType .. c.getTypeOfPropertyOrIndexSignatureOfType (3)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	31607-31612	K-PRED: c.getTargetType (1)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/checker.go	31694-31702	K-SUBST: c.getActualTypeVariable (1)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/relater.go	1708-1913	T-SIGSHAPE: c.isTopSignature .. c.getEffectiveRestType (13)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1915-1945	T-TUPLE: c.sliceTupleType .. c.getRestArrayTypeOfTupleType (3)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1947-2150	T-SIGSHAPE: c.getThisTypeOfSignature .. c.isResolvingReturnTypeOfSignature (12)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2354-2557	K-TEMPLATE: c.templateLiteralTypesDefinitelyUnrelated .. c.applyTargetStringMappingToSource (8)	checker/relater.rs	not started	89d5d5b

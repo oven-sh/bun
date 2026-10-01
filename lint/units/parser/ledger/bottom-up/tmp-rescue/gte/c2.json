@@ -1,0 +1,6 @@
+[
+"declare const a: any, b: any; type T = number; let z = a as T <= b;",
+"declare const a: any, b: any, x: any; let z = a as typeof x <= b;",
+"declare const a: any, b: any; namespace A { export type B = number } let z = a as A.B <= b;",
+"let t: readonly (string[]);"
+]

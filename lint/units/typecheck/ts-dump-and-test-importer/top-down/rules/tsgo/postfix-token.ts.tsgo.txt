@@ -1,0 +1,52 @@
+file /postfix-token.ts scriptKind=3 variant=0 dts=false textLen=111
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=37 identifiers=10 text=11 reparsedClones=0
+root KindSourceFile [0,111) f=0x0
+  .Statements: list [0,110) n=3
+    - KindInterfaceDeclaration [0,38) f=0x0
+      .Members: list [13,36) n=2
+        - KindPropertySignature [13,25) f=0x0
+          .PostfixToken: KindQuestionToken [15,16) f=0x0
+          .Type: KindNumberKeyword [17,24) f=0x0
+          .name: KindIdentifier [13,15) f=0x0 Text="a"
+        - KindMethodSignature [25,36) f=0x0
+          .Parameters: list [29,29) n=0
+          .PostfixToken: KindQuestionToken [27,28) f=0x0
+          .Type: KindVoidKeyword [31,36) f=0x0
+          .name: KindIdentifier [25,27) f=0x0 Text="m"
+      .name: KindIdentifier [9,11) f=0x0 Text="I"
+    - KindClassDeclaration [38,82) f=0x0
+      .Members: list [48,80) n=3
+        - KindPropertyDeclaration [48,60) f=0x0
+          .PostfixToken: KindExclamationToken [50,51) f=0x0
+          .Type: KindStringKeyword [52,59) f=0x0
+          .name: KindIdentifier [48,50) f=0x0 Text="p"
+        - KindPropertyDeclaration [60,72) f=0x0
+          .PostfixToken: KindQuestionToken [62,63) f=0x0
+          .Type: KindNumberKeyword [64,71) f=0x0
+          .name: KindIdentifier [60,62) f=0x0 Text="q"
+        - KindMethodDeclaration [72,80) f=0x0
+          .Body: KindBlock [77,80) f=0x0
+            .Statements: list [79,79) n=0
+          .Parameters: list [76,76) n=0
+          .PostfixToken: KindQuestionToken [74,75) f=0x0
+          .name: KindIdentifier [72,74) f=0x0 Text="m"
+      .name: KindIdentifier [44,46) f=0x0 Text="C"
+    - KindVariableStatement [82,110) f=0x0
+      .DeclarationList: KindVariableDeclarationList [82,109) f=0x2
+        .Declarations: list [88,109) n=1
+          - KindVariableDeclaration [88,109) f=0x0
+            .Initializer: KindObjectLiteralExpression [92,109) f=0x0
+              .Properties: list [94,107) n=2
+                - KindPropertyAssignment [94,99) f=0x0
+                  .Initializer: KindNumericLiteral [97,99) f=0x0 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [94,96) f=0x0 Text="a"
+                - KindMethodDeclaration [100,107) f=0x0
+                  .Body: KindBlock [104,107) f=0x0
+                    .Statements: list [106,106) n=0
+                  .Parameters: list [103,103) n=0
+                  .name: KindIdentifier [100,102) f=0x0 Text="m"
+            .name: KindIdentifier [88,90) f=0x0 Text="o"
+  .EndOfFileToken: KindEndOfFile [110,111) f=0x0

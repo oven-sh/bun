@@ -1,0 +1,7 @@
+== lib files, ranges and text of comment lists masked
+units 108 same 107 differ 1 (of them without parse errors 1) failed 0; units with parse errors 0; units with JSDoc 66, of them same 65; same but reparsedClones count differs 0
+     1 CLEAN shape go<.Tags:> ts<.Tags:>   e.g. lib.decorators.d.ts:106
+== lib files, nothing masked
+units 108 same 105 differ 3 (of them without parse errors 3) failed 0; units with parse errors 0; units with JSDoc 66, of them same 63; same but reparsedClones count differs 0
+     2 CLEAN shape go<.Comment:> ts<.Comment:>   e.g. lib.dom.d.ts:16809 lib.es2024.sharedmemory.d.ts:75
+     1 CLEAN shape go<.Tags:> ts<.Tags:>   e.g. lib.decorators.d.ts:106

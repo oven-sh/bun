@@ -1,0 +1,182 @@
+class B  dialect ts  config deco: 417 inputs in 39 clusters
+
+[03-signatures / arrowSig]  tsc TS1003 Identifier expected.   (6 inputs, 1 distinct)
+    "{ ...{ a } }"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]   tsc @16+1 in "const f = ({ ...{ a } }) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ',' expected.   (16 inputs, 9 distinct)
+    "a: a is B"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]   tsc @16+2 in "const f = (a: a is B) => 0;"
+    "a!"  [arrowRet]   tsc @14+1 in "const f = (a!): void => {};"
+    "(a)"  [arrowRet]   tsc @15+1 in "const f = ((a)): void => {};"
+    "a as A"  [arrowRet,genericArrow]   tsc @18+1 in "const f = (a as A): void => {};"
+    "a satisfies A"  [arrowRet,genericArrow]   tsc @25+1 in "const f = (a satisfies A): void => {};"
+    "<A>a"  [arrowRet]   tsc @16+1 in "const f = (<A>a): void => {};"
+    "a<A>"  [arrowRet]   tsc @16+1 in "const f = (a<A>): void => {};"
+    "a!: A"  [asyncArrow]   tsc @19+1 in "const f = async (a!: A) => 0;"
+    "(a): A"  [asyncArrow]   tsc @20+1 in "const f = async ((a): A) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ';' expected.   (12 inputs, 6 distinct)
+    "a!"  [arrow,asyncArrow]   tsc @15+2 in "const f = (a!) => 0;"
+    "(a)"  [arrow,asyncArrow]   tsc @16+2 in "const f = ((a)) => 0;"
+    "a as A"  [arrow,asyncArrow]   tsc @19+2 in "const f = (a as A) => 0;"
+    "a satisfies A"  [arrow,asyncArrow]   tsc @26+2 in "const f = (a satisfies A) => 0;"
+    "<A>a"  [arrow,asyncArrow]   tsc @17+2 in "const f = (<A>a) => 0;"
+    "a<A>"  [arrow,asyncArrow]   tsc @17+2 in "const f = (a<A>) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ':' expected.   (6 inputs, 6 distinct)
+    "a!"  [arrowInCond]   tsc @19+2 in "const f = a ? (a!) => 0 : 1;"
+    "(a)"  [arrowInCond]   tsc @20+2 in "const f = a ? ((a)) => 0 : 1;"
+    "a as A"  [arrowInCond]   tsc @23+2 in "const f = a ? (a as A) => 0 : 1;"
+    "a satisfies A"  [arrowInCond]   tsc @30+2 in "const f = a ? (a satisfies A) => 0 : 1;"
+    "<A>a"  [arrowInCond]   tsc @21+2 in "const f = a ? (<A>a) => 0 : 1;"
+    "a<A>"  [arrowInCond]   tsc @21+2 in "const f = a ? (a<A>) => 0 : 1;"
+
+[03-signatures / arrowSig]  tsc TS1005 ')' expected.   (8 inputs, 2 distinct)
+    "a!: A"  [arrow,arrowRet,arrowInCond,arrowInCondRet]   tsc @13+1 in "const f = (a!: A) => 0;"
+    "(a): A"  [arrow,arrowRet,arrowInCond,arrowInCondRet]   tsc @14+1 in "const f = ((a): A) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 '>' expected.   (6 inputs, 6 distinct)
+    "a!"  [genericArrow]   tsc @12+1 in "const f = <T,>(a!) => 0;"
+    "a!: A"  [genericArrow]   tsc @12+1 in "const f = <T,>(a!: A) => 0;"
+    "(a)"  [genericArrow]   tsc @12+1 in "const f = <T,>((a)) => 0;"
+    "(a): A"  [genericArrow]   tsc @12+1 in "const f = <T,>((a): A) => 0;"
+    "<A>a"  [genericArrow]   tsc @12+1 in "const f = <T,>(<A>a) => 0;"
+    "a<A>"  [genericArrow]   tsc @12+1 in "const f = <T,>(a<A>) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1109 Expression expected.   (6 inputs, 6 distinct)
+    "a!"  [arrowInCondRet]   tsc @25+2 in "const f = a ? (a!): void => {} : 1;"
+    "(a)"  [arrowInCondRet]   tsc @26+2 in "const f = a ? ((a)): void => {} : 1;"
+    "a as A"  [arrowInCondRet]   tsc @29+2 in "const f = a ? (a as A): void => {} : 1;"
+    "a satisfies A"  [arrowInCondRet]   tsc @36+2 in "const f = a ? (a satisfies A): void => {} : 1;"
+    "<A>a"  [arrowInCondRet]   tsc @27+2 in "const f = a ? (<A>a): void => {} : 1;"
+    "a<A>"  [arrowInCondRet]   tsc @27+2 in "const f = a ? (a<A>): void => {} : 1;"
+
+[03-signatures / declSig]  tsc TS1005 ',' expected.   (21 inputs, 3 distinct)
+    "a: a is B"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @16+2 in "function f(a: a is B) {}"
+    "public\na: A"  [ctor,ctorOverload,declareCtor]   tsc @29+1 in "class C { constructor(public\na: A) {} }"
+    "readonly\na: A"  [ctor,ctorOverload,declareCtor]   tsc @31+1 in "class C { constructor(readonly\na: A) {} }"
+
+[03-signatures / declSig]  tsc TS1005 ':' expected.   (45 inputs, 3 distinct)
+    "{ if }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @16+1 in "function f({ if }) {}"
+    "{ this }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @18+1 in "function f({ this }) {}"
+    "{ enum }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @18+1 in "function f({ enum }) {}"
+
+[03-signatures / memberSig]  tsc TS1005 ',' expected.   (10 inputs, 2 distinct)
+    "this?: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @16+1 in "type X = { (this?: A): void };"
+    "a: a is B"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @17+2 in "type X = { (a: a is B): void };"
+
+[03-signatures / memberSig]  tsc TS1181 Array element destructuring pattern expected.   (5 inputs, 1 distinct)
+    "[this]"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @13+4 in "type X = { ([this]): void };"
+
+[03-signatures / memberSig]  tsc TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.   (10 inputs, 2 distinct)
+    "{ a: this }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @17+4 in "type X = { ({ a: this }): void };"
+    "...this: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @15+4 in "type X = { (...this: A): void };"
+
+[03-signatures / typeSig]  tsc TS1005 ',' expected.   (14 inputs, 2 distinct)
+    "this?: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @12+1 in "let x: (this?: A) => void;"
+    "a: a is B"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @13+2 in "let x: (a: a is B) => void;"
+
+[03-signatures / typeSig]  tsc TS1005 ';' expected.   (4 inputs, 2 distinct)
+    "[this]"  [fnType,fnTypeAsArg]   tsc @16+2 in "let x: ([this]) => void;"
+    "{ a: this }"  [fnType,fnTypeAsArg]   tsc @21+2 in "let x: ({ a: this }) => void;"
+
+[03-signatures / typeSig]  tsc TS1005 ')' expected.   (4 inputs, 2 distinct)
+    "[this]"  [fnTypeInUnion,fnTypeArrowRet]   tsc @21+2 in "let x: A | (([this]) => void);"
+    "{ a: this }"  [fnTypeInUnion,fnTypeArrowRet]   tsc @26+2 in "let x: A | (({ a: this }) => void);"
+
+[03-signatures / typeSig]  tsc TS1110 Type expected.   (35 inputs, 5 distinct)
+    "{ a }: "  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @15+1 in "let x: ({ a }: ) => void;"
+    "a:"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @10+1 in "let x: (a:) => void;"
+    "a?:"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+1 in "let x: (a?:) => void;"
+    "a: "  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+1 in "let x: (a: ) => void;"
+    "a: |"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @12+1 in "let x: (a: |) => void;"
+
+[03-signatures / typeSig]  tsc TS1131 Property or signature expected.   (3 inputs, 1 distinct)
+    "{ : a }"  [fnType,fnTypeInUnion,fnTypeArrowRet]   tsc @10+1 in "let x: ({ : a }) => void;"
+
+[03-signatures / typeSig]  tsc TS1136 Property assignment expected.   (1 inputs, 1 distinct)
+    "{ : a }"  [fnTypeAsArg]   tsc @5+1 in "f<({ : a }) => void>(x);"
+
+[03-signatures / typeSig]  tsc TS1180 Property destructuring pattern expected.   (3 inputs, 1 distinct)
+    "{ : a }"  [ctorType,abstractCtorType,genericFnType]   tsc @14+1 in "let x: new ({ : a }) => A;"
+
+[03-signatures / typeSig]  tsc TS1181 Array element destructuring pattern expected.   (3 inputs, 1 distinct)
+    "[this]"  [ctorType,abstractCtorType,genericFnType]   tsc @13+4 in "let x: new ([this]) => A;"
+
+[03-signatures / typeSig]  tsc TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.   (10 inputs, 2 distinct)
+    "...this: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+4 in "let x: (...this: A) => void;"
+    "{ a: this }"  [ctorType,abstractCtorType,genericFnType]   tsc @17+4 in "let x: new ({ a: this }) => A;"
+
+[06-class-members / classHead]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export abstract\nclass C {}"  [-]   tsc @0+6 in "export abstract\nclass C {}"
+
+[06-class-members / heritage]  tsc TS1005 ',' expected.   (1 inputs, 1 distinct)
+    "class C extends await B {}"  [-]   tsc @22+1 in "class C extends await B {}"
+
+[06-class-members / heritage]  tsc TS1109 Expression expected.   (4 inputs, 4 distinct)
+    "class C extends <any>B {}"  [-]   tsc @16+1 in "class C extends <any>B {}"
+    "class C extends void 0 {}"  [-]   tsc @16+4 in "class C extends void 0 {}"
+    "class C extends typeof B {}"  [-]   tsc @16+6 in "class C extends typeof B {}"
+    "class C extends -B {}"  [-]   tsc @16+1 in "class C extends -B {}"
+
+[06-class-members / heritage]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "class C extends B<T>.D {}"  [-]   tsc @17+3 in "class C extends B<T>.D {}"
+
+[06-class-members / member]  tsc TS1005 '(' expected.   (16 inputs, 4 distinct)
+    "constructor?() {}"  [class,abstractClass,declareClass,classExpr]   tsc @21+1 in "class C { constructor?() {} }"
+    "constructor!() {}"  [class,abstractClass,declareClass,classExpr]   tsc @21+1 in "class C { constructor!() {} }"
+    "get x?() { return 1 }"  [class,abstractClass,declareClass,classExpr]   tsc @15+1 in "class C { get x?() { return 1 } }"
+    "set x?(v) {}"  [class,abstractClass,declareClass,classExpr]   tsc @15+1 in "class C { set x?(v) {} }"
+
+[06-class-members / member]  tsc TS1441 Cannot start a function call in a type annotation.   (8 inputs, 2 distinct)
+    "m!() {}"  [class,abstractClass,declareClass,classExpr]   tsc @12+1 in "class C { m!() {} }"
+    "m!(): void;"  [class,abstractClass,declareClass,classExpr]   tsc @12+1 in "class C { m!(): void; }"
+
+[06-class-members / member]  tsc TS1442 Expected '=' for property initializer.   (4 inputs, 1 distinct)
+    "x: a is B;"  [class,abstractClass,declareClass,classExpr]   tsc @15+2 in "class C { x: a is B; }"
+
+[06-class-members / modifier]  tsc TS1005 ']' expected.   (8 inputs, 2 distinct)
+    "get [k: string]: T;"  [class,abstractClass,declareClass,classExpr]   tsc @16+1 in "class C { get [k: string]: T; }"
+    "set [k: string]: T;"  [class,abstractClass,declareClass,classExpr]   tsc @16+1 in "class C { set [k: string]: T; }"
+
+[06-class-members / paramProp]  tsc TS1005 ',' expected.   (42 inputs, 6 distinct)
+    "...public x"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @32+1 in "class C { constructor(...public x) {} }"
+    "...readonly x"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @34+1 in "class C { constructor(...readonly x) {} }"
+    "public\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @29+1 in "class C { constructor(public\nx: T) {} }"
+    "readonly\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @31+1 in "class C { constructor(readonly\nx: T) {} }"
+    "public\nreadonly\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @29+8 in "class C { constructor(public\nreadonly\nx: T) {} }"
+    "public // c\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @34+1 in "class C { constructor(public // c\nx: T) {} }"
+
+[09-decorators / classPos]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export declare @d class C {}"  [-]   tsc @0+6 in "export declare @d class C {}"
+
+[09-decorators / classPos]  tsc TS1146 Declaration expected.   (1 inputs, 1 distinct)
+    "@d abstract = 1"  [-]   tsc @2+0 in "@d abstract = 1"
+
+[09-decorators / expr]  tsc TS1003 Identifier expected.   (6 inputs, 1 distinct)
+    "@d.\ne"  [classDecl,classExpr,field,method,staticField,param]   tsc @3+0 in "@d.\ne class C {}"
+
+[09-decorators / expr]  tsc TS1109 Expression expected.   (59 inputs, 8 distinct)
+    "@typeof d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+6 in "@typeof d class C {}"
+    "@void d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+4 in "@void d class C {}"
+    "@delete d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+6 in "@delete d class C {}"
+    "@-d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+1 in "@-d class C {}"
+    "@!d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+1 in "@!d class C {}"
+    "@++d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]   tsc @1+2 in "@++d class C {}"
+    "@<any>d"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,…]   tsc @1+1 in "@<any>d class C {}"
+    "@await d"  [classExpr]   tsc @16+0 in "const c = @await d class {};"
+
+[09-decorators / expr]  tsc TS1146 Declaration expected.   (2 inputs, 1 distinct)
+    "@await d"  [classDecl,classDeclNewline]   tsc @6+0 in "@await d class C {}"
+
+[09-decorators / expr]  tsc TS1434 Unexpected …   (3 inputs, 1 distinct)
+    "@await d"  [field,method,staticField]   tsc @17+1 in "class C { @await d x; }"
+
+[09-decorators / expr]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (20 inputs, 2 distinct)
+    "@d<T>.e"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,…]   tsc @2+3 in "@d<T>.e class C {}"
+    "@d<T>.e()"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,…]   tsc @2+3 in "@d<T>.e() class C {}"
+
+[09-decorators / paramPos]  tsc TS1005 ',' expected.   (11 inputs, 1 distinct)
+    "@d a: a is B"  [method,decoratedMethod,staticMethod,ctor,decoratedClassCtor,setter,overload,abstractMethod,…]   tsc @20+2 in "class C { m(@d a: a is B) {} }"
+
+[10-declaration-files / directive]  tsc TS1084 Invalid 'reference' directive syntax.   (1 inputs, 1 distinct)
+    "/// <reference />\nexport {};"  [-]   tsc @0+17 in "/// <reference />\nexport {};"

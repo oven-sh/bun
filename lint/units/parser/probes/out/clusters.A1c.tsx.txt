@@ -1,0 +1,42 @@
+class A1c  dialect tsx  config plain: 90 inputs in 9 clusters
+
+[04-type-params-args / targsExpr]  bun Unexpected …   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "<A"  [instImport]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here   (48 inputs, 3 distinct)
+    tsc also: TS2304 x22, TS2318 x3
+    "<out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out = A>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<const out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+
+[04-type-params-args / tparamsArrow]  bun The modifier "…" is not valid here   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS7006 x1, TS2318 x1
+    "<out = A>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"   (6 inputs, 2 distinct)
+    tsc also: TS2304 x6, TS7006 x1
+    "(): if => x"  [init,stmt,arg,condTrue,condFalse]
+    "a ? ((b)) : c => d"  [condTrue]
+
+[05-assertions / arrow]  bun Unexpected …   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "a ? (await) : b"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / as]  bun Unexpected …   (15 inputs, 3 distinct)
+    tsc also: TS2304 x15
+    "x as if"  [init,stmt,arg,element,return]
+    "x as var"  [init,stmt,arg,element,return]
+    "x as T <= y"  [init,stmt,arg,element,return]
+
+[05-assertions / cast]  bun The modifier "…" is not valid here   (6 inputs, 2 distinct)
+    tsc also: TS7006 x6, TS2304 x4
+    "<out, T>(x) => x"  [init,stmt,arg]
+    "<out = A>(x) => x"  [init,stmt,arg]
+
+[05-assertions / catch]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "try {} catch (e: any = 1) {}"  [-]
+
+[05-assertions / nonNull]  bun Expected identifier but found "…"   (3 inputs, 1 distinct)
+    tsc also: TS7017 x3, TS2304 x1
+    "this.#x!"  [stmt,init,arg]

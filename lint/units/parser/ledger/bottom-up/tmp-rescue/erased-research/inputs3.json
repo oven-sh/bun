@@ -1,0 +1,15 @@
+[
+ {"name":"spec-arrow-cond-1","text":"const r = c ? (y): T => { type Z = 1; interface Q {} ; return y } : d;"},
+ {"name":"spec-arrow-cond-2","text":"const r = c ? (y) : (z) => { type Z = 1; return z };"},
+ {"name":"spec-arrow-cond-3","text":"const r = c ? (y): (T) => { declare const q: number; return y } : d;"},
+ {"name":"arrow-body-erased","text":"const f = (a: number) => { interface I {} type T = I; declare function g(): void; return a }"},
+ {"name":"class-expr-members","text":"const K = class { m(): void; m() {} [k: string]: any }"},
+ {"name":"decl-in-static-block","text":"class S { static { interface I {} type T = 1; declare let v: T } }"},
+ {"name":"try-catch-finally","text":"try { type A = 1 } catch (e) { interface B {} } finally { declare var c: number }"},
+ {"name":"use-strict-after-type","text":"type T = 1;\n'use strict';\nlet x = 1;"},
+ {"name":"legal-comment","text":"a();\ninterface I { /*! keep */ x: 1 }\n/*! legal */\nb();"},
+ {"name":"type-only-mixed","text":"import { type a, b } from 'ab';\nexport { type a, b };\nimport type {} from 'empty';\nimport {} from 'e2';\nexport type {};\n"},
+ {"name":"import-attrs","text":"import type { X } from './x.json' with { type: 'json' };\nexport type { Y } from './y' with { 'resolution-mode': 'require' };"},
+ {"name":"export-type-star-as-string","text":"export type * as 'str name' from 'm';"},
+ {"name":"export-type-name-keyword","text":"export type { default } from 'm'; export type { default as D, x as default } from 'n';"}
+]

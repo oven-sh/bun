@@ -1,0 +1,130 @@
+## K-LIT 0
+## K-PRED 0
+## K-GENERIC 0
+## K-UNION 1
+checker/checker.go:26119	(*Checker).removeSubtypes	TS2590	Error	Expression_produces_a_union_type_that_is_too_complex_to_represent
+## K-INTERSECT 1
+checker/checker.go:26777	(*Checker).checkCrossProductUnion	TS2590	Error	Expression_produces_a_union_type_that_is_too_complex_to_represent
+## T-TUPLE 2
+checker/checker.go:23495	(*TupleNormalizer).normalize	TS2799	Error	Type_produces_a_tuple_type_that_is_too_large_to_represent
+checker/checker.go:23496	(*TupleNormalizer).normalize	TS2800	Error	Expression_produces_a_tuple_type_that_is_too_large_to_represent
+## T-DECLARED 1
+checker/checker.go:23988	(*Checker).getDeclaredTypeOfTypeAlias	TS2456	Error	Type_alias_0_circularly_references_itself
+## T-ENUMVAL 13
+checker/checker.go:24083	(*Checker).computeEnumMemberValue	TS1164	Error	Computed_property_names_are_not_allowed_in_enums
+checker/checker.go:24085	(*Checker).computeEnumMemberValue	TS2452	Error	An_enum_member_cannot_have_a_numeric_name
+checker/checker.go:24089	(*Checker).computeEnumMemberValue	TS2452	Error	An_enum_member_cannot_have_a_numeric_name
+checker/checker.go:24105	(*Checker).computeEnumMemberValue	TS1061	Error	Enum_member_must_have_initializer
+checker/checker.go:24112	(*Checker).computeEnumMemberValue	TS18056	Error	Enum_member_following_a_non_literal_numeric_member_must_have_an_initializer_when_isolatedModules_is_enabled
+checker/checker.go:24127	(*Checker).computeConstantEnumMemberValue	TS2478	Error	X_const_enum_member_initializer_was_evaluated_to_disallowed_value_NaN
+checker/checker.go:24128	(*Checker).computeConstantEnumMemberValue	TS2477	Error	X_const_enum_member_initializer_was_evaluated_to_a_non_finite_value
+checker/checker.go:24134	(*Checker).computeConstantEnumMemberValue	TS18055	Error	X_0_has_a_string_type_but_must_have_syntactically_recognizable_string_syntax_when_isolatedModules_is_enabled
+checker/checker.go:24138	(*Checker).computeConstantEnumMemberValue	TS2474	Error	X_const_enum_member_initializers_must_be_constant_expressions
+checker/checker.go:24140	(*Checker).computeConstantEnumMemberValue	TS1066	Error	In_ambient_enum_declarations_member_initializer_must_be_constant_expression
+checker/checker.go:24142	(*Checker).computeConstantEnumMemberValue	TS18033	Error	Type_0_is_not_assignable_to_type_1_as_required_for_computed_enum_member_values
+checker/checker.go:24203	(*Checker).evaluateEnumMember	TS2565	Error	Property_0_is_used_before_being_assigned
+checker/checker.go:24207	(*Checker).evaluateEnumMember	TS2651	Error	A_member_initializer_in_a_enum_declaration_cannot_reference_members_declared_after_it_including_members_defined_in_other_enums
+## T-TYPENODE 10
+checker/checker.go:22038	(*Checker).getTypeArguments	TS4109	Error	Type_arguments_for_0_circularly_reference_themselves
+checker/checker.go:22040	(*Checker).getTypeArguments	TS4110	Error	Tuple_type_arguments_circularly_reference_themselves
+checker/checker.go:23032	(*Checker).getThisType	TS2526	Error	A_this_type_is_available_only_in_a_non_static_member_of_a_class_or_interface
+checker/checker.go:23297	(*Checker).getTypeFromClassOrInterfaceReference	TS8026	Error	Expected_0_type_arguments_provide_these_with_an_extends_tag
+checker/checker.go:23299	(*Checker).getTypeFromClassOrInterfaceReference	TS8027	Error	Expected_0_1_type_arguments_provide_these_with_an_extends_tag
+checker/checker.go:23302	(*Checker).getTypeFromClassOrInterfaceReference	TS2314	Error	Generic_type_0_requires_1_type_argument_s
+checker/checker.go:23304	(*Checker).getTypeFromClassOrInterfaceReference	TS2707	Error	Generic_type_0_requires_between_1_and_2_type_arguments
+checker/checker.go:23342	(*Checker).checkNoTypeArguments	TS2315	Error	Type_0_is_not_generic
+checker/checker.go:23714	(*Checker).getTypeFromTypeAliasReference	TS2314	Error	Generic_type_0_requires_1_type_argument_s
+checker/checker.go:23715	(*Checker).getTypeFromTypeAliasReference	TS2707	Error	Generic_type_0_requires_between_1_and_2_type_arguments
+## T-CONSTRAINT 2
+checker/checker.go:27596	(*Checker).getResolvedBaseConstraint	TS2313	Error	Type_parameter_0_has_a_circular_constraint
+checker/checker.go:27598	(*Checker).getResolvedBaseConstraint	TS2751	Error	Circularity_originates_in_type_at_this_location
+## T-BASE 8
+checker/checker.go:17071	(*Checker).getBaseConstructorTypeOfClass	TS2506	Error	X_0_is_referenced_directly_or_indirectly_in_its_own_base_expression
+checker/checker.go:17078	(*Checker).getBaseConstructorTypeOfClass	TS2507	Error	Type_0_is_not_a_constructor_function_type
+checker/checker.go:17089	(*Checker).getBaseConstructorTypeOfClass	TS2735	Error	Did_you_mean_for_0_to_be_constrained_to_type_new_args_Colon_any_1
+checker/checker.go:19358	(*Checker).resolveBaseTypesOfClass	TS2508	Error	No_base_constructor_has_the_specified_number_of_type_arguments
+checker/checker.go:19370	(*Checker).resolveBaseTypesOfClass	TS2509	Error	Base_constructor_return_type_0_is_not_an_object_type_or_intersection_of_object_types_with_statically_known_members
+checker/checker.go:19375	(*Checker).resolveBaseTypesOfClass	TS2310	Error	Type_0_recursively_references_itself_as_a_base_type
+checker/checker.go:19626	(*Checker).resolveBaseTypesOfInterface	TS2312	Error	An_interface_can_only_extend_an_object_type_or_intersection_of_object_types_with_statically_known_members
+checker/checker.go:19647	(*Checker).reportCircularBaseType	TS2310	Error	Type_0_recursively_references_itself_as_a_base_type
+## T-MEMBERS 0
+## T-UIMEMBERS 0
+## T-LOOKUP 0
+## T-APPARENT 2
+checker/checker.go:21986	(*Checker).elaborateNeverIntersection	TS18031	Error	The_intersection_0_was_reduced_to_never_because_property_1_has_conflicting_types_in_some_constituents
+checker/checker.go:21990	(*Checker).elaborateNeverIntersection	TS18032	Error	The_intersection_0_was_reduced_to_never_because_property_1_exists_in_multiple_constituents_and_is_private_in_some
+## T-SIGDECL 0
+## T-SIGSHAPE 3
+checker/checker.go:20147	(*Checker).getReturnTypeOfSignature	TS2577	Error	Return_type_annotation_circularly_references_itself
+checker/checker.go:20151	(*Checker).getReturnTypeOfSignature	TS7023	Error	X_0_implicitly_has_return_type_any_because_it_does_not_have_a_return_type_annotation_and_is_referenced_directly_or_indirectly_in_one_of_its_return_expressions
+checker/checker.go:20153	(*Checker).getReturnTypeOfSignature	TS7024	Error	Function_implicitly_has_return_type_any_because_it_does_not_have_a_return_type_annotation_and_is_referenced_directly_or_indirectly_in_one_of_its_return_expressions
+## T-SIGINST 0
+## T-INSTANTIATE 1
+checker/checker.go:22232	(*Checker).instantiateTypeWithAlias	TS2589	Error	Type_instantiation_is_excessively_deep_and_possibly_infinite
+## T-SYMTYPE 9
+checker/checker.go:17836	(*Checker).getBindingElementTypeFromParentType	TS2700	Error	Rest_types_may_only_be_created_from_object_types
+checker/checker.go:18653	(*Checker).getTypeOfAccessors	TS7032	Error	Property_0_implicitly_has_type_any_because_its_set_accessor_lacks_a_parameter_type_annotation
+checker/checker.go:18655	(*Checker).getTypeOfAccessors	TS7033	Error	Property_0_implicitly_has_type_any_because_its_get_accessor_lacks_a_return_type_annotation
+checker/checker.go:18657	(*Checker).getTypeOfAccessors	TS7008	Error	Member_0_implicitly_has_an_1_type
+checker/checker.go:18663	(*Checker).getTypeOfAccessors	TS2502	Error	X_0_is_referenced_directly_or_indirectly_in_its_own_type_annotation
+checker/checker.go:18665	(*Checker).getTypeOfAccessors	TS2502	Error	X_0_is_referenced_directly_or_indirectly_in_its_own_type_annotation
+checker/checker.go:18667	(*Checker).getTypeOfAccessors	TS2502	Error	X_0_is_referenced_directly_or_indirectly_in_its_own_type_annotation
+checker/checker.go:18669	(*Checker).getTypeOfAccessors	TS7023	Error	X_0_implicitly_has_return_type_any_because_it_does_not_have_a_return_type_annotation_and_is_referenced_directly_or_indirectly_in_one_of_its_return_expressions
+checker/checker.go:18696	(*Checker).getWriteTypeOfAccessors	TS2502	Error	X_0_is_referenced_directly_or_indirectly_in_its_own_type_annotation
+## T-WIDEN 19
+checker/checker.go:18395	(*Checker).reportImplicitAny	TS7008	Error	Member_0_implicitly_has_an_1_type
+checker/checker.go:18396	(*Checker).reportImplicitAny	TS7045	Suggestion	Member_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage
+checker/checker.go:18407	(*Checker).reportImplicitAny	TS7051	Error	Parameter_has_a_name_but_no_type_Did_you_mean_0_Colon_1
+checker/checker.go:18414	(*Checker).reportImplicitAny	TS7019	Error	Rest_parameter_0_implicitly_has_an_any_type
+checker/checker.go:18416	(*Checker).reportImplicitAny	TS7047	Suggestion	Rest_parameter_0_implicitly_has_an_any_type_but_a_better_type_may_be_inferred_from_usage
+checker/checker.go:18419	(*Checker).reportImplicitAny	TS7006	Error	Parameter_0_implicitly_has_an_1_type
+checker/checker.go:18421	(*Checker).reportImplicitAny	TS7044	Suggestion	Parameter_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage
+checker/checker.go:18424	(*Checker).reportImplicitAny	TS7031	Error	Binding_element_0_implicitly_has_an_1_type
+checker/checker.go:18433	(*Checker).reportImplicitAny	TS7025	Error	Generator_implicitly_has_yield_type_0_Consider_supplying_a_return_type_annotation
+checker/checker.go:18435	(*Checker).reportImplicitAny	TS7011	Error	Function_expression_which_lacks_return_type_annotation_implicitly_has_an_0_return_type
+checker/checker.go:18441	(*Checker).reportImplicitAny	TS7050	Suggestion	X_0_implicitly_has_an_1_return_type_but_a_better_type_may_be_inferred_from_usage
+checker/checker.go:18444	(*Checker).reportImplicitAny	TS7010	Error	X_0_which_lacks_return_type_annotation_implicitly_has_an_1_return_type
+checker/checker.go:18446	(*Checker).reportImplicitAny	TS7012	Error	This_overload_implicitly_returns_the_type_0_because_it_lacks_a_return_type_annotation
+checker/checker.go:18450	(*Checker).reportImplicitAny	TS7055	Error	X_0_which_lacks_return_type_annotation_implicitly_has_an_1_yield_type
+checker/checker.go:18452	(*Checker).reportImplicitAny	TS7010	Error	X_0_which_lacks_return_type_annotation_implicitly_has_an_1_return_type
+checker/checker.go:18456	(*Checker).reportImplicitAny	TS7039	Error	Mapped_object_type_implicitly_has_an_any_template_type
+checker/checker.go:18461	(*Checker).reportImplicitAny	TS7005	Error	Variable_0_implicitly_has_an_1_type
+checker/checker.go:18463	(*Checker).reportImplicitAny	TS7043	Suggestion	Variable_0_implicitly_has_an_1_type_but_a_better_type_may_be_inferred_from_usage
+checker/checker.go:20638	(*Checker).reportWideningErrorsInType	TS7018	Error	Object_literal_s_property_0_implicitly_has_an_1_type
+## K-KEYOF 1
+checker/checker.go:26939	(*Checker).checkComputedPropertyName	TS2464	Error	A_computed_property_name_must_be_of_type_string_number_symbol_or_any
+## K-INDEXED 23
+checker/checker.go:27159	(*Checker).getPropertyTypeForIndexType	TS2540	Error	Cannot_assign_to_0_because_it_is_a_read_only_property
+checker/checker.go:27192	(*Checker).getPropertyTypeForIndexType	TS2514	Error	A_tuple_type_cannot_be_indexed_with_a_negative_value
+checker/checker.go:27195	(*Checker).getPropertyTypeForIndexType	TS2493	Error	Tuple_type_0_of_length_1_has_no_element_at_index_2
+checker/checker.go:27197	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27220	(*Checker).getPropertyTypeForIndexType	TS2862	Error	Type_0_is_generic_and_can_only_be_indexed_for_reading
+checker/checker.go:27222	(*Checker).getPropertyTypeForIndexType	TS2536	Error	Type_0_cannot_be_used_to_index_type_1
+checker/checker.go:27229	(*Checker).getPropertyTypeForIndexType	TS2538	Error	Type_0_cannot_be_used_as_an_index_type
+checker/checker.go:27259	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27269	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27273	(*Checker).getPropertyTypeForIndexType	TS2576	Error	Property_0_does_not_exist_on_type_1_Did_you_mean_to_access_the_static_member_2_instead
+checker/checker.go:27275	(*Checker).getPropertyTypeForIndexType	TS7015	Error	Element_implicitly_has_an_any_type_because_index_expression_is_not_of_type_number
+checker/checker.go:27282	(*Checker).getPropertyTypeForIndexType	TS2551	Error	Property_0_does_not_exist_on_type_1_Did_you_mean_2
+checker/checker.go:27286	(*Checker).getPropertyTypeForIndexType	TS7052	Error	Element_implicitly_has_an_any_type_because_type_0_has_no_index_signature_Did_you_mean_to_call_1
+checker/checker.go:27291	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27294	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27296	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27298	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27300	(*Checker).getPropertyTypeForIndexType	TS7054	Error	No_index_signature_with_a_parameter_of_type_0_was_found_on_type_1
+checker/checker.go:27302	(*Checker).getPropertyTypeForIndexType	TS7053	Error	Element_implicitly_has_an_any_type_because_expression_of_type_0_can_t_be_used_to_index_type_1
+checker/checker.go:27319	(*Checker).getPropertyTypeForIndexType	TS2339	Error	Property_0_does_not_exist_on_type_1
+checker/checker.go:27321	(*Checker).getPropertyTypeForIndexType	TS2537	Error	Type_0_has_no_matching_index_signature_for_type_1
+checker/checker.go:27329	(*Checker).getPropertyTypeForIndexType	TS2538	Error	Type_0_cannot_be_used_as_an_index_type
+checker/checker.go:27394	(*Checker).errorIfWritingToReadonlyIndex	TS2542	Error	Index_signature_in_type_0_only_permits_reading
+## K-SUBST 0
+## K-COND 1
+checker/checker.go:24434	(*Checker).getConditionalType	TS2589	Error	Type_instantiation_is_excessively_deep_and_possibly_infinite
+## T-MAPPED 1
+checker/checker.go:21126	(*Checker).getTypeOfMappedSymbol	TS2615	Error	Type_of_property_0_circularly_references_itself_in_mapped_type_1
+## K-TEMPLATE 0
+## K-IMPORTTYPE 4
+checker/checker.go:24703	(*Checker).getTypeFromImportTypeNode	TS1141	Error	String_literal_expected
+checker/checker.go:24748	(*Checker).getTypeFromImportTypeNode	TS2694	Error	Namespace_0_has_no_exported_member_1
+checker/checker.go:24762	(*Checker).getTypeFromImportTypeNode	TS1339	Error	Module_0_does_not_refer_to_a_value_but_is_used_as_a_value_here
+checker/checker.go:24763	(*Checker).getTypeFromImportTypeNode	TS1340	Error	Module_0_does_not_refer_to_a_type_but_is_used_as_a_type_here_Did_you_mean_typeof_import_0

@@ -1,0 +1,7546 @@
+# Class members, modifiers, overloads, parameter properties.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== file member.001
+abstract class C extends B {
+  a
+}
+=== file member.002
+abstract class C extends B {
+  a;
+}
+=== file member.003
+abstract class C extends B {
+  a: A
+}
+=== file member.004
+abstract class C extends B {
+  a: A;
+}
+=== file member.005
+abstract class C extends B {
+  a = 1
+}
+=== file member.006
+abstract class C extends B {
+  a: A = 1
+}
+=== file member.007
+abstract class C extends B {
+  a?: A
+}
+=== file member.008
+abstract class C extends B {
+  a?
+}
+=== file member.009
+abstract class C extends B {
+  a? = 1
+}
+=== file member.010
+abstract class C extends B {
+  a?: A = 1
+}
+=== file member.011
+abstract class C extends B {
+  a!: A
+}
+=== file member.012
+abstract class C extends B {
+  a!
+}
+=== file member.013
+abstract class C extends B {
+  a! = 1
+}
+=== file member.014
+abstract class C extends B {
+  a!: A = 1
+}
+=== file member.015
+abstract class C extends B {
+  a?!: A
+}
+=== file member.016
+abstract class C extends B {
+  a!?: A
+}
+=== file member.017
+abstract class C extends B {
+  a
+!: A
+}
+=== file member.018
+abstract class C extends B {
+  a
+?: A
+}
+=== file member.019
+abstract class C extends B {
+  a: A
+b: B
+}
+=== file member.020
+abstract class C extends B {
+  a: A b: B
+}
+=== file member.021
+abstract class C extends B {
+  a: A, b: B
+}
+=== file member.022
+abstract class C extends B {
+  a, b
+}
+=== file member.023
+abstract class C extends B {
+  a = 1, b = 2
+}
+=== file member.024
+abstract class C extends B {
+  a = 1; b = 2
+}
+=== file member.025
+abstract class C extends B {
+  a = 1
+b = 2
+}
+=== file member.026
+abstract class C extends B {
+  a
+b
+}
+=== file member.027
+abstract class C extends B {
+  a b
+}
+=== file member.028
+abstract class C extends B {
+  a: A;;
+}
+=== file member.029
+abstract class C extends B {
+  ;
+}
+=== file member.030
+abstract class C extends B {
+  ;;
+}
+=== file member.031
+abstract class C extends B {
+  a():
+}
+=== file member.032
+abstract class C extends B {
+  a(): void {}
+}
+=== file member.033
+abstract class C extends B {
+  a() {}
+}
+=== file member.034
+abstract class C extends B {
+  a(b: B): C { return b }
+}
+=== file member.035
+abstract class C extends B {
+  a<T>(b: T): T { return b }
+}
+=== file member.036
+abstract class C extends B {
+  a?() {}
+}
+=== file member.037
+abstract class C extends B {
+  a?(): void {}
+}
+=== file member.038
+abstract class C extends B {
+  a?(): void
+}
+=== file member.039
+abstract class C extends B {
+  a?<T>(): void {}
+}
+=== file member.040
+abstract class C extends B {
+  a!() {}
+}
+=== file member.041
+abstract class C extends B {
+  a(): void
+}
+=== file member.042
+abstract class C extends B {
+  a(): void;
+}
+=== file member.043
+abstract class C extends B {
+  a();
+}
+=== file member.044
+abstract class C extends B {
+  a()
+}
+=== file member.045
+abstract class C extends B {
+  a(): void; a(b?: any) {}
+}
+=== file member.046
+abstract class C extends B {
+  a(): void
+a(b?: any) {}
+}
+=== file member.047
+abstract class C extends B {
+  a(): void a() {}
+}
+=== file member.048
+abstract class C extends B {
+  a(); a() {}
+}
+=== file member.049
+abstract class C extends B {
+  a();
+a();
+a() {}
+}
+=== file member.050
+abstract class C extends B {
+  a(): void; b() {}
+}
+=== file member.051
+abstract class C extends B {
+  a(): void; a(): void;
+}
+=== file member.052
+abstract class C extends B {
+  a(b: B): void; a(b: B, c: C): void; a(b: any, c?: any) {}
+}
+=== file member.053
+abstract class C extends B {
+  a?(): void; a?() {}
+}
+=== file member.054
+abstract class C extends B {
+  async a(): Promise<void> {}
+}
+=== file member.055
+abstract class C extends B {
+  async a(): Promise<void>; async a(b?: any) {}
+}
+=== file member.056
+abstract class C extends B {
+  *a(): Generator {}
+}
+=== file member.057
+abstract class C extends B {
+  *a(): any; *a() {}
+}
+=== file member.058
+abstract class C extends B {
+  async *a(): AsyncGenerator {}
+}
+=== file member.059
+abstract class C extends B {
+  async *a(): any; async *a() {}
+}
+=== file member.060
+abstract class C extends B {
+  static a(): void; static a(b?: any) {}
+}
+=== file member.061
+abstract class C extends B {
+  #a(): void; #a(b?: any) {}
+}
+=== file member.062
+abstract class C extends B {
+  "a"(): void; "a"(b?: any) {}
+}
+=== file member.063
+abstract class C extends B {
+  [a](): void; [a](b?: any) {}
+}
+=== file member.064
+abstract class C extends B {
+  1(): void; 1(b?: any) {}
+}
+=== file member.065
+abstract class C extends B {
+  constructor() {}
+}
+=== file member.066
+abstract class C extends B {
+  constructor();
+}
+=== file member.067
+abstract class C extends B {
+  constructor(); constructor(a?: any) {}
+}
+=== file member.068
+abstract class C extends B {
+  constructor(a: A); constructor(a: A, b: B); constructor(a: any, b?: any) {}
+}
+=== file member.069
+abstract class C extends B {
+  constructor()
+constructor(a?: any) {}
+}
+=== file member.070
+abstract class C extends B {
+  constructor(): void {}
+}
+=== file member.071
+abstract class C extends B {
+  constructor<T>() {}
+}
+=== file member.072
+abstract class C extends B {
+  constructor(this: A) {}
+}
+=== file member.073
+abstract class C extends B {
+  constructor?() {}
+}
+=== file member.074
+abstract class C extends B {
+  constructor!() {}
+}
+=== file member.075
+abstract class C extends B {
+  constructor: A
+}
+=== file member.076
+abstract class C extends B {
+  constructor = 1
+}
+=== file member.077
+abstract class C extends B {
+  constructor
+}
+=== file member.078
+abstract class C extends B {
+  constructor;
+}
+=== file member.079
+abstract class C extends B {
+  constructor?: A
+}
+=== file member.080
+abstract class C extends B {
+  "constructor"() {}
+}
+=== file member.081
+abstract class C extends B {
+  'constructor'(); 'constructor'(a?: any) {}
+}
+=== file member.082
+abstract class C extends B {
+  "constructor"<T>() {}
+}
+=== file member.083
+abstract class C extends B {
+  ["constructor"]() {}
+}
+=== file member.084
+abstract class C extends B {
+  "constructor": A
+}
+=== file member.085
+abstract class C extends B {
+  #constructor
+}
+=== file member.086
+abstract class C extends B {
+  #constructor() {}
+}
+=== file member.087
+abstract class C extends B {
+  *constructor() {}
+}
+=== file member.088
+abstract class C extends B {
+  async constructor() {}
+}
+=== file member.089
+abstract class C extends B {
+  get constructor() { return 1 }
+}
+=== file member.090
+abstract class C extends B {
+  set constructor(v) {}
+}
+=== file member.091
+abstract class C extends B {
+  static constructor() {}
+}
+=== file member.092
+abstract class C extends B {
+  static constructor
+}
+=== file member.093
+abstract class C extends B {
+  static constructor: A
+}
+=== file member.094
+abstract class C extends B {
+  constructor() {} constructor() {}
+}
+=== file member.095
+abstract class C extends B {
+  get a(): A { return 1 }
+}
+=== file member.096
+abstract class C extends B {
+  set a(v: A) {}
+}
+=== file member.097
+abstract class C extends B {
+  get a() { return 1 } set a(v) {}
+}
+=== file member.098
+abstract class C extends B {
+  get a(): A; 
+}
+=== file member.099
+abstract class C extends B {
+  set a(v: A);
+}
+=== file member.100
+abstract class C extends B {
+  get a();
+}
+=== file member.101
+abstract class C extends B {
+  get a<T>() { return 1 }
+}
+=== file member.102
+abstract class C extends B {
+  set a<T>(v) {}
+}
+=== file member.103
+abstract class C extends B {
+  set a(v: A): void {}
+}
+=== file member.104
+abstract class C extends B {
+  set a(v?: A) {}
+}
+=== file member.105
+abstract class C extends B {
+  set a(...v: A[]) {}
+}
+=== file member.106
+abstract class C extends B {
+  set a(v: A = 1) {}
+}
+=== file member.107
+abstract class C extends B {
+  set a(v = 1) {}
+}
+=== file member.108
+abstract class C extends B {
+  get a(v) { return 1 }
+}
+=== file member.109
+abstract class C extends B {
+  set a() {}
+}
+=== file member.110
+abstract class C extends B {
+  set a(v, w) {}
+}
+=== file member.111
+abstract class C extends B {
+  set a({ b }: A) {}
+}
+=== file member.112
+abstract class C extends B {
+  set a([b]: A) {}
+}
+=== file member.113
+abstract class C extends B {
+  set a(this: A, v) {}
+}
+=== file member.114
+abstract class C extends B {
+  get a(this: A) { return 1 }
+}
+=== file member.115
+abstract class C extends B {
+  get a?() { return 1 }
+}
+=== file member.116
+abstract class C extends B {
+  get a!() { return 1 }
+}
+=== file member.117
+abstract class C extends B {
+  get: A
+}
+=== file member.118
+abstract class C extends B {
+  get = 1
+}
+=== file member.119
+abstract class C extends B {
+  get() {}
+}
+=== file member.120
+abstract class C extends B {
+  get<T>() {}
+}
+=== file member.121
+abstract class C extends B {
+  get?: A
+}
+=== file member.122
+abstract class C extends B {
+  get!: A
+}
+=== file member.123
+abstract class C extends B {
+  get;
+}
+=== file member.124
+abstract class C extends B {
+  get
+}
+=== file member.125
+abstract class C extends B {
+  get
+a() {}
+}
+=== file member.126
+abstract class C extends B {
+  set
+a(v) {}
+}
+=== file member.127
+abstract class C extends B {
+  get
+*a() {}
+}
+=== file member.128
+abstract class C extends B {
+  get *a() {}
+}
+=== file member.129
+abstract class C extends B {
+  get async a() {}
+}
+=== file member.130
+abstract class C extends B {
+  async get a() {}
+}
+=== file member.131
+abstract class C extends B {
+  get async() { return 1 }
+}
+=== file member.132
+abstract class C extends B {
+  get static() { return 1 }
+}
+=== file member.133
+abstract class C extends B {
+  get get() { return 1 }
+}
+=== file member.134
+abstract class C extends B {
+  get set() { return 1 }
+}
+=== file member.135
+abstract class C extends B {
+  set get(v) {}
+}
+=== file member.136
+abstract class C extends B {
+  get "a"(): A { return 1 }
+}
+=== file member.137
+abstract class C extends B {
+  get 1(): A { return 1 }
+}
+=== file member.138
+abstract class C extends B {
+  get [a](): A { return 1 }
+}
+=== file member.139
+abstract class C extends B {
+  get #a(): A { return 1 }
+}
+=== file member.140
+abstract class C extends B {
+  get a: A
+}
+=== file member.141
+abstract class C extends B {
+  [k: string]: A
+}
+=== file member.142
+abstract class C extends B {
+  [k: string]: A;
+}
+=== file member.143
+abstract class C extends B {
+  [k: number]: A
+}
+=== file member.144
+abstract class C extends B {
+  [k: string]
+}
+=== file member.145
+abstract class C extends B {
+  [k: string]: A = 1
+}
+=== file member.146
+abstract class C extends B {
+  [k: string]?: A
+}
+=== file member.147
+abstract class C extends B {
+  [k?: string]: A
+}
+=== file member.148
+abstract class C extends B {
+  [...k: string[]]: A
+}
+=== file member.149
+abstract class C extends B {
+  [k: string, l: number]: A
+}
+=== file member.150
+abstract class C extends B {
+  [k: string,]: A
+}
+=== file member.151
+abstract class C extends B {
+  [k, l]: A
+}
+=== file member.152
+abstract class C extends B {
+  [k]: A
+}
+=== file member.153
+abstract class C extends B {
+  [k] = 1
+}
+=== file member.154
+abstract class C extends B {
+  [k]
+}
+=== file member.155
+abstract class C extends B {
+  [k]?: A
+}
+=== file member.156
+abstract class C extends B {
+  [k]!: A
+}
+=== file member.157
+abstract class C extends B {
+  [k: string]() {}
+}
+=== file member.158
+abstract class C extends B {
+  [k](): A {}
+}
+=== file member.159
+abstract class C extends B {
+  [a.b]: A
+}
+=== file member.160
+abstract class C extends B {
+  [Symbol.iterator](): A {}
+}
+=== file member.161
+abstract class C extends B {
+  ["a" + "b"]: A
+}
+=== file member.162
+abstract class C extends B {
+  [a as B]: A
+}
+=== file member.163
+abstract class C extends B {
+  [a!]: A
+}
+=== file member.164
+abstract class C extends B {
+  [k: string]: A; [l: number]: B
+}
+=== file member.165
+abstract class C extends B {
+  [public k: string]: A
+}
+=== file member.166
+abstract class C extends B {
+  [k = 1]: A
+}
+=== file member.167
+abstract class C extends B {
+  [this: string]: A
+}
+=== file member.168
+abstract class C extends B {
+  []: A
+}
+=== file member.169
+abstract class C extends B {
+  [a, b]: A
+}
+=== file member.170
+abstract class C extends B {
+  [a in b]: A
+}
+=== file member.171
+abstract class C extends B {
+  [k: A<B>]: C
+}
+=== file member.172
+abstract class C extends B {
+  [k: string]: A<B>
+}
+=== file member.173
+abstract class C extends B {
+  [k: string]: () => void
+}
+=== file member.174
+abstract class C extends B {
+  [k: string]: A | B
+a: C
+}
+=== file member.175
+abstract class C extends B {
+  static {}
+}
+=== file member.176
+abstract class C extends B {
+  static { let a: A = 1; }
+}
+=== file member.177
+abstract class C extends B {
+  static {} static {}
+}
+=== file member.178
+abstract class C extends B {
+  static
+{}
+}
+=== file member.179
+abstract class C extends B {
+  static { await a }
+}
+=== file member.180
+abstract class C extends B {
+  static { return }
+}
+=== file member.181
+abstract class C extends B {
+  static { this.a as A }
+}
+=== file member.182
+abstract class C extends B {
+  static { var v = <T>(a: T) => a }
+}
+=== file member.183
+abstract class C extends B {
+  static
+}
+=== file member.184
+abstract class C extends B {
+  static;
+}
+=== file member.185
+abstract class C extends B {
+  static = 1
+}
+=== file member.186
+abstract class C extends B {
+  static: A
+}
+=== file member.187
+abstract class C extends B {
+  static?: A
+}
+=== file member.188
+abstract class C extends B {
+  static!: A
+}
+=== file member.189
+abstract class C extends B {
+  static() {}
+}
+=== file member.190
+abstract class C extends B {
+  static<T>() {}
+}
+=== file member.191
+abstract class C extends B {
+  static?() {}
+}
+=== file member.192
+abstract class C extends B {
+  static a
+}
+=== file member.193
+abstract class C extends B {
+  static a: A = 1
+}
+=== file member.194
+abstract class C extends B {
+  static
+a
+}
+=== file member.195
+abstract class C extends B {
+  static static
+}
+=== file member.196
+abstract class C extends B {
+  static static a
+}
+=== file member.197
+abstract class C extends B {
+  static static: A
+}
+=== file member.198
+abstract class C extends B {
+  static static() {}
+}
+=== file member.199
+abstract class C extends B {
+  static static static
+}
+=== file member.200
+abstract class C extends B {
+  static async
+}
+=== file member.201
+abstract class C extends B {
+  static async a() {}
+}
+=== file member.202
+abstract class C extends B {
+  static async *a() {}
+}
+=== file member.203
+abstract class C extends B {
+  static get
+}
+=== file member.204
+abstract class C extends B {
+  static get a() { return 1 }
+}
+=== file member.205
+abstract class C extends B {
+  static set a(v) {}
+}
+=== file member.206
+abstract class C extends B {
+  static readonly
+}
+=== file member.207
+abstract class C extends B {
+  static readonly a
+}
+=== file member.208
+abstract class C extends B {
+  static *a() {}
+}
+=== file member.209
+abstract class C extends B {
+  static #a
+}
+=== file member.210
+abstract class C extends B {
+  static #a() {}
+}
+=== file member.211
+abstract class C extends B {
+  static [a]
+}
+=== file member.212
+abstract class C extends B {
+  static "a"
+}
+=== file member.213
+abstract class C extends B {
+  static 1
+}
+=== file member.214
+abstract class C extends B {
+  static in
+}
+=== file member.215
+abstract class C extends B {
+  static a = b in c
+}
+=== file member.216
+abstract class C extends B {
+  async
+}
+=== file member.217
+abstract class C extends B {
+  async;
+}
+=== file member.218
+abstract class C extends B {
+  async = 1
+}
+=== file member.219
+abstract class C extends B {
+  async: A
+}
+=== file member.220
+abstract class C extends B {
+  async?: A
+}
+=== file member.221
+abstract class C extends B {
+  async() {}
+}
+=== file member.222
+abstract class C extends B {
+  async<T>() {}
+}
+=== file member.223
+abstract class C extends B {
+  async a() {}
+}
+=== file member.224
+abstract class C extends B {
+  async
+a() {}
+}
+=== file member.225
+abstract class C extends B {
+  async *a() {}
+}
+=== file member.226
+abstract class C extends B {
+  async a
+}
+=== file member.227
+abstract class C extends B {
+  async a: A
+}
+=== file member.228
+abstract class C extends B {
+  async a = 1
+}
+=== file member.229
+abstract class C extends B {
+  async async() {}
+}
+=== file member.230
+abstract class C extends B {
+  async get() {}
+}
+=== file member.231
+abstract class C extends B {
+  async static() {}
+}
+=== file member.232
+abstract class C extends B {
+  async #a() {}
+}
+=== file member.233
+abstract class C extends B {
+  async [a]() {}
+}
+=== file member.234
+abstract class C extends B {
+  async "a"() {}
+}
+=== file member.235
+abstract class C extends B {
+  async 1() {}
+}
+=== file member.236
+abstract class C extends B {
+  async a<T>(b: T): Promise<T> { return b }
+}
+=== file member.237
+abstract class C extends B {
+  async *a<T>(): AsyncGenerator<T> {}
+}
+=== file member.238
+abstract class C extends B {
+  accessor
+}
+=== file member.239
+abstract class C extends B {
+  accessor;
+}
+=== file member.240
+abstract class C extends B {
+  accessor = 1
+}
+=== file member.241
+abstract class C extends B {
+  accessor: A
+}
+=== file member.242
+abstract class C extends B {
+  accessor?: A
+}
+=== file member.243
+abstract class C extends B {
+  accessor() {}
+}
+=== file member.244
+abstract class C extends B {
+  accessor<T>() {}
+}
+=== file member.245
+abstract class C extends B {
+  accessor a
+}
+=== file member.246
+abstract class C extends B {
+  accessor a = 1
+}
+=== file member.247
+abstract class C extends B {
+  accessor a: A
+}
+=== file member.248
+abstract class C extends B {
+  accessor a: A = 1
+}
+=== file member.249
+abstract class C extends B {
+  accessor a?: A
+}
+=== file member.250
+abstract class C extends B {
+  accessor a!: A
+}
+=== file member.251
+abstract class C extends B {
+  accessor
+a
+}
+=== file member.252
+abstract class C extends B {
+  accessor a() {}
+}
+=== file member.253
+abstract class C extends B {
+  accessor "a"
+}
+=== file member.254
+abstract class C extends B {
+  accessor 1
+}
+=== file member.255
+abstract class C extends B {
+  accessor [a]
+}
+=== file member.256
+abstract class C extends B {
+  accessor #a
+}
+=== file member.257
+abstract class C extends B {
+  accessor #a: A = 1
+}
+=== file member.258
+abstract class C extends B {
+  accessor accessor
+}
+=== file member.259
+abstract class C extends B {
+  accessor static a
+}
+=== file member.260
+abstract class C extends B {
+  accessor readonly a
+}
+=== file member.261
+abstract class C extends B {
+  accessor get a() { return 1 }
+}
+=== file member.262
+abstract class C extends B {
+  accessor async a() {}
+}
+=== file member.263
+abstract class C extends B {
+  accessor *a() {}
+}
+=== file member.264
+abstract class C extends B {
+  accessor constructor
+}
+=== file member.265
+abstract class C extends B {
+  declare
+}
+=== file member.266
+abstract class C extends B {
+  declare;
+}
+=== file member.267
+abstract class C extends B {
+  declare = 1
+}
+=== file member.268
+abstract class C extends B {
+  declare: A
+}
+=== file member.269
+abstract class C extends B {
+  declare?: A
+}
+=== file member.270
+abstract class C extends B {
+  declare() {}
+}
+=== file member.271
+abstract class C extends B {
+  declare<T>() {}
+}
+=== file member.272
+abstract class C extends B {
+  declare a
+}
+=== file member.273
+abstract class C extends B {
+  declare a: A
+}
+=== file member.274
+abstract class C extends B {
+  declare a: A;
+}
+=== file member.275
+abstract class C extends B {
+  declare a = 1
+}
+=== file member.276
+abstract class C extends B {
+  declare a: A = 1
+}
+=== file member.277
+abstract class C extends B {
+  declare a?: A
+}
+=== file member.278
+abstract class C extends B {
+  declare a!: A
+}
+=== file member.279
+abstract class C extends B {
+  declare
+a
+}
+=== file member.280
+abstract class C extends B {
+  declare a() {}
+}
+=== file member.281
+abstract class C extends B {
+  declare a(): void
+}
+=== file member.282
+abstract class C extends B {
+  declare a(): void;
+}
+=== file member.283
+abstract class C extends B {
+  declare get a(): A
+}
+=== file member.284
+abstract class C extends B {
+  declare get a() { return 1 }
+}
+=== file member.285
+abstract class C extends B {
+  declare set a(v)
+}
+=== file member.286
+abstract class C extends B {
+  declare #a: A
+}
+=== file member.287
+abstract class C extends B {
+  declare #a
+}
+=== file member.288
+abstract class C extends B {
+  declare "a": A
+}
+=== file member.289
+abstract class C extends B {
+  declare 1: A
+}
+=== file member.290
+abstract class C extends B {
+  declare [a]: A
+}
+=== file member.291
+abstract class C extends B {
+  declare constructor()
+}
+=== file member.292
+abstract class C extends B {
+  declare constructor() {}
+}
+=== file member.293
+abstract class C extends B {
+  declare [k: string]: A
+}
+=== file member.294
+abstract class C extends B {
+  declare static {}
+}
+=== file member.295
+abstract class C extends B {
+  declare declare
+}
+=== file member.296
+abstract class C extends B {
+  declare declare a
+}
+=== file member.297
+abstract class C extends B {
+  declare async a() {}
+}
+=== file member.298
+abstract class C extends B {
+  declare *a() {}
+}
+=== file member.299
+abstract class C extends B {
+  declare accessor a
+}
+=== file member.300
+abstract class C extends B {
+  abstract
+}
+=== file member.301
+abstract class C extends B {
+  abstract;
+}
+=== file member.302
+abstract class C extends B {
+  abstract = 1
+}
+=== file member.303
+abstract class C extends B {
+  abstract: A
+}
+=== file member.304
+abstract class C extends B {
+  abstract?: A
+}
+=== file member.305
+abstract class C extends B {
+  abstract() {}
+}
+=== file member.306
+abstract class C extends B {
+  abstract<T>() {}
+}
+=== file member.307
+abstract class C extends B {
+  abstract a
+}
+=== file member.308
+abstract class C extends B {
+  abstract a;
+}
+=== file member.309
+abstract class C extends B {
+  abstract a: A
+}
+=== file member.310
+abstract class C extends B {
+  abstract a: A;
+}
+=== file member.311
+abstract class C extends B {
+  abstract a = 1
+}
+=== file member.312
+abstract class C extends B {
+  abstract a: A = 1
+}
+=== file member.313
+abstract class C extends B {
+  abstract a?: A
+}
+=== file member.314
+abstract class C extends B {
+  abstract a!: A
+}
+=== file member.315
+abstract class C extends B {
+  abstract
+a
+}
+=== file member.316
+abstract class C extends B {
+  abstract a(): void
+}
+=== file member.317
+abstract class C extends B {
+  abstract a(): void;
+}
+=== file member.318
+abstract class C extends B {
+  abstract a();
+}
+=== file member.319
+abstract class C extends B {
+  abstract a() {}
+}
+=== file member.320
+abstract class C extends B {
+  abstract a(): void {}
+}
+=== file member.321
+abstract class C extends B {
+  abstract a?(): void
+}
+=== file member.322
+abstract class C extends B {
+  abstract a<T>(b: T): T
+}
+=== file member.323
+abstract class C extends B {
+  abstract a(): void; abstract a(b: B): void;
+}
+=== file member.324
+abstract class C extends B {
+  abstract a(): void
+abstract b(): void
+}
+=== file member.325
+abstract class C extends B {
+  abstract a(): void b() {}
+}
+=== file member.326
+abstract class C extends B {
+  abstract get a(): A
+}
+=== file member.327
+abstract class C extends B {
+  abstract get a(): A;
+}
+=== file member.328
+abstract class C extends B {
+  abstract set a(v: A)
+}
+=== file member.329
+abstract class C extends B {
+  abstract set a(v: A);
+}
+=== file member.330
+abstract class C extends B {
+  abstract get a() { return 1 }
+}
+=== file member.331
+abstract class C extends B {
+  abstract get a(): A; abstract set a(v: A);
+}
+=== file member.332
+abstract class C extends B {
+  abstract #a
+}
+=== file member.333
+abstract class C extends B {
+  abstract #a(): void
+}
+=== file member.334
+abstract class C extends B {
+  abstract "a": A
+}
+=== file member.335
+abstract class C extends B {
+  abstract 1(): void
+}
+=== file member.336
+abstract class C extends B {
+  abstract [a]: A
+}
+=== file member.337
+abstract class C extends B {
+  abstract [a](): void
+}
+=== file member.338
+abstract class C extends B {
+  abstract constructor()
+}
+=== file member.339
+abstract class C extends B {
+  abstract constructor() {}
+}
+=== file member.340
+abstract class C extends B {
+  abstract [k: string]: A
+}
+=== file member.341
+abstract class C extends B {
+  abstract static {}
+}
+=== file member.342
+abstract class C extends B {
+  abstract abstract
+}
+=== file member.343
+abstract class C extends B {
+  abstract abstract a
+}
+=== file member.344
+abstract class C extends B {
+  abstract async a()
+}
+=== file member.345
+abstract class C extends B {
+  abstract async a(): Promise<void>;
+}
+=== file member.346
+abstract class C extends B {
+  abstract *a()
+}
+=== file member.347
+abstract class C extends B {
+  abstract *a(): any;
+}
+=== file member.348
+abstract class C extends B {
+  abstract accessor a: A
+}
+=== file member.349
+abstract class C extends B {
+  abstract accessor a
+}
+=== file member.350
+abstract class C extends B {
+  override
+}
+=== file member.351
+abstract class C extends B {
+  override;
+}
+=== file member.352
+abstract class C extends B {
+  override = 1
+}
+=== file member.353
+abstract class C extends B {
+  override: A
+}
+=== file member.354
+abstract class C extends B {
+  override() {}
+}
+=== file member.355
+abstract class C extends B {
+  override a
+}
+=== file member.356
+abstract class C extends B {
+  override a: A
+}
+=== file member.357
+abstract class C extends B {
+  override a() {}
+}
+=== file member.358
+abstract class C extends B {
+  override a(): void; override a(b?: any) {}
+}
+=== file member.359
+abstract class C extends B {
+  override
+a
+}
+=== file member.360
+abstract class C extends B {
+  override get a() { return 1 }
+}
+=== file member.361
+abstract class C extends B {
+  override set a(v) {}
+}
+=== file member.362
+abstract class C extends B {
+  override async a() {}
+}
+=== file member.363
+abstract class C extends B {
+  override *a() {}
+}
+=== file member.364
+abstract class C extends B {
+  override #a
+}
+=== file member.365
+abstract class C extends B {
+  override [a]() {}
+}
+=== file member.366
+abstract class C extends B {
+  override "a"() {}
+}
+=== file member.367
+abstract class C extends B {
+  override constructor() {}
+}
+=== file member.368
+abstract class C extends B {
+  override [k: string]: A
+}
+=== file member.369
+abstract class C extends B {
+  override static {}
+}
+=== file member.370
+abstract class C extends B {
+  override override a
+}
+=== file member.371
+abstract class C extends B {
+  override accessor a
+}
+=== file member.372
+abstract class C extends B {
+  readonly
+}
+=== file member.373
+abstract class C extends B {
+  readonly;
+}
+=== file member.374
+abstract class C extends B {
+  readonly = 1
+}
+=== file member.375
+abstract class C extends B {
+  readonly: A
+}
+=== file member.376
+abstract class C extends B {
+  readonly?: A
+}
+=== file member.377
+abstract class C extends B {
+  readonly() {}
+}
+=== file member.378
+abstract class C extends B {
+  readonly<T>() {}
+}
+=== file member.379
+abstract class C extends B {
+  readonly a
+}
+=== file member.380
+abstract class C extends B {
+  readonly a: A
+}
+=== file member.381
+abstract class C extends B {
+  readonly a = 1
+}
+=== file member.382
+abstract class C extends B {
+  readonly a?: A
+}
+=== file member.383
+abstract class C extends B {
+  readonly a!: A
+}
+=== file member.384
+abstract class C extends B {
+  readonly
+a
+}
+=== file member.385
+abstract class C extends B {
+  readonly a() {}
+}
+=== file member.386
+abstract class C extends B {
+  readonly get a() { return 1 }
+}
+=== file member.387
+abstract class C extends B {
+  readonly #a
+}
+=== file member.388
+abstract class C extends B {
+  readonly [a]
+}
+=== file member.389
+abstract class C extends B {
+  readonly "a"
+}
+=== file member.390
+abstract class C extends B {
+  readonly 1
+}
+=== file member.391
+abstract class C extends B {
+  readonly constructor() {}
+}
+=== file member.392
+abstract class C extends B {
+  readonly [k: string]: A
+}
+=== file member.393
+abstract class C extends B {
+  readonly static {}
+}
+=== file member.394
+abstract class C extends B {
+  readonly readonly
+}
+=== file member.395
+abstract class C extends B {
+  readonly readonly a
+}
+=== file member.396
+abstract class C extends B {
+  readonly async a() {}
+}
+=== file member.397
+abstract class C extends B {
+  readonly *a() {}
+}
+=== file member.398
+abstract class C extends B {
+  readonly accessor a
+}
+=== file member.399
+abstract class C extends B {
+  in: A
+}
+=== file member.400
+abstract class C extends B {
+  instanceof: A
+}
+=== file member.401
+abstract class C extends B {
+  if: A
+}
+=== file member.402
+abstract class C extends B {
+  class: A
+}
+=== file member.403
+abstract class C extends B {
+  new: A
+}
+=== file member.404
+abstract class C extends B {
+  new() {}
+}
+=== file member.405
+abstract class C extends B {
+  new<T>() {}
+}
+=== file member.406
+abstract class C extends B {
+  delete() {}
+}
+=== file member.407
+abstract class C extends B {
+  typeof: A
+}
+=== file member.408
+abstract class C extends B {
+  void: A
+}
+=== file member.409
+abstract class C extends B {
+  function() {}
+}
+=== file member.410
+abstract class C extends B {
+  var: A
+}
+=== file member.411
+abstract class C extends B {
+  enum: A
+}
+=== file member.412
+abstract class C extends B {
+  type: A
+}
+=== file member.413
+abstract class C extends B {
+  type = 1
+}
+=== file member.414
+abstract class C extends B {
+  type a
+}
+=== file member.415
+abstract class C extends B {
+  of: A
+}
+=== file member.416
+abstract class C extends B {
+  as: A
+}
+=== file member.417
+abstract class C extends B {
+  is: A
+}
+=== file member.418
+abstract class C extends B {
+  infer: A
+}
+=== file member.419
+abstract class C extends B {
+  keyof: A
+}
+=== file member.420
+abstract class C extends B {
+  any: A
+}
+=== file member.421
+abstract class C extends B {
+  string: A
+}
+=== file member.422
+abstract class C extends B {
+  namespace: A
+}
+=== file member.423
+abstract class C extends B {
+  module: A
+}
+=== file member.424
+abstract class C extends B {
+  interface: A
+}
+=== file member.425
+abstract class C extends B {
+  implements: A
+}
+=== file member.426
+abstract class C extends B {
+  package: A
+}
+=== file member.427
+abstract class C extends B {
+  let: A
+}
+=== file member.428
+abstract class C extends B {
+  yield: A
+}
+=== file member.429
+abstract class C extends B {
+  await: A
+}
+=== file member.430
+abstract class C extends B {
+  this: A
+}
+=== file member.431
+abstract class C extends B {
+  null: A
+}
+=== file member.432
+abstract class C extends B {
+  true: A
+}
+=== file member.433
+abstract class C extends B {
+  import: A
+}
+=== file member.434
+abstract class C extends B {
+  export: A
+}
+=== file member.435
+abstract class C extends B {
+  default: A
+}
+=== file member.436
+abstract class C extends B {
+  extends: A
+}
+=== file member.437
+abstract class C extends B {
+  super: A
+}
+=== file member.438
+abstract class C extends B {
+  const: A
+}
+=== file member.439
+abstract class C extends B {
+  const a
+}
+=== file member.440
+abstract class C extends B {
+  const a = 1
+}
+=== file member.441
+abstract class C extends B {
+  var a
+}
+=== file member.442
+abstract class C extends B {
+  let a
+}
+=== file member.443
+abstract class C extends B {
+  function a() {}
+}
+=== file member.444
+abstract class C extends B {
+  export a
+}
+=== file member.445
+abstract class C extends B {
+  default a
+}
+=== file member.446
+abstract class C extends B {
+  in a
+}
+=== file member.447
+abstract class C extends B {
+  out a
+}
+=== file member.448
+abstract class C extends B {
+  const
+}
+=== file member.449
+abstract class C extends B {
+  interface I {}
+}
+=== file member.450
+abstract class C extends B {
+  type X = A
+}
+=== file member.451
+abstract class C extends B {
+  enum E {}
+}
+=== file member.452
+abstract class C extends B {
+  namespace N {}
+}
+=== file member.453
+abstract class C extends B {
+  a: A = <A>b
+}
+=== file member.454
+abstract class C extends B {
+  a = <T>(b: T) => b
+}
+=== file member.455
+abstract class C extends B {
+  a = <T,>(b: T) => b
+}
+=== file member.456
+abstract class C extends B {
+  a = (b: B): C => b
+}
+=== file member.457
+abstract class C extends B {
+  a: () => void
+}
+=== file member.458
+abstract class C extends B {
+  a: () => void = () => {}
+}
+=== file member.459
+abstract class C extends B {
+  a: (b: B) => C = d
+}
+=== file member.460
+abstract class C extends B {
+  a: A<B>=c
+}
+=== file member.461
+abstract class C extends B {
+  a: A<B<C>>=d
+}
+=== file member.462
+abstract class C extends B {
+  a?: A<B>
+}
+=== file member.463
+abstract class C extends B {
+  a!: A<B>
+}
+=== file member.464
+abstract class C extends B {
+  a: A<B>
+b: C
+}
+=== file member.465
+abstract class C extends B {
+  a: typeof b
+}
+=== file member.466
+abstract class C extends B {
+  a: typeof b
+c: C
+}
+=== file member.467
+abstract class C extends B {
+  a: A | B = c
+}
+=== file member.468
+abstract class C extends B {
+  a: A extends B ? C : D = e
+}
+=== file member.469
+abstract class C extends B {
+  a: new () => A = b
+}
+=== file member.470
+abstract class C extends B {
+  a: { b: B }
+}
+=== file member.471
+abstract class C extends B {
+  a: { b: B } = { b: 1 }
+}
+=== file member.472
+abstract class C extends B {
+  a: [A] = [1]
+}
+=== file member.473
+abstract class C extends B {
+  a: A[] = []
+}
+=== file member.474
+abstract class C extends B {
+  a: asserts b
+}
+=== file member.475
+abstract class C extends B {
+  a: b is C
+}
+=== file member.476
+abstract class C extends B {
+  a: this
+}
+=== file member.477
+abstract class C extends B {
+  a: void
+}
+=== file member.478
+abstract class C extends B {
+  a: unique symbol
+}
+=== file member.479
+abstract class C extends B {
+  static readonly a: unique symbol
+}
+=== file member.480
+abstract class C extends B {
+  a: A
+[b]: B
+}
+=== file member.481
+abstract class C extends B {
+  a: A
+(b): B
+}
+=== file member.482
+abstract class C extends B {
+  a: A
+<T>(b: T): T {}
+}
+=== file member.483
+abstract class C extends B {
+  a: A
+*b() {}
+}
+=== file member.484
+abstract class C extends B {
+  a: A
+get b() { return 1 }
+}
+=== file member.485
+abstract class C extends B {
+  a: A
+static b
+}
+=== file member.486
+abstract class C extends B {
+  a = 1
+[b] = 2
+}
+=== file member.487
+abstract class C extends B {
+  a = 1
+*b() {}
+}
+=== file member.488
+abstract class C extends B {
+  a = b
+(c)
+}
+=== file member.489
+abstract class C extends B {
+  a
+(b) {}
+}
+=== file member.490
+abstract class C extends B {
+  a
+<T>() {}
+}
+=== file member.491
+abstract class C extends B {
+  a: A.B
+<T>() {}
+}
+=== file member.492
+abstract class C extends B {
+  a =
+}
+=== file member.493
+abstract class C extends B {
+  a:
+}
+=== file member.494
+abstract class C extends B {
+  a: A =
+}
+=== file member.495
+abstract class C extends B {
+  a?:
+}
+=== file member.496
+abstract class C extends B {
+  a() { }; b() { }
+}
+=== file member.497
+abstract class C extends B {
+  a(b: B) { b as C; <C>b; b!; }
+}
+=== file member.498
+abstract class C extends B {
+  a = b as C
+}
+=== file member.499
+abstract class C extends B {
+  a = b!
+}
+=== file member.500
+abstract class C extends B {
+  a = b satisfies C
+}
+=== file member.501
+abstract class C extends B {
+  a = b<C>
+}
+=== file member.502
+abstract class C extends B {
+  a = b<C>(d)
+}
+=== file member.expr.001
+var v = class {
+  a
+};
+=== file member.expr.002
+var v = class {
+  a;
+};
+=== file member.expr.003
+var v = class {
+  a: A
+};
+=== file member.expr.004
+var v = class {
+  a: A;
+};
+=== file member.expr.005
+var v = class {
+  a = 1
+};
+=== file member.expr.006
+var v = class {
+  a: A = 1
+};
+=== file member.expr.007
+var v = class {
+  a?: A
+};
+=== file member.expr.008
+var v = class {
+  a?
+};
+=== file member.expr.009
+var v = class {
+  a? = 1
+};
+=== file member.expr.010
+var v = class {
+  a?: A = 1
+};
+=== file member.expr.011
+var v = class {
+  a!: A
+};
+=== file member.expr.012
+var v = class {
+  a!
+};
+=== file member.expr.013
+var v = class {
+  a! = 1
+};
+=== file member.expr.014
+var v = class {
+  a!: A = 1
+};
+=== file member.expr.015
+var v = class {
+  a?!: A
+};
+=== file member.expr.016
+var v = class {
+  a!?: A
+};
+=== file member.expr.017
+var v = class {
+  a
+!: A
+};
+=== file member.expr.018
+var v = class {
+  a
+?: A
+};
+=== file member.expr.019
+var v = class {
+  a: A
+b: B
+};
+=== file member.expr.020
+var v = class {
+  a: A b: B
+};
+=== file member.expr.021
+var v = class {
+  a: A, b: B
+};
+=== file member.expr.022
+var v = class {
+  a, b
+};
+=== file member.expr.023
+var v = class {
+  a = 1, b = 2
+};
+=== file member.expr.024
+var v = class {
+  a = 1; b = 2
+};
+=== file member.expr.025
+var v = class {
+  a = 1
+b = 2
+};
+=== file member.expr.026
+var v = class {
+  a
+b
+};
+=== file member.expr.027
+var v = class {
+  a b
+};
+=== file member.expr.028
+var v = class {
+  a: A;;
+};
+=== file member.expr.029
+var v = class {
+  ;
+};
+=== file member.expr.030
+var v = class {
+  ;;
+};
+=== file member.expr.031
+var v = class {
+  a():
+};
+=== file member.expr.032
+var v = class {
+  a(): void {}
+};
+=== file member.expr.033
+var v = class {
+  a() {}
+};
+=== file member.expr.034
+var v = class {
+  a(b: B): C { return b }
+};
+=== file member.expr.035
+var v = class {
+  a<T>(b: T): T { return b }
+};
+=== file member.expr.036
+var v = class {
+  a?() {}
+};
+=== file member.expr.037
+var v = class {
+  a?(): void {}
+};
+=== file member.expr.038
+var v = class {
+  a?(): void
+};
+=== file member.expr.039
+var v = class {
+  a?<T>(): void {}
+};
+=== file member.expr.040
+var v = class {
+  a!() {}
+};
+=== file member.expr.041
+var v = class {
+  a(): void
+};
+=== file member.expr.042
+var v = class {
+  a(): void;
+};
+=== file member.expr.043
+var v = class {
+  a();
+};
+=== file member.expr.044
+var v = class {
+  a()
+};
+=== file member.expr.045
+var v = class {
+  a(): void; a(b?: any) {}
+};
+=== file member.expr.046
+var v = class {
+  a(): void
+a(b?: any) {}
+};
+=== file member.expr.047
+var v = class {
+  a(): void a() {}
+};
+=== file member.expr.048
+var v = class {
+  a(); a() {}
+};
+=== file member.expr.049
+var v = class {
+  a();
+a();
+a() {}
+};
+=== file member.expr.050
+var v = class {
+  a(): void; b() {}
+};
+=== file member.expr.051
+var v = class {
+  a(): void; a(): void;
+};
+=== file member.expr.052
+var v = class {
+  a(b: B): void; a(b: B, c: C): void; a(b: any, c?: any) {}
+};
+=== file member.expr.053
+var v = class {
+  a?(): void; a?() {}
+};
+=== file member.expr.054
+var v = class {
+  async a(): Promise<void> {}
+};
+=== file member.expr.055
+var v = class {
+  async a(): Promise<void>; async a(b?: any) {}
+};
+=== file member.expr.056
+var v = class {
+  *a(): Generator {}
+};
+=== file member.expr.057
+var v = class {
+  *a(): any; *a() {}
+};
+=== file member.expr.058
+var v = class {
+  async *a(): AsyncGenerator {}
+};
+=== file member.expr.059
+var v = class {
+  async *a(): any; async *a() {}
+};
+=== file member.expr.060
+var v = class {
+  static a(): void; static a(b?: any) {}
+};
+=== file member.expr.061
+var v = class {
+  #a(): void; #a(b?: any) {}
+};
+=== file member.expr.062
+var v = class {
+  "a"(): void; "a"(b?: any) {}
+};
+=== file member.expr.063
+var v = class {
+  [a](): void; [a](b?: any) {}
+};
+=== file member.expr.064
+var v = class {
+  1(): void; 1(b?: any) {}
+};
+=== file member.expr.065
+var v = class {
+  constructor() {}
+};
+=== file member.expr.066
+var v = class {
+  constructor();
+};
+=== file member.expr.067
+var v = class {
+  constructor(); constructor(a?: any) {}
+};
+=== file member.expr.068
+var v = class {
+  constructor(a: A); constructor(a: A, b: B); constructor(a: any, b?: any) {}
+};
+=== file member.expr.069
+var v = class {
+  constructor()
+constructor(a?: any) {}
+};
+=== file member.expr.070
+var v = class {
+  constructor(): void {}
+};
+=== file member.expr.071
+var v = class {
+  constructor<T>() {}
+};
+=== file member.expr.072
+var v = class {
+  constructor(this: A) {}
+};
+=== file member.expr.073
+var v = class {
+  constructor?() {}
+};
+=== file member.expr.074
+var v = class {
+  constructor!() {}
+};
+=== file member.expr.075
+var v = class {
+  constructor: A
+};
+=== file member.expr.076
+var v = class {
+  constructor = 1
+};
+=== file member.expr.077
+var v = class {
+  constructor
+};
+=== file member.expr.078
+var v = class {
+  constructor;
+};
+=== file member.expr.079
+var v = class {
+  constructor?: A
+};
+=== file member.expr.080
+var v = class {
+  "constructor"() {}
+};
+=== file member.expr.081
+var v = class {
+  'constructor'(); 'constructor'(a?: any) {}
+};
+=== file member.expr.082
+var v = class {
+  "constructor"<T>() {}
+};
+=== file member.expr.083
+var v = class {
+  ["constructor"]() {}
+};
+=== file member.expr.084
+var v = class {
+  "constructor": A
+};
+=== file member.expr.085
+var v = class {
+  #constructor
+};
+=== file member.expr.086
+var v = class {
+  #constructor() {}
+};
+=== file member.expr.087
+var v = class {
+  *constructor() {}
+};
+=== file member.expr.088
+var v = class {
+  async constructor() {}
+};
+=== file member.expr.089
+var v = class {
+  get constructor() { return 1 }
+};
+=== file member.expr.090
+var v = class {
+  set constructor(v) {}
+};
+=== file member.expr.091
+var v = class {
+  static constructor() {}
+};
+=== file member.expr.092
+var v = class {
+  static constructor
+};
+=== file member.expr.093
+var v = class {
+  static constructor: A
+};
+=== file member.expr.094
+var v = class {
+  constructor() {} constructor() {}
+};
+=== file member.expr.095
+var v = class {
+  get a(): A { return 1 }
+};
+=== file member.expr.096
+var v = class {
+  set a(v: A) {}
+};
+=== file member.expr.097
+var v = class {
+  get a() { return 1 } set a(v) {}
+};
+=== file member.expr.098
+var v = class {
+  get a(): A; 
+};
+=== file member.expr.099
+var v = class {
+  set a(v: A);
+};
+=== file member.expr.100
+var v = class {
+  get a();
+};
+=== file member.expr.101
+var v = class {
+  get a<T>() { return 1 }
+};
+=== file member.expr.102
+var v = class {
+  set a<T>(v) {}
+};
+=== file member.expr.103
+var v = class {
+  set a(v: A): void {}
+};
+=== file member.expr.104
+var v = class {
+  set a(v?: A) {}
+};
+=== file member.expr.105
+var v = class {
+  set a(...v: A[]) {}
+};
+=== file member.expr.106
+var v = class {
+  set a(v: A = 1) {}
+};
+=== file member.expr.107
+var v = class {
+  set a(v = 1) {}
+};
+=== file member.expr.108
+var v = class {
+  get a(v) { return 1 }
+};
+=== file member.expr.109
+var v = class {
+  set a() {}
+};
+=== file member.expr.110
+var v = class {
+  set a(v, w) {}
+};
+=== file member.declare.001
+declare abstract class C extends B {
+  a
+}
+=== file member.declare.002
+declare abstract class C extends B {
+  a;
+}
+=== file member.declare.003
+declare abstract class C extends B {
+  a: A
+}
+=== file member.declare.004
+declare abstract class C extends B {
+  a: A;
+}
+=== file member.declare.005
+declare abstract class C extends B {
+  a = 1
+}
+=== file member.declare.006
+declare abstract class C extends B {
+  a: A = 1
+}
+=== file member.declare.007
+declare abstract class C extends B {
+  a?: A
+}
+=== file member.declare.008
+declare abstract class C extends B {
+  a?
+}
+=== file member.declare.009
+declare abstract class C extends B {
+  a? = 1
+}
+=== file member.declare.010
+declare abstract class C extends B {
+  a?: A = 1
+}
+=== file member.declare.011
+declare abstract class C extends B {
+  a!: A
+}
+=== file member.declare.012
+declare abstract class C extends B {
+  a!
+}
+=== file member.declare.013
+declare abstract class C extends B {
+  a! = 1
+}
+=== file member.declare.014
+declare abstract class C extends B {
+  a!: A = 1
+}
+=== file member.declare.015
+declare abstract class C extends B {
+  a?!: A
+}
+=== file member.declare.016
+declare abstract class C extends B {
+  a!?: A
+}
+=== file member.declare.017
+declare abstract class C extends B {
+  a
+!: A
+}
+=== file member.declare.018
+declare abstract class C extends B {
+  a
+?: A
+}
+=== file member.declare.019
+declare abstract class C extends B {
+  a: A
+b: B
+}
+=== file member.declare.020
+declare abstract class C extends B {
+  a: A b: B
+}
+=== file member.declare.021
+declare abstract class C extends B {
+  a: A, b: B
+}
+=== file member.declare.022
+declare abstract class C extends B {
+  a, b
+}
+=== file member.declare.023
+declare abstract class C extends B {
+  a = 1, b = 2
+}
+=== file member.declare.024
+declare abstract class C extends B {
+  a = 1; b = 2
+}
+=== file member.declare.025
+declare abstract class C extends B {
+  a = 1
+b = 2
+}
+=== file member.declare.026
+declare abstract class C extends B {
+  a
+b
+}
+=== file member.declare.027
+declare abstract class C extends B {
+  a b
+}
+=== file member.declare.028
+declare abstract class C extends B {
+  a: A;;
+}
+=== file member.declare.029
+declare abstract class C extends B {
+  ;
+}
+=== file member.declare.030
+declare abstract class C extends B {
+  ;;
+}
+=== file member.declare.031
+declare abstract class C extends B {
+  a():
+}
+=== file member.declare.032
+declare abstract class C extends B {
+  a(): void {}
+}
+=== file member.declare.033
+declare abstract class C extends B {
+  a() {}
+}
+=== file member.declare.034
+declare abstract class C extends B {
+  a(b: B): C { return b }
+}
+=== file member.declare.035
+declare abstract class C extends B {
+  a<T>(b: T): T { return b }
+}
+=== file member.declare.036
+declare abstract class C extends B {
+  a?() {}
+}
+=== file member.declare.037
+declare abstract class C extends B {
+  a?(): void {}
+}
+=== file member.declare.038
+declare abstract class C extends B {
+  a?(): void
+}
+=== file member.declare.039
+declare abstract class C extends B {
+  a?<T>(): void {}
+}
+=== file member.declare.040
+declare abstract class C extends B {
+  a!() {}
+}
+=== file member.declare.041
+declare abstract class C extends B {
+  a(): void
+}
+=== file member.declare.042
+declare abstract class C extends B {
+  a(): void;
+}
+=== file member.declare.043
+declare abstract class C extends B {
+  a();
+}
+=== file member.declare.044
+declare abstract class C extends B {
+  a()
+}
+=== file member.declare.045
+declare abstract class C extends B {
+  a(): void; a(b?: any) {}
+}
+=== file member.declare.046
+declare abstract class C extends B {
+  a(): void
+a(b?: any) {}
+}
+=== file member.declare.047
+declare abstract class C extends B {
+  a(): void a() {}
+}
+=== file member.declare.048
+declare abstract class C extends B {
+  a(); a() {}
+}
+=== file member.declare.049
+declare abstract class C extends B {
+  a();
+a();
+a() {}
+}
+=== file member.declare.050
+declare abstract class C extends B {
+  a(): void; b() {}
+}
+=== file member.declare.051
+declare abstract class C extends B {
+  a(): void; a(): void;
+}
+=== file member.declare.052
+declare abstract class C extends B {
+  a(b: B): void; a(b: B, c: C): void; a(b: any, c?: any) {}
+}
+=== file member.declare.053
+declare abstract class C extends B {
+  a?(): void; a?() {}
+}
+=== file member.declare.054
+declare abstract class C extends B {
+  async a(): Promise<void> {}
+}
+=== file member.declare.055
+declare abstract class C extends B {
+  async a(): Promise<void>; async a(b?: any) {}
+}
+=== file member.declare.056
+declare abstract class C extends B {
+  *a(): Generator {}
+}
+=== file member.declare.057
+declare abstract class C extends B {
+  *a(): any; *a() {}
+}
+=== file member.declare.058
+declare abstract class C extends B {
+  async *a(): AsyncGenerator {}
+}
+=== file member.declare.059
+declare abstract class C extends B {
+  async *a(): any; async *a() {}
+}
+=== file member.declare.060
+declare abstract class C extends B {
+  static a(): void; static a(b?: any) {}
+}
+=== file member.declare.061
+declare abstract class C extends B {
+  #a(): void; #a(b?: any) {}
+}
+=== file member.declare.062
+declare abstract class C extends B {
+  "a"(): void; "a"(b?: any) {}
+}
+=== file member.declare.063
+declare abstract class C extends B {
+  [a](): void; [a](b?: any) {}
+}
+=== file member.declare.064
+declare abstract class C extends B {
+  1(): void; 1(b?: any) {}
+}
+=== file member.declare.065
+declare abstract class C extends B {
+  constructor() {}
+}
+=== file member.declare.066
+declare abstract class C extends B {
+  constructor();
+}
+=== file member.declare.067
+declare abstract class C extends B {
+  constructor(); constructor(a?: any) {}
+}
+=== file member.declare.068
+declare abstract class C extends B {
+  constructor(a: A); constructor(a: A, b: B); constructor(a: any, b?: any) {}
+}
+=== file member.declare.069
+declare abstract class C extends B {
+  constructor()
+constructor(a?: any) {}
+}
+=== file member.declare.070
+declare abstract class C extends B {
+  constructor(): void {}
+}
+=== file member.declare.071
+declare abstract class C extends B {
+  constructor<T>() {}
+}
+=== file member.declare.072
+declare abstract class C extends B {
+  constructor(this: A) {}
+}
+=== file member.declare.073
+declare abstract class C extends B {
+  constructor?() {}
+}
+=== file member.declare.074
+declare abstract class C extends B {
+  constructor!() {}
+}
+=== file member.declare.075
+declare abstract class C extends B {
+  constructor: A
+}
+=== file member.declare.076
+declare abstract class C extends B {
+  constructor = 1
+}
+=== file member.declare.077
+declare abstract class C extends B {
+  constructor
+}
+=== file member.declare.078
+declare abstract class C extends B {
+  constructor;
+}
+=== file member.declare.079
+declare abstract class C extends B {
+  constructor?: A
+}
+=== file member.declare.080
+declare abstract class C extends B {
+  "constructor"() {}
+}
+=== file member.declare.081
+declare abstract class C extends B {
+  'constructor'(); 'constructor'(a?: any) {}
+}
+=== file member.declare.082
+declare abstract class C extends B {
+  "constructor"<T>() {}
+}
+=== file member.declare.083
+declare abstract class C extends B {
+  ["constructor"]() {}
+}
+=== file member.declare.084
+declare abstract class C extends B {
+  "constructor": A
+}
+=== file member.declare.085
+declare abstract class C extends B {
+  #constructor
+}
+=== file member.declare.086
+declare abstract class C extends B {
+  #constructor() {}
+}
+=== file member.declare.087
+declare abstract class C extends B {
+  *constructor() {}
+}
+=== file member.declare.088
+declare abstract class C extends B {
+  async constructor() {}
+}
+=== file member.declare.089
+declare abstract class C extends B {
+  get constructor() { return 1 }
+}
+=== file member.declare.090
+declare abstract class C extends B {
+  set constructor(v) {}
+}
+=== file member.declare.091
+declare abstract class C extends B {
+  static constructor() {}
+}
+=== file member.declare.092
+declare abstract class C extends B {
+  static constructor
+}
+=== file member.declare.093
+declare abstract class C extends B {
+  static constructor: A
+}
+=== file member.declare.094
+declare abstract class C extends B {
+  constructor() {} constructor() {}
+}
+=== file member.declare.095
+declare abstract class C extends B {
+  get a(): A { return 1 }
+}
+=== file member.declare.096
+declare abstract class C extends B {
+  set a(v: A) {}
+}
+=== file member.declare.097
+declare abstract class C extends B {
+  get a() { return 1 } set a(v) {}
+}
+=== file member.declare.098
+declare abstract class C extends B {
+  get a(): A; 
+}
+=== file member.declare.099
+declare abstract class C extends B {
+  set a(v: A);
+}
+=== file member.declare.100
+declare abstract class C extends B {
+  get a();
+}
+=== file member.declare.101
+declare abstract class C extends B {
+  get a<T>() { return 1 }
+}
+=== file member.declare.102
+declare abstract class C extends B {
+  set a<T>(v) {}
+}
+=== file member.declare.103
+declare abstract class C extends B {
+  set a(v: A): void {}
+}
+=== file member.declare.104
+declare abstract class C extends B {
+  set a(v?: A) {}
+}
+=== file member.declare.105
+declare abstract class C extends B {
+  set a(...v: A[]) {}
+}
+=== file member.declare.106
+declare abstract class C extends B {
+  set a(v: A = 1) {}
+}
+=== file member.declare.107
+declare abstract class C extends B {
+  set a(v = 1) {}
+}
+=== file member.declare.108
+declare abstract class C extends B {
+  get a(v) { return 1 }
+}
+=== file member.declare.109
+declare abstract class C extends B {
+  set a() {}
+}
+=== file member.declare.110
+declare abstract class C extends B {
+  set a(v, w) {}
+}
+=== file member.declare.111
+declare abstract class C extends B {
+  set a({ b }: A) {}
+}
+=== file member.declare.112
+declare abstract class C extends B {
+  set a([b]: A) {}
+}
+=== file member.declare.113
+declare abstract class C extends B {
+  set a(this: A, v) {}
+}
+=== file member.declare.114
+declare abstract class C extends B {
+  get a(this: A) { return 1 }
+}
+=== file member.declare.115
+declare abstract class C extends B {
+  get a?() { return 1 }
+}
+=== file member.declare.116
+declare abstract class C extends B {
+  get a!() { return 1 }
+}
+=== file member.declare.117
+declare abstract class C extends B {
+  get: A
+}
+=== file member.declare.118
+declare abstract class C extends B {
+  get = 1
+}
+=== file member.declare.119
+declare abstract class C extends B {
+  get() {}
+}
+=== file member.declare.120
+declare abstract class C extends B {
+  get<T>() {}
+}
+=== file member.declare.121
+declare abstract class C extends B {
+  get?: A
+}
+=== file member.declare.122
+declare abstract class C extends B {
+  get!: A
+}
+=== file member.declare.123
+declare abstract class C extends B {
+  get;
+}
+=== file member.declare.124
+declare abstract class C extends B {
+  get
+}
+=== file member.declare.125
+declare abstract class C extends B {
+  get
+a() {}
+}
+=== file member.declare.126
+declare abstract class C extends B {
+  set
+a(v) {}
+}
+=== file member.declare.127
+declare abstract class C extends B {
+  get
+*a() {}
+}
+=== file member.declare.128
+declare abstract class C extends B {
+  get *a() {}
+}
+=== file member.declare.129
+declare abstract class C extends B {
+  get async a() {}
+}
+=== file member.declare.130
+declare abstract class C extends B {
+  async get a() {}
+}
+=== file member.declare.131
+declare abstract class C extends B {
+  get async() { return 1 }
+}
+=== file member.declare.132
+declare abstract class C extends B {
+  get static() { return 1 }
+}
+=== file member.declare.133
+declare abstract class C extends B {
+  get get() { return 1 }
+}
+=== file member.declare.134
+declare abstract class C extends B {
+  get set() { return 1 }
+}
+=== file member.declare.135
+declare abstract class C extends B {
+  set get(v) {}
+}
+=== file member.declare.136
+declare abstract class C extends B {
+  get "a"(): A { return 1 }
+}
+=== file member.declare.137
+declare abstract class C extends B {
+  get 1(): A { return 1 }
+}
+=== file member.declare.138
+declare abstract class C extends B {
+  get [a](): A { return 1 }
+}
+=== file member.declare.139
+declare abstract class C extends B {
+  get #a(): A { return 1 }
+}
+=== file member.declare.140
+declare abstract class C extends B {
+  get a: A
+}
+=== file member.declare.141
+declare abstract class C extends B {
+  [k: string]: A
+}
+=== file member.declare.142
+declare abstract class C extends B {
+  [k: string]: A;
+}
+=== file member.declare.143
+declare abstract class C extends B {
+  [k: number]: A
+}
+=== file member.declare.144
+declare abstract class C extends B {
+  [k: string]
+}
+=== file member.declare.145
+declare abstract class C extends B {
+  [k: string]: A = 1
+}
+=== file member.declare.146
+declare abstract class C extends B {
+  [k: string]?: A
+}
+=== file member.declare.147
+declare abstract class C extends B {
+  [k?: string]: A
+}
+=== file member.declare.148
+declare abstract class C extends B {
+  [...k: string[]]: A
+}
+=== file member.declare.149
+declare abstract class C extends B {
+  [k: string, l: number]: A
+}
+=== file member.declare.150
+declare abstract class C extends B {
+  [k: string,]: A
+}
+=== file member.declare.151
+declare abstract class C extends B {
+  [k, l]: A
+}
+=== file member.declare.152
+declare abstract class C extends B {
+  [k]: A
+}
+=== file member.declare.153
+declare abstract class C extends B {
+  [k] = 1
+}
+=== file member.declare.154
+declare abstract class C extends B {
+  [k]
+}
+=== file member.declare.155
+declare abstract class C extends B {
+  [k]?: A
+}
+=== file member.declare.156
+declare abstract class C extends B {
+  [k]!: A
+}
+=== file member.declare.157
+declare abstract class C extends B {
+  [k: string]() {}
+}
+=== file member.declare.158
+declare abstract class C extends B {
+  [k](): A {}
+}
+=== file member.declare.159
+declare abstract class C extends B {
+  [a.b]: A
+}
+=== file member.declare.160
+declare abstract class C extends B {
+  [Symbol.iterator](): A {}
+}
+=== file member.declare.161
+declare abstract class C extends B {
+  ["a" + "b"]: A
+}
+=== file member.declare.162
+declare abstract class C extends B {
+  [a as B]: A
+}
+=== file member.declare.163
+declare abstract class C extends B {
+  [a!]: A
+}
+=== file member.declare.164
+declare abstract class C extends B {
+  [k: string]: A; [l: number]: B
+}
+=== file member.declare.165
+declare abstract class C extends B {
+  [public k: string]: A
+}
+=== file member.declare.166
+declare abstract class C extends B {
+  [k = 1]: A
+}
+=== file member.declare.167
+declare abstract class C extends B {
+  [this: string]: A
+}
+=== file member.declare.168
+declare abstract class C extends B {
+  []: A
+}
+=== file member.declare.169
+declare abstract class C extends B {
+  [a, b]: A
+}
+=== file member.declare.170
+declare abstract class C extends B {
+  [a in b]: A
+}
+=== file member.declare.171
+declare abstract class C extends B {
+  [k: A<B>]: C
+}
+=== file member.declare.172
+declare abstract class C extends B {
+  [k: string]: A<B>
+}
+=== file member.declare.173
+declare abstract class C extends B {
+  [k: string]: () => void
+}
+=== file member.declare.174
+declare abstract class C extends B {
+  [k: string]: A | B
+a: C
+}
+=== file member.declare.175
+declare abstract class C extends B {
+  static {}
+}
+=== file member.declare.176
+declare abstract class C extends B {
+  static { let a: A = 1; }
+}
+=== file member.declare.177
+declare abstract class C extends B {
+  static {} static {}
+}
+=== file member.declare.178
+declare abstract class C extends B {
+  static
+{}
+}
+=== file member.declare.179
+declare abstract class C extends B {
+  static { await a }
+}
+=== file member.declare.180
+declare abstract class C extends B {
+  static { return }
+}
+=== file member.declare.181
+declare abstract class C extends B {
+  static { this.a as A }
+}
+=== file member.declare.182
+declare abstract class C extends B {
+  static { var v = <T>(a: T) => a }
+}
+=== file member.declare.183
+declare abstract class C extends B {
+  static
+}
+=== file member.declare.184
+declare abstract class C extends B {
+  static;
+}
+=== file member.declare.185
+declare abstract class C extends B {
+  static = 1
+}
+=== file member.declare.186
+declare abstract class C extends B {
+  static: A
+}
+=== file member.declare.187
+declare abstract class C extends B {
+  static?: A
+}
+=== file member.declare.188
+declare abstract class C extends B {
+  static!: A
+}
+=== file member.declare.189
+declare abstract class C extends B {
+  static() {}
+}
+=== file member.declare.190
+declare abstract class C extends B {
+  static<T>() {}
+}
+=== file member.declare.191
+declare abstract class C extends B {
+  static?() {}
+}
+=== file member.declare.192
+declare abstract class C extends B {
+  static a
+}
+=== file member.declare.193
+declare abstract class C extends B {
+  static a: A = 1
+}
+=== file member.declare.194
+declare abstract class C extends B {
+  static
+a
+}
+=== file member.declare.195
+declare abstract class C extends B {
+  static static
+}
+=== file member.declare.196
+declare abstract class C extends B {
+  static static a
+}
+=== file member.declare.197
+declare abstract class C extends B {
+  static static: A
+}
+=== file member.declare.198
+declare abstract class C extends B {
+  static static() {}
+}
+=== file member.declare.199
+declare abstract class C extends B {
+  static static static
+}
+=== file member.declare.200
+declare abstract class C extends B {
+  static async
+}
+=== file member.declare.201
+declare abstract class C extends B {
+  static async a() {}
+}
+=== file member.declare.202
+declare abstract class C extends B {
+  static async *a() {}
+}
+=== file member.declare.203
+declare abstract class C extends B {
+  static get
+}
+=== file member.declare.204
+declare abstract class C extends B {
+  static get a() { return 1 }
+}
+=== file member.declare.205
+declare abstract class C extends B {
+  static set a(v) {}
+}
+=== file member.declare.206
+declare abstract class C extends B {
+  static readonly
+}
+=== file member.declare.207
+declare abstract class C extends B {
+  static readonly a
+}
+=== file member.declare.208
+declare abstract class C extends B {
+  static *a() {}
+}
+=== file member.declare.209
+declare abstract class C extends B {
+  static #a
+}
+=== file member.declare.210
+declare abstract class C extends B {
+  static #a() {}
+}
+=== file member.declare.211
+declare abstract class C extends B {
+  static [a]
+}
+=== file member.declare.212
+declare abstract class C extends B {
+  static "a"
+}
+=== file member.declare.213
+declare abstract class C extends B {
+  static 1
+}
+=== file member.declare.214
+declare abstract class C extends B {
+  static in
+}
+=== file member.declare.215
+declare abstract class C extends B {
+  static a = b in c
+}
+=== file member.declare.216
+declare abstract class C extends B {
+  async
+}
+=== file member.declare.217
+declare abstract class C extends B {
+  async;
+}
+=== file member.declare.218
+declare abstract class C extends B {
+  async = 1
+}
+=== file member.declare.219
+declare abstract class C extends B {
+  async: A
+}
+=== file member.declare.220
+declare abstract class C extends B {
+  async?: A
+}
+=== file member.declare.221
+declare abstract class C extends B {
+  async() {}
+}
+=== file member.declare.222
+declare abstract class C extends B {
+  async<T>() {}
+}
+=== file member.declare.223
+declare abstract class C extends B {
+  async a() {}
+}
+=== file member.declare.224
+declare abstract class C extends B {
+  async
+a() {}
+}
+=== file member.declare.225
+declare abstract class C extends B {
+  async *a() {}
+}
+=== file member.declare.226
+declare abstract class C extends B {
+  async a
+}
+=== file member.declare.227
+declare abstract class C extends B {
+  async a: A
+}
+=== file member.declare.228
+declare abstract class C extends B {
+  async a = 1
+}
+=== file member.declare.229
+declare abstract class C extends B {
+  async async() {}
+}
+=== file member.declare.230
+declare abstract class C extends B {
+  async get() {}
+}
+=== file member.declare.231
+declare abstract class C extends B {
+  async static() {}
+}
+=== file member.declare.232
+declare abstract class C extends B {
+  async #a() {}
+}
+=== file member.declare.233
+declare abstract class C extends B {
+  async [a]() {}
+}
+=== file member.declare.234
+declare abstract class C extends B {
+  async "a"() {}
+}
+=== file member.declare.235
+declare abstract class C extends B {
+  async 1() {}
+}
+=== file member.declare.236
+declare abstract class C extends B {
+  async a<T>(b: T): Promise<T> { return b }
+}
+=== file member.declare.237
+declare abstract class C extends B {
+  async *a<T>(): AsyncGenerator<T> {}
+}
+=== file member.declare.238
+declare abstract class C extends B {
+  accessor
+}
+=== file member.declare.239
+declare abstract class C extends B {
+  accessor;
+}
+=== file member.declare.240
+declare abstract class C extends B {
+  accessor = 1
+}
+=== file member.declare.241
+declare abstract class C extends B {
+  accessor: A
+}
+=== file member.declare.242
+declare abstract class C extends B {
+  accessor?: A
+}
+=== file member.declare.243
+declare abstract class C extends B {
+  accessor() {}
+}
+=== file member.declare.244
+declare abstract class C extends B {
+  accessor<T>() {}
+}
+=== file member.declare.245
+declare abstract class C extends B {
+  accessor a
+}
+=== file member.declare.246
+declare abstract class C extends B {
+  accessor a = 1
+}
+=== file member.declare.247
+declare abstract class C extends B {
+  accessor a: A
+}
+=== file member.declare.248
+declare abstract class C extends B {
+  accessor a: A = 1
+}
+=== file member.declare.249
+declare abstract class C extends B {
+  accessor a?: A
+}
+=== file member.declare.250
+declare abstract class C extends B {
+  accessor a!: A
+}
+=== file member.declare.251
+declare abstract class C extends B {
+  accessor
+a
+}
+=== file member.declare.252
+declare abstract class C extends B {
+  accessor a() {}
+}
+=== file member.declare.253
+declare abstract class C extends B {
+  accessor "a"
+}
+=== file member.declare.254
+declare abstract class C extends B {
+  accessor 1
+}
+=== file member.declare.255
+declare abstract class C extends B {
+  accessor [a]
+}
+=== file member.declare.256
+declare abstract class C extends B {
+  accessor #a
+}
+=== file member.declare.257
+declare abstract class C extends B {
+  accessor #a: A = 1
+}
+=== file member.declare.258
+declare abstract class C extends B {
+  accessor accessor
+}
+=== file member.declare.259
+declare abstract class C extends B {
+  accessor static a
+}
+=== file member.declare.260
+declare abstract class C extends B {
+  accessor readonly a
+}
+=== file member.declare.261
+declare abstract class C extends B {
+  accessor get a() { return 1 }
+}
+=== file member.declare.262
+declare abstract class C extends B {
+  accessor async a() {}
+}
+=== file member.declare.263
+declare abstract class C extends B {
+  accessor *a() {}
+}
+=== file member.declare.264
+declare abstract class C extends B {
+  accessor constructor
+}
+=== file member.declare.265
+declare abstract class C extends B {
+  declare
+}
+=== file member.declare.266
+declare abstract class C extends B {
+  declare;
+}
+=== file member.declare.267
+declare abstract class C extends B {
+  declare = 1
+}
+=== file member.declare.268
+declare abstract class C extends B {
+  declare: A
+}
+=== file member.declare.269
+declare abstract class C extends B {
+  declare?: A
+}
+=== file member.declare.270
+declare abstract class C extends B {
+  declare() {}
+}
+=== file member.declare.271
+declare abstract class C extends B {
+  declare<T>() {}
+}
+=== file member.declare.272
+declare abstract class C extends B {
+  declare a
+}
+=== file member.declare.273
+declare abstract class C extends B {
+  declare a: A
+}
+=== file member.declare.274
+declare abstract class C extends B {
+  declare a: A;
+}
+=== file member.declare.275
+declare abstract class C extends B {
+  declare a = 1
+}
+=== file member.declare.276
+declare abstract class C extends B {
+  declare a: A = 1
+}
+=== file member.declare.277
+declare abstract class C extends B {
+  declare a?: A
+}
+=== file member.declare.278
+declare abstract class C extends B {
+  declare a!: A
+}
+=== file member.declare.279
+declare abstract class C extends B {
+  declare
+a
+}
+=== file member.declare.280
+declare abstract class C extends B {
+  declare a() {}
+}
+=== file member.declare.281
+declare abstract class C extends B {
+  declare a(): void
+}
+=== file member.declare.282
+declare abstract class C extends B {
+  declare a(): void;
+}
+=== file member.declare.283
+declare abstract class C extends B {
+  declare get a(): A
+}
+=== file member.declare.284
+declare abstract class C extends B {
+  declare get a() { return 1 }
+}
+=== file member.declare.285
+declare abstract class C extends B {
+  declare set a(v)
+}
+=== file member.declare.286
+declare abstract class C extends B {
+  declare #a: A
+}
+=== file member.declare.287
+declare abstract class C extends B {
+  declare #a
+}
+=== file member.declare.288
+declare abstract class C extends B {
+  declare "a": A
+}
+=== file member.declare.289
+declare abstract class C extends B {
+  declare 1: A
+}
+=== file member.declare.290
+declare abstract class C extends B {
+  declare [a]: A
+}
+=== file member.declare.291
+declare abstract class C extends B {
+  declare constructor()
+}
+=== file member.declare.292
+declare abstract class C extends B {
+  declare constructor() {}
+}
+=== file member.declare.293
+declare abstract class C extends B {
+  declare [k: string]: A
+}
+=== file member.declare.294
+declare abstract class C extends B {
+  declare static {}
+}
+=== file member.declare.295
+declare abstract class C extends B {
+  declare declare
+}
+=== file member.declare.296
+declare abstract class C extends B {
+  declare declare a
+}
+=== file member.declare.297
+declare abstract class C extends B {
+  declare async a() {}
+}
+=== file member.declare.298
+declare abstract class C extends B {
+  declare *a() {}
+}
+=== file member.declare.299
+declare abstract class C extends B {
+  declare accessor a
+}
+=== file member.declare.300
+declare abstract class C extends B {
+  abstract
+}
+=== file member.declare.301
+declare abstract class C extends B {
+  abstract;
+}
+=== file member.declare.302
+declare abstract class C extends B {
+  abstract = 1
+}
+=== file member.declare.303
+declare abstract class C extends B {
+  abstract: A
+}
+=== file member.declare.304
+declare abstract class C extends B {
+  abstract?: A
+}
+=== file member.declare.305
+declare abstract class C extends B {
+  abstract() {}
+}
+=== file member.declare.306
+declare abstract class C extends B {
+  abstract<T>() {}
+}
+=== file member.declare.307
+declare abstract class C extends B {
+  abstract a
+}
+=== file member.declare.308
+declare abstract class C extends B {
+  abstract a;
+}
+=== file member.declare.309
+declare abstract class C extends B {
+  abstract a: A
+}
+=== file member.declare.310
+declare abstract class C extends B {
+  abstract a: A;
+}
+=== file member.declare.311
+declare abstract class C extends B {
+  abstract a = 1
+}
+=== file member.declare.312
+declare abstract class C extends B {
+  abstract a: A = 1
+}
+=== file member.declare.313
+declare abstract class C extends B {
+  abstract a?: A
+}
+=== file member.declare.314
+declare abstract class C extends B {
+  abstract a!: A
+}
+=== file member.declare.315
+declare abstract class C extends B {
+  abstract
+a
+}
+=== file member.declare.316
+declare abstract class C extends B {
+  abstract a(): void
+}
+=== file member.declare.317
+declare abstract class C extends B {
+  abstract a(): void;
+}
+=== file member.declare.318
+declare abstract class C extends B {
+  abstract a();
+}
+=== file member.declare.319
+declare abstract class C extends B {
+  abstract a() {}
+}
+=== file member.declare.320
+declare abstract class C extends B {
+  abstract a(): void {}
+}
+=== file member.declare.321
+declare abstract class C extends B {
+  abstract a?(): void
+}
+=== file member.declare.322
+declare abstract class C extends B {
+  abstract a<T>(b: T): T
+}
+=== file member.declare.323
+declare abstract class C extends B {
+  abstract a(): void; abstract a(b: B): void;
+}
+=== file member.declare.324
+declare abstract class C extends B {
+  abstract a(): void
+abstract b(): void
+}
+=== file member.declare.325
+declare abstract class C extends B {
+  abstract a(): void b() {}
+}
+=== file member.declare.326
+declare abstract class C extends B {
+  abstract get a(): A
+}
+=== file member.declare.327
+declare abstract class C extends B {
+  abstract get a(): A;
+}
+=== file member.declare.328
+declare abstract class C extends B {
+  abstract set a(v: A)
+}
+=== file member.declare.329
+declare abstract class C extends B {
+  abstract set a(v: A);
+}
+=== file member.declare.330
+declare abstract class C extends B {
+  abstract get a() { return 1 }
+}
+=== file member.declare.331
+declare abstract class C extends B {
+  abstract get a(): A; abstract set a(v: A);
+}
+=== file member.declare.332
+declare abstract class C extends B {
+  abstract #a
+}
+=== file member.declare.333
+declare abstract class C extends B {
+  abstract #a(): void
+}
+=== file member.declare.334
+declare abstract class C extends B {
+  abstract "a": A
+}
+=== file member.declare.335
+declare abstract class C extends B {
+  abstract 1(): void
+}
+=== file member.declare.336
+declare abstract class C extends B {
+  abstract [a]: A
+}
+=== file member.declare.337
+declare abstract class C extends B {
+  abstract [a](): void
+}
+=== file member.declare.338
+declare abstract class C extends B {
+  abstract constructor()
+}
+=== file member.declare.339
+declare abstract class C extends B {
+  abstract constructor() {}
+}
+=== file member.declare.340
+declare abstract class C extends B {
+  abstract [k: string]: A
+}
+=== file member.declare.341
+declare abstract class C extends B {
+  abstract static {}
+}
+=== file member.declare.342
+declare abstract class C extends B {
+  abstract abstract
+}
+=== file member.declare.343
+declare abstract class C extends B {
+  abstract abstract a
+}
+=== file member.declare.344
+declare abstract class C extends B {
+  abstract async a()
+}
+=== file member.declare.345
+declare abstract class C extends B {
+  abstract async a(): Promise<void>;
+}
+=== file member.declare.346
+declare abstract class C extends B {
+  abstract *a()
+}
+=== file member.declare.347
+declare abstract class C extends B {
+  abstract *a(): any;
+}
+=== file member.declare.348
+declare abstract class C extends B {
+  abstract accessor a: A
+}
+=== file member.declare.349
+declare abstract class C extends B {
+  abstract accessor a
+}
+=== file member.declare.350
+declare abstract class C extends B {
+  override
+}
+=== file member.declare.351
+declare abstract class C extends B {
+  override;
+}
+=== file member.declare.352
+declare abstract class C extends B {
+  override = 1
+}
+=== file member.declare.353
+declare abstract class C extends B {
+  override: A
+}
+=== file member.declare.354
+declare abstract class C extends B {
+  override() {}
+}
+=== file member.declare.355
+declare abstract class C extends B {
+  override a
+}
+=== file member.declare.356
+declare abstract class C extends B {
+  override a: A
+}
+=== file member.declare.357
+declare abstract class C extends B {
+  override a() {}
+}
+=== file member.declare.358
+declare abstract class C extends B {
+  override a(): void; override a(b?: any) {}
+}
+=== file member.declare.359
+declare abstract class C extends B {
+  override
+a
+}
+=== file member.declare.360
+declare abstract class C extends B {
+  override get a() { return 1 }
+}
+=== file member.declare.361
+declare abstract class C extends B {
+  override set a(v) {}
+}
+=== file member.declare.362
+declare abstract class C extends B {
+  override async a() {}
+}
+=== file member.declare.363
+declare abstract class C extends B {
+  override *a() {}
+}
+=== file member.declare.364
+declare abstract class C extends B {
+  override #a
+}
+=== file member.declare.365
+declare abstract class C extends B {
+  override [a]() {}
+}
+=== file member.declare.366
+declare abstract class C extends B {
+  override "a"() {}
+}
+=== file member.declare.367
+declare abstract class C extends B {
+  override constructor() {}
+}
+=== file member.declare.368
+declare abstract class C extends B {
+  override [k: string]: A
+}
+=== file member.declare.369
+declare abstract class C extends B {
+  override static {}
+}
+=== file member.declare.370
+declare abstract class C extends B {
+  override override a
+}
+=== file member.declare.371
+declare abstract class C extends B {
+  override accessor a
+}
+=== file member.declare.372
+declare abstract class C extends B {
+  readonly
+}
+=== file member.declare.373
+declare abstract class C extends B {
+  readonly;
+}
+=== file member.declare.374
+declare abstract class C extends B {
+  readonly = 1
+}
+=== file member.declare.375
+declare abstract class C extends B {
+  readonly: A
+}
+=== file member.declare.376
+declare abstract class C extends B {
+  readonly?: A
+}
+=== file member.declare.377
+declare abstract class C extends B {
+  readonly() {}
+}
+=== file member.declare.378
+declare abstract class C extends B {
+  readonly<T>() {}
+}
+=== file member.declare.379
+declare abstract class C extends B {
+  readonly a
+}
+=== file member.declare.380
+declare abstract class C extends B {
+  readonly a: A
+}
+=== file member.declare.381
+declare abstract class C extends B {
+  readonly a = 1
+}
+=== file member.declare.382
+declare abstract class C extends B {
+  readonly a?: A
+}
+=== file member.declare.383
+declare abstract class C extends B {
+  readonly a!: A
+}
+=== file member.declare.384
+declare abstract class C extends B {
+  readonly
+a
+}
+=== file member.declare.385
+declare abstract class C extends B {
+  readonly a() {}
+}
+=== file member.declare.386
+declare abstract class C extends B {
+  readonly get a() { return 1 }
+}
+=== file member.declare.387
+declare abstract class C extends B {
+  readonly #a
+}
+=== file member.declare.388
+declare abstract class C extends B {
+  readonly [a]
+}
+=== file member.declare.389
+declare abstract class C extends B {
+  readonly "a"
+}
+=== file member.declare.390
+declare abstract class C extends B {
+  readonly 1
+}
+=== file member.declare.391
+declare abstract class C extends B {
+  readonly constructor() {}
+}
+=== file member.declare.392
+declare abstract class C extends B {
+  readonly [k: string]: A
+}
+=== file member.declare.393
+declare abstract class C extends B {
+  readonly static {}
+}
+=== file member.declare.394
+declare abstract class C extends B {
+  readonly readonly
+}
+=== file member.declare.395
+declare abstract class C extends B {
+  readonly readonly a
+}
+=== file member.declare.396
+declare abstract class C extends B {
+  readonly async a() {}
+}
+=== file member.declare.397
+declare abstract class C extends B {
+  readonly *a() {}
+}
+=== file member.declare.398
+declare abstract class C extends B {
+  readonly accessor a
+}
+=== file member.declare.399
+declare abstract class C extends B {
+  in: A
+}
+=== file member.declare.400
+declare abstract class C extends B {
+  instanceof: A
+}
+=== file member.declare.401
+declare abstract class C extends B {
+  if: A
+}
+=== file member.declare.402
+declare abstract class C extends B {
+  class: A
+}
+=== file member.declare.403
+declare abstract class C extends B {
+  new: A
+}
+=== file member.declare.404
+declare abstract class C extends B {
+  new() {}
+}
+=== file member.declare.405
+declare abstract class C extends B {
+  new<T>() {}
+}
+=== file member.declare.406
+declare abstract class C extends B {
+  delete() {}
+}
+=== file member.declare.407
+declare abstract class C extends B {
+  typeof: A
+}
+=== file member.declare.408
+declare abstract class C extends B {
+  void: A
+}
+=== file member.declare.409
+declare abstract class C extends B {
+  function() {}
+}
+=== file member.declare.410
+declare abstract class C extends B {
+  var: A
+}
+=== file member.declare.411
+declare abstract class C extends B {
+  enum: A
+}
+=== file member.declare.412
+declare abstract class C extends B {
+  type: A
+}
+=== file member.declare.413
+declare abstract class C extends B {
+  type = 1
+}
+=== file member.declare.414
+declare abstract class C extends B {
+  type a
+}
+=== file member.declare.415
+declare abstract class C extends B {
+  of: A
+}
+=== file member.declare.416
+declare abstract class C extends B {
+  as: A
+}
+=== file member.declare.417
+declare abstract class C extends B {
+  is: A
+}
+=== file member.declare.418
+declare abstract class C extends B {
+  infer: A
+}
+=== file member.declare.419
+declare abstract class C extends B {
+  keyof: A
+}
+=== file member.declare.420
+declare abstract class C extends B {
+  any: A
+}
+=== file member.declare.421
+declare abstract class C extends B {
+  string: A
+}
+=== file member.declare.422
+declare abstract class C extends B {
+  namespace: A
+}
+=== file member.declare.423
+declare abstract class C extends B {
+  module: A
+}
+=== file member.declare.424
+declare abstract class C extends B {
+  interface: A
+}
+=== file member.declare.425
+declare abstract class C extends B {
+  implements: A
+}
+=== file member.declare.426
+declare abstract class C extends B {
+  package: A
+}
+=== file member.declare.427
+declare abstract class C extends B {
+  let: A
+}
+=== file member.declare.428
+declare abstract class C extends B {
+  yield: A
+}
+=== file member.declare.429
+declare abstract class C extends B {
+  await: A
+}
+=== file member.declare.430
+declare abstract class C extends B {
+  this: A
+}
+=== file member.declare.431
+declare abstract class C extends B {
+  null: A
+}
+=== file member.declare.432
+declare abstract class C extends B {
+  true: A
+}
+=== file member.declare.433
+declare abstract class C extends B {
+  import: A
+}
+=== file member.declare.434
+declare abstract class C extends B {
+  export: A
+}
+=== file member.declare.435
+declare abstract class C extends B {
+  default: A
+}
+=== file member.declare.436
+declare abstract class C extends B {
+  extends: A
+}
+=== file member.declare.437
+declare abstract class C extends B {
+  super: A
+}
+=== file member.declare.438
+declare abstract class C extends B {
+  const: A
+}
+=== file member.declare.439
+declare abstract class C extends B {
+  const a
+}
+=== file member.declare.440
+declare abstract class C extends B {
+  const a = 1
+}
+=== file member.declare.441
+declare abstract class C extends B {
+  var a
+}
+=== file member.declare.442
+declare abstract class C extends B {
+  let a
+}
+=== file member.declare.443
+declare abstract class C extends B {
+  function a() {}
+}
+=== file member.declare.444
+declare abstract class C extends B {
+  export a
+}
+=== file member.declare.445
+declare abstract class C extends B {
+  default a
+}
+=== file member.declare.446
+declare abstract class C extends B {
+  in a
+}
+=== file member.declare.447
+declare abstract class C extends B {
+  out a
+}
+=== file member.declare.448
+declare abstract class C extends B {
+  const
+}
+=== file member.declare.449
+declare abstract class C extends B {
+  interface I {}
+}
+=== file member.declare.450
+declare abstract class C extends B {
+  type X = A
+}
+=== file member.declare.451
+declare abstract class C extends B {
+  enum E {}
+}
+=== file member.declare.452
+declare abstract class C extends B {
+  namespace N {}
+}
+=== file member.declare.453
+declare abstract class C extends B {
+  a: A = <A>b
+}
+=== file member.declare.454
+declare abstract class C extends B {
+  a = <T>(b: T) => b
+}
+=== file member.declare.455
+declare abstract class C extends B {
+  a = <T,>(b: T) => b
+}
+=== file member.declare.456
+declare abstract class C extends B {
+  a = (b: B): C => b
+}
+=== file member.declare.457
+declare abstract class C extends B {
+  a: () => void
+}
+=== file member.declare.458
+declare abstract class C extends B {
+  a: () => void = () => {}
+}
+=== file member.declare.459
+declare abstract class C extends B {
+  a: (b: B) => C = d
+}
+=== file member.declare.460
+declare abstract class C extends B {
+  a: A<B>=c
+}
+=== file member.declare.461
+declare abstract class C extends B {
+  a: A<B<C>>=d
+}
+=== file member.declare.462
+declare abstract class C extends B {
+  a?: A<B>
+}
+=== file member.declare.463
+declare abstract class C extends B {
+  a!: A<B>
+}
+=== file member.declare.464
+declare abstract class C extends B {
+  a: A<B>
+b: C
+}
+=== file member.declare.465
+declare abstract class C extends B {
+  a: typeof b
+}
+=== file member.declare.466
+declare abstract class C extends B {
+  a: typeof b
+c: C
+}
+=== file member.declare.467
+declare abstract class C extends B {
+  a: A | B = c
+}
+=== file member.declare.468
+declare abstract class C extends B {
+  a: A extends B ? C : D = e
+}
+=== file member.declare.469
+declare abstract class C extends B {
+  a: new () => A = b
+}
+=== file member.declare.470
+declare abstract class C extends B {
+  a: { b: B }
+}
+=== file member.declare.471
+declare abstract class C extends B {
+  a: { b: B } = { b: 1 }
+}
+=== file member.declare.472
+declare abstract class C extends B {
+  a: [A] = [1]
+}
+=== file member.declare.473
+declare abstract class C extends B {
+  a: A[] = []
+}
+=== file member.declare.474
+declare abstract class C extends B {
+  a: asserts b
+}
+=== file member.declare.475
+declare abstract class C extends B {
+  a: b is C
+}
+=== file member.declare.476
+declare abstract class C extends B {
+  a: this
+}
+=== file member.declare.477
+declare abstract class C extends B {
+  a: void
+}
+=== file member.declare.478
+declare abstract class C extends B {
+  a: unique symbol
+}
+=== file member.declare.479
+declare abstract class C extends B {
+  static readonly a: unique symbol
+}
+=== file member.declare.480
+declare abstract class C extends B {
+  a: A
+[b]: B
+}
+=== file member.declare.481
+declare abstract class C extends B {
+  a: A
+(b): B
+}
+=== file member.declare.482
+declare abstract class C extends B {
+  a: A
+<T>(b: T): T {}
+}
+=== file member.declare.483
+declare abstract class C extends B {
+  a: A
+*b() {}
+}
+=== file member.declare.484
+declare abstract class C extends B {
+  a: A
+get b() { return 1 }
+}
+=== file member.declare.485
+declare abstract class C extends B {
+  a: A
+static b
+}
+=== file member.declare.486
+declare abstract class C extends B {
+  a = 1
+[b] = 2
+}
+=== file member.declare.487
+declare abstract class C extends B {
+  a = 1
+*b() {}
+}
+=== file member.declare.488
+declare abstract class C extends B {
+  a = b
+(c)
+}
+=== file member.declare.489
+declare abstract class C extends B {
+  a
+(b) {}
+}
+=== file member.declare.490
+declare abstract class C extends B {
+  a
+<T>() {}
+}
+=== file member.declare.491
+declare abstract class C extends B {
+  a: A.B
+<T>() {}
+}
+=== file member.declare.492
+declare abstract class C extends B {
+  a =
+}
+=== file member.declare.493
+declare abstract class C extends B {
+  a:
+}
+=== file member.declare.494
+declare abstract class C extends B {
+  a: A =
+}
+=== file member.declare.495
+declare abstract class C extends B {
+  a?:
+}
+=== file member.declare.496
+declare abstract class C extends B {
+  a() { }; b() { }
+}
+=== file member.declare.497
+declare abstract class C extends B {
+  a(b: B) { b as C; <C>b; b!; }
+}
+=== file member.declare.498
+declare abstract class C extends B {
+  a = b as C
+}
+=== file member.declare.499
+declare abstract class C extends B {
+  a = b!
+}
+=== file member.declare.500
+declare abstract class C extends B {
+  a = b satisfies C
+}
+=== file member.declare.501
+declare abstract class C extends B {
+  a = b<C>
+}
+=== file member.declare.502
+declare abstract class C extends B {
+  a = b<C>(d)
+}
+=== file member.nonabstract.001
+class C {
+  abstract
+}
+=== file member.nonabstract.002
+class C {
+  abstract;
+}
+=== file member.nonabstract.003
+class C {
+  abstract = 1
+}
+=== file member.nonabstract.004
+class C {
+  abstract: A
+}
+=== file member.nonabstract.005
+class C {
+  abstract?: A
+}
+=== file member.nonabstract.006
+class C {
+  abstract() {}
+}
+=== file member.nonabstract.007
+class C {
+  abstract<T>() {}
+}
+=== file member.nonabstract.008
+class C {
+  abstract a
+}
+=== file member.nonabstract.009
+class C {
+  abstract a;
+}
+=== file member.nonabstract.010
+class C {
+  abstract a: A
+}
+=== file member.nonabstract.011
+class C {
+  abstract a: A;
+}
+=== file member.nonabstract.012
+class C {
+  abstract a = 1
+}
+=== file member.nonabstract.013
+class C {
+  abstract a: A = 1
+}
+=== file member.nonabstract.014
+class C {
+  abstract a?: A
+}
+=== file member.nonabstract.015
+class C {
+  abstract a!: A
+}
+=== file member.nonabstract.016
+class C {
+  abstract
+a
+}
+=== file member.nonabstract.017
+class C {
+  abstract a(): void
+}
+=== file member.nonabstract.018
+class C {
+  abstract a(): void;
+}
+=== file member.nonabstract.019
+class C {
+  abstract a();
+}
+=== file member.nonabstract.020
+class C {
+  abstract a() {}
+}
+=== file member.nonabstract.021
+class C {
+  abstract a(): void {}
+}
+=== file member.nonabstract.022
+class C {
+  abstract a?(): void
+}
+=== file member.nonabstract.023
+class C {
+  abstract a<T>(b: T): T
+}
+=== file member.nonabstract.024
+class C {
+  abstract a(): void; abstract a(b: B): void;
+}
+=== file member.nonabstract.025
+class C {
+  abstract a(): void
+abstract b(): void
+}
+=== file member.nonabstract.026
+class C {
+  abstract a(): void b() {}
+}
+=== file member.nonabstract.027
+class C {
+  abstract get a(): A
+}
+=== file member.nonabstract.028
+class C {
+  abstract get a(): A;
+}
+=== file member.nonabstract.029
+class C {
+  abstract set a(v: A)
+}
+=== file member.nonabstract.030
+class C {
+  abstract set a(v: A);
+}
+=== file member.nonabstract.031
+class C {
+  abstract get a() { return 1 }
+}
+=== file member.nonabstract.032
+class C {
+  abstract get a(): A; abstract set a(v: A);
+}
+=== file member.nonabstract.033
+class C {
+  abstract #a
+}
+=== file member.nonabstract.034
+class C {
+  abstract #a(): void
+}
+=== file member.nonabstract.035
+class C {
+  abstract "a": A
+}
+=== file member.nonabstract.036
+class C {
+  abstract 1(): void
+}
+=== file member.nonabstract.037
+class C {
+  abstract [a]: A
+}
+=== file member.nonabstract.038
+class C {
+  abstract [a](): void
+}
+=== file member.nonabstract.039
+class C {
+  abstract constructor()
+}
+=== file member.nonabstract.040
+class C {
+  abstract constructor() {}
+}
+=== file member.nonabstract.041
+class C {
+  abstract [k: string]: A
+}
+=== file member.nonabstract.042
+class C {
+  abstract static {}
+}
+=== file member.nonabstract.043
+class C {
+  abstract abstract
+}
+=== file member.nonabstract.044
+class C {
+  abstract abstract a
+}
+=== file member.nonabstract.045
+class C {
+  abstract async a()
+}
+=== file member.nonabstract.046
+class C {
+  abstract async a(): Promise<void>;
+}
+=== file member.nonabstract.047
+class C {
+  abstract *a()
+}
+=== file member.nonabstract.048
+class C {
+  abstract *a(): any;
+}
+=== file member.nonabstract.049
+class C {
+  abstract accessor a: A
+}
+=== file member.nonabstract.050
+class C {
+  abstract accessor a
+}
+=== file modifier.001
+abstract class C extends B {
+  public a
+}
+=== file modifier.002
+abstract class C extends B {
+  public "a"
+}
+=== file modifier.003
+abstract class C extends B {
+  public 1
+}
+=== file modifier.004
+abstract class C extends B {
+  public [a]
+}
+=== file modifier.005
+abstract class C extends B {
+  public #a
+}
+=== file modifier.006
+abstract class C extends B {
+  public public a
+}
+=== file modifier.007
+abstract class C extends B {
+  public public a() {}
+}
+=== file modifier.008
+abstract class C extends B {
+  public public
+}
+=== file modifier.009
+abstract class C extends B {
+  public private a
+}
+=== file modifier.010
+abstract class C extends B {
+  public private a() {}
+}
+=== file modifier.011
+abstract class C extends B {
+  public private
+}
+=== file modifier.012
+abstract class C extends B {
+  public protected a
+}
+=== file modifier.013
+abstract class C extends B {
+  public protected a() {}
+}
+=== file modifier.014
+abstract class C extends B {
+  public protected
+}
+=== file modifier.015
+abstract class C extends B {
+  public static a
+}
+=== file modifier.016
+abstract class C extends B {
+  public static a() {}
+}
+=== file modifier.017
+abstract class C extends B {
+  public static
+}
+=== file modifier.018
+abstract class C extends B {
+  public readonly a
+}
+=== file modifier.019
+abstract class C extends B {
+  public readonly a() {}
+}
+=== file modifier.020
+abstract class C extends B {
+  public readonly
+}
+=== file modifier.021
+abstract class C extends B {
+  public abstract a
+}
+=== file modifier.022
+abstract class C extends B {
+  public abstract a() {}
+}
+=== file modifier.023
+abstract class C extends B {
+  public abstract
+}
+=== file modifier.024
+abstract class C extends B {
+  public override a
+}
+=== file modifier.025
+abstract class C extends B {
+  public override a() {}
+}
+=== file modifier.026
+abstract class C extends B {
+  public override
+}
+=== file modifier.027
+abstract class C extends B {
+  public declare a
+}
+=== file modifier.028
+abstract class C extends B {
+  public declare a() {}
+}
+=== file modifier.029
+abstract class C extends B {
+  public declare
+}
+=== file modifier.030
+abstract class C extends B {
+  public accessor a
+}
+=== file modifier.031
+abstract class C extends B {
+  public accessor a() {}
+}
+=== file modifier.032
+abstract class C extends B {
+  public accessor
+}
+=== file modifier.033
+abstract class C extends B {
+  public async a
+}
+=== file modifier.034
+abstract class C extends B {
+  public async a() {}
+}
+=== file modifier.035
+abstract class C extends B {
+  public async
+}
+=== file modifier.036
+abstract class C extends B {
+  private a
+}
+=== file modifier.037
+abstract class C extends B {
+  private "a"
+}
+=== file modifier.038
+abstract class C extends B {
+  private 1
+}
+=== file modifier.039
+abstract class C extends B {
+  private [a]
+}
+=== file modifier.040
+abstract class C extends B {
+  private #a
+}
+=== file modifier.041
+abstract class C extends B {
+  private public a
+}
+=== file modifier.042
+abstract class C extends B {
+  private public a() {}
+}
+=== file modifier.043
+abstract class C extends B {
+  private public
+}
+=== file modifier.044
+abstract class C extends B {
+  private private a
+}
+=== file modifier.045
+abstract class C extends B {
+  private private a() {}
+}
+=== file modifier.046
+abstract class C extends B {
+  private private
+}
+=== file modifier.047
+abstract class C extends B {
+  private protected a
+}
+=== file modifier.048
+abstract class C extends B {
+  private protected a() {}
+}
+=== file modifier.049
+abstract class C extends B {
+  private protected
+}
+=== file modifier.050
+abstract class C extends B {
+  private static a
+}
+=== file modifier.051
+abstract class C extends B {
+  private static a() {}
+}
+=== file modifier.052
+abstract class C extends B {
+  private static
+}
+=== file modifier.053
+abstract class C extends B {
+  private readonly a
+}
+=== file modifier.054
+abstract class C extends B {
+  private readonly a() {}
+}
+=== file modifier.055
+abstract class C extends B {
+  private readonly
+}
+=== file modifier.056
+abstract class C extends B {
+  private abstract a
+}
+=== file modifier.057
+abstract class C extends B {
+  private abstract a() {}
+}
+=== file modifier.058
+abstract class C extends B {
+  private abstract
+}
+=== file modifier.059
+abstract class C extends B {
+  private override a
+}
+=== file modifier.060
+abstract class C extends B {
+  private override a() {}
+}
+=== file modifier.061
+abstract class C extends B {
+  private override
+}
+=== file modifier.062
+abstract class C extends B {
+  private declare a
+}
+=== file modifier.063
+abstract class C extends B {
+  private declare a() {}
+}
+=== file modifier.064
+abstract class C extends B {
+  private declare
+}
+=== file modifier.065
+abstract class C extends B {
+  private accessor a
+}
+=== file modifier.066
+abstract class C extends B {
+  private accessor a() {}
+}
+=== file modifier.067
+abstract class C extends B {
+  private accessor
+}
+=== file modifier.068
+abstract class C extends B {
+  private async a
+}
+=== file modifier.069
+abstract class C extends B {
+  private async a() {}
+}
+=== file modifier.070
+abstract class C extends B {
+  private async
+}
+=== file modifier.071
+abstract class C extends B {
+  protected a
+}
+=== file modifier.072
+abstract class C extends B {
+  protected "a"
+}
+=== file modifier.073
+abstract class C extends B {
+  protected 1
+}
+=== file modifier.074
+abstract class C extends B {
+  protected [a]
+}
+=== file modifier.075
+abstract class C extends B {
+  protected #a
+}
+=== file modifier.076
+abstract class C extends B {
+  protected public a
+}
+=== file modifier.077
+abstract class C extends B {
+  protected public a() {}
+}
+=== file modifier.078
+abstract class C extends B {
+  protected public
+}
+=== file modifier.079
+abstract class C extends B {
+  protected private a
+}
+=== file modifier.080
+abstract class C extends B {
+  protected private a() {}
+}
+=== file modifier.081
+abstract class C extends B {
+  protected private
+}
+=== file modifier.082
+abstract class C extends B {
+  protected protected a
+}
+=== file modifier.083
+abstract class C extends B {
+  protected protected a() {}
+}
+=== file modifier.084
+abstract class C extends B {
+  protected protected
+}
+=== file modifier.085
+abstract class C extends B {
+  protected static a
+}
+=== file modifier.086
+abstract class C extends B {
+  protected static a() {}
+}
+=== file modifier.087
+abstract class C extends B {
+  protected static
+}
+=== file modifier.088
+abstract class C extends B {
+  protected readonly a
+}
+=== file modifier.089
+abstract class C extends B {
+  protected readonly a() {}
+}
+=== file modifier.090
+abstract class C extends B {
+  protected readonly
+}
+=== file modifier.091
+abstract class C extends B {
+  protected abstract a
+}
+=== file modifier.092
+abstract class C extends B {
+  protected abstract a() {}
+}
+=== file modifier.093
+abstract class C extends B {
+  protected abstract
+}
+=== file modifier.094
+abstract class C extends B {
+  protected override a
+}
+=== file modifier.095
+abstract class C extends B {
+  protected override a() {}
+}
+=== file modifier.096
+abstract class C extends B {
+  protected override
+}
+=== file modifier.097
+abstract class C extends B {
+  protected declare a
+}
+=== file modifier.098
+abstract class C extends B {
+  protected declare a() {}
+}
+=== file modifier.099
+abstract class C extends B {
+  protected declare
+}
+=== file modifier.100
+abstract class C extends B {
+  protected accessor a
+}
+=== file modifier.101
+abstract class C extends B {
+  protected accessor a() {}
+}
+=== file modifier.102
+abstract class C extends B {
+  protected accessor
+}
+=== file modifier.103
+abstract class C extends B {
+  protected async a
+}
+=== file modifier.104
+abstract class C extends B {
+  protected async a() {}
+}
+=== file modifier.105
+abstract class C extends B {
+  protected async
+}
+=== file modifier.106
+abstract class C extends B {
+  static a
+}
+=== file modifier.107
+abstract class C extends B {
+  static "a"
+}
+=== file modifier.108
+abstract class C extends B {
+  static 1
+}
+=== file modifier.109
+abstract class C extends B {
+  static [a]
+}
+=== file modifier.110
+abstract class C extends B {
+  static #a
+}
+=== file modifier.111
+abstract class C extends B {
+  static public a
+}
+=== file modifier.112
+abstract class C extends B {
+  static public a() {}
+}
+=== file modifier.113
+abstract class C extends B {
+  static public
+}
+=== file modifier.114
+abstract class C extends B {
+  static private a
+}
+=== file modifier.115
+abstract class C extends B {
+  static private a() {}
+}
+=== file modifier.116
+abstract class C extends B {
+  static private
+}
+=== file modifier.117
+abstract class C extends B {
+  static protected a
+}
+=== file modifier.118
+abstract class C extends B {
+  static protected a() {}
+}
+=== file modifier.119
+abstract class C extends B {
+  static protected
+}
+=== file modifier.120
+abstract class C extends B {
+  static static a
+}
+=== file modifier.121
+abstract class C extends B {
+  static static a() {}
+}
+=== file modifier.122
+abstract class C extends B {
+  static static
+}
+=== file modifier.123
+abstract class C extends B {
+  static readonly a
+}
+=== file modifier.124
+abstract class C extends B {
+  static readonly a() {}
+}
+=== file modifier.125
+abstract class C extends B {
+  static readonly
+}
+=== file modifier.126
+abstract class C extends B {
+  static abstract a
+}
+=== file modifier.127
+abstract class C extends B {
+  static abstract a() {}
+}
+=== file modifier.128
+abstract class C extends B {
+  static abstract
+}
+=== file modifier.129
+abstract class C extends B {
+  static override a
+}
+=== file modifier.130
+abstract class C extends B {
+  static override a() {}
+}
+=== file modifier.131
+abstract class C extends B {
+  static override
+}
+=== file modifier.132
+abstract class C extends B {
+  static declare a
+}
+=== file modifier.133
+abstract class C extends B {
+  static declare a() {}
+}
+=== file modifier.134
+abstract class C extends B {
+  static declare
+}
+=== file modifier.135
+abstract class C extends B {
+  static accessor a
+}
+=== file modifier.136
+abstract class C extends B {
+  static accessor a() {}
+}
+=== file modifier.137
+abstract class C extends B {
+  static accessor
+}
+=== file modifier.138
+abstract class C extends B {
+  static async a
+}
+=== file modifier.139
+abstract class C extends B {
+  static async a() {}
+}
+=== file modifier.140
+abstract class C extends B {
+  static async
+}
+=== file modifier.141
+abstract class C extends B {
+  readonly a
+}
+=== file modifier.142
+abstract class C extends B {
+  readonly "a"
+}
+=== file modifier.143
+abstract class C extends B {
+  readonly 1
+}
+=== file modifier.144
+abstract class C extends B {
+  readonly [a]
+}
+=== file modifier.145
+abstract class C extends B {
+  readonly #a
+}
+=== file modifier.146
+abstract class C extends B {
+  readonly public a
+}
+=== file modifier.147
+abstract class C extends B {
+  readonly public a() {}
+}
+=== file modifier.148
+abstract class C extends B {
+  readonly public
+}
+=== file modifier.149
+abstract class C extends B {
+  readonly private a
+}
+=== file modifier.150
+abstract class C extends B {
+  readonly private a() {}
+}
+=== file modifier.151
+abstract class C extends B {
+  readonly private
+}
+=== file modifier.152
+abstract class C extends B {
+  readonly protected a
+}
+=== file modifier.153
+abstract class C extends B {
+  readonly protected a() {}
+}
+=== file modifier.154
+abstract class C extends B {
+  readonly protected
+}
+=== file modifier.155
+abstract class C extends B {
+  readonly static a
+}
+=== file modifier.156
+abstract class C extends B {
+  readonly static a() {}
+}
+=== file modifier.157
+abstract class C extends B {
+  readonly static
+}
+=== file modifier.158
+abstract class C extends B {
+  readonly readonly a
+}
+=== file modifier.159
+abstract class C extends B {
+  readonly readonly a() {}
+}
+=== file modifier.160
+abstract class C extends B {
+  readonly readonly
+}
+=== file modifier.161
+abstract class C extends B {
+  readonly abstract a
+}
+=== file modifier.162
+abstract class C extends B {
+  readonly abstract a() {}
+}
+=== file modifier.163
+abstract class C extends B {
+  readonly abstract
+}
+=== file modifier.164
+abstract class C extends B {
+  readonly override a
+}
+=== file modifier.165
+abstract class C extends B {
+  readonly override a() {}
+}
+=== file modifier.166
+abstract class C extends B {
+  readonly override
+}
+=== file modifier.167
+abstract class C extends B {
+  readonly declare a
+}
+=== file modifier.168
+abstract class C extends B {
+  readonly declare a() {}
+}
+=== file modifier.169
+abstract class C extends B {
+  readonly declare
+}
+=== file modifier.170
+abstract class C extends B {
+  readonly accessor a
+}
+=== file modifier.171
+abstract class C extends B {
+  readonly accessor a() {}
+}
+=== file modifier.172
+abstract class C extends B {
+  readonly accessor
+}
+=== file modifier.173
+abstract class C extends B {
+  readonly async a
+}
+=== file modifier.174
+abstract class C extends B {
+  readonly async a() {}
+}
+=== file modifier.175
+abstract class C extends B {
+  readonly async
+}
+=== file modifier.176
+abstract class C extends B {
+  abstract a
+}
+=== file modifier.177
+abstract class C extends B {
+  abstract "a"
+}
+=== file modifier.178
+abstract class C extends B {
+  abstract 1
+}
+=== file modifier.179
+abstract class C extends B {
+  abstract [a]
+}
+=== file modifier.180
+abstract class C extends B {
+  abstract #a
+}
+=== file modifier.181
+abstract class C extends B {
+  abstract public a
+}
+=== file modifier.182
+abstract class C extends B {
+  abstract public a() {}
+}
+=== file modifier.183
+abstract class C extends B {
+  abstract public
+}
+=== file modifier.184
+abstract class C extends B {
+  abstract private a
+}
+=== file modifier.185
+abstract class C extends B {
+  abstract private a() {}
+}
+=== file modifier.186
+abstract class C extends B {
+  abstract private
+}
+=== file modifier.187
+abstract class C extends B {
+  abstract protected a
+}
+=== file modifier.188
+abstract class C extends B {
+  abstract protected a() {}
+}
+=== file modifier.189
+abstract class C extends B {
+  abstract protected
+}
+=== file modifier.190
+abstract class C extends B {
+  abstract static a
+}
+=== file modifier.191
+abstract class C extends B {
+  abstract static a() {}
+}
+=== file modifier.192
+abstract class C extends B {
+  abstract static
+}
+=== file modifier.193
+abstract class C extends B {
+  abstract readonly a
+}
+=== file modifier.194
+abstract class C extends B {
+  abstract readonly a() {}
+}
+=== file modifier.195
+abstract class C extends B {
+  abstract readonly
+}
+=== file modifier.196
+abstract class C extends B {
+  abstract abstract a
+}
+=== file modifier.197
+abstract class C extends B {
+  abstract abstract a() {}
+}
+=== file modifier.198
+abstract class C extends B {
+  abstract abstract
+}
+=== file modifier.199
+abstract class C extends B {
+  abstract override a
+}
+=== file modifier.200
+abstract class C extends B {
+  abstract override a() {}
+}
+=== file modifier.201
+abstract class C extends B {
+  abstract override
+}
+=== file modifier.202
+abstract class C extends B {
+  abstract declare a
+}
+=== file modifier.203
+abstract class C extends B {
+  abstract declare a() {}
+}
+=== file modifier.204
+abstract class C extends B {
+  abstract declare
+}
+=== file modifier.205
+abstract class C extends B {
+  abstract accessor a
+}
+=== file modifier.206
+abstract class C extends B {
+  abstract accessor a() {}
+}
+=== file modifier.207
+abstract class C extends B {
+  abstract accessor
+}
+=== file modifier.208
+abstract class C extends B {
+  abstract async a
+}
+=== file modifier.209
+abstract class C extends B {
+  abstract async a() {}
+}
+=== file modifier.210
+abstract class C extends B {
+  abstract async
+}
+=== file modifier.211
+abstract class C extends B {
+  override a
+}
+=== file modifier.212
+abstract class C extends B {
+  override "a"
+}
+=== file modifier.213
+abstract class C extends B {
+  override 1
+}
+=== file modifier.214
+abstract class C extends B {
+  override [a]
+}
+=== file modifier.215
+abstract class C extends B {
+  override #a
+}
+=== file modifier.216
+abstract class C extends B {
+  override public a
+}
+=== file modifier.217
+abstract class C extends B {
+  override public a() {}
+}
+=== file modifier.218
+abstract class C extends B {
+  override public
+}
+=== file modifier.219
+abstract class C extends B {
+  override private a
+}
+=== file modifier.220
+abstract class C extends B {
+  override private a() {}
+}
+=== file modifier.221
+abstract class C extends B {
+  override private
+}
+=== file modifier.222
+abstract class C extends B {
+  override protected a
+}
+=== file modifier.223
+abstract class C extends B {
+  override protected a() {}
+}
+=== file modifier.224
+abstract class C extends B {
+  override protected
+}
+=== file modifier.225
+abstract class C extends B {
+  override static a
+}
+=== file modifier.226
+abstract class C extends B {
+  override static a() {}
+}
+=== file modifier.227
+abstract class C extends B {
+  override static
+}
+=== file modifier.228
+abstract class C extends B {
+  override readonly a
+}
+=== file modifier.229
+abstract class C extends B {
+  override readonly a() {}
+}
+=== file modifier.230
+abstract class C extends B {
+  override readonly
+}
+=== file modifier.231
+abstract class C extends B {
+  override abstract a
+}
+=== file modifier.232
+abstract class C extends B {
+  override abstract a() {}
+}
+=== file modifier.233
+abstract class C extends B {
+  override abstract
+}
+=== file modifier.234
+abstract class C extends B {
+  override override a
+}
+=== file modifier.235
+abstract class C extends B {
+  override override a() {}
+}
+=== file modifier.236
+abstract class C extends B {
+  override override
+}
+=== file modifier.237
+abstract class C extends B {
+  override declare a
+}
+=== file modifier.238
+abstract class C extends B {
+  override declare a() {}
+}
+=== file modifier.239
+abstract class C extends B {
+  override declare
+}
+=== file modifier.240
+abstract class C extends B {
+  override accessor a
+}
+=== file modifier.241
+abstract class C extends B {
+  override accessor a() {}
+}
+=== file modifier.242
+abstract class C extends B {
+  override accessor
+}
+=== file modifier.243
+abstract class C extends B {
+  override async a
+}
+=== file modifier.244
+abstract class C extends B {
+  override async a() {}
+}
+=== file modifier.245
+abstract class C extends B {
+  override async
+}
+=== file modifier.246
+abstract class C extends B {
+  declare a
+}
+=== file modifier.247
+abstract class C extends B {
+  declare "a"
+}
+=== file modifier.248
+abstract class C extends B {
+  declare 1
+}
+=== file modifier.249
+abstract class C extends B {
+  declare [a]
+}
+=== file modifier.250
+abstract class C extends B {
+  declare #a
+}
+=== file modifier.251
+abstract class C extends B {
+  declare public a
+}
+=== file modifier.252
+abstract class C extends B {
+  declare public a() {}
+}
+=== file modifier.253
+abstract class C extends B {
+  declare public
+}
+=== file modifier.254
+abstract class C extends B {
+  declare private a
+}
+=== file modifier.255
+abstract class C extends B {
+  declare private a() {}
+}
+=== file modifier.256
+abstract class C extends B {
+  declare private
+}
+=== file modifier.257
+abstract class C extends B {
+  declare protected a
+}
+=== file modifier.258
+abstract class C extends B {
+  declare protected a() {}
+}
+=== file modifier.259
+abstract class C extends B {
+  declare protected
+}
+=== file modifier.260
+abstract class C extends B {
+  declare static a
+}
+=== file modifier.261
+abstract class C extends B {
+  declare static a() {}
+}
+=== file modifier.262
+abstract class C extends B {
+  declare static
+}
+=== file modifier.263
+abstract class C extends B {
+  declare readonly a
+}
+=== file modifier.264
+abstract class C extends B {
+  declare readonly a() {}
+}
+=== file modifier.265
+abstract class C extends B {
+  declare readonly
+}
+=== file modifier.266
+abstract class C extends B {
+  declare abstract a
+}
+=== file modifier.267
+abstract class C extends B {
+  declare abstract a() {}
+}
+=== file modifier.268
+abstract class C extends B {
+  declare abstract
+}
+=== file modifier.269
+abstract class C extends B {
+  declare override a
+}
+=== file modifier.270
+abstract class C extends B {
+  declare override a() {}
+}
+=== file modifier.271
+abstract class C extends B {
+  declare override
+}
+=== file modifier.272
+abstract class C extends B {
+  declare declare a
+}
+=== file modifier.273
+abstract class C extends B {
+  declare declare a() {}
+}
+=== file modifier.274
+abstract class C extends B {
+  declare declare
+}
+=== file modifier.275
+abstract class C extends B {
+  declare accessor a
+}
+=== file modifier.276
+abstract class C extends B {
+  declare accessor a() {}
+}
+=== file modifier.277
+abstract class C extends B {
+  declare accessor
+}
+=== file modifier.278
+abstract class C extends B {
+  declare async a
+}
+=== file modifier.279
+abstract class C extends B {
+  declare async a() {}
+}
+=== file modifier.280
+abstract class C extends B {
+  declare async
+}
+=== file modifier.281
+abstract class C extends B {
+  accessor a
+}
+=== file modifier.282
+abstract class C extends B {
+  accessor "a"
+}
+=== file modifier.283
+abstract class C extends B {
+  accessor 1
+}
+=== file modifier.284
+abstract class C extends B {
+  accessor [a]
+}
+=== file modifier.285
+abstract class C extends B {
+  accessor #a
+}
+=== file modifier.286
+abstract class C extends B {
+  accessor public a
+}
+=== file modifier.287
+abstract class C extends B {
+  accessor public a() {}
+}
+=== file modifier.288
+abstract class C extends B {
+  accessor public
+}
+=== file modifier.289
+abstract class C extends B {
+  accessor private a
+}
+=== file modifier.290
+abstract class C extends B {
+  accessor private a() {}
+}
+=== file modifier.291
+abstract class C extends B {
+  accessor private
+}
+=== file modifier.292
+abstract class C extends B {
+  accessor protected a
+}
+=== file modifier.293
+abstract class C extends B {
+  accessor protected a() {}
+}
+=== file modifier.294
+abstract class C extends B {
+  accessor protected
+}
+=== file modifier.295
+abstract class C extends B {
+  accessor static a
+}
+=== file modifier.296
+abstract class C extends B {
+  accessor static a() {}
+}
+=== file modifier.297
+abstract class C extends B {
+  accessor static
+}
+=== file modifier.298
+abstract class C extends B {
+  accessor readonly a
+}
+=== file modifier.299
+abstract class C extends B {
+  accessor readonly a() {}
+}
+=== file modifier.300
+abstract class C extends B {
+  accessor readonly
+}
+=== file modifier.301
+abstract class C extends B {
+  accessor abstract a
+}
+=== file modifier.302
+abstract class C extends B {
+  accessor abstract a() {}
+}
+=== file modifier.303
+abstract class C extends B {
+  accessor abstract
+}
+=== file modifier.304
+abstract class C extends B {
+  accessor override a
+}
+=== file modifier.305
+abstract class C extends B {
+  accessor override a() {}
+}
+=== file modifier.306
+abstract class C extends B {
+  accessor override
+}
+=== file modifier.307
+abstract class C extends B {
+  accessor declare a
+}
+=== file modifier.308
+abstract class C extends B {
+  accessor declare a() {}
+}
+=== file modifier.309
+abstract class C extends B {
+  accessor declare
+}
+=== file modifier.310
+abstract class C extends B {
+  accessor accessor a
+}
+=== file modifier.311
+abstract class C extends B {
+  accessor accessor a() {}
+}
+=== file modifier.312
+abstract class C extends B {
+  accessor accessor
+}
+=== file modifier.313
+abstract class C extends B {
+  accessor async a
+}
+=== file modifier.314
+abstract class C extends B {
+  accessor async a() {}
+}
+=== file modifier.315
+abstract class C extends B {
+  accessor async
+}
+=== file modifier.316
+abstract class C extends B {
+  async a
+}
+=== file modifier.317
+abstract class C extends B {
+  async "a"
+}
+=== file modifier.318
+abstract class C extends B {
+  async 1
+}
+=== file modifier.319
+abstract class C extends B {
+  async [a]
+}
+=== file modifier.320
+abstract class C extends B {
+  async #a
+}
+=== file modifier.321
+abstract class C extends B {
+  async public a
+}
+=== file modifier.322
+abstract class C extends B {
+  async public a() {}
+}
+=== file modifier.323
+abstract class C extends B {
+  async public
+}
+=== file modifier.324
+abstract class C extends B {
+  async private a
+}
+=== file modifier.325
+abstract class C extends B {
+  async private a() {}
+}
+=== file modifier.326
+abstract class C extends B {
+  async private
+}
+=== file modifier.327
+abstract class C extends B {
+  async protected a
+}
+=== file modifier.328
+abstract class C extends B {
+  async protected a() {}
+}
+=== file modifier.329
+abstract class C extends B {
+  async protected
+}
+=== file modifier.330
+abstract class C extends B {
+  async static a
+}
+=== file modifier.331
+abstract class C extends B {
+  async static a() {}
+}
+=== file modifier.332
+abstract class C extends B {
+  async static
+}
+=== file modifier.333
+abstract class C extends B {
+  async readonly a
+}
+=== file modifier.334
+abstract class C extends B {
+  async readonly a() {}
+}
+=== file modifier.335
+abstract class C extends B {
+  async readonly
+}
+=== file modifier.336
+abstract class C extends B {
+  async abstract a
+}
+=== file modifier.337
+abstract class C extends B {
+  async abstract a() {}
+}
+=== file modifier.338
+abstract class C extends B {
+  async abstract
+}
+=== file modifier.339
+abstract class C extends B {
+  async override a
+}
+=== file modifier.340
+abstract class C extends B {
+  async override a() {}
+}
+=== file modifier.341
+abstract class C extends B {
+  async override
+}
+=== file modifier.342
+abstract class C extends B {
+  async declare a
+}
+=== file modifier.343
+abstract class C extends B {
+  async declare a() {}
+}
+=== file modifier.344
+abstract class C extends B {
+  async declare
+}
+=== file modifier.345
+abstract class C extends B {
+  async accessor a
+}
+=== file modifier.346
+abstract class C extends B {
+  async accessor a() {}
+}
+=== file modifier.347
+abstract class C extends B {
+  async accessor
+}
+=== file modifier.348
+abstract class C extends B {
+  async async a
+}
+=== file modifier.349
+abstract class C extends B {
+  async async a() {}
+}
+=== file modifier.350
+abstract class C extends B {
+  async async
+}
+=== file modifier.351
+abstract class C extends B {
+  public static readonly a
+}
+=== file modifier.352
+abstract class C extends B {
+  public static override a
+}
+=== file modifier.353
+abstract class C extends B {
+  public override readonly a
+}
+=== file modifier.354
+abstract class C extends B {
+  public static override readonly a
+}
+=== file modifier.355
+abstract class C extends B {
+  public abstract readonly a
+}
+=== file modifier.356
+abstract class C extends B {
+  public abstract override a
+}
+=== file modifier.357
+abstract class C extends B {
+  public static async a() {}
+}
+=== file modifier.358
+abstract class C extends B {
+  public static async *a() {}
+}
+=== file modifier.359
+abstract class C extends B {
+  public static get a() { return 1 }
+}
+=== file modifier.360
+abstract class C extends B {
+  public static accessor a
+}
+=== file modifier.361
+abstract class C extends B {
+  public declare readonly a
+}
+=== file modifier.362
+abstract class C extends B {
+  public static declare readonly a
+}
+=== file modifier.363
+abstract class C extends B {
+  public override async a() {}
+}
+=== file modifier.364
+abstract class C extends B {
+  public abstract override readonly a: A
+}
+=== file modifier.365
+abstract class C extends B {
+  private static readonly a
+}
+=== file modifier.366
+abstract class C extends B {
+  private static override a
+}
+=== file modifier.367
+abstract class C extends B {
+  private override readonly a
+}
+=== file modifier.368
+abstract class C extends B {
+  private static override readonly a
+}
+=== file modifier.369
+abstract class C extends B {
+  private abstract readonly a
+}
+=== file modifier.370
+abstract class C extends B {
+  private abstract override a
+}
+=== file modifier.371
+abstract class C extends B {
+  private static async a() {}
+}
+=== file modifier.372
+abstract class C extends B {
+  private static async *a() {}
+}
+=== file modifier.373
+abstract class C extends B {
+  private static get a() { return 1 }
+}
+=== file modifier.374
+abstract class C extends B {
+  private static accessor a
+}
+=== file modifier.375
+abstract class C extends B {
+  private declare readonly a
+}
+=== file modifier.376
+abstract class C extends B {
+  private static declare readonly a
+}
+=== file modifier.377
+abstract class C extends B {
+  private override async a() {}
+}
+=== file modifier.378
+abstract class C extends B {
+  private abstract override readonly a: A
+}
+=== file modifier.379
+abstract class C extends B {
+  protected static readonly a
+}
+=== file modifier.380
+abstract class C extends B {
+  protected static override a
+}
+=== file modifier.381
+abstract class C extends B {
+  protected override readonly a
+}
+=== file modifier.382
+abstract class C extends B {
+  protected static override readonly a
+}
+=== file modifier.383
+abstract class C extends B {
+  protected abstract readonly a
+}
+=== file modifier.384
+abstract class C extends B {
+  protected abstract override a
+}
+=== file modifier.385
+abstract class C extends B {
+  protected static async a() {}
+}
+=== file modifier.386
+abstract class C extends B {
+  protected static async *a() {}
+}
+=== file modifier.387
+abstract class C extends B {
+  protected static get a() { return 1 }
+}
+=== file modifier.388
+abstract class C extends B {
+  protected static accessor a
+}
+=== file modifier.389
+abstract class C extends B {
+  protected declare readonly a
+}
+=== file modifier.390
+abstract class C extends B {
+  protected static declare readonly a
+}
+=== file modifier.391
+abstract class C extends B {
+  protected override async a() {}
+}
+=== file modifier.392
+abstract class C extends B {
+  protected abstract override readonly a: A
+}
+=== file extends.001
+class C extends A {}
+=== file extends.002
+class C extends A<B> {}
+=== file extends.003
+class C extends A.B {}
+=== file extends.004
+class C extends A.B<C> {}
+=== file extends.005
+class C extends A<B<C>> {}
+=== file extends.006
+class C extends A, B {}
+=== file extends.007
+class C extends A<B>, C<D> {}
+=== file extends.008
+class C extends A, {}
+=== file extends.009
+class C extends ,A {}
+=== file extends.010
+class C extends A,,B {}
+=== file extends.011
+class C extends  {}
+=== file extends.012
+class C extends A B {}
+=== file extends.013
+class C extends A[] {}
+=== file extends.014
+class C extends A[B] {}
+=== file extends.015
+class C extends A[0] {}
+=== file extends.016
+class C extends A | B {}
+=== file extends.017
+class C extends A & B {}
+=== file extends.018
+class C extends (A) {}
+=== file extends.019
+class C extends (A)<B> {}
+=== file extends.020
+class C extends (A as any) {}
+=== file extends.021
+class C extends (A as any)<B> {}
+=== file extends.022
+class C extends typeof a {}
+=== file extends.023
+class C extends keyof A {}
+=== file extends.024
+class C extends A extends B ? C : D {}
+=== file extends.025
+class C extends {} {}
+=== file extends.026
+class C extends { a: A } {}
+=== file extends.027
+class C extends [A] {}
+=== file extends.028
+class C extends () => void {}
+=== file extends.029
+class C extends new () => A {}
+=== file extends.030
+class C extends string {}
+=== file extends.031
+class C extends void {}
+=== file extends.032
+class C extends null {}
+=== file extends.033
+class C extends undefined {}
+=== file extends.034
+class C extends this {}
+=== file extends.035
+class C extends this.A {}
+=== file extends.036
+class C extends super {}
+=== file extends.037
+class C extends 1 {}
+=== file extends.038
+class C extends "s" {}
+=== file extends.039
+class C extends `t` {}
+=== file extends.040
+class C extends A<B>.C {}
+=== file extends.041
+class C extends A<> {}
+=== file extends.042
+class C extends A<B,> {}
+=== file extends.043
+class C extends A?.B {}
+=== file extends.044
+class C extends A?.() {}
+=== file extends.045
+class C extends A! {}
+=== file extends.046
+class C extends A!.B {}
+=== file extends.047
+class C extends A<B>! {}
+=== file extends.048
+class C extends A() {}
+=== file extends.049
+class C extends A()<B> {}
+=== file extends.050
+class C extends A<B>() {}
+=== file extends.051
+class C extends A<B>()<C> {}
+=== file extends.052
+class C extends A.B() {}
+=== file extends.053
+class C extends A["b"] {}
+=== file extends.054
+class C extends A`t` {}
+=== file extends.055
+class C extends A<B>`t` {}
+=== file extends.056
+class C extends new A {}
+=== file extends.057
+class C extends new A() {}
+=== file extends.058
+class C extends new A<B>() {}
+=== file extends.059
+class C extends A as B {}
+=== file extends.060
+class C extends A satisfies B {}
+=== file extends.061
+class C extends a ? B : C {}
+=== file extends.062
+class C extends A || B {}
+=== file extends.063
+class C extends A.#b {}
+=== file extends.064
+class C extends A.class {}
+=== file extends.065
+class C extends A.default {}
+=== file extends.066
+class C extends class {} {}
+=== file extends.067
+class C extends class B {} {}
+=== file extends.068
+class C extends class<T> {} {}
+=== file extends.069
+class C extends function () {} {}
+=== file extends.070
+class C extends function <T>() {} {}
+=== file extends.071
+class C extends import('m') {}
+=== file extends.072
+class C extends import.meta {}
+=== file extends.073
+class C extends async {}
+=== file extends.074
+class C extends async () => {} {}
+=== file extends.075
+class C extends await A {}
+=== file extends.076
+class C extends yield A {}
+=== file extends.077
+class C extends type {}
+=== file extends.078
+class C extends of {}
+=== file extends.079
+class C extends any {}
+=== file extends.080
+class C extends object {}
+=== file extends.081
+class C extends A
+<B> {}
+=== file extends.082
+class C extends A<B>
+<C> {}
+=== file extends.083
+class C extends A.
+B {}
+=== file extends.084
+class C extends A<B<C<D>>> {}
+=== file extends.085
+class C extends A<B>> {}
+=== file extends.086
+class C extends f(A)<B> {}
+=== file extends.087
+class C extends f<A>(B)<C> {}
+=== file extends.088
+class C extends mixin(A, B) {}
+=== file extends.089
+class C extends mixin<A>(B) {}
+=== file extends.090
+class C extends A<(b: B) => C> {}
+=== file extends.091
+class C extends A<{ b: B }> {}
+=== file extends.092
+class C extends A<typeof b> {}
+=== file extends.093
+class C extends A<B | C> {}
+=== file extends.094
+class C extends A<B[]> {}
+=== file extends.095
+class C extends A<B extends C ? D : E> {}
+=== file extends.expr.001
+var v = class extends A {};
+=== file extends.expr.002
+var v = class extends A<B> {};
+=== file extends.expr.003
+var v = class extends A.B {};
+=== file extends.expr.004
+var v = class extends A.B<C> {};
+=== file extends.expr.005
+var v = class extends A<B<C>> {};
+=== file extends.expr.006
+var v = class extends A, B {};
+=== file extends.expr.007
+var v = class extends A<B>, C<D> {};
+=== file extends.expr.008
+var v = class extends A, {};
+=== file extends.expr.009
+var v = class extends ,A {};
+=== file extends.expr.010
+var v = class extends A,,B {};
+=== file extends.expr.011
+var v = class extends  {};
+=== file extends.expr.012
+var v = class extends A B {};
+=== file extends.expr.013
+var v = class extends A[] {};
+=== file extends.expr.014
+var v = class extends A[B] {};
+=== file extends.expr.015
+var v = class extends A[0] {};
+=== file extends.expr.016
+var v = class extends A | B {};
+=== file extends.expr.017
+var v = class extends A & B {};
+=== file extends.expr.018
+var v = class extends (A) {};
+=== file extends.expr.019
+var v = class extends (A)<B> {};
+=== file extends.expr.020
+var v = class extends (A as any) {};
+=== file extends.expr.021
+var v = class extends (A as any)<B> {};
+=== file extends.expr.022
+var v = class extends typeof a {};
+=== file extends.expr.023
+var v = class extends keyof A {};
+=== file extends.expr.024
+var v = class extends A extends B ? C : D {};
+=== file extends.expr.025
+var v = class extends {} {};
+=== file extends.expr.026
+var v = class extends { a: A } {};
+=== file extends.expr.027
+var v = class extends [A] {};
+=== file extends.expr.028
+var v = class extends () => void {};
+=== file extends.expr.029
+var v = class extends new () => A {};
+=== file extends.expr.030
+var v = class extends string {};
+=== file extends.expr.031
+var v = class extends void {};
+=== file extends.expr.032
+var v = class extends null {};
+=== file extends.expr.033
+var v = class extends undefined {};
+=== file extends.expr.034
+var v = class extends this {};
+=== file extends.expr.035
+var v = class extends this.A {};
+=== file extends.expr.036
+var v = class extends super {};
+=== file extends.expr.037
+var v = class extends 1 {};
+=== file extends.expr.038
+var v = class extends "s" {};
+=== file extends.expr.039
+var v = class extends `t` {};
+=== file extends.expr.040
+var v = class extends A<B>.C {};
+=== file extends.expr.041
+var v = class extends A<> {};
+=== file extends.expr.042
+var v = class extends A<B,> {};
+=== file extends.expr.043
+var v = class extends A?.B {};
+=== file extends.expr.044
+var v = class extends A?.() {};
+=== file extends.expr.045
+var v = class extends A! {};
+=== file extends.expr.046
+var v = class extends A!.B {};
+=== file extends.expr.047
+var v = class extends A<B>! {};
+=== file extends.expr.048
+var v = class extends A() {};
+=== file extends.expr.049
+var v = class extends A()<B> {};
+=== file extends.expr.050
+var v = class extends A<B>() {};
+=== file extends.expr.051
+var v = class extends A<B>()<C> {};
+=== file extends.expr.052
+var v = class extends A.B() {};
+=== file extends.expr.053
+var v = class extends A["b"] {};
+=== file extends.expr.054
+var v = class extends A`t` {};
+=== file extends.expr.055
+var v = class extends A<B>`t` {};
+=== file extends.expr.056
+var v = class extends new A {};
+=== file extends.expr.057
+var v = class extends new A() {};
+=== file extends.expr.058
+var v = class extends new A<B>() {};
+=== file extends.expr.059
+var v = class extends A as B {};
+=== file extends.expr.060
+var v = class extends A satisfies B {};
+=== file extends.expr.061
+var v = class extends a ? B : C {};
+=== file extends.expr.062
+var v = class extends A || B {};
+=== file extends.expr.063
+var v = class extends A.#b {};
+=== file extends.expr.064
+var v = class extends A.class {};
+=== file extends.expr.065
+var v = class extends A.default {};
+=== file extends.expr.066
+var v = class extends class {} {};
+=== file extends.expr.067
+var v = class extends class B {} {};
+=== file extends.expr.068
+var v = class extends class<T> {} {};
+=== file extends.expr.069
+var v = class extends function () {} {};
+=== file extends.expr.070
+var v = class extends function <T>() {} {};
+=== file extends.expr.071
+var v = class extends import('m') {};
+=== file extends.expr.072
+var v = class extends import.meta {};
+=== file extends.expr.073
+var v = class extends async {};
+=== file extends.expr.074
+var v = class extends async () => {} {};
+=== file extends.expr.075
+var v = class extends await A {};
+=== file extends.expr.076
+var v = class extends yield A {};
+=== file extends.expr.077
+var v = class extends type {};
+=== file extends.expr.078
+var v = class extends of {};
+=== file extends.expr.079
+var v = class extends any {};
+=== file extends.expr.080
+var v = class extends object {};
+=== file extends.expr.081
+var v = class extends A
+<B> {};
+=== file extends.expr.082
+var v = class extends A<B>
+<C> {};
+=== file extends.expr.083
+var v = class extends A.
+B {};
+=== file extends.expr.084
+var v = class extends A<B<C<D>>> {};
+=== file extends.expr.085
+var v = class extends A<B>> {};
+=== file extends.expr.086
+var v = class extends f(A)<B> {};
+=== file extends.expr.087
+var v = class extends f<A>(B)<C> {};
+=== file extends.expr.088
+var v = class extends mixin(A, B) {};
+=== file extends.expr.089
+var v = class extends mixin<A>(B) {};
+=== file extends.expr.090
+var v = class extends A<(b: B) => C> {};
+=== file extends.expr.091
+var v = class extends A<{ b: B }> {};
+=== file extends.expr.092
+var v = class extends A<typeof b> {};
+=== file extends.expr.093
+var v = class extends A<B | C> {};
+=== file extends.expr.094
+var v = class extends A<B[]> {};
+=== file extends.expr.095
+var v = class extends A<B extends C ? D : E> {};
+=== file implements.001
+class C implements A {}
+=== file implements.002
+class C implements A<B> {}
+=== file implements.003
+class C implements A.B {}
+=== file implements.004
+class C implements A.B<C> {}
+=== file implements.005
+class C implements A<B<C>> {}
+=== file implements.006
+class C implements A, B {}
+=== file implements.007
+class C implements A<B>, C<D> {}
+=== file implements.008
+class C implements A, {}
+=== file implements.009
+class C implements ,A {}
+=== file implements.010
+class C implements A,,B {}
+=== file implements.011
+class C implements  {}
+=== file implements.012
+class C implements A B {}
+=== file implements.013
+class C implements A[] {}
+=== file implements.014
+class C implements A[B] {}
+=== file implements.015
+class C implements A[0] {}
+=== file implements.016
+class C implements A | B {}
+=== file implements.017
+class C implements A & B {}
+=== file implements.018
+class C implements (A) {}
+=== file implements.019
+class C implements (A)<B> {}
+=== file implements.020
+class C implements (A as any) {}
+=== file implements.021
+class C implements (A as any)<B> {}
+=== file implements.022
+class C implements typeof a {}
+=== file implements.023
+class C implements keyof A {}
+=== file implements.024
+class C implements A extends B ? C : D {}
+=== file implements.025
+class C implements {} {}
+=== file implements.026
+class C implements { a: A } {}
+=== file implements.027
+class C implements [A] {}
+=== file implements.028
+class C implements () => void {}
+=== file implements.029
+class C implements new () => A {}
+=== file implements.030
+class C implements string {}
+=== file implements.031
+class C implements void {}
+=== file implements.032
+class C implements null {}
+=== file implements.033
+class C implements undefined {}
+=== file implements.034
+class C implements this {}
+=== file implements.035
+class C implements this.A {}
+=== file implements.036
+class C implements super {}
+=== file implements.037
+class C implements 1 {}
+=== file implements.038
+class C implements "s" {}
+=== file implements.039
+class C implements `t` {}
+=== file implements.040
+class C implements A<B>.C {}
+=== file implements.041
+class C implements A<> {}
+=== file implements.042
+class C implements A<B,> {}
+=== file implements.043
+class C implements A?.B {}
+=== file implements.044
+class C implements A?.() {}
+=== file implements.045
+class C implements A! {}
+=== file implements.046
+class C implements A!.B {}
+=== file implements.047
+class C implements A<B>! {}
+=== file implements.048
+class C implements A() {}
+=== file implements.049
+class C implements A()<B> {}
+=== file implements.050
+class C implements A<B>() {}
+=== file implements.051
+class C implements A<B>()<C> {}
+=== file implements.052
+class C implements A.B() {}
+=== file implements.053
+class C implements A["b"] {}
+=== file implements.054
+class C implements A`t` {}
+=== file implements.055
+class C implements A<B>`t` {}
+=== file implements.056
+class C implements new A {}
+=== file implements.057
+class C implements new A() {}
+=== file implements.058
+class C implements new A<B>() {}
+=== file implements.059
+class C implements A as B {}
+=== file implements.060
+class C implements A satisfies B {}
+=== file implements.061
+class C implements a ? B : C {}
+=== file implements.062
+class C implements A || B {}
+=== file implements.063
+class C implements A.#b {}
+=== file implements.064
+class C implements A.class {}
+=== file implements.065
+class C implements A.default {}
+=== file implements.066
+class C implements class {} {}
+=== file implements.067
+class C implements class B {} {}
+=== file implements.068
+class C implements class<T> {} {}
+=== file implements.069
+class C implements function () {} {}
+=== file implements.070
+class C implements function <T>() {} {}
+=== file implements.071
+class C implements import('m') {}
+=== file implements.072
+class C implements import.meta {}
+=== file implements.073
+class C implements async {}
+=== file implements.074
+class C implements async () => {} {}
+=== file implements.075
+class C implements await A {}
+=== file implements.076
+class C implements yield A {}
+=== file implements.077
+class C implements type {}
+=== file implements.078
+class C implements of {}
+=== file implements.079
+class C implements any {}
+=== file implements.080
+class C implements object {}
+=== file implements.081
+class C implements A
+<B> {}
+=== file implements.082
+class C implements A<B>
+<C> {}
+=== file implements.083
+class C implements A.
+B {}
+=== file implements.084
+class C implements A<B<C<D>>> {}
+=== file implements.085
+class C implements A<B>> {}
+=== file implements.086
+class C implements f(A)<B> {}
+=== file implements.087
+class C implements f<A>(B)<C> {}
+=== file implements.088
+class C implements mixin(A, B) {}
+=== file implements.089
+class C implements mixin<A>(B) {}
+=== file implements.090
+class C implements A<(b: B) => C> {}
+=== file implements.091
+class C implements A<{ b: B }> {}
+=== file implements.092
+class C implements A<typeof b> {}
+=== file implements.093
+class C implements A<B | C> {}
+=== file implements.094
+class C implements A<B[]> {}
+=== file implements.095
+class C implements A<B extends C ? D : E> {}
+=== file extends.implements.001
+class C extends D implements A {}
+=== file extends.implements.002
+class C extends D implements A<B> {}
+=== file extends.implements.003
+class C extends D implements A.B {}
+=== file extends.implements.004
+class C extends D implements A.B<C> {}
+=== file extends.implements.005
+class C extends D implements A<B<C>> {}
+=== file extends.implements.006
+class C extends D implements A, B {}
+=== file extends.implements.007
+class C extends D implements A<B>, C<D> {}
+=== file extends.implements.008
+class C extends D implements A, {}
+=== file extends.implements.009
+class C extends D implements ,A {}
+=== file extends.implements.010
+class C extends D implements A,,B {}
+=== file extends.implements.011
+class C extends D implements  {}
+=== file extends.implements.012
+class C extends D implements A B {}
+=== file extends.implements.013
+class C extends D implements A[] {}
+=== file extends.implements.014
+class C extends D implements A[B] {}
+=== file extends.implements.015
+class C extends D implements A[0] {}
+=== file extends.implements.016
+class C extends D implements A | B {}
+=== file extends.implements.017
+class C extends D implements A & B {}
+=== file extends.implements.018
+class C extends D implements (A) {}
+=== file extends.implements.019
+class C extends D implements (A)<B> {}
+=== file extends.implements.020
+class C extends D implements (A as any) {}
+=== file extends.implements.021
+class C extends D implements (A as any)<B> {}
+=== file extends.implements.022
+class C extends D implements typeof a {}
+=== file extends.implements.023
+class C extends D implements keyof A {}
+=== file extends.implements.024
+class C extends D implements A extends B ? C : D {}
+=== file extends.implements.025
+class C extends D implements {} {}
+=== file extends.implements.026
+class C extends D implements { a: A } {}
+=== file extends.implements.027
+class C extends D implements [A] {}
+=== file extends.implements.028
+class C extends D implements () => void {}
+=== file extends.implements.029
+class C extends D implements new () => A {}
+=== file extends.implements.030
+class C extends D implements string {}
+=== file extends.implements.031
+class C extends D implements void {}
+=== file extends.implements.032
+class C extends D implements null {}
+=== file extends.implements.033
+class C extends D implements undefined {}
+=== file extends.implements.034
+class C extends D implements this {}
+=== file extends.implements.035
+class C extends D implements this.A {}
+=== file extends.implements.036
+class C extends D implements super {}
+=== file extends.implements.037
+class C extends D implements 1 {}
+=== file extends.implements.038
+class C extends D implements "s" {}
+=== file extends.implements.039
+class C extends D implements `t` {}
+=== file extends.implements.040
+class C extends D implements A<B>.C {}
+=== file extends.implements.041
+class C extends D implements A<> {}
+=== file extends.implements.042
+class C extends D implements A<B,> {}
+=== file extends.implements.043
+class C extends D implements A?.B {}
+=== file extends.implements.044
+class C extends D implements A?.() {}
+=== file extends.implements.045
+class C extends D implements A! {}
+=== file extends.implements.046
+class C extends D implements A!.B {}
+=== file extends.implements.047
+class C extends D implements A<B>! {}
+=== file extends.implements.048
+class C extends D implements A() {}
+=== file extends.implements.049
+class C extends D implements A()<B> {}
+=== file extends.implements.050
+class C extends D implements A<B>() {}
+=== file extends.implements.051
+class C extends D implements A<B>()<C> {}
+=== file extends.implements.052
+class C extends D implements A.B() {}
+=== file extends.implements.053
+class C extends D implements A["b"] {}
+=== file extends.implements.054
+class C extends D implements A`t` {}
+=== file extends.implements.055
+class C extends D implements A<B>`t` {}
+=== file extends.implements.056
+class C extends D implements new A {}
+=== file extends.implements.057
+class C extends D implements new A() {}
+=== file extends.implements.058
+class C extends D implements new A<B>() {}
+=== file extends.implements.059
+class C extends D implements A as B {}
+=== file extends.implements.060
+class C extends D implements A satisfies B {}
+=== file extends.implements.061
+class C extends D implements a ? B : C {}
+=== file extends.implements.062
+class C extends D implements A || B {}
+=== file extends.implements.063
+class C extends D implements A.#b {}
+=== file extends.implements.064
+class C extends D implements A.class {}
+=== file extends.implements.065
+class C extends D implements A.default {}
+=== file extends.implements.066
+class C extends D implements class {} {}
+=== file extends.implements.067
+class C extends D implements class B {} {}
+=== file extends.implements.068
+class C extends D implements class<T> {} {}
+=== file extends.implements.069
+class C extends D implements function () {} {}
+=== file extends.implements.070
+class C extends D implements function <T>() {} {}
+=== file extends.implements.071
+class C extends D implements import('m') {}
+=== file extends.implements.072
+class C extends D implements import.meta {}
+=== file extends.implements.073
+class C extends D implements async {}
+=== file extends.implements.074
+class C extends D implements async () => {} {}
+=== file extends.implements.075
+class C extends D implements await A {}
+=== file extends.implements.076
+class C extends D implements yield A {}
+=== file extends.implements.077
+class C extends D implements type {}
+=== file extends.implements.078
+class C extends D implements of {}
+=== file extends.implements.079
+class C extends D implements any {}
+=== file extends.implements.080
+class C extends D implements object {}
+=== file extends.implements.081
+class C extends D implements A
+<B> {}
+=== file extends.implements.082
+class C extends D implements A<B>
+<C> {}
+=== file extends.implements.083
+class C extends D implements A.
+B {}
+=== file extends.implements.084
+class C extends D implements A<B<C<D>>> {}
+=== file extends.implements.085
+class C extends D implements A<B>> {}
+=== file extends.implements.086
+class C extends D implements f(A)<B> {}
+=== file extends.implements.087
+class C extends D implements f<A>(B)<C> {}
+=== file extends.implements.088
+class C extends D implements mixin(A, B) {}
+=== file extends.implements.089
+class C extends D implements mixin<A>(B) {}
+=== file extends.implements.090
+class C extends D implements A<(b: B) => C> {}
+=== file extends.implements.091
+class C extends D implements A<{ b: B }> {}
+=== file extends.implements.092
+class C extends D implements A<typeof b> {}
+=== file extends.implements.093
+class C extends D implements A<B | C> {}
+=== file extends.implements.094
+class C extends D implements A<B[]> {}
+=== file extends.implements.095
+class C extends D implements A<B extends C ? D : E> {}
+=== file class.001
+class C {}
+=== file class.002
+class C<T> {}
+=== file class.003
+class C extends D {}
+=== file class.004
+class C extends D implements I {}
+=== file class.005
+class C implements I {}
+=== file class.006
+class C implements I extends D {}
+=== file class.007
+class C extends D extends E {}
+=== file class.008
+class C implements I implements J {}
+=== file class.009
+class C extends D implements I extends E {}
+=== file class.010
+class C extends D, E {}
+=== file class.011
+class C<T> extends D<T> implements I<T>, J<T> {}
+=== file class.012
+class C extends {}
+=== file class.013
+class C implements {}
+=== file class.014
+class C extends implements I {}
+=== file class.015
+class C implements extends D {}
+=== file class.016
+class implements I {}
+=== file class.017
+class implements {}
+=== file class.018
+class extends D {}
+=== file class.019
+class implements implements I {}
+=== file class.020
+class C extends D<T>
+=== file class.021
+class C extends D<T> {
+=== file class.022
+class C
+extends D
+implements I
+{}
+=== file class.023
+class C implements
+I {}
+=== file class.024
+abstract class C {}
+=== file class.025
+abstract
+class C {}
+=== file class.026
+abstract class
+C {}
+=== file class.027
+export abstract class C {}
+=== file class.028
+export default abstract class C {}
+=== file class.029
+export default abstract class {}
+=== file class.030
+export default abstract class extends D {}
+=== file class.031
+export default abstract class implements I {}
+=== file class.032
+declare class C {}
+=== file class.033
+declare abstract class C {}
+=== file class.034
+abstract declare class C {}
+=== file class.035
+export declare abstract class C {}
+=== file class.036
+abstract abstract class C {}
+=== file class.037
+var v = abstract class {};
+=== file class.038
+var v = (abstract class {});
+=== file class.039
+abstract;
+=== file class.040
+abstract = 1;
+=== file class.041
+abstract();
+=== file class.042
+abstract
+();
+=== file class.043
+abstract.a;
+=== file class.044
+abstract
+class
+C {}
+=== file class.045
+var abstract = 1;
+=== file class.046
+abstract + 1;
+=== file class.047
+abstract class C
+=== file class.048
+abstract function f() {}
+=== file class.049
+abstract const a = 1;
+=== file class.050
+abstract var a;
+=== file class.051
+abstract enum E {}
+=== file class.052
+abstract namespace N {}
+=== file class.053
+abstract type X = 1;
+=== file class.054
+async class C {}
+=== file class.055
+static class C {}
+=== file class.056
+public class C {}
+=== file class.057
+private class C {}
+=== file class.058
+readonly class C {}
+=== file class.059
+const class C {}
+=== file class.060
+override class C {}
+=== file class.061
+accessor class C {}
+=== file class.062
+export public class C {}
+=== file class.063
+export static class C {}
+=== file class.064
+var v = class<T> {};
+=== file class.065
+var v = class C<T> extends D<T> implements I {};
+=== file class.066
+(class implements I {});
+=== file class.067
+(class C implements I, J {});
+=== file class.068
+var v = class extends D<T> {};
+=== file class.069
+var v = class implements I {};
+=== file class.070
+new (class<T> implements I {})();
+=== file class.071
+class C { }
+class D { }
+=== file class.072
+class type {}
+=== file class.073
+class as {}
+=== file class.074
+class of {}
+=== file class.075
+class is {}
+=== file class.076
+class async {}
+=== file class.077
+class await {}
+=== file class.078
+class yield {}
+=== file class.079
+class let {}
+=== file class.080
+class static {}
+=== file class.081
+class public {}
+=== file class.082
+class interface {}
+=== file class.083
+class package {}
+=== file class.084
+class abstract {}
+=== file class.085
+class declare {}
+=== file class.086
+class readonly {}
+=== file class.087
+class any {}
+=== file class.088
+class string {}
+=== file class.089
+class number {}
+=== file class.090
+class object {}
+=== file class.091
+class undefined {}
+=== file class.092
+class unknown {}
+=== file class.093
+class never {}
+=== file class.094
+class namespace {}
+=== file class.095
+class module {}
+=== file class.096
+class global {}
+=== file class.097
+class require {}
+=== file class.098
+class constructor {}
+=== file class.099
+class get {}
+=== file class.100
+class set {}
+=== file class.101
+class from {}
+=== file class.102
+class using {}
+=== file class.103
+class accessor {}
+=== file class.104
+class override {}
+=== file class.105
+class keyof {}
+=== file class.106
+class infer {}
+=== file class.107
+class unique {}
+=== file class.108
+class asserts {}
+=== file class.109
+class out {}
+=== file class.110
+class satisfies {}
+=== file class.111
+class arguments {}
+=== file class.112
+class eval {}
+=== file this.001
+function f(this: A) {}
+=== file this.002
+function f(this) {}
+=== file this.003
+function f(this: A, a: B) {}
+=== file this.004
+function f(this, a) {}
+=== file this.005
+function f(a, this: A) {}
+=== file this.006
+function f(this: A, ...a: B[]) {}
+=== file this.007
+function f(this,) {}
+=== file this.008
+function f(this: A,) {}
+=== file this.009
+function f(this?: A) {}
+=== file this.010
+function f(this = 1) {}
+=== file this.011
+function f(this: A = 1) {}
+=== file this.012
+function f(...this) {}
+=== file this.013
+function f(this: A, this: B) {}
+=== file this.014
+function f(@d this) {}
+=== file this.015
+function f(public this) {}
+=== file this.016
+function f(this: this) {}
+=== file this.017
+function f(this: void) {}
+=== file this.018
+function f(this: A<B>) {}
+=== file this.019
+function f(this: () => void) {}
+=== file this.020
+function f({ this: a }) {}
+=== file this.021
+function f([this]) {}
+=== file this.022
+function f(this.a) {}
+=== file this.023
+function f(this
+: A) {}
+=== file this.024
+function* f(this: A) {}
+=== file this.025
+async function f(this: A) {}
+=== file this.026
+var v = function (this: A) {};
+=== file this.027
+var v = function (this: A, a: B): C {};
+=== file this.028
+var v = (this: A) => 1;
+=== file this.029
+var v = (this) => 1;
+=== file this.030
+var v = (this: A, a: B) => 1;
+=== file this.031
+var v = async (this: A) => 1;
+=== file this.032
+var v = { m(this: A) {} };
+=== file this.033
+var v = { m(this: A, a: B) {} };
+=== file this.034
+var v = { get a(this: A) { return 1 } };
+=== file this.035
+var v = { set a(this: A, v) {} };
+=== file this.036
+class C { m(this: C) {} }
+=== file this.037
+class C { m(this: C, a: A) {} }
+=== file this.038
+class C { m(this) {} }
+=== file this.039
+class C { m(a, this: C) {} }
+=== file this.040
+class C { static m(this: A) {} }
+=== file this.041
+class C { constructor(this: A) {} }
+=== file this.042
+class C { get a(this: A) { return 1 } }
+=== file this.043
+class C { set a(this: A, v) {} }
+=== file this.044
+class C { m(this: this) {} }
+=== file this.045
+class C { m(this: C): void; m(this: C, a?: any) {} }
+=== file this.046
+class C { @d m(this: C, a: A) {} }
+=== file this.047
+class C { m(@d this: C) {} }
+=== file this.048
+declare function f(this: A): void;
+=== file this.049
+declare function f(this: A, a: B): void;
+=== file this.050
+type X = (this: A) => void;
+=== file this.051
+type X = (this: A, a: B) => void;
+=== file this.052
+type X = new (this: A) => B;
+=== file this.053
+type X = { m(this: A): void };
+=== file this.054
+type X = { (this: A): void };
+=== file this.055
+type X = { new (this: A): B };
+=== file this.056
+interface I { m(this: I): void }
+=== file overload.001
+function f(): void; function f(a?: any) {}
+=== file overload.002
+function f(): void
+function f(a?: any) {}
+=== file overload.003
+function f(): void function f() {}
+=== file overload.004
+function f(): void;
+=== file overload.005
+function f();
+=== file overload.006
+function f()
+=== file overload.007
+function f(): void
+
+=== file overload.008
+function f(a: A): void; function f(a: B): void; function f(a: any) {}
+=== file overload.009
+function f(): void; function g() {}
+=== file overload.010
+function f(): void; var a = 1; function f() {}
+=== file overload.011
+export function f(): void; export function f(a?: any) {}
+=== file overload.012
+export function f(): void;
+=== file overload.013
+export default function f(): void; export default function f(a?: any) {}
+=== file overload.014
+export default function (): void; export default function (a?: any) {}
+=== file overload.015
+export default function f(): void;
+=== file overload.016
+export default function (): void;
+=== file overload.017
+async function f(): Promise<void>; async function f(a?: any) {}
+=== file overload.018
+function* f(): any; function* f() {}
+=== file overload.019
+declare function f(): void; function f() {}
+=== file overload.020
+function f(): void; declare function f(): void;
+=== file overload.021
+function f<T>(a: T): T; function f(a: any) { return a }
+=== file overload.022
+function f(this: A): void; function f(this: any) {}
+=== file overload.023
+function f(a: A,): void; function f(a: any) {}
+=== file overload.024
+function f(...a: A[]): void; function f() {}
+=== file overload.025
+function f(a = 1): void; function f(a: any) {}
+=== file overload.026
+function f({ a }: A): void; function f(a: any) {}
+=== file overload.027
+function f(a?: A): a is A; function f(a: any) { return true }
+=== file overload.028
+{ function f(): void; function f(a?: any) {} }
+=== file overload.029
+function g() { function f(): void; function f(a?: any) {} }
+=== file overload.030
+namespace N { function f(): void; function f(a?: any) {} }
+=== file overload.031
+namespace N { export function f(): void; export function f(a?: any) {} }
+=== file overload.032
+if (a) function f(): void;
+=== file overload.033
+label: function f(): void;
+=== file overload.034
+var v = function f(): void;
+=== file overload.035
+var v = function (): void;
+=== file overload.036
+var v = { m(): void; m() {} };
+=== file overload.037
+var v = { m(): void };
+=== file overload.038
+var v = { m(); };
+=== file overload.039
+var v = () : void;
+=== file overload.040
+var v = (): void => ;
+=== file overload.041
+function f(): void {} function f(): void;
+=== file overload.042
+function f(): void;
+function f(): void;
+function f(): void;
+function f() {}
+=== file overload.043
+function f(): void; export {};
+=== file overload.044
+function f(): void; export function f() {}
+=== file overload.045
+export function f(): void; function f() {}
+=== file overload.046
+function f(): void /* c */ ; function f() {}
+=== file overload.047
+function f(): void // c
+function f() {}
+=== file overload.048
+function f(): A<B>; function f(): any {}
+=== file overload.049
+function f(): A<B>
+function f(): any {}
+=== file overload.050
+function f(): typeof a
+function f(): any {}
+=== file overload.051
+function f(): A.B
+function f(): any {}
+=== file overload.052
+function f(): A
+<T>() => {}
+=== file overload.053
+function f(): void; async function f() {}
+=== file overload.054
+function f(): void; function* f() {}

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Commits and pushes the notes directory so that a restart of the machine does not lose it.
+# usage: /workspace/tools/save-notes <short message>
+cd /workspace/notes || exit 1
+exec flock /workspace/tools/notes.lock sh -c '
+  git add -A . >/dev/null 2>&1
+  if git diff --cached --quiet; then echo "notes: nothing to save"; exit 0; fi
+  git commit -q -m "notes: $1" && git push -q origin HEAD:robobun/abbc0c92/lint-notes && echo "notes: saved"
+' sh "${1:-update}"

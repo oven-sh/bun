@@ -1,0 +1,6 @@
+[
+  {"jsx": true, "code": "x = <a b={c = c} />"},
+  {"jsx": true, "code": "x = <a>{c.d = c.d}</a>"},
+  {"jsx": true, "code": "x = <a {...(c = c)} />"},
+  {"jsx": true, "code": "a.b = <a/>.b"}
+]

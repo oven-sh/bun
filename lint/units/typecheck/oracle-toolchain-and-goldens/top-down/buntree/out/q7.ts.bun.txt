@@ -1,0 +1,27 @@
+file q7.ts bytes=62 statements=7
+s_expr @0
+  e_binary @0
+    e_identifier @4 a
+    e_identifier @0 x
+s_expr @6
+  e_unary @6
+    e_identifier @8 b
+s_expr @10
+  e_binary @10
+    e_call @14
+      e_identifier @14 c
+      e_identifier @17 d
+    e_identifier @10 y
+s_expr @20
+  e_identifier @20 return_
+s_if @29
+  e_identifier @33 a
+  s_expr @36
+    e_identifier @36 b
+  s_expr @43
+    e_identifier @43 c
+s_do_while @45
+  s_empty @-1
+  e_identifier @57 e
+s_expr @60
+  e_identifier @60 f

@@ -1,0 +1,237 @@
+# interface heritage
+interface A {}
+interface A extends B {}
+interface A extends B, C {}
+interface A extends B, C, {}
+interface A extends B<C> {}
+interface A extends B<C>, D<E> {}
+interface A extends B.C {}
+interface A extends B.C<D> {}
+interface A extends B.C.D<E, F> {}
+interface A extends B<C>.D {}
+interface A extends {} {}
+interface A extends {a: number} {}
+interface A extends B[] {}
+interface A extends B | C {}
+interface A extends B & C {}
+interface A extends (B) {}
+interface A extends (B)<C> {}
+interface A extends typeof B {}
+interface A extends keyof B {}
+interface A extends [B] {}
+interface A extends string {}
+interface A extends any {}
+interface A extends number[] {}
+interface A extends this {}
+interface A extends null {}
+interface A extends void {}
+interface A extends 1 {}
+interface A extends "a" {}
+interface A extends `a` {}
+interface A extends B?.C {}
+interface A extends B!.C {}
+interface A extends B.#c {}
+interface A extends B() {}
+interface A extends b() {}
+interface A extends B<C>() {}
+interface A extends new B {}
+interface A extends new B() {}
+interface A extends B[0] {}
+interface A extends B["c"] {}
+interface A extends B`c` {}
+interface A extends B as C {}
+interface A extends import("x") {}
+interface A extends import("x").B {}
+interface A extends typeof import("x") {}
+interface A extends function () {} {}
+interface A extends class {} {}
+interface A extends () => void {}
+interface A extends B extends C ? D : E {}
+interface A extends {}
+interface A extends
+interface A extends B extends C {}
+interface A extends B implements C {}
+interface A implements B {}
+interface A implements B, C {}
+interface A extends B {} extends C {}
+interface A extends B, {}
+interface A extends , B {}
+interface A extends B C {}
+interface A extends if {}
+interface A extends super {}
+interface A extends super.b {}
+interface A extends this.b {}
+interface A extends B\n{}
+interface A extends B\n<C> {}
+interface A extends\nB {}
+interface A\nextends B {}
+interface\nA {}
+interface A<T> extends B<T> {}
+interface A<T extends U = V> extends B<T> { a: T }
+interface if {}
+interface any {}
+interface string {}
+interface number {}
+interface type {}
+interface as {}
+interface of {}
+interface let {}
+interface yield {}
+interface await {}
+interface async {}
+interface static {}
+interface public {}
+interface readonly {}
+interface declare {}
+interface abstract {}
+interface interface {}
+interface namespace {}
+interface module {}
+interface global {}
+interface implements {}
+interface extends {}
+interface extends extends B {}
+interface implements extends B {}
+interface A.B {}
+interface "A" {}
+interface {}
+interface A
+interface A { a: number
+declare interface A {}
+export interface A {}
+export default interface A {}
+export default interface {}
+export declare interface A {}
+declare export interface A {}
+# class heritage
+class A implements B {}
+class A implements B, C {}
+class A implements B<C> {}
+class A implements B.C<D> {}
+class A implements B, C, {}
+class A implements {} {}
+class A implements {a: number} {}
+class A implements B[] {}
+class A implements B | C {}
+class A implements (B) {}
+class A implements typeof B {}
+class A implements string {}
+class A implements this {}
+class A implements B() {}
+class A implements b.c() {}
+class A implements new B {}
+class A implements B?.C {}
+class A implements B!.C {}
+class A implements 1 {}
+class A implements import("x").B {}
+class A implements () => void {}
+class A implements B extends C {}
+class A implements B implements C {}
+class A implements B extends C implements D {}
+class A extends B implements C {}
+class A implements C extends B {}
+class A extends B extends C {}
+class A extends B, C {}
+class A extends B<C>, D {}
+class A implements {}
+class A implements
+class A extends {}
+class A extends {} {}
+class A extends {a: 1} {}
+class implements {}
+class implements implements B {}
+class A implements implements {}
+class A extends implements {}
+class A extends B implements {}
+class A implements B\n{}
+class A implements\nB {}
+class A\nimplements B {}
+(class implements B {})
+(class implements {})
+(class A implements B {})
+(class extends B implements C {})
+abstract class A implements B {}
+declare class A implements B {}
+declare class A extends B<C> implements D<E> {}
+# type alias statements
+type A = B
+type A = B;
+type A = B\ntype C = D
+type A\n= B
+type\nA = B
+type A =\nB
+type A = \n| B\n| C
+type A = intrinsic
+type A<T> = intrinsic
+type A = intrinsic.b
+type A = intrinsic<B>
+type A = intrinsic | B
+type A = intrinsic[]
+type intrinsic = 1
+type A = B C
+type A B
+type A
+type A =
+type A = = B
+type if = 1
+type any = 1
+type string = 1
+type number = 1
+type type = 1
+type as = 1
+type of = 1
+type let = 1
+type yield = 1
+type await = 1
+type async = 1
+type static = 1
+type public = 1
+type readonly = 1
+type declare = 1
+type abstract = 1
+type interface = 1
+type namespace = 1
+type module = 1
+type global = 1
+type unique = 1
+type keyof = 1
+type infer = 1
+type asserts = 1
+type is = 1
+type satisfies = 1
+type out = 1
+type in = 1
+type object = 1
+type symbol = 1
+type never = 1
+type unknown = 1
+type undefined = 1
+type null = 1
+type void = 1
+type this = 1
+type A.B = 1
+type "A" = 1
+type = 1
+type;
+type
+type\nA
+type = B
+type.a = 1
+type()
+type + 1
+type < A > (b)
+type as any
+type as = 1
+declare type A = B
+export type A = B
+export declare type A = B
+export default type A = B
+export type { A }
+export type { A } from "x"
+export type { A as B } from "x"
+export type * from "x"
+export type * as A from "x"
+export type A from "x"
+export type = 1
+export type
+declare type

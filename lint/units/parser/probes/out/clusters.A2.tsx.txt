@@ -1,0 +1,490 @@
+class A2  dialect tsx  config plain: 1358 inputs in 100 clusters
+
+[04-type-params-args / targsExpr]  bun Expected "…" but found "…"  /  tsc TS1228 A type predicate is only allowed in return type position for functions and methods.   (47 inputs, 1 distinct)
+    tsc also: TS2304 x46, TS2347 x5, TS2318 x2, TS2558 x2, TS2364 x1, TS2635 x1
+    "<asserts a>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]
+
+[04-type-params-args / targsExpr]  bun Expected "…" but found "…"  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "<A?>"  [optionalCall3,instClassExtends,instClassExtendsCall,instDecorator]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS1009 Trailing comma not allowed.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "<A,>"  [optionalCall3,instClassExtends,instDecorator]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS1099 Type argument list cannot be empty.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "<>"  [optionalCall3,instClassExtends,instDecorator]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS1326 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.   (43 inputs, 43 distinct)
+    tsc also: TS2318 x43, TS2711 x43, TS2307 x43
+    "<A>"  [instImport]
+    "<A, B>"  [instImport]
+    "<A, B, C>"  [instImport]
+    "<A,>"  [instImport]
+    "<>"  [instImport]
+    "<A | B>"  [instImport]
+    "<| A>"  [instImport]
+    "<A extends B ? C : D>"  [instImport]
+    "<() => void>"  [instImport]
+    "<(a: A) => B>"  [instImport]
+    "<new () => A>"  [instImport]
+    "<{ a: A }>"  [instImport]
+    … 31 more
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (43 inputs, 1 distinct)
+    tsc also: TS2304 x43, TS2347 x5, TS2318 x2, TS2558 x2, TS2364 x1, TS2635 x1
+    "<A?>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (47 inputs, 1 distinct)
+    tsc also: TS2304 x47, TS2347 x5, TS2318 x2, TS2558 x2, TS2364 x1, TS2635 x1
+    "<?A>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS8020 JSDoc types can only be used inside documentation comments.   (47 inputs, 1 distinct)
+    tsc also: TS2304 x46, TS2347 x5, TS2318 x2, TS2558 x2, TS2364 x1, TS2635 x1
+    "<*>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]
+
+[04-type-params-args / targsHeritage]  bun "…" is a reserved word and cannot be used in strict mode  /  tsc TS1097 'extends' list cannot be empty.   (2 inputs, 2 distinct)
+    "class C extends implements {}"  [-]
+    "class C extends implements implements I {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun "…" is a reserved word and cannot be used in strict mode  /  tsc TS1213 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "class C extends yield {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS1172 'extends' clause already seen.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "class C extends B extends D {}"  [-]
+    "class C extends B<A> extends D {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS1173 'extends' clause must precede 'implements' clause.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "class C implements D extends B {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS1174 Classes can only extend a single class.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "class C extends B, D {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS1175 'implements' clause already seen.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "class C implements D implements E {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS1213 Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode.   (1 inputs, 1 distinct)
+    "const c = class implements {};"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found end of file  /  tsc TS1009 Trailing comma not allowed.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "class C implements D, {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found end of file  /  tsc TS1097 'extends' list cannot be empty.   (1 inputs, 1 distinct)
+    "class C extends {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found end of file  /  tsc TS1097 'implements' list cannot be empty.   (1 inputs, 1 distinct)
+    "class C implements {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Unexpected …  /  tsc TS1009 Trailing comma not allowed.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "class C extends B<A,> {}"  [-]
+    "class C implements D<E,> {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Unexpected …  /  tsc TS1099 Type argument list cannot be empty.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "class C extends B<> {}"  [-]
+    "class C implements D<> {}"  [-]
+
+[04-type-params-args / targsJsx]  bun Unexpected …  /  tsc TS1009 Trailing comma not allowed.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "const v = <C<A,> />;"  [-]
+
+[04-type-params-args / targsJsx]  bun Unexpected …  /  tsc TS1099 Type argument list cannot be empty.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "const v = <C<> />;"  [-]
+
+[04-type-params-args / targsJsx]  bun Unexpected …  /  tsc TS1200 Line terminator not permitted before arrow.   (1 inputs, 1 distinct)
+    "const f = <T,>(a: T)\n=> a;"  [-]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1092 Type parameters cannot appear on a constructor declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "<T extends A?>"  [ctor]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1094 An accessor cannot have type parameters.   (36 inputs, 12 distinct)
+    tsc also: TS7032 x12, TS7006 x12, TS2304 x3
+    "<public T>"  [getter,setter,objGetter]
+    "<private T>"  [getter,setter,objGetter]
+    "<protected T>"  [getter,setter,objGetter]
+    "<readonly T>"  [getter,setter,objGetter]
+    "<static T>"  [getter,setter,objGetter]
+    "<abstract T>"  [getter,setter,objGetter]
+    "<declare T>"  [getter,setter,objGetter]
+    "<override T>"  [getter,setter,objGetter]
+    "<accessor T>"  [getter,setter,objGetter]
+    "<async T>"  [getter,setter,objGetter]
+    "<public in T>"  [getter,setter,objGetter]
+    "<T extends A?>"  [getter,setter,objGetter]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'abstract' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<abstract T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'accessor' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<accessor T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'async' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<async T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'declare' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<declare T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'override' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<override T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'private' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<private T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'protected' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<protected T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'public' modifier cannot appear on a type parameter   (58 inputs, 3 distinct)
+    tsc also: TS2304 x9, TS2318 x2, TS2637 x2
+    "<public T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+    "<public in T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+    "<in public T>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'readonly' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<readonly T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS1273 'static' modifier cannot appear on a type parameter   (25 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1
+    "<static T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected "…" but found "…"  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (24 inputs, 1 distinct)
+    tsc also: TS2304 x24, TS2318 x1
+    "<T extends A?>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun Expected identifier but found "…"  /  tsc TS1098 Type parameter list cannot be empty.   (26 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS2318 x1, TS7032 x1, TS7006 x1
+    "<>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1029 'in' modifier must precede 'out' modifier.   (8 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS2637 x1
+    "<out in T>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1030 'in' modifier already seen.   (8 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS2637 x1
+    "<in in T>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1030 'out' modifier already seen.   (8 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS2637 x1
+    "<out out T>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1092 Type parameters cannot appear on a constructor declaration.   (6 inputs, 6 distinct)
+    tsc also: TS2304 x1
+    "<const in T>"  [ctor]
+    "<const out T>"  [ctor]
+    "<const in out T>"  [ctor]
+    "<out>"  [ctor]
+    "<out = A>"  [ctor]
+    "<const out>"  [ctor]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1094 An accessor cannot have type parameters.   (69 inputs, 23 distinct)
+    tsc also: TS7032 x23, TS7006 x23, TS2304 x6
+    "<in T>"  [getter,setter,objGetter]
+    "<out T>"  [getter,setter,objGetter]
+    "<in out T>"  [getter,setter,objGetter]
+    "<const in T>"  [getter,setter,objGetter]
+    "<in const T>"  [getter,setter,objGetter]
+    "<const out T>"  [getter,setter,objGetter]
+    "<out const T>"  [getter,setter,objGetter]
+    "<const in out T>"  [getter,setter,objGetter]
+    "<in out const T>"  [getter,setter,objGetter]
+    "<out in T>"  [getter,setter,objGetter]
+    "<in in T>"  [getter,setter,objGetter]
+    "<out out T>"  [getter,setter,objGetter]
+    … 11 more
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias   (202 inputs, 12 distinct)
+    tsc also: TS2304 x36, TS2318 x12
+    "<in T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in out T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<const in T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in const T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<const in out T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in out const T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in in T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in T, out U>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in out T, const U>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in out out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<in public T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias   (135 inputs, 8 distinct)
+    tsc also: TS2304 x38, TS2318 x8
+    "<out T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<const out T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out const T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out in T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out out T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out out = A>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out out, T>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here  /  tsc TS1277 'const' modifier can only appear on a type parameter of a function, method or class   (20 inputs, 10 distinct)
+    tsc also: TS2637 x7
+    "<const T>"  [iface,alias]
+    "<const in T>"  [iface,alias]
+    "<in const T>"  [iface,alias]
+    "<const out T>"  [iface,alias]
+    "<out const T>"  [iface,alias]
+    "<const in out T>"  [iface,alias]
+    "<in out const T>"  [iface,alias]
+    "<const const T>"  [iface,alias]
+    "<in out T, const U>"  [iface,alias]
+    "<const out>"  [iface,alias]
+
+[04-type-params-args / tparams]  bun Unexpected …  /  tsc TS1092 Type parameters cannot appear on a constructor declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "<T extends !A>"  [ctor]
+
+[04-type-params-args / tparams]  bun Unexpected …  /  tsc TS1094 An accessor cannot have type parameters.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3, TS7032 x1, TS7006 x1
+    "<T extends !A>"  [getter,setter,objGetter]
+
+[04-type-params-args / tparams]  bun Unexpected …  /  tsc TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?   (24 inputs, 1 distinct)
+    tsc also: TS2304 x24, TS2318 x1
+    "<T extends !A>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]
+
+[04-type-params-args / tparamsArrow]  bun Expected "…" but found "…"  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS7006 x1, TS2318 x1
+    "<T extends A?>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]
+
+[04-type-params-args / tparamsArrow]  bun Expected "…" but found "…"  /  tsc TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?   (1 inputs, 1 distinct)
+    tsc also: TS2318 x1, TS2304 x1
+    "<T extends !A>"  [asyncArrow]
+
+[04-type-params-args / tparamsArrow]  bun Unexpected …  /  tsc TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4, TS7006 x1
+    "<T extends !A>"  [arrow,arrowParam,arrowRet,arrowStmt]
+
+[05-assertions / arrow]  bun A rest argument cannot have a default initializer  /  tsc TS1048 A rest parameter cannot have an initializer.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(...a = []) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS1090 'declare' modifier cannot appear on a parameter.   (5 inputs, 1 distinct)
+    tsc also: TS7006 x5, TS2304 x5
+    "(declare a) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS1090 'static' modifier cannot appear on a parameter.   (5 inputs, 1 distinct)
+    tsc also: TS7006 x5, TS2304 x5
+    "(static a) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS1242 'abstract' modifier can only appear on a class, method, or property declaration.   (5 inputs, 1 distinct)
+    tsc also: TS7006 x5, TS2304 x5
+    "(abstract a) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (10 inputs, 2 distinct)
+    tsc also: TS2304 x10
+    "(): A? => x"  [init,stmt,arg,condTrue,condFalse]
+    "(a: A?) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(): ?A => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS8020 JSDoc types can only be used inside documentation comments.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(): * => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Invalid binding pattern  /  tsc TS1048 A rest parameter cannot have an initializer.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(...a: A[] = []) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS1014 A rest parameter must be last in a parameter list.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS7006 x5
+    "(...a: A[], b) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS1015 Parameter cannot have question mark and initializer.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(a? = 1) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS1200 Line terminator not permitted before arrow.   (20 inputs, 4 distinct)
+    tsc also: TS2304 x20, TS7006 x10, TS2318 x5
+    "(a): T\n=> x"  [init,stmt,arg,condTrue,condFalse]
+    "async (a: A)\n=> x"  [init,stmt,arg,condTrue,condFalse]
+    "async (a: A): T\n=> x"  [init,stmt,arg,condTrue,condFalse]
+    "a ? (b): c\n=> d : e"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS1359 Identifier expected. 'await' is a reserved word that cannot be used here.   (10 inputs, 2 distinct)
+    tsc also: TS2318 x10, TS2304 x10, TS7006 x5
+    "async (await) => x"  [init,stmt,arg,condTrue,condFalse]
+    "async (await: A) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "(a: ?A) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / as]  bun "…" can only be used inside an "…" function  /  tsc TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "await x as T"  [return]
+
+[05-assertions / as]  bun Expected "…" but found "…"  /  tsc TS1228 A type predicate is only allowed in return type position for functions and methods.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "x as asserts a"  [init,stmt,arg,element,return]
+
+[05-assertions / as]  bun The constant "…" must be initialized  /  tsc TS1155 'const' declarations must be initialized.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2, TS7005 x2
+    "x as T, y"  [init]
+    "x satisfies T, y"  [init]
+
+[05-assertions / as]  bun Unexpected …  /  tsc TS17019 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "x as T?"  [init,stmt,arg,element,return]
+
+[05-assertions / as]  bun Unexpected …  /  tsc TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "x as ?T"  [init,stmt,arg,element,return]
+
+[05-assertions / as]  bun Unexpected …  /  tsc TS8020 JSDoc types can only be used inside documentation comments.   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "x as *"  [init,stmt,arg,element,return]
+
+[05-assertions / catch]  bun Expected "…" but found "…"  /  tsc TS1196 Catch clause variable type annotation must be 'any' or 'unknown' if specified.   (1 inputs, 1 distinct)
+    "try {} catch (e: asserts e) {}"  [-]
+
+[05-assertions / catch]  bun Expected "…" but found "…"  /  tsc TS1197 Catch clause variable cannot have an initializer.   (1 inputs, 1 distinct)
+    "try {} catch (e = 1) {}"  [-]
+
+[05-assertions / nonNull]  bun Cannot use "…" outside a generator function  /  tsc TS1163 A 'yield' expression is only allowed in a generator body.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "yield x!"  [stmt,init,arg]
+
+[05-assertions / nonNull]  bun Expected "…" but found "…"  /  tsc TS1155 'const' declarations must be initialized.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS7005 x1
+    "x!, y!"  [init]
+
+[05-assertions / nonNull]  bun Expected identifier but found "…"  /  tsc TS18016 Private identifiers are not allowed outside class bodies.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "x!.#y"  [stmt,init,arg]
+
+[05-assertions / objLit]  bun Cannot use "…" here  /  tsc TS18004 No value exists in scope for the shorthand property 'async'. Either declare one or provide an initializer.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ async, await }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1005 '{' expected.   (12 inputs, 4 distinct)
+    tsc also: TS2304 x8
+    "{ a(): A; }"  [init,arg,paren]
+    "{ m(): void }"  [init,arg,paren]
+    "{ m(); }"  [init,arg,paren]
+    "{ new (): A }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1024 'readonly' modifier can only appear on a property declaration or index signature.   (6 inputs, 2 distinct)
+    tsc also: TS2318 x3, TS2697 x3, TS2304 x2
+    "{ readonly m() {} }"  [init,arg,paren]
+    "{ async readonly m() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'abstract' modifier cannot be used here.   (6 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "{ abstract a: 1 }"  [init,arg,paren]
+    "{ abstract m() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'accessor' modifier cannot be used here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ accessor a: 1 }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'declare' modifier cannot be used here.   (6 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "{ declare a: 1 }"  [init,arg,paren]
+    "{ declare m() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'export' modifier cannot be used here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ export a: 1 }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'override' modifier cannot be used here.   (6 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "{ override a: 1 }"  [init,arg,paren]
+    "{ override m() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'private' modifier cannot be used here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ private a: 1 }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'protected' modifier cannot be used here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ protected a: 1 }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'public' modifier cannot be used here.   (9 inputs, 3 distinct)
+    tsc also: TS2304 x3
+    "{ public a: 1 }"  [init,arg,paren]
+    "{ public m() {} }"  [init,arg,paren]
+    "{ public get a() { return 1 } }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'readonly' modifier cannot be used here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ readonly a: 1 }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1042 'static' modifier cannot be used here.   (9 inputs, 3 distinct)
+    tsc also: TS2318 x3, TS2697 x3, TS2304 x3
+    "{ static a: 1 }"  [init,arg,paren]
+    "{ static m() {} }"  [init,arg,paren]
+    "{ static async m() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1162 An object member cannot be declared optional.   (18 inputs, 6 distinct)
+    tsc also: TS2304 x8
+    "{ a?: 1 }"  [init,arg,paren]
+    "{ m?() {} }"  [init,arg,paren]
+    "{ m?<T>() {} }"  [init,arg,paren]
+    "{ [a]?: 1 }"  [init,arg,paren]
+    "{ \"a\"?: 1 }"  [init,arg,paren]
+    "{ async?() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS1255 A definite assignment assertion '!' is not permitted in this context.   (6 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "{ a!: 1 }"  [init,arg,paren]
+    "{ m!() {} }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS18004 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.   (9 inputs, 3 distinct)
+    tsc also: TS2304 x3
+    "{ a? }"  [init,arg,paren]
+    "{ a! }"  [init,arg,paren]
+    "{ a?, b }"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Unexpected …  /  tsc TS1312 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ a = 1 }"  [init,arg,paren]
+
+[05-assertions / target]  bun Expected "…" but found "…"  /  tsc TS18004 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "({ a! } = y)"  [-]
+
+[05-assertions / varAnnot]  bun Cannot use "…" with a "…" declaration  /  tsc TS1491 'declare' modifier cannot appear on a 'using' declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare using x: T"  [-]
+
+[05-assertions / varAnnot]  bun Expected "…" but found "…"  /  tsc TS1228 A type predicate is only allowed in return type position for functions and methods.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "let x: asserts a = y"  [-]
+
+[05-assertions / varAnnot]  bun Expected "…" but found "…"  /  tsc TS1263 Declarations with initializers cannot also have definite assignment assertions.   (1 inputs, 1 distinct)
+    "let x! = 1"  [-]
+
+[05-assertions / varAnnot]  bun Expected "…" but found "…"  /  tsc TS1492 'using' declarations may not have binding patterns.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "using { a }: T = y"  [-]
+
+[05-assertions / varAnnot]  bun Expected "…" but found end of file  /  tsc TS1264 Declarations with definite assignment assertions must also have type annotations.   (1 inputs, 1 distinct)
+    "let x!"  [-]
+
+[05-assertions / varAnnot]  bun The constant "…" must be initialized  /  tsc TS1155 'const' declarations must be initialized.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "const x: T"  [-]
+
+[05-assertions / varAnnot]  bun The declaration "…" must be initialized  /  tsc TS1155 'using' declarations must be initialized.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "using x: T"  [-]

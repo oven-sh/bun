@@ -1,0 +1,8 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+enumrel.ts(6,5): error TS2322: Type 'E.A' is not assignable to type 'E'.
+enumrel.ts(8,5): error TS2322: Type 'N3.E' is not assignable to type 'N1.E'.
+  Property 'C' is missing in type 'N1.E'.
+enumrel.ts(10,5): error TS2322: Type 'N4.E' is not assignable to type 'N1.E'.
+  Each declaration of 'E.A' differs in its value, where '0' was expected but '1' was given.
+enumrel.ts(12,5): error TS2322: Type '1' is not assignable to type 'E.A'.
+SIZES after check: identity=0 assignable=2 comparable=0 subtype=0 strictSubtype=0 enum=3 types=116

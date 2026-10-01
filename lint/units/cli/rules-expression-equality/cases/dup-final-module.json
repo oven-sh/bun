@@ -1,0 +1,4 @@
+[
+{"code": "switch (a) { case import.meta: break; case import.meta: break; }", "sourceType": "module"},
+{"code": "switch (a) { case import.meta.url: break; case import.meta.url: break; }", "sourceType": "module"}
+]

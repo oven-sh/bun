@@ -1,0 +1,57 @@
+[statement-keywords] "var declare, global; declare\nglobal\n{}"  (codes)
+    tsc:  parse - | js TS8006@29+6
+    tsgo: parse - | js -
+[statement-keywords] "var global; global\n{}"  (codes)
+    tsc:  parse - | js TS8006@12+6
+    tsgo: parse - | js -
+[decorators] "class A { foo(@dec x) {} }"  (codes)
+    tsc:  parse - | js TS1206@14+4
+    tsgo: parse - | js -
+[decorators] "class A { constructor(@dec x) {} }"  (codes)
+    tsc:  parse - | js TS1206@22+4
+    tsgo: parse - | js -
+[decorators] "@dec abstract_\nclass A {}"  (codes)
+    tsc:  parse TS1146@4+0 | js TS1206@0+4
+    tsgo: parse TS1146@4+0 | js -
+[decorators] "@a[b] class A {}"  (codes)
+    tsc:  parse TS1146@2+0 TS1005@6+5 | js TS1206@0+2
+    tsgo: parse TS1146@2+0 TS1005@6+5 | js -
+[decorators] "@a<b> class A {}"  (codes)
+    tsc:  parse TS1146@2+0 TS17008@3+1 TS1005@16+0 | js TS1206@0+2
+    tsgo: parse TS1146@2+0 TS17008@3+1 TS1005@16+0 | js -
+[typescript-only] "function f();"  (spans)
+    tsc:  parse - | js TS8017@9+1
+    tsgo: parse - | js TS8017@0+13
+[typescript-only] "class A { foo(); foo() {} }"  (spans)
+    tsc:  parse - | js TS8017@10+3
+    tsgo: parse - | js TS8017@10+6
+[typescript-only] "class A { [k: string]: any }"  (codes)
+    tsc:  parse - | js TS8010@14+6
+    tsgo: parse - | js TS8017@10+16
+[typescript-only] "declare function f()"  (codes)
+    tsc:  parse - | js TS8017@17+1
+    tsgo: parse - | js TS8017@0+20 TS8009@0+7
+[typescript-only] "declare module 'm' {}"  (codes)
+    tsc:  parse - | js TS8006@15+3
+    tsgo: parse - | js -
+[typescript-only] "declare global {}"  (codes)
+    tsc:  parse - | js TS8006@8+6
+    tsgo: parse - | js -
+[typescript-only] "export declare const x: number"  (codes)
+    tsc:  parse - | js TS8009@7+7 TS8010@24+6
+    tsgo: parse - | js TS8010@24+6 TS8009@7+7
+[typescript-only] "class A { constructor(); constructor() {} }"  (spans)
+    tsc:  parse - | js TS8017@10+11
+    tsgo: parse - | js TS8017@10+14
+
+SUMMARY
+   15 a.cjs: DIFFERS
+  445 a.cjs: same codes and spans
+   12 a.js differs in codes
+    3 a.js differs in spans
+   15 a.js: DIFFERS
+  445 a.js: same codes and spans
+   15 a.jsx: DIFFERS
+  445 a.jsx: same codes and spans
+   15 a.mjs: DIFFERS
+  445 a.mjs: same codes and spans

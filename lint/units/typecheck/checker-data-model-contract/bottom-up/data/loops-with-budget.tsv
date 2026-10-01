@@ -1,0 +1,6 @@
+site	function	what the loop walks	why it needs a budget
+checker/checker.go:2150	getTypeOnlyAliasDeclarationEx	symbol = resolveAlias(symbol) while the symbol is an alias without the meaning	an alias that resolves to itself keeps the loop alive
+checker/checker.go:15915	resolveEntityName	symbol = resolveAlias(symbol) while the symbol is an alias without the meaning	the same chain as above
+checker/checker.go:16413	resolveAliasWithDeprecationCheck	symbol = getImmediateAliasedSymbol(symbol)	a target without declarations that is not the resolved target leaves `symbol` unchanged: the loop never ends (same in TypeScript)
+checker/checker.go:27989	getNormalizedType	t = normalized(t) until a fixed point	two types that normalize to each other never reach one
+checker/relater.go:2323	getEffectiveConstraintOfIntersection	constraint = getConstraintOfType(constraint)	a constraint cycle that getConstraintOfType does not cut

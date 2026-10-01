@@ -1,0 +1,13 @@
+layer	position	functions	lines	closures	codes	panics	asserts	forward: this unit	forward: inference	forward: keyof..template	forward: iteration, awaited	forward: jsx	forward: grammar	forward: decorators, collisions, mark references	forward: declaration checks and the rest	forward total	called from earlier steps
+E-CORE	45	42	799	10	24	2	3	41	8	1	6	5	7	1	5	74	10
+E-LITERAL	46	27	699	12	5	0	1	9	1	4	2	0	3	0	1	20	15
+E-OPER	47	41	895	7	41	1	0	12	0	3	4	0	3	1	2	25	9
+E-ACCESS	48	71	1581	18	59	1	0	18	1	12	1	0	2	3	2	39	19
+E-FACTS	49	15	260	4	0	0	0	0	0	0	0	0	0	0	0	0	8
+E-FUNC	50	17	370	1	1	0	0	5	1	0	0	0	2	2	8	18	4
+T-RETINFER	51	15	383	4	5	0	0	10	0	0	6	0	0	0	0	16	4
+E-CALL	52	63	1755	11	59	3	1	7	8	0	2	3	3	2	3	28	11
+E-CTX	55	55	1031	16	0	0	0	0	0	8	6	5	0	1	0	20	18
+F-NARROW	56	134	2481	40	3	1	0	1	0	3	1	0	0	0	0	5	22
+F-REACH	57	5	134	0	0	0	0	0	0	0	0	0	0	0	0	0	2
+F-UNREACH	81	2	79	0	1	0	0	0	0	0	0	0	0	0	0	0	1

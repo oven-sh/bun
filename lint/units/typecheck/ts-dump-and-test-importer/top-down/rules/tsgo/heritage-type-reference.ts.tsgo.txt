@@ -1,0 +1,74 @@
+file /heritage-type-reference.ts scriptKind=3 variant=0 dts=false textLen=186
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=61 identifiers=20 text=20 reparsedClones=0
+root KindSourceFile [0,186) f=0x0
+  .Statements: list [0,185) n=4
+    - KindModuleDeclaration [0,55) f=0x0 Keyword=KindNamespaceKeyword
+      .Body: KindModuleBlock [11,55) f=0x0
+        .Statements: list [13,53) n=2
+          - KindInterfaceDeclaration [13,35) f=0x0
+            .Members: list [34,34) n=0
+            .modifiers.flags=0x20
+            .modifiers: list [13,20) n=1
+              - KindExportKeyword [13,20) f=0x0
+            .name: KindIdentifier [30,32) f=0x0 Text="A"
+          - KindClassDeclaration [35,53) f=0x0
+            .Members: list [52,52) n=0
+            .modifiers.flags=0x20
+            .modifiers: list [35,42) n=1
+              - KindExportKeyword [35,42) f=0x0
+            .name: KindIdentifier [48,50) f=0x0 Text="B"
+      .name: KindIdentifier [9,11) f=0x0 Text="N"
+    - KindInterfaceDeclaration [55,97) f=0x0
+      .HeritageClauses: list [67,94) n=1
+        - KindHeritageClause [67,94) f=0x0 Token=KindExtendsKeyword
+          .Types: list [75,94) n=2
+            - KindTypeReference [75,79) f=0x0
+              .TypeName: KindQualifiedName [75,79) f=0x0
+                .Left: KindIdentifier [75,77) f=0x0 Text="N"
+                .Right: KindIdentifier [78,79) f=0x0 Text="A"
+            - KindTypeReference [80,94) f=0x0
+              .TypeArguments: list [87,93) n=1
+                - KindStringKeyword [87,93) f=0x0
+              .TypeName: KindIdentifier [80,86) f=0x0 Text="Array"
+      .Members: list [96,96) n=0
+      .name: KindIdentifier [65,67) f=0x0 Text="X"
+    - KindClassDeclaration [97,138) f=0x0
+      .HeritageClauses: list [105,135) n=2
+        - KindHeritageClause [105,117) f=0x0 Token=KindExtendsKeyword
+          .Types: list [113,117) n=1
+            - KindExpressionWithTypeArguments [113,117) f=0x0
+              .Expression: KindPropertyAccessExpression [113,117) f=0x0
+                .Expression: KindIdentifier [113,115) f=0x0 Text="N"
+                .name: KindIdentifier [116,117) f=0x0 Text="B"
+        - KindHeritageClause [117,135) f=0x0 Token=KindImplementsKeyword
+          .Types: list [128,135) n=2
+            - KindTypeReference [128,132) f=0x0
+              .TypeName: KindQualifiedName [128,132) f=0x0
+                .Left: KindIdentifier [128,130) f=0x0 Text="N"
+                .Right: KindIdentifier [131,132) f=0x0 Text="A"
+            - KindTypeReference [133,135) f=0x0
+              .TypeName: KindIdentifier [133,135) f=0x0 Text="X"
+      .Members: list [137,137) n=0
+      .name: KindIdentifier [103,105) f=0x0 Text="Y"
+    - KindClassDeclaration [138,185) f=0x0
+      .HeritageClauses: list [146,182) n=2
+        - KindHeritageClause [146,160) f=0x0 Token=KindExtendsKeyword
+          .Types: list [154,160) n=1
+            - KindExpressionWithTypeArguments [154,160) f=0x0
+              .Expression: KindParenthesizedExpression [154,160) f=0x0
+                .Expression: KindPropertyAccessExpression [156,159) f=0x0
+                  .Expression: KindIdentifier [156,157) f=0x0 Text="N"
+                  .name: KindIdentifier [158,159) f=0x0 Text="B"
+        - KindHeritageClause [160,182) f=0x0 Token=KindImplementsKeyword
+          .Types: list [171,182) n=1
+            - KindTypeReference [171,182) f=0x0
+              .TypeArguments: list [180,181) n=1
+                - KindTypeReference [180,181) f=0x0
+                  .TypeName: KindIdentifier [180,181) f=0x0 Text="X"
+              .TypeName: KindIdentifier [171,179) f=0x0 Text="Partial"
+      .Members: list [184,184) n=0
+      .name: KindIdentifier [144,146) f=0x0 Text="Z"
+  .EndOfFileToken: KindEndOfFile [185,186) f=0x0

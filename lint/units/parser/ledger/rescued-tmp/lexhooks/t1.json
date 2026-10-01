@@ -1,0 +1,12 @@
+[
+ ["prefix-default-in-expr", "ts", "x = );"],
+ ["prefix-default-stmt-start", "ts", ")"],
+ ["prefix-eof", "ts", "x = "],
+ ["expect-paren", "ts", "f(1;"],
+ ["expect-semicolon", "ts", "let x = 1 2"],
+ ["type-missing", "ts", "let x: ;"],
+ ["ident-missing", "ts", "let = 1;"],
+ ["ident-reserved", "ts", "let class = 1;"],
+ ["unterminated-string", "ts", "let s = 'abc"],
+ ["unterminated-block-comment", "ts", "let s = 1; /* abc"]
+]

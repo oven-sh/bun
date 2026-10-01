@@ -1,0 +1,100 @@
+# bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889  typescript 6.0.2
+"class C { [async x => x]() {} }"
+    tsc  parse TS1005@19 TS1005@24 TS1005@27 TS1128@30
+    bun  ok "class C {\n  [async (x) => x]() {}\n}\n"
+"class C { [async x => x] = 1 }"
+    tsc  parse TS1005@19 TS1005@25
+    bun  ok "class C {\n  [async (x) => x] = 1;\n}\n"
+"class C { [async (x) => x]() {} }"
+    tsc  ok other 2318,2464,7006
+    bun  ok "class C {\n  [async (x) => x]() {}\n}\n"
+"class C { [async]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [async]() {}\n}\n"
+"class C { [static x]() {} }"
+    tsc  parse TS1005@20 TS1005@23 TS1128@26
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [public x]: T }"
+    tsc  ok grammar TS1018@18 other 2369,7006
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [readonly x]() {} }"
+    tsc  parse TS1005@22 TS1005@25 TS1128@28
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [abstract x]() {} }"
+    tsc  parse TS1005@22 TS1005@25 TS1128@28
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [declare x]() {} }"
+    tsc  parse TS1005@21 TS1005@24 TS1128@27
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [override x]() {} }"
+    tsc  parse TS1005@22 TS1005@25 TS1128@28
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [accessor x]() {} }"
+    tsc  parse TS1005@22 TS1005@25 TS1128@28
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [async function () {}]() {} }"
+    tsc  ok other 2318,2464,2697
+    bun  ok "class C {\n  [async function() {}]() {}\n}\n"
+"class C { [await x]() {} }"
+    tsc  ok grammar TS1375@11
+    bun  ok "class C {\n  [await x]() {}\n}\n"
+"async function f() { class C { [await x]() {} } }"
+    tsc  ok
+    bun  ok "async function f() {\n  class C {\n    [await x]() {}\n  }\n}\n"
+"class C { [yield]() {} }"
+    tsc  ok grammar TS1213@11
+    bun  ERR "\"yield\" is a reserved word and cannot be used in strict mode"
+"function* g() { class C { [yield x]() {} } }"
+    tsc  ok other 2318
+    bun  ok "function* g() {\n  class C {\n    [yield x]() {}\n  }\n}\n"
+"class C { [x ? y : z]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x ? y : z]() {}\n}\n"
+"class C { [x ?? y]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x ?? y]() {}\n}\n"
+"class C { [x?.y]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x?.y]() {}\n}\n"
+"class C { [x, y]() {} }"
+    tsc  parse TS1005@16 TS1005@19 TS1128@22
+    bun  ERR "Expected \"]\" but found \",\""
+"class C { [x as any]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x]() {}\n}\n"
+"class C { [x!]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x]() {}\n}\n"
+"class C { [<any>x]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x]() {}\n}\n"
+"class C { [x satisfies any]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x]() {}\n}\n"
+"class C { [x in y]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x in y]() {}\n}\n"
+"class C { [type]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [type]() {}\n}\n"
+"class C { [async\nx => x]() {} }"
+    tsc  parse TS1005@17 TS1005@19 TS1005@24 TS1005@27 TS1128@30
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [get x]() {} }"
+    tsc  parse TS1005@15 TS1068@16 TS1068@17 TS1005@20 TS1128@23
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [set x]() {} }"
+    tsc  parse TS1005@15 TS1068@16 TS1068@17 TS1005@20 TS1128@23
+    bun  ERR "Expected \"]\" but found \"x\""
+"class C { [new.target]() {} }"
+    tsc  ok grammar TS17013@11
+    bun  ok "class C {\n  [new.target]() {}\n}\n"
+"class C { [x = 1]() {} }"
+    tsc  ok
+    bun  ok "class C {\n  [x = 1]() {}\n}\n"
+"class C { [x => x]() {} }"
+    tsc  ok other 2464,7006
+    bun  ok "class C {\n  [(x) => x]() {}\n}\n"
+"class C { [x: y]() {} }"
+    tsc  parse TS1005@16 TS1005@19 TS1128@22
+    bun  ERR "Expected \":\" but found \"(\""

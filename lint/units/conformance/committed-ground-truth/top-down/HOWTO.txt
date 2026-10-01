@@ -1,0 +1,85 @@
+Research unit "committed-ground-truth", top-down pass (2026-09-30). Nothing was written in a worktree; no git command ran in one.
+N = /workspace/notes/lint/units/conformance, P = N/committed-ground-truth/top-down, REF = /workspace/ref/typescript-go, W = a scratch directory.
+
+Files of P
+  fixtures/                 the five files to commit as they are: reference_counts.json, reference_instances.tsv (written by probes/pin.ts),
+                            directives-inputs.json, directives-expected.json (copies of N/directive-grammar/vectors/synthetic-*.json),
+                            fake-lint-fixture.ts (copy of N/check-contract-default-spawn/top-down/fakes/lints.ts)
+  fixtures-compact/         the other form of the list: reference_counts.json with 256 bucket rows and reference_skips.tsv (pin.ts --compact)
+  FIXTURES.tsv              every committed fixture and every vector that stays out, with bytes and packed sizes
+  NAMES.tsv                 the two discovery rules and the final name of each prototype
+  PROVENANCE.tsv            one row per vector: generator, toolchain, network
+  TIMES.tsv                 release and debug times per check
+  AFTER-SYNC.txt            the procedure after sync.sh moves UPSTREAM
+  probes/pin.ts             prototype of the pin script (writes the two reference files; --reference, --reference-log)
+  probes/witness.ts         the counts that the baseline files of both upstream projects give, without Go
+  probes/constants.ts       first form of the constants with a row per directory (361 rows), and the comparison of the two layouts
+  probes/lists.ts           the candidate forms of the reference list, for their sizes
+  probes/timing.ts          processor time of each check
+  probes/log_lists.sh       subtests and skip reasons out of a `go test -v` log, in awk
+  prototype/instances.test.ts  the blocks of conformance.test.ts that read reference_instances.tsv
+  prototype/pins.test.ts    the corpus blocks (both forms) and the blocks of the compact form
+
+Scratch set (about one minute)
+  bun N/shared-foundation-merge/bottom-up/overlay/assemble.ts N W/asm                      the runner as it would be committed
+  bash N/corpus-layout-and-sync/top-down/prototype/validate.sh /workspace/wt/conformance REF REF/_submodules/TypeScript W/validate
+      -> W/validate/with is a repository with the corpus in the committed layout (22186 files, 32485872 bytes, bundle 7737689 bytes).
+         This pass used a clone of the one that an earlier pass left: git clone --local /tmp/nlc-td/validate/with W/repo
+  H=W/repo/test/cli/lint/conformance ; cp W/asm/test/cli/lint/conformance/post-emit-order.txt $H/
+
+The constants
+  bun P/probes/pin.ts W/asm $H P/fixtures --reference REF --reference-log /tmp/oe-research/test.log
+      -> reference_counts.json 2793 bytes, reference_instances.tsv 743026 bytes (14915 rows, sha256 85cbb4e9...8960)
+  bun P/probes/pin.ts W/asm $H P/fixtures-compact --compact --reference REF --reference-log /tmp/oe-research/test.log
+      -> reference_counts.json 17239 bytes, reference_skips.tsv 157156 bytes (2118 rows, sha256 933bb51a...c515)
+      /tmp/oe-research/test.log is the output of the reference's own TestSubmodule with -test.v (22679650 bytes), left by
+      N/oracle-and-expectations/bottom-up/groundtruth/prepost/build.sh. Without it: leave --reference-log out, the block referenceRun is not written.
+  sh P/probes/log_lists.sh /tmp/oe-research/test.log W/loglists
+      -> subtests 14915 sha256 a78d75bf...abf3, skips 2118 sha256 01b47418...d3d3, and the ten reasons with their counts (awk, sort and sha256sum only)
+  bun P/probes/constants.ts W/asm $H W/constants.json REF N/oracle-and-expectations/bottom-up/vectors/go-subtests.tsv.gz W/loglists/reference-skips.tsv
+      -> the same digest from the stored list of subtests; "every skip has the reason text of the reference";
+         "instances whose oracle differs between the layouts: 0" (committed layout against the reference's directories)
+  bun P/probes/witness.ts W/asm $H REF
+      -> TypeScript's 9056 error baselines: oracle 6353, behind typescript-go's 552, behind the no-error list 23, of a skipped instance 2081, no instance 47;
+         typescript-go's 45811 baseline files: 0 without a run instance; 12763 of 12797 run instances have one, 34 have none (all without errors)
+
+The test blocks
+  CGT_FX=P/fixtures CGT_ASM=W/asm CGT_HOME=$H bun test --timeout 180000 P/prototype/instances.test.ts P/prototype/pins.test.ts    -> 12 pass, 10 skip (release)
+  the same with /workspace/wt/cli/build/debug/bun-debug, BUN_DEBUG_QUIET_LOGS=1 and --timeout 900000, instances.test.ts alone          -> 9 pass, 1 skip
+  CGT_FX=P/fixtures-compact CGT_ASM=W/asm CGT_HOME=$H bun test --timeout 180000 P/prototype/pins.test.ts                             -> 12 pass; debug: 10 pass, 2 skip
+  The blocks fail when they should. List form: in a copy of reference_instances.tsv, the kind of 2dArrays.ts set to E and the row of
+  ES5For-of28(target=es5).ts set to run: 2 fail, both rows are printed with what was expected and what was received.
+  Compact form: one hex digit of a bucket digest changed, "instances": 14915 to 14916, one row of the skip list deleted: 3 fail, the row is printed by name.
+
+Sizes
+  bun P/probes/lists.ts W/asm $H W/lists ; wc -c W/lists/* ; gzip -9 -c <file> | wc -c
+  In W/repo: a branch with the runner (cp W/asm/test/cli/lint/...), one commit; a branch with the fixtures, one commit;
+  git bundle create W/x.bundle HEAD~1..HEAD ; wc -c W/x.bundle            -> runner 112283, fixtures 115863 (compact form 35277), corpus + runner + fixtures 7966242 (7885657)
+  The same for each candidate that stays out, as text and as gzip: the table of FIXTURES.tsv.
+
+Times
+  bun P/probes/timing.ts W/asm $H P/fixtures all                                                          release, every step
+  BUN_DEBUG_QUIET_LOGS=1 /workspace/wt/cli/build/debug/bun-debug P/probes/timing.ts W/asm $H P/fixtures load,enumerate-sample-40,skips-parse,directives small
+  ... load,corpus-names-digest,roundtrip-sample,replay-sample small                                       debug
+  cd W/asm && TFS_CHECK=replay NO_COLOR=1 bun test --timeout 180000 test/cli/lint/conformance.test.ts    the assembled test, release: 49 pass
+  the same with the debug binary and --timeout 900000                                                    48 pass, 1 skip, 43.8 s
+  bun N/shared-foundation-merge/bottom-up/verify/verify_go.ts <vectors.jsonl>                             16533083 checks, 5.5 s
+
+Names
+  A directory with files named conformance.test.ts, runner/compiler_test.ts, runner/compilertest.ts, runner/vfstest.ts, runner/test_case_parser.ts,
+  runner/x_spec.ts, runner/inspec.ts, runner/plain.test.ts, fakes/lints.ts, lint-fixture.ts, spec.helper.ts, a.test-d.ts, y_test.mjs, runner/z.spec.cts,
+  each with one passing test: `bun test` there runs conformance.test.ts, y_test.mjs, compiler_test.ts, x_spec.ts, plain.test.ts, z.spec.cts.
+  The rule of CI on the same names (the two functions of scripts/runner.node.ts:2459-2494 copied into node -e): conformance.test.ts, x_spec.ts, inspec.ts,
+  plain.test.ts, spec.helper.ts, a.test-d.ts, z.spec.cts.
+  The corpus: cut -f2 of the two listings of validate.sh, lower case, grep for both rules -> 0 of 22185.
+
+Provenance checks made in this pass
+  python3 N/shared-foundation-merge/bottom-up/groundtruth/build.py REF W/gt-sfm /usr/bin/go ; W/gt-sfm/gt W/gt-sfm/vectors.jsonl      (Go 1.24.4, offline: 26 s and 3 s)
+  tail -n +2 W/gt-sfm/vectors.jsonl | cmp - <(gunzip -c N/shared-foundation-merge/bottom-up/vectors/go-vectors.jsonl.gz | tail -n +2)   -> equal
+  bun N/shared-foundation-merge/bottom-up/groundtruth/gen_tables.ts W/gt-sfm/vectors.jsonl      -> the two tables of gostrings.ts; the first line says go1.24.4
+  a copy of N/enumerator/prototype/gen_options_table.ts run in W: options_table.json is byte-identical to the one of the assembled runner (27847 bytes)
+  git -C /workspace/wt/conformance ls-files '*.go' | wc -l -> 0 ; the largest of the 399 tracked .gz and .tgz files below test/ is 78116 bytes
+
+Not done: anything on Windows or macOS; an ASAN build without debug assertions; a run of the reference's suite. This pass fetched no toolchain and built
+nothing with Go 1.26 (its only use of /tmp/rr/go125 and /tmp/rr/go126 was `go version`): every fact about the reference's run comes from files that
+earlier passes left on disk.

@@ -1,0 +1,664 @@
+== TYPES
+551-562 FormatTypeFlags
+565-567 TypeFlags.String
+569-592 VarianceFlags.String
+665-670 TypeAlias.Symbol
+672-677 TypeAlias.TypeArguments
+691-693 Type.Id
+695-697 Type.Flags
+699-701 Type.ObjectFlags
+705-705 Type.AsIntrinsicType
+706-706 Type.AsLiteralType
+707-707 Type.AsUniqueESSymbolType
+708-708 Type.AsTupleType
+709-711 Type.AsInstantiationExpressionType
+712-712 Type.AsMappedType
+713-713 Type.AsReverseMappedType
+714-714 Type.AsEvolvingArrayType
+715-715 Type.AsTypeParameter
+716-716 Type.AsUnionType
+717-717 Type.AsIntersectionType
+718-718 Type.AsIndexType
+719-719 Type.AsIndexedAccessType
+720-720 Type.AsTemplateLiteralType
+721-721 Type.AsStringMappingType
+722-722 Type.AsSubstitutionType
+723-723 Type.AsConditionalType
+727-727 Type.AsConstrainedType
+728-728 Type.AsStructuredType
+729-729 Type.AsObjectType
+730-730 Type.AsTypeReference
+731-731 Type.AsInterfaceType
+732-734 Type.AsUnionOrIntersectionType
+736-744 Type.Distributed
+748-762 Type.Target PANIC@761
+764-774 Type.Mapper PANIC@773
+776-784 Type.Types PANIC@783
+786-788 Type.TargetInterfaceType
+790-792 Type.TargetTupleType
+794-796 Type.Symbol
+798-800 Type.Alias
+802-804 Type.IsUnion
+806-808 Type.IsString
+810-812 Type.IsIntersection
+814-816 Type.IsStringLiteral
+818-820 Type.IsNumberLiteral
+822-824 Type.IsBigIntLiteral
+826-828 Type.IsEnumLiteral
+830-832 Type.IsBooleanLike
+834-836 Type.IsStringLike
+838-840 Type.IsClass
+842-844 Type.IsTypeParameter
+846-848 Type.IsIndex
+850-852 Type.IsTupleType
+872-872 TypeBase.AsType
+873-873 TypeBase.AsConstrainedType
+874-874 TypeBase.AsStructuredType
+875-875 TypeBase.AsObjectType
+876-876 TypeBase.AsTypeReference
+877-877 TypeBase.AsInterfaceType
+878-878 TypeBase.AsUnionOrIntersectionType
+887-887 IntrinsicType.IntrinsicName
+898-900 LiteralType.Value
+902-904 LiteralType.FreshType
+906-908 LiteralType.RegularType
+910-912 LiteralType.String
+928-928 ConstrainedType.AsConstrainedType
+943-943 StructuredType.AsStructuredType
+945-947 StructuredType.CallSignatures
+949-951 StructuredType.ConstructSignatures
+953-955 StructuredType.Properties
+997-997 ObjectType.AsObjectType
+1007-1007 TypeReference.AsTypeReference
+1026-1026 InterfaceType.AsInterfaceType
+1028-1033 InterfaceType.OuterTypeParameters
+1035-1040 InterfaceType.LocalTypeParameters
+1042-1047 InterfaceType.TypeParameters
+1070-1070 TupleElementInfo.TupleElementFlags
+1071-1071 TupleElementInfo.LabeledDeclaration
+1082-1082 TupleType.FixedLength
+1083-1083 TupleType.IsReadonly
+1084-1090 TupleType.ElementFlags
+1091-1091 TupleType.ElementInfos
+1141-1141 UnionOrIntersectionType.AsUnionOrIntersectionType
+1143-1145 UnionOrIntersectionType.Types
+1177-1177 TypeParameter.IsThisType
+1198-1198 IndexType.Target
+1209-1209 IndexedAccessType.ObjectType
+1210-1210 IndexedAccessType.IndexType
+1218-1218 TemplateLiteralType.Texts
+1219-1219 TemplateLiteralType.Types
+1226-1226 StringMappingType.Target
+1234-1234 SubstitutionType.BaseType
+1235-1235 SubstitutionType.SubstConstraint
+1262-1262 ConditionalType.CheckType
+1263-1263 ConditionalType.ExtendsType
+1308-1310 Signature.Id
+1312-1314 Signature.Flags
+1316-1318 Signature.TypeParameters
+1320-1322 Signature.Declaration
+1324-1326 Signature.Target
+1328-1330 Signature.ThisParameter
+1332-1334 Signature.Parameters
+1336-1338 Signature.HasRestParameter
+1340-1342 Signature.MinArgumentCount
+1365-1367 TypePredicate.Type
+1369-1371 TypePredicate.Kind
+1373-1375 TypePredicate.ParameterIndex
+1377-1379 TypePredicate.ParameterName
+1392-1394 IndexInfo.KeyType
+1396-1398 IndexInfo.ValueType
+1400-1402 IndexInfo.IsReadonly
+1404-1406 IndexInfo.Declaration
+-- stand-ins TYPES
+isTupleType	checker.go:23603-23605	<- Type.IsTupleType
+== LINKS
+14-16 nodeLinkStore.Get
+18-20 nodeLinkStore.Has
+22-24 nodeLinkStore.TryGet
+33-39 symbolArenaLinkStore.Get
+41-43 symbolArenaLinkStore.Has
+45-50 symbolArenaLinkStore.TryGet
+-- stand-ins LINKS
+== MAPPER
+26-26 TypeMapper.Map
+27-27 TypeMapper.Kind
+28-28 TypeMapper.MapsThisOnly
+40-45 newTypeMapper
+47-52 c.combineTypeMappers
+54-63 c.mapTypeWithCompositeMapper
+65-70 mergeTypeMappers
+72-77 prependTypeMapping
+79-84 appendTypeMapping
+88-94 c.newBackreferenceMapper closures=1
+102-102 TypeMapperBase.Map
+103-103 TypeMapperBase.Kind
+104-104 TypeMapperBase.MapsThisOnly
+114-120 newSimpleTypeMapper
+122-127 SimpleTypeMapper.Map
+129-131 SimpleTypeMapper.Kind
+133-135 SimpleTypeMapper.MapsThisOnly
+145-151 newArrayTypeMapper
+153-160 ArrayTypeMapper.Map
+162-164 ArrayTypeMapper.Kind
+166-168 ArrayTypeMapper.MapsThisOnly
+178-184 newArrayToSingleTypeMapper
+186-191 ArrayToSingleTypeMapper.Map
+193-195 ArrayToSingleTypeMapper.MapsThisOnly
+205-211 newDeferredTypeMapper
+213-220 DeferredTypeMapper.Map
+222-224 DeferredTypeMapper.MapsThisOnly
+233-238 newFunctionTypeMapper
+240-242 FunctionTypeMapper.Map
+252-258 newMergedTypeMapper
+260-262 MergedTypeMapper.Map
+264-266 MergedTypeMapper.Kind
+277-284 newCompositeTypeMapper
+286-292 CompositeTypeMapper.Map
+303-310 c.newInferenceTypeMapper
+312-326 InferenceTypeMapper.Map
+-- stand-ins MAPPER
+c.instantiateType	checker.go:22214-22216	<- CompositeTypeMapper.Map, c.mapTypeWithCompositeMapper
+c.getInferredType	inference.go:1317-1404	<- InferenceTypeMapper.Map
+c.inferFromIntraExpressionSites	inference.go:1302-1315	<- InferenceTypeMapper.Map
+clearCachedInferences	inference.go:1642-1648	<- InferenceTypeMapper.Map
+== UTIL
+22-30 NewDiagnosticForNode
+32-37 NewDiagnosticChainForNode
+39-46 findInMap MAPRANGE@40
+48-50 tokenIsIdentifierOrKeyword
+52-54 tokenIsIdentifierOrKeywordOrGreaterThan
+56-58 hasOverrideModifier
+60-62 hasAsyncModifier
+64-66 getSelectedModifierFlags
+68-70 hasReadonlyModifier
+72-74 isStaticPrivateIdentifierProperty
+76-78 isEmptyObjectLiteral
+90-108 getAssignmentTargetKind PANIC@107
+110-116 isDeleteTarget
+118-121 isInCompoundLikeAssignment
+123-126 isCompoundLikeAssignment
+128-130 isConstTypeReference
+134-138 isConstTypeReferenceName
+144-153 isExportAssignmentExpressionName
+155-160 GetSingleVariableOfVariableStatement
+162-167 isTypeReferenceIdentifier
+169-182 IsInTypeQuery closures=1
+184-196 canHaveLocals
+198-200 isShorthandAmbientModuleSymbol
+202-205 isShorthandAmbientModule
+207-216 getAliasDeclarationFromName
+218-220 entityNameToString
+222-227 getContainingQualifiedNameNode
+229-232 isSideEffectImport
+234-239 getExternalModuleRequireArgument
+241-244 isRightSideOfAccessExpression
+246-248 isTopLevelInExternalModuleAugmentation
+250-255 isSyntacticDefault
+257-259 hasExportAssignmentSymbol
+261-263 isTypeAlias
+265-271 hasOnlyExpressionInitializer
+273-285 hasDotDotDotToken
+287-289 IsTypeAny
+291-293 isJSDocOptionalParameter
+295-297 isExclamationToken
+299-301 isOptionalDeclaration
+303-328 c.isOptionalParameter ASSERT@314 closures=2
+330-332 isEmptyArrayLiteral
+334-341 declarationBelongsToPrivateAmbientMember
+343-345 isPrivateWithinAmbient
+347-349 isTypeAssertion
+351-360 createSymbolTable
+362-364 c.sortSymbols
+366-391 c.compareSymbolsWorker
+393-413 c.compareNodes
+415-579 CompareTypes PANIC@426
+581-587 getSortOrderFlags
+589-605 compareTypeNames
+607-615 getTypeNameSymbol
+617-622 getObjectTypeName
+624-645 compareTupleTypes
+647-658 compareElementLabels
+660-670 compareTypeLists
+672-711 compareTypeMappers
+713-715 getDeclarationModifierFlagsFromSymbol
+717-755 getDeclarationModifierFlagsFromSymbolEx
+757-759 isExponentiationOperator
+761-763 isMultiplicativeOperator
+765-767 isMultiplicativeOperatorOrHigher
+769-771 isAdditiveOperator
+773-775 isAdditiveOperatorOrHigher
+777-780 isShiftOperator
+782-784 isShiftOperatorOrHigher
+786-789 isRelationalOperator
+791-793 isRelationalOperatorOrHigher
+795-798 isEqualityOperator
+800-802 isEqualityOperatorOrHigher
+804-806 isBitwiseOperator
+808-810 isBitwiseOperatorOrHigher
+812-814 isLogicalOperatorOrHigher
+816-818 isAssignmentOperatorOrHigher
+820-822 isBinaryOperator
+824-826 isObjectLiteralType
+828-830 isDeclarationReadonly
+841-847 orderedSet.contains
+849-863 orderedSet.add
+865-867 getContainingFunctionOrClassStaticBlock
+869-877 isNodeDescendantOf
+879-881 isTypeUsableAsPropertyName
+886-896 getPropertyNameFromType PANIC@895
+898-921 isNumericLiteralName
+923-925 isThisProperty
+927-933 isValidNumberString
+935-959 isValidBigIntString closures=1
+961-969 isValidESSymbolDeclaration
+971-973 isVariableDeclarationInVariableStatement
+975-977 IsKnownSymbol
+979-984 IsPrivateIdentifierSymbol
+986-988 isLateBoundName
+990-992 isObjectOrArrayLiteralType
+994-1011 getContainingClassExcludingClassDecorators closures=1
+1013-1015 isThisTypeParameter
+1017-1024 isClassInstanceProperty
+1026-1030 isThisInitializedObjectBindingExpression
+1032-1034 isThisInitializedDeclaration
+1036-1038 isInfinityOrNaNString
+1040-1042 c.isConstantVariable
+1044-1051 c.isParameterOrMutableLocalVariable
+1053-1056 c.isMutableLocalVariableDeclaration
+1058-1062 isInAmbientOrTypeNode closures=1
+1064-1071 isLiteralExpressionOfObject
+1073-1075 canHaveFlowNode
+1077-1079 isNonNullAccess
+1081-1083 getBindingElementPropertyName
+1085-1087 isCallChain
+1089-1091 c.callLikeExpressionMayHaveTypeArguments
+1093-1095 isSuperCall
+1097-1105 getMembersOfDeclaration
+1107-1114 isInRightSideOfImportOrExportAssignment
+1116-1118 isJsxIntrinsicTagName
+1120-1129 getContainingObjectLiteral
+1131-1143 isImportTypeQualifierPart
+1145-1152 isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference
+1154-1156 getIndexSymbolFromSymbolTable
+1160-1183 expressionResultIsUnused
+1185-1187 pseudoBigIntToString
+1189-1219 getSuperContainer
+1221-1253 forEachYieldExpression closures=1
+1255-1259 getEnclosingContainer closures=1
+1261-1263 getDeclarationsOfKind closures=1
+1265-1267 hasType
+1269-1271 getNonRestParameterCount
+1273-1286 minAndMax
+1555-1557 rangeOfTypeParameters
+1559-1577 tryGetPropertyAccessOrIdentifierToString
+1579-1591 allDeclarationsInSameSourceFile
+1593-1601 containsNonMissingUndefinedType
+1603-1618 getAnyImportSyntax
+1623-1625 isReservedMemberName
+1627-1634 introducesArgumentsExoticObject
+1636-1644 symbolsToArray MAPRANGE@1638
+1646-1651 SkipAlias
+1654-1657 IsExternalModuleSymbol
+1659-1661 c.isCanceled
+1663-1667 c.checkNotCanceled PANIC@1665
+1669-1682 c.getPackagesMap MAPRANGE@1673,1674 PROGRAM=GetResolvedModules
+1684-1688 c.typesPackageExists
+1690-1694 c.packageBundlesTypes
+1696-1708 ValueToString PANIC@1707
+1710-1717 nodeStartsNewLexicalEnvironment
+1724-1745 c.isUncheckedJSSuggestion
+1754-1773 c.isJSLiteralType
+1786-1816 CreateModuleNotFoundChain codes=6278,7035,7040,7058 PROGRAM=GetPackagesMap,GetResolvedModule
+1822-1851 CreateModeMismatchDetails codes=1480,1481,1482,1483 PROGRAM=GetSourceFileMetaData
+1853-1859 walkUpOuterExpressions
+1861-1868 GetSetAccessorValueParameter
+-- stand-ins UTIL
+c.getEffectiveCallArguments	checker.go:30165-30229	<- c.isOptionalParameter
+c.getMinArgumentCountEx	relater.go:1741-1780	<- c.isOptionalParameter
+c.getSignatureFromDeclaration	checker.go:19950-20024	<- c.isOptionalParameter
+c.getDeclarationNodeFlagsFromSymbol	checker.go:18795-18800	<- c.isConstantVariable
+signatureHasRestParameter	checker.go:17132-17134	<- getNonRestParameterCount
+c.GetAliasedSymbol	checker.go:32294-32296	<- SkipAlias
+c.getResolvedBaseConstraint	checker.go:27570-27611	<- c.isJSLiteralType
+== T-KEYS
+17473-17475 CacheHashKey.IsZero
+17483-17488 keyBuilder.hash
+17492-17495 keyBuilder.spill
+17497-17503 keyBuilder.writeByte
+17505-17514 keyBuilder.writeString
+17516-17522 keyBuilder.writeUint32
+17524-17530 keyBuilder.writeUint64
+17532-17534 keyBuilder.writeInt
+17536-17538 keyBuilder.writeSymbol
+17540-17542 keyBuilder.writeType
+17544-17549 keyBuilder.writeTypes
+17551-17559 keyBuilder.writeAlias
+17561-17594 keyBuilder.writeGenericTypeReferences closures=1
+17596-17598 keyBuilder.writeNodeId
+17600-17604 keyBuilder.writeNode
+17606-17610 getTypeListKey
+17612-17616 getAliasKey
+17618-17640 getUnionKey PANIC@17636
+17642-17651 getIntersectionKey
+17653-17674 getTupleKey
+17676-17678 getTypeAliasInstantiationKey
+17680-17688 getTypeInstantiationKey
+17690-17697 getIndexedAccessKey
+17699-17711 getTemplateTypeKey
+17713-17721 getConditionalTypeKey
+17723-17739 getRelationKey
+17741-17748 getNodeListKey
+17750-17754 isTypeReferenceWithGenericArguments closures=1
+17756-17758 isNonDeferredTypeReference
+17761-17775 isUnconstrainedTypeParameter
+-- stand-ins T-KEYS
+c.getConstraintOfTypeParameter	checker.go:17153-17158	<- keyBuilder.writeGenericTypeReferences
+c.getTypeArguments	checker.go:22007-22045	<- isTypeReferenceWithGenericArguments
+== K-OBJ
+25126-25138 c.newType
+25140-25142 c.newIntrinsicType
+25144-25148 c.newIntrinsicTypeEx
+25150-25157 c.createWideningType
+25159-25164 c.createUnknownUnionType
+25166-25176 c.newLiteralType
+25178-25184 c.newUniqueESSymbolType
+25186-25211 c.newObjectType PANIC@25206
+25213-25217 c.newAnonymousType
+25219-25224 c.tryCreateTypeReference
+25226-25228 c.createTypeReference
+25230-25242 c.createTypeReferenceEx
+25244-25258 c.createDeferredTypeReference
+25260-25266 c.cloneTypeReference
+25268-25289 c.setStructuredTypeMembers
+25291-25295 c.newTypeParameter
+25301-25309 c.getPropagatingFlagsOfTypes
+25311-25315 c.newUnionType
+25317-25321 c.newIntersectionType
+25323-25329 c.newIndexedAccessType
+25331-25336 c.newIndexType
+25338-25343 c.newTemplateLiteralType
+25345-25351 c.newStringMappingType
+25353-25361 c.newConditionalType
+25363-25368 c.newSubstitutionType
+25370-25384 c.newSignature
+25386-25394 c.newIndexInfo
+-- stand-ins K-OBJ
+Tracer.RecordType	tracer.go:25-27	<- c.newType
+c.getUnionType	checker.go:25740-25742	<- c.createUnknownUnionType
+c.getAliasForTypeNode	checker.go:23825-23831	<- c.createDeferredTypeReference
+c.instantiateTypes	checker.go:22881-22883	<- c.createDeferredTypeReference
+c.getNamedMembers	checker.go:22163-22188	<- c.setStructuredTypeMembers
+c.instantiateType	checker.go:22214-22216	<- c.newConditionalType
+== T-RSTACK
+18872-18883 c.pushTypeResolution
+18889-18895 c.popTypeResolution
+18897-18908 c.findResolutionCycleStartIndex
+18910-18934 c.typeResolutionHasProperty PANIC@18933
+18936-18958 c.reportCircularityError codes=2303,2502,7022
+-- stand-ins T-RSTACK
+c.symbolToString	printer.go:124-126	<- c.reportCircularityError
+== C-INIT
+908-1122 NewChecker PROGRAM=BindSourceFiles,Options,SourceFiles
+1124-1130 createFileIndexMap
+1132-1140 countGlobalSymbols
+1142-1147 c.reportUnreliableWorker
+1149-1154 c.reportUnmeasurableWorker
+1157-1161 c.getGlobalTypeResolver closures=1
+1164-1168 c.getGlobalTypeAliasResolver closures=1
+1171-1175 c.getGlobalValueSymbolResolver codes=2468 closures=1
+1177-1181 c.getGlobalTypeSymbolResolver codes=2318 closures=1
+1183-1189 c.getGlobalTypesResolver closures=2
+1191-1206 c.getGlobalTypeAliasSymbol codes=2317,2318
+1208-1214 c.GetTypeAliasTypeParameters PANIC@1210
+1216-1235 c.getGlobalType codes=2316,2317,2318
+1237-1245 getGlobalTypeDeclaration
+1247-1250 c.getGlobalSymbol
+1252-1263 c.initializeClosures closures=2
+1265-1300 c.initializeIterationResolvers codes=1320,2489,2490,2519,2547,2767,2768 closures=2
+1302-1390 c.initializeChecker codes=2397 MAPRANGE@1314,1328
+1392-1401 c.mergeGlobalSymbol
+1403-1456 c.mergeModuleAugmentation codes=2664,2671 MAPRANGE@1443 closures=1
+1458-1470 c.addUndefinedToGlobalsOrErrorOnRedeclaration codes=2397
+1472-1488 c.createNameResolver
+1490-1503 c.createNameResolverForSuggestion
+-- stand-ins C-INIT
+c.compareSymbolChainsWorker	symbolaccessibility.go:595-610	<- NewChecker
+c.evaluateEntity	checker.go:24147-24198	<- NewChecker
+c.getBigIntLiteralType	checker.go:25454-25461	<- NewChecker
+c.getNumberLiteralType	checker.go:25437-25452	<- NewChecker
+c.getStringLiteralType	checker.go:25428-25435	<- NewChecker
+c.getTemplateLiteralType	checker.go:29268-29334	<- NewChecker
+c.getUnionType	checker.go:25740-25742	<- NewChecker
+c.getUniqueLiteralTypeForTypeParameter	checker.go:25068-25073	<- NewChecker
+c.permissiveMapperWorker	checker.go:24655-24660	<- NewChecker
+c.restrictiveMapperWorker	checker.go:24648-24653	<- NewChecker
+c.getDeclaredTypeOfSymbol	checker.go:23784-23790	<- c.GetTypeAliasTypeParameters, c.getGlobalType, c.getGlobalTypeAliasSymbol
+c.IsEmptyAnonymousObjectType	checker.go:26599-26602	<- c.initializeClosures
+c.compareTypesAssignableWorker	relater.go:135-140	<- c.initializeClosures
+c.couldContainTypeVariablesWorker	checker.go:22298-22313	<- c.initializeClosures
+c.isStringIndexSignatureOnlyTypeWorker	checker.go:27488-27491	<- c.initializeClosures
+c.markNodeAssignmentsWorker	flow.go:2703-2747	<- c.initializeClosures
+c.getAwaitedTypeEx	checker.go:31380-31386	<- c.initializeIterationResolvers
+c.createArrayType	checker.go:24824-24826	<- c.initializeChecker
+c.createTypeFromGenericGlobalType	checker.go:24791-24796	<- c.initializeChecker
+c.getGlobalStrictFunctionType	checker.go:24798-24803	<- c.initializeChecker
+== D-SINK
+14052-14054 c.GetDiagnostics
+14056-14058 c.GetSuggestionDiagnostics
+14060-14068 c.getDiagnostics
+14070-14073 c.GetGlobalDiagnostics
+14075-14077 c.addDeferredDiagnostic
+14079-14084 c.produceDeferredDiagnostics
+14086-14092 c.addDiagnostic
+14094-14100 c.addSuggestionDiagnostic
+14102-14104 c.error
+14106-14110 c.errorSkippedOnNoEmit
+14112-14114 c.errorOrSuggestion
+14116-14122 c.errorAndMaybeSuggestAwait codes=2773
+14124-14132 c.addErrorOrSuggestion
+14134-14136 c.IsDeprecatedDeclaration
+14138-14141 c.addDeprecatedSuggestion codes=6385
+14143-14152 c.addDeprecatedSuggestionWorker codes=2798
+14154-14164 c.isDeprecatedSymbol
+14166-14168 c.hasParseDiagnostics
+-- stand-ins D-SINK
+c.checkSourceFile	checker.go:2202-2236	<- c.getDiagnostics
+c.getCombinedNodeFlagsCached	checker.go:18802-18810	<- c.IsDeprecatedDeclaration
+== S-MERGE
+14170-14176 c.newSymbol
+14178-14182 c.newSymbolEx
+14184-14188 c.newParameter
+14190-14194 c.newProperty
+14196-14207 c.combineSymbolTables
+14209-14240 c.mergeSymbolTable MAPRANGE@14210
+14246-14299 c.mergeSymbol codes=2649
+14301-14324 c.reportMergeSymbolError codes=2300,2451,2567
+14326-14330 c.addDuplicateDeclarationErrorsForSymbols
+14332-14356 c.addDuplicateDeclarationError codes=6203,6204 closures=1
+14358-14360 createDiagnosticForNode
+14362-14368 getAdjustedNodeForError
+14370-14372 c.lookupOrIssueError
+14374-14379 getFirstDeclaration
+14381-14435 getExcludedSymbolFlags
+14437-14447 c.cloneSymbol
+14449-14457 c.getMergedSymbol
+14459-14464 c.getParentOfSymbol
+14466-14468 c.recordMergedSymbol
+14470-14475 c.getSymbolIfSameReference
+14477-14482 c.getExportSymbolOfValueSymbolIfExported
+14484-14490 c.getSymbolOfDeclaration
+14494-14500 c.getSymbolOfNode
+14502-14520 c.getLateBoundSymbol
+14522-14524 c.resolveSymbol
+14526-14531 c.resolveSymbolEx
+-- stand-ins S-MERGE
+c.symbolToString	printer.go:124-126	<- c.mergeSymbol, c.reportMergeSymbolError
+c.hasLateBindableName	checker.go:20062-20065	<- c.getLateBoundSymbol
+== N-RESOLVE
+25-344 r.Resolve codes=1281,2302,2467,2562
+346-370 r.useOuterVariableScopeInParameter
+372-375 r.requiresScopeChange
+377-400 r.requiresScopeChangeWorker
+402-407 r.error
+409-416 r.getSymbolOfDeclaration
+418-432 r.lookup
+434-440 r.argumentsSymbol
+442-453 binder.GetLocalSymbolForExportDefault
+455-457 binder.isExportDefaultSymbol
+459-475 binder.getIsDeferredContext
+477-487 binder.isTypeParameterSymbolDeclaredInContainer
+489-498 binder.isSelfReferenceLocation
+2182-2200 c.getSymbol
+13991-14002 c.getResolvedSymbol
+14004-14006 c.getResolvedSymbolOrNil
+14008-14014 c.getReferencedValueOrAliasSymbol
+14016-14050 c.getCannotFindNameDiagnosticForName codes=2304,2311,2580,2581,2582,2583,2584,2591,2592,2593,2867,2868,18004
+-- stand-ins N-RESOLVE
+== N-DIAG
+1505-1507 c.symbolReferenced
+1509-1511 c.getRequiresScopeChangeCache
+1513-1515 c.setRequiresScopeChangeCache
+1520-1536 c.checkAndReportErrorForInvalidInitializer codes=2301,2844
+1538-1568 c.checkAndReportErrorForMissingPrefix codes=2662,2663
+1570-1612 c.onFailedToResolveSymbol codes=2552,2570,2728,2833
+1614-1633 c.checkAndReportErrorForUsingTypeAsNamespace codes=2702,2713 ASSERT@1620
+1635-1641 c.checkAndReportErrorForExportingPrimitiveType codes=2661
+1643-1645 isPrimitiveTypeName
+1647-1666 c.checkAndReportErrorForUsingNamespaceAsTypeOrValue codes=2708,2709
+1668-1708 c.checkAndReportErrorForUsingTypeAsValue codes=2585,2690,2693,2840,2863,2864
+1710-1712 isES2015OrLaterConstructorName
+1714-1726 c.maybeMappedType
+1728-1737 c.checkAndReportErrorForUsingValueAsType codes=2749
+1739-1745 c.getSuggestedLibForNonExistentName
+1747-1749 c.getSuggestedSymbolForNonexistentSymbol
+1769-1779 getPrimitiveTypeAliasSuggestions MAPRANGE@1771 closures=1
+1781-1791 c.getSuggestionForSymbolNameLookup
+1806-1824 c.getSpellingSuggestionForName closures=1
+1826-1892 c.onSuccessfullyResolvedSymbol codes=1361,1362,2372,2373,2686,2866 closures=2
+1894-1926 c.checkResolvedBlockScopedVariable codes=2448,2449,2450,2728 PANIC@1905 ASSERT@1895,1917 closures=1
+1928-2015 c.isBlockScopedNameDeclaredBeforeUse
+2017-2076 c.isUsedInFunctionOrInstanceProperty closures=1
+2078-2090 isImmediatelyUsedInInitializerOfBlockScopedVariable
+2096-2109 isSameScopeDescendentOf
+2112-2136 isPropertyImmediatelyReferencedWithinDeclaration
+2139-2145 c.getTypeOnlyAliasDeclaration
+2149-2159 c.getTypeOnlyAliasDeclarationEx
+2161-2172 c.getImmediateAliasedSymbol PANIC@2167 ASSERT@2162
+2174-2180 c.addTypeOnlyDeclarationRelatedInfo codes=1376,1377
+-- stand-ins N-DIAG
+c.getDeclaredTypeOfSymbol	checker.go:23784-23790	<- c.checkAndReportErrorForMissingPrefix, c.checkAndReportErrorForUsingTypeAsNamespace, c.maybeMappedType
+c.getPropertyOfType	checker.go:19001-19003	<- c.checkAndReportErrorForMissingPrefix, c.checkAndReportErrorForUsingTypeAsNamespace
+c.getThisContainer	checker.go:12279-12324	<- c.checkAndReportErrorForMissingPrefix
+c.getTypeOfSymbol	checker.go:16587-16616	<- c.checkAndReportErrorForMissingPrefix, c.isUsedInFunctionOrInstanceProperty
+c.symbolToString	printer.go:124-126	<- c.checkAndReportErrorForMissingPrefix, c.onFailedToResolveSymbol
+c.checkAndReportErrorForExtendingInterface	checker.go:11756-11763	<- c.onFailedToResolveSymbol
+c.allTypesAssignableToKindEx	checker.go:27755-27762	<- c.maybeMappedType
+c.isInAmbientOrTypeNode	checker.go:11328-11332	<- c.isBlockScopedNameDeclaredBeforeUse
+c.isPropertyInitializedInStaticBlocks	checker.go:5036-5051	<- c.isUsedInFunctionOrInstanceProperty
+== A-ALIAS
+14533-14554 c.getTargetOfImportEqualsDeclaration
+14556-14565 c.resolveExternalModuleTypeByLiteral
+14568-14586 c.getSymbolOfPartOfRightHandSideOfImportEquals ASSERT@14584
+14588-14613 c.checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol codes=1376,1377,1379,1380
+14615-14620 c.getTypeOnlyDeclarationOfEntityName
+14622-14628 c.getTargetOfImportClause
+14630-14683 c.getTargetOfModuleDefault PROGRAM=GetImpliedNodeFormatForEmit
+14685-14707 c.reportNonDefaultExport codes=1192,1195,2613 closures=1
+14709-14720 c.resolveExportByName
+14722-14728 c.getTargetOfNamespaceImport
+14730-14739 c.getTargetOfNamespaceExport
+14741-14759 c.getTargetOfImportSpecifier
+14761-14830 c.getExternalModuleMember codes=1544
+14832-14840 c.getPropertyOfVariable
+14860-14881 c.combineValueAndTypeSymbols ASSERT@14871
+14883-14892 c.getExportOfModule
+14894-14910 c.isOnlyImportableAsDefault
+14912-14969 c.canHaveSyntheticDefault PROGRAM=GetEmitModuleFormatOfFile,GetImpliedNodeFormatForEmit,GetProjectReferenceFromOutputDts,GetRedirectForResolution
+14971-14976 c.getEmitSyntaxForModuleSpecifierExpression PROGRAM=GetEmitSyntaxForUsageLocation
+14978-15001 c.errorNoModuleMemberSymbol codes=2614,2724,2728
+15003-15033 c.reportNonExportedMember codes=2305,2459,2460,2728,6204 closures=1
+15035-15043 c.reportInvalidImportEqualsExportMember codes=2595,2597,2616
+15045-15068 c.getTargetOfExportSpecifier
+15070-15082 c.getTargetOfExportAssignment
+15084-15088 c.getTargetOfBinaryExpression
+15090-15103 c.getTargetOfAliasLikeExpression
+15105-15112 c.getTargetOfNamespaceExportDeclaration
+15114-15122 c.getTargetOfAccessExpression
+15124-15144 c.getModuleSpecifierForImportOrExport PANIC@15143
+15146-15154 getModuleSpecifierFromNode PANIC@15153
+15177-15193 c.markSymbolOfAliasDeclarationIfTypeOnly
+15830-15861 c.getTargetOfAliasDeclaration PANIC@15860
+16349-16355 c.ResolveAlias
+16360-16385 c.resolveAlias codes=2303 PANIC@16362,16371
+16387-16395 c.resolveIndirectionAlias
+16397-16403 c.tryResolveAlias
+16405-16435 c.resolveAliasWithDeprecationCheck
+16457-16459 c.getSymbolFlags
+16461-16489 c.getSymbolFlagsEx
+16491-16493 c.getDeclarationOfAliasSymbol
+-- stand-ins A-ALIAS
+c.getTypeOfSymbol	checker.go:16587-16616	<- c.getExternalModuleMember, c.resolveExportByName, c.resolveExternalModuleTypeByLiteral
+c.symbolToString	printer.go:124-126	<- c.errorNoModuleMemberSymbol, c.reportNonDefaultExport, c.reportNonExportedMember, c.resolveAlias
+c.getPropertyOfTypeEx	checker.go:19013-19062	<- c.getExternalModuleMember, c.resolveExportByName
+c.getPropertyOfType	checker.go:19001-19003	<- c.getPropertyOfVariable
+c.getTypeFromTypeNode	checker.go:22921-22923	<- c.getPropertyOfVariable
+isContainedByNamespace	checker.go:5665-5671	<- c.getTargetOfExportAssignment
+c.checkExpressionCached	checker.go:7603-7605	<- c.getTargetOfAliasLikeExpression
+== M-MODULE
+15195-15202 c.resolveExternalModuleName codes=2307
+15204-15214 c.getCannotResolveModuleNameErrorForSpecificModule codes=2580,2591
+15216-15221 c.resolveExternalModuleNameWorker
+15223-15241 c.getExternalModuleFileFromDeclaration
+15243-15526 c.resolveExternalModule codes=1471,1479,1541,1542,2306,2665,2732,2834,2835,2846,2876,2877,2878,5097,6137,6142,6305,7016 PANIC@15324,15347 PROGRAM=CommonSourceDirectory,GetCurrentDirectory,GetDefaultResolutionModeForFile,GetModeForUsageLocation,GetProjectReferenceFromSource,GetRedirectForResolution,GetResolvedModule,GetSourceFileForResolvedModule,SourceFileMayBeEmitted,UseCaseSensitiveFileNames closures=1
+15528-15530 resolutionExtensionIsTSOrJson
+15532-15553 c.getSuggestedImportSource
+15555-15577 c.getSuggestedImportExtension PROGRAM=FileExists
+15579-15598 c.errorOnImplicitAnyModule codes=7016
+15600-15616 c.createModuleNotFoundChain
+15618-15625 c.createModeMismatchDetails
+15627-15637 c.tryFindAmbientModule
+15639-15648 c.GetAmbientModules MAPRANGE@15641 closures=1
+15650-15658 c.resolveExternalModuleSymbol
+15662-15716 c.resolveESModuleSymbol PROGRAM=GetImpliedNodeFormatForEmit
+15718-15720 c.hasSignatures
+15722-15724 isESMFormatImportImportingCommonjsFormatFile
+15726-15738 c.getTypeWithSyntheticDefaultOnly
+15740-15766 c.getTypeWithSyntheticDefaultImportType
+15768-15799 c.isCommonJSRequire PANIC@15773
+15801-15813 c.createDefaultPropertyWrapperForModule
+15815-15828 c.cloneTypeAsModuleType
+16014-16022 c.getExportsOfSymbol
+16024-16071 c.getResolvedMembersOrExportsOfSymbol
+16099-16160 c.lateBindMember codes=2300 ASSERT@16100
+16162-16181 c.lateBindIndexSignature
+16183-16185 isNotReplacableByMethod
+16190-16211 c.addDeclarationToLateBoundSymbol ASSERT@16191
+16218-16223 c.getMembersOfSymbol
+16225-16233 c.getExportsOfModule
+16242-16323 c.getExportsOfModuleWorker codes=2308 MAPRANGE@16253,16272,16287,16307,16319 closures=1
+16329-16347 c.extendExportSymbols MAPRANGE@16330
+-- stand-ins M-MODULE
+c.getPropertyOfTypeEx	checker.go:19013-19062	<- c.resolveESModuleSymbol
+c.getTypeOfSymbol	checker.go:16587-16616	<- c.resolveESModuleSymbol
+c.getSignaturesOfStructuredType	checker.go:19077-19086	<- c.hasSignatures
+c.isErrorType	checker.go:26761-26765	<- c.getTypeWithSyntheticDefaultImportType, c.getTypeWithSyntheticDefaultOnly
+c.getSpreadType	checker.go:13488-13596	<- c.getTypeWithSyntheticDefaultImportType
+c.isValidSpreadType	checker.go:13605-13609	<- c.getTypeWithSyntheticDefaultImportType
+c.getStringLiteralType	checker.go:25428-25435	<- c.createDefaultPropertyWrapperForModule
+c.resolveStructuredTypeMembers	checker.go:19176-19203	<- c.cloneTypeAsModuleType
+c.hasLateBindableIndexSignature	checker.go:20085-20088	<- c.getResolvedMembersOrExportsOfSymbol
+c.hasLateBindableName	checker.go:20062-20065	<- c.getResolvedMembersOrExportsOfSymbol
+c.checkComputedPropertyName	checker.go:26925-26943	<- c.lateBindMember
+c.checkExpressionCached	checker.go:7603-7605	<- c.lateBindMember
+== Q-ENTITY
+15866-15920 c.resolveEntityName codes=2503 PANIC@15907
+15922-15983 c.resolveQualifiedName codes=2694,2713,2724,2749
+15985-16001 c.tryGetQualifiedNameAsValue
+16003-16005 c.getSuggestedSymbolForNonexistentModule
+16007-16012 c.getFullyQualifiedName
+-- stand-ins Q-ENTITY
+c.symbolToString	printer.go:124-126	<- c.getFullyQualifiedName, c.resolveQualifiedName
+c.getPropertyOfType	checker.go:19001-19003	<- c.tryGetQualifiedNameAsValue
+c.getTypeOfSymbol	checker.go:16587-16616	<- c.tryGetQualifiedNameAsValue
+c.symbolToStringEx	printer.go:132-177	<- c.getFullyQualifiedName

@@ -1,0 +1,118 @@
+try {} catch (e = 1) {}
+try {} catch (e: any = 1) {}
+try {} catch (e: unknown) {}
+try {} catch (e: any) {}
+try {} catch (e: string) {}
+try {} catch ({ a }: any) {}
+try {} catch ({ a } = {}) {}
+try {} catch ([a] = []) {}
+try {} catch (e!) {}
+try {} catch (e!: any) {}
+try {} catch (e?) {}
+try {} catch (e, f) {}
+try {} catch () {}
+try {} catch (...e) {}
+let a!;
+let a!: number;
+let a! = 1;
+let a!: number = 1;
+var a!;
+var a!: number;
+const a!: number = 1;
+const a!;
+let a!, b!;
+let a!: number, b!: string;
+let a\n!;
+let a\n!: number;
+let { a }!: any = x;
+let [a]!: any = x;
+let a!!: number;
+let a?: number;
+for (let a!: number;;) {}
+for (let a! of []) {}
+for (let a!: any of []) {}
+for (let a! in {}) {}
+for (var a!;;) {}
+for (const a: number of []) {}
+for (let a: number in {}) {}
+for (let a = 1 of []) {}
+for (let a: any = 1 of []) {}
+for (var a = 1 in {}) {}
+using a!: any = x;
+declare let a!: number;
+declare const a!: number;
+export let a!: number;
+namespace N { export let a!: number }
+enum E { A }
+enum E { "a" }
+enum E { "a-b" = 1 }
+enum E { 1 }
+enum E { 1 = 1 }
+enum E { 1.5 }
+enum E { 0x10 }
+enum E { 1n }
+enum E { -1 }
+enum E { ["x"] }
+enum E { ["x"] = 1 }
+enum E { ['x'] = 1, B = E.x }
+enum E { [`x`] = 1 }
+enum E { [`a${1}`] = 1 }
+enum E { [1] = 1 }
+enum E { [x] = 1 }
+enum E { [x.y] = 1 }
+enum E { ["a" + "b"] = 1 }
+enum E { #a }
+enum E { `a` }
+enum E { A, A }
+enum E { "a", "a" }
+enum E { A = 1, 2 }
+enum E { if }
+enum E { if = 1 }
+enum E { await }
+enum E { yield }
+enum E { this }
+enum E { null }
+enum E { true }
+enum E { default }
+enum E { class }
+enum E { A = this }
+enum E { A = super.x }
+enum E { A,, B }
+enum E { , }
+enum E { A; B }
+enum E { A B }
+enum E { A\nB }
+enum E { A = 1 B }
+enum E { A: 1 }
+enum E { A? }
+enum E { A! }
+enum E { A() {} }
+enum E { get A() { return 1 } }
+enum E { public A }
+enum E { readonly A }
+enum E { static A }
+enum E { @dec A }
+enum E { ...A }
+enum E<T> { A }
+enum E extends F { A }
+enum { A }
+enum "E" { A }
+enum E.F { A }
+enum await { A }
+enum yield { A }
+enum let { A }
+enum static { A }
+enum type { A }
+enum as { A }
+enum any { A }
+enum string { A }
+enum E\n{ A }
+enum\nE { A }
+const enum E { A }
+const\nenum E { A }
+declare enum E { A = x }
+declare const enum E { A }
+export enum E { A }
+export const enum E { A }
+export default enum E { A }
+export declare enum E { A }

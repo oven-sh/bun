@@ -1,0 +1,15 @@
+# Functions that `tsgo --noEmit --skipDefaultLibCheck --singleThreaded [variant] min.ts` enters from the bind on (phases 3b-bind, 4a-preinit, 4b-init, 5-check, 9-report),
+# measured with the snapshot build of groundtruth/setup2.sh and py/snap.py need. Lists: k4_need_<variant>.tsv (phase, layer, file:line, name, lines).
+# variant   options                      lib files  functions  lines   checker fn/lines  binder fn/lines  ast fn/lines  printer fn/lines
+nolib       --noLib                              0        288    4768         97 / 1526       34 / 1236      80 / 894        0 / 0     (the command line prints 10 lines TS2318 and no TS2322: global diagnostics stop it, program.go 1970-1980)
+es5         --lib es5                            3        780   12376        263 / 5681       57 / 1530     267 / 2091      43 / 1051
+es6         --target es2015                     19        946   15245        349 / 7869       70 / 1680     332 / 2610      43 / 1051
+skip1       (default target ES2025)             82        960   15383        350 / 7923       73 / 1706     341 / 2658      43 / 1051
+full1       without --skipDefaultLibCheck       82       2155   36311       1072 / 22461      74 / 1717     505 / 3619     105 / 2029  (plus parser 162 / 2964, scanner 58 / 1277: reparsing in the type printer)
+# The sets are nested: es5 is in es6, es6 is in skip1, skip1 is in full1 (checker and binder functions).
+# skip1 minus es5, checker and binder functions by layer (count, lines):
+#   E-ACCESS 12 640, T-TYPENODE 9 214, U-ALIASMARK 2 186, S-MERGE 10 183, F-NARROW 8 181, binder 16 176, E-FACTS 2 138, UTIL 10 97, T-SIGDECL 3 91,
+#   M-MODULE 2 84, K-INDEXED 3 60, C-INIT 1 54, N-RESOLVE 3 50, T-LOOKUP 1 50, T-JSDECL 1 44, E-CORE 4 32, A-ALIAS 1 31, K-PRED 3 27, K-KEYOF 2 24,
+#   D-SINK 2 14, T-DECLARED 1 14, T-SIGSHAPE 2 7, TYPES 2 7, K-OBJ 1 7, K-SUBST 1 4, LINKS 1 3
+# Other packages of skip1 (functions / lines): compiler 42/649, core 42/371, tspath 16/273, scanner 8/197, execute/tsc 4/131, evaluator 1/99, diagnostics 11/92,
+#   diagnosticwriter 9/80, collections 7/47, stringutil 5/43, spanmap 1/11, module 1/9, tsoptions 1/6, jsnum 1/3, pseudochecker 1/3

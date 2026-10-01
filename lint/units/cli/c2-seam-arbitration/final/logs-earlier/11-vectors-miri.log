@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.21s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/586edcc91c9c8c6b/out/bun_lint-586edcc91c9c8c6b)
+
+running 1 test
+test vector_tests::the_plain_writer_agrees_with_the_reference_on_the_fuzz_vectors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 337.68s
+
+miri-exit=0

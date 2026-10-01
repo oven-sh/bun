@@ -1,0 +1,1434 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ff20922..d6ead81 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -974,6 +974,11 @@ dependencies = [
+ [[package]]
+ name = "bun_lint"
+ version = "0.0.0"
++dependencies = [
++ "bstr",
++ "bun_ast",
++ "bun_core",
++]
+ 
+ [[package]]
+ name = "bun_lsquic_sys"
+diff --git a/src/lint/Cargo.toml b/src/lint/Cargo.toml
+index fb4368b..6eca1bc 100644
+--- a/src/lint/Cargo.toml
++++ b/src/lint/Cargo.toml
+@@ -10,3 +10,8 @@ path = "lib.rs"
+ workspace = true
+ 
+ [dependencies]
++bun_ast.workspace = true
++bun_core.workspace = true
++
++[dev-dependencies]
++bstr.workspace = true
+diff --git a/src/lint/UPSTREAM_PORTED b/src/lint/UPSTREAM_PORTED
+new file mode 100644
+index 0000000..daf89d8
+--- /dev/null
++++ b/src/lint/UPSTREAM_PORTED
+@@ -0,0 +1 @@
++microsoft/typescript-go 89d5d5b2849a0db0957065889ca58536fa6d2e4a
+diff --git a/src/lint/code_frame.rs b/src/lint/code_frame.rs
+new file mode 100644
+index 0000000..280afbe
+--- /dev/null
++++ b/src/lint/code_frame.rs
+@@ -0,0 +1,96 @@
++//! The terminal format: Bun's code frame, with the code in front of the message.
++
++use core::fmt;
++use std::borrow::Cow;
++use std::io::Write;
++
++use crate::diagnostic::{Category, Diagnostic, FileId, MessageChain, SourceFile};
++use crate::diagnosticwriter::{FormattingOptions, write_flattened_diagnostic_message};
++use crate::tspath;
++
++struct ByteWriter<'a>(&'a mut Vec<u8>);
++
++impl fmt::Write for ByteWriter<'_> {
++    fn write_str(&mut self, s: &str) -> fmt::Result {
++        self.0.extend_from_slice(s.as_bytes());
++        Ok(())
++    }
++}
++
++/// One frame for each diagnostic, an empty line between two, as `bun_ast::Log::print` separates messages.
++pub fn write_code_frames<const ENABLE_ANSI_COLORS: bool>(
++    output: &mut Vec<u8>,
++    files: &[SourceFile],
++    diagnostics: &[Diagnostic],
++    format_opts: &FormattingOptions<'_>,
++) {
++    for (i, diagnostic) in diagnostics.iter().enumerate() {
++        if i > 0 {
++            output.extend_from_slice(b"\n\n");
++        }
++        let msg = to_msg(files, diagnostic, format_opts);
++        let _ = msg.write_format::<ENABLE_ANSI_COLORS>(&mut ByteWriter(output));
++    }
++    if !diagnostics.is_empty() {
++        output.push(b'\n');
++    }
++}
++
++fn to_msg(
++    files: &[SourceFile],
++    diagnostic: &Diagnostic,
++    format_opts: &FormattingOptions<'_>,
++) -> bun_ast::Msg {
++    let mut text: Vec<u8> = Vec::new();
++    let _ = write!(text, "{}: ", diagnostic.code);
++    bun_ast::Msg {
++        kind: match diagnostic.category {
++            Category::Error => bun_ast::Kind::Err,
++            Category::Warning => bun_ast::Kind::Warn,
++            Category::Suggestion | Category::Message => bun_ast::Kind::Note,
++        },
++        data: to_data(files, diagnostic, text, format_opts),
++        notes: diagnostic
++            .related
++            .iter()
++            .map(|related| to_data(files, related, Vec::new(), format_opts))
++            .collect(),
++        ..Default::default()
++    }
++}
++
++/// `text` holds what is printed in front of the message.
++fn to_data(
++    files: &[SourceFile],
++    diagnostic: &Diagnostic,
++    mut text: Vec<u8>,
++    format_opts: &FormattingOptions<'_>,
++) -> bun_ast::Data {
++    let chain: &[MessageChain] = &diagnostic.chain;
++    write_flattened_diagnostic_message(&mut text, &diagnostic.text, chain, b"\n");
++    bun_ast::Data {
++        text: Cow::Owned(text),
++        location: to_location(files, diagnostic.file, diagnostic, format_opts),
++    }
++}
++
++fn to_location(
++    files: &[SourceFile],
++    file: Option<FileId>,
++    diagnostic: &Diagnostic,
++    format_opts: &FormattingOptions<'_>,
++) -> Option<bun_ast::Location> {
++    let file = files.get(file?.0 as usize)?;
++    let range = bun_ast::Range {
++        loc: bun_ast::Loc {
++            start: i32::try_from(diagnostic.start).unwrap_or(i32::MAX),
++        },
++        len: i32::try_from(diagnostic.length).unwrap_or(i32::MAX),
++    };
++    let mut location = bun_ast::Location::init_or_null(Some(file.source()), range)?;
++    location.file = Cow::Owned(tspath::convert_to_relative_path(
++        file.file_name(),
++        format_opts.compare_paths_options,
++    ));
++    Some(location)
++}
+diff --git a/src/lint/diagnostic.rs b/src/lint/diagnostic.rs
+new file mode 100644
+index 0000000..ff9fb12
+--- /dev/null
++++ b/src/lint/diagnostic.rs
+@@ -0,0 +1,299 @@
++//! The diagnostic of a lint run and its order: `internal/ast/diagnostic.go` of typescript-go.
++
++use core::cmp::Ordering;
++use core::fmt;
++use std::borrow::Cow;
++use std::sync::OnceLock;
++
++use crate::scanner;
++
++/// The index of a file in the list that the run keeps.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub struct FileId(pub u32);
++
++/// A file that diagnostics point into.
++pub struct SourceFile {
++    file_name: Box<[u8]>,
++    source: bun_ast::Source,
++    ecma_line_map: OnceLock<Vec<u32>>,
++}
++
++impl SourceFile {
++    /// `file_name` is absolute and has forward slashes: `tspath::get_normalized_absolute_path`.
++    pub fn new(file_name: Box<[u8]>, source: bun_ast::Source) -> SourceFile {
++        SourceFile {
++            file_name,
++            source,
++            ecma_line_map: OnceLock::new(),
++        }
++    }
++
++    pub fn file_name(&self) -> &[u8] {
++        &self.file_name
++    }
++
++    pub fn source(&self) -> &bun_ast::Source {
++        &self.source
++    }
++
++    pub fn text(&self) -> &[u8] {
++        self.source.contents()
++    }
++
++    pub fn ecma_line_map(&self) -> &[u32] {
++        self.ecma_line_map
++            .get_or_init(|| scanner::compute_ecma_line_starts(self.text()))
++    }
++}
++
++/// The variants are in the order of the reference, which the sort uses.
++#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
++pub enum Category {
++    Warning,
++    Error,
++    Suggestion,
++    Message,
++}
++
++impl Category {
++    pub fn name(self) -> &'static str {
++        match self {
++            Category::Warning => "warning",
++            Category::Error => "error",
++            Category::Suggestion => "suggestion",
++            Category::Message => "message",
++        }
++    }
++}
++
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Code {
++    /// The number of a TypeScript diagnostic, printed as `TS2322`.
++    Ts(u32),
++    /// The name of a rule, or a word of the command for what has no TypeScript number.
++    Name(&'static str),
++}
++
++impl Code {
++    /// An error or a warning of Bun's parser that has no TypeScript number.
++    pub const SYNTAX: Code = Code::Name("syntax");
++    pub const CANNOT_READ_FILE: Code = Code::Name("cannot-read-file");
++    pub const UNSUPPORTED_EXTENSION: Code = Code::Name("unsupported-extension");
++    /// Where the reference panics or asserts.
++    pub const INTERNAL_ERROR: Code = Code::Name("internal-error");
++    /// A part of the checker that is not ported was reached.
++    pub const INTERNAL_STAND_IN: Code = Code::Name("internal-stand-in");
++
++    /// `Code()` of the reference: a name sorts as the number 0.
++    fn number(self) -> u32 {
++        match self {
++            Code::Ts(number) => number,
++            Code::Name(_) => 0,
++        }
++    }
++
++    /// `Source()` of the reference: empty for a TypeScript number.
++    fn source(self) -> &'static str {
++        match self {
++            Code::Ts(_) => "",
++            Code::Name(name) => name,
++        }
++    }
++}
++
++impl fmt::Display for Code {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match *self {
++            Code::Ts(number) => write!(f, "TS{number}"),
++            Code::Name(name) => f.write_str(name),
++        }
++    }
++}
++
++#[derive(Clone, PartialEq, Eq, Debug)]
++pub struct MessageChain {
++    pub text: Cow<'static, [u8]>,
++    pub next: Vec<MessageChain>,
++}
++
++#[derive(Clone, Debug)]
++pub struct Diagnostic {
++    /// `None` for a diagnostic that belongs to no file.
++    pub file: Option<FileId>,
++    /// Byte offset in the text of the file, after the byte order mark was removed.
++    pub start: u32,
++    pub length: u32,
++    pub category: Category,
++    pub code: Code,
++    pub text: Cow<'static, [u8]>,
++    pub chain: Vec<MessageChain>,
++    /// An entry has no related information of its own.
++    pub related: Vec<Diagnostic>,
++}
++
++impl Diagnostic {
++    pub fn end(&self) -> u64 {
++        u64::from(self.start) + u64::from(self.length)
++    }
++
++    /// A message of Bun's log in a file of the run; `None` for a kind that is no diagnostic.
++    pub fn from_msg(file: FileId, msg: bun_ast::Msg) -> Option<Diagnostic> {
++        let category = match msg.kind {
++            bun_ast::Kind::Err => Category::Error,
++            bun_ast::Kind::Warn => Category::Warning,
++            bun_ast::Kind::Note => Category::Message,
++            bun_ast::Kind::Debug | bun_ast::Kind::Verbose => return None,
++        };
++        let code = match msg.code() {
++            Some(number) => Code::Ts(number),
++            None => Code::SYNTAX,
++        };
++        let related = Vec::from(msg.notes)
++            .into_iter()
++            .map(|note| from_data(file, note, Category::Message, Code::SYNTAX))
++            .collect();
++        let mut diagnostic = from_data(file, msg.data, category, code);
++        diagnostic.related = related;
++        Some(diagnostic)
++    }
++}
++
++fn from_data(file: FileId, data: bun_ast::Data, category: Category, code: Code) -> Diagnostic {
++    let (file, start, length) = match &data.location {
++        // A location without a line has no position: the diagnostic is at the start of the file.
++        Some(location) if location.line > 0 => (
++            Some(file),
++            u32::try_from(location.offset).unwrap_or(u32::MAX),
++            u32::try_from(location.length).unwrap_or(u32::MAX),
++        ),
++        Some(_) => (Some(file), 0, 0),
++        None => (None, 0, 0),
++    };
++    Diagnostic {
++        file,
++        start,
++        length,
++        category,
++        code,
++        // A borrowed text of a `Msg` can point into its `Log` or its `Source`.
++        text: Cow::Owned(data.text.into_owned()),
++        chain: Vec::new(),
++        related: Vec::new(),
++    }
++}
++
++fn get_diagnostic_path<'a>(files: &'a [SourceFile], d: &Diagnostic) -> &'a [u8] {
++    d.file
++        .and_then(|id| files.get(id.0 as usize))
++        .map_or(b"", SourceFile::file_name)
++}
++
++pub fn equal_diagnostics(files: &[SourceFile], d1: &Diagnostic, d2: &Diagnostic) -> bool {
++    equal_diagnostics_no_related_info(files, d1, d2)
++        && d1.related.len() == d2.related.len()
++        && d1
++            .related
++            .iter()
++            .zip(&d2.related)
++            .all(|(r1, r2)| equal_diagnostics_no_related_info(files, r1, r2))
++}
++
++/// The text stands for the message and its arguments, which the reference compares apart.
++pub fn equal_diagnostics_no_related_info(
++    files: &[SourceFile],
++    d1: &Diagnostic,
++    d2: &Diagnostic,
++) -> bool {
++    get_diagnostic_path(files, d1) == get_diagnostic_path(files, d2)
++        && d1.start == d2.start
++        && d1.length == d2.length
++        && d1.code == d2.code
++        && d1.category == d2.category
++        && d1.text == d2.text
++        && equal_message_chain(&d1.chain, &d2.chain)
++}
++
++fn equal_message_chain(c1: &[MessageChain], c2: &[MessageChain]) -> bool {
++    let mut stack = vec![(c1, c2)];
++    while let Some((c1, c2)) = stack.pop() {
++        if c1.len() != c2.len() {
++            return false;
++        }
++        for (n1, n2) in c1.iter().zip(c2) {
++            if n1.text != n2.text {
++                return false;
++            }
++            stack.push((&n1.next, &n2.next));
++        }
++    }
++    true
++}
++
++/// More chains sort first, as in the reference.
++fn compare_message_chain_size(c1: &[MessageChain], c2: &[MessageChain]) -> Ordering {
++    let mut stack = vec![(c1, c2)];
++    while let Some((c1, c2)) = stack.pop() {
++        let c = c2.len().cmp(&c1.len());
++        if c != Ordering::Equal {
++            return c;
++        }
++        for (n1, n2) in c1.iter().zip(c2).rev() {
++            stack.push((&n1.next, &n2.next));
++        }
++    }
++    Ordering::Equal
++}
++
++/// Called for chains of one shape; the reference compares the arguments where this compares the text.
++fn compare_message_chain_content(c1: &[MessageChain], c2: &[MessageChain]) -> Ordering {
++    let mut stack = vec![c1.iter().zip(c2)];
++    while let Some(level) = stack.last_mut() {
++        let Some((n1, n2)) = level.next() else {
++            stack.pop();
++            continue;
++        };
++        let c = n1.text.as_ref().cmp(n2.text.as_ref());
++        if c != Ordering::Equal {
++            return c;
++        }
++        stack.push(n1.next.iter().zip(&n2.next));
++    }
++    Ordering::Equal
++}
++
++/// More related information sorts first, as in the reference.
++fn compare_related_info(files: &[SourceFile], r1: &[Diagnostic], r2: &[Diagnostic]) -> Ordering {
++    let c = r2.len().cmp(&r1.len());
++    if c != Ordering::Equal {
++        return c;
++    }
++    for (d1, d2) in r1.iter().zip(r2) {
++        let c = compare_diagnostics_no_related_info(files, d1, d2);
++        if c != Ordering::Equal {
++            return c;
++        }
++    }
++    Ordering::Equal
++}
++
++fn compare_diagnostics_no_related_info(
++    files: &[SourceFile],
++    d1: &Diagnostic,
++    d2: &Diagnostic,
++) -> Ordering {
++    get_diagnostic_path(files, d1)
++        .cmp(get_diagnostic_path(files, d2))
++        .then_with(|| d1.start.cmp(&d2.start))
++        .then_with(|| d1.end().cmp(&d2.end()))
++        .then_with(|| d1.code.number().cmp(&d2.code.number()))
++        .then_with(|| d1.category.cmp(&d2.category))
++        .then_with(|| d1.code.source().cmp(d2.code.source()))
++        .then_with(|| d1.text.as_ref().cmp(d2.text.as_ref()))
++        .then_with(|| compare_message_chain_size(&d1.chain, &d2.chain))
++        .then_with(|| compare_message_chain_content(&d1.chain, &d2.chain))
++}
++
++pub fn compare_diagnostics(files: &[SourceFile], d1: &Diagnostic, d2: &Diagnostic) -> Ordering {
++    compare_diagnostics_no_related_info(files, d1, d2)
++        .then_with(|| compare_related_info(files, &d1.related, &d2.related))
++}
+diff --git a/src/lint/diagnosticwriter.rs b/src/lint/diagnosticwriter.rs
+new file mode 100644
+index 0000000..ac6b7c2
+--- /dev/null
++++ b/src/lint/diagnosticwriter.rs
+@@ -0,0 +1,99 @@
++//! The plain format of tsc: `internal/diagnosticwriter/diagnosticwriter.go` of typescript-go.
++
++use std::io::Write;
++
++use crate::diagnostic::{Diagnostic, MessageChain, SourceFile};
++use crate::scanner;
++use crate::tspath::{self, ComparePathsOptions};
++
++#[derive(Clone, Copy)]
++pub struct FormattingOptions<'a> {
++    pub compare_paths_options: ComparePathsOptions<'a>,
++    pub new_line: &'a [u8],
++}
++
++pub fn write_format_diagnostics(
++    output: &mut Vec<u8>,
++    files: &[SourceFile],
++    diagnostics: &[Diagnostic],
++    format_opts: &FormattingOptions<'_>,
++) {
++    for diagnostic in diagnostics {
++        write_format_diagnostic(output, files, diagnostic, format_opts);
++    }
++}
++
++pub fn write_format_diagnostic(
++    output: &mut Vec<u8>,
++    files: &[SourceFile],
++    diagnostic: &Diagnostic,
++    format_opts: &FormattingOptions<'_>,
++) {
++    if let Some(file) = diagnostic.file.and_then(|id| files.get(id.0 as usize)) {
++        let (line, character) = scanner::get_ecma_line_and_utf16_character_of_position(
++            file.text(),
++            file.ecma_line_map(),
++            diagnostic.start,
++        );
++        let relative_file_name =
++            tspath::convert_to_relative_path(file.file_name(), format_opts.compare_paths_options);
++        output.extend_from_slice(&relative_file_name);
++        let _ = write!(output, "({},{}): ", line + 1, character + 1);
++    }
++
++    let _ = write!(
++        output,
++        "{} {}: ",
++        diagnostic.category.name(),
++        diagnostic.code
++    );
++    write_flattened_diagnostic_message(
++        output,
++        &diagnostic.text,
++        &diagnostic.chain,
++        format_opts.new_line,
++    );
++    output.extend_from_slice(format_opts.new_line);
++}
++
++/// The text, then each message of the chain on its own line, two more spaces per level.
++pub fn write_flattened_diagnostic_message(
++    output: &mut Vec<u8>,
++    text: &[u8],
++    chain: &[MessageChain],
++    new_line: &[u8],
++) {
++    write_text(output, text);
++    let mut stack = vec![chain.iter()];
++    loop {
++        let level = stack.len();
++        let Some(messages) = stack.last_mut() else {
++            break;
++        };
++        let Some(message) = messages.next() else {
++            stack.pop();
++            continue;
++        };
++        output.extend_from_slice(new_line);
++        for _ in 0..level {
++            output.extend_from_slice(b"  ");
++        }
++        write_text(output, &message.text);
++        stack.push(message.next.iter());
++    }
++}
++
++/// A line break inside a text is written as one space: a diagnostic and each chain message stay one line.
++fn write_text(output: &mut Vec<u8>, text: &[u8]) {
++    let mut bytes = text.iter().copied().peekable();
++    while let Some(b) = bytes.next() {
++        match b {
++            b'\r' => {
++                bytes.next_if_eq(&b'\n');
++                output.push(b' ');
++            }
++            b'\n' => output.push(b' '),
++            _ => output.push(b),
++        }
++    }
++}
+diff --git a/src/lint/lib.rs b/src/lint/lib.rs
+index b168ad4..8cd79fe 100644
+--- a/src/lint/lib.rs
++++ b/src/lint/lib.rs
+@@ -1 +1,13 @@
+ //! The lint rules behind `bun --lint`.
++
++pub mod code_frame;
++pub mod diagnostic;
++pub mod diagnosticwriter;
++pub mod program;
++pub mod scanner;
++pub mod tspath;
++
++pub use diagnostic::{Category, Code, Diagnostic, FileId, MessageChain, SourceFile};
++
++#[cfg(test)]
++mod tests;
+diff --git a/src/lint/program.rs b/src/lint/program.rs
+new file mode 100644
+index 0000000..dd0ed8b
+--- /dev/null
++++ b/src/lint/program.rs
+@@ -0,0 +1,50 @@
++//! `SortAndDeduplicateDiagnostics` of `internal/compiler/program.go` of typescript-go.
++
++use crate::diagnostic::{
++    Diagnostic, SourceFile, compare_diagnostics, equal_diagnostics,
++    equal_diagnostics_no_related_info,
++};
++
++/// The sort is stable: diagnostics that compare equal keep the order in which they were reported.
++pub fn sort_and_deduplicate_diagnostics(
++    files: &[SourceFile],
++    mut diagnostics: Vec<Diagnostic>,
++) -> Vec<Diagnostic> {
++    diagnostics.sort_by(|d1, d2| compare_diagnostics(files, d1, d2));
++    compact_and_merge_related_infos(files, diagnostics)
++}
++
++/// Keeps the first of each run of diagnostics that differ only by related information and gives it all of it.
++fn compact_and_merge_related_infos(
++    files: &[SourceFile],
++    diagnostics: Vec<Diagnostic>,
++) -> Vec<Diagnostic> {
++    let mut result: Vec<Diagnostic> = Vec::with_capacity(diagnostics.len());
++    let mut merged = false;
++    for d in diagnostics {
++        match result.last_mut() {
++            Some(last) if equal_diagnostics_no_related_info(files, last, &d) => {
++                last.related.extend(d.related);
++                merged = true;
++            }
++            _ => {
++                sort_merged_related_infos(files, result.last_mut(), merged);
++                merged = false;
++                result.push(d);
++            }
++        }
++    }
++    sort_merged_related_infos(files, result.last_mut(), merged);
++    result
++}
++
++fn sort_merged_related_infos(files: &[SourceFile], d: Option<&mut Diagnostic>, merged: bool) {
++    let Some(d) = d else { return };
++    if !merged {
++        return;
++    }
++    d.related
++        .sort_by(|r1, r2| compare_diagnostics(files, r1, r2));
++    d.related
++        .dedup_by(|r2, r1| equal_diagnostics(files, r1, r2));
++}
+diff --git a/src/lint/scanner.rs b/src/lint/scanner.rs
+new file mode 100644
+index 0000000..9cb4376
+--- /dev/null
++++ b/src/lint/scanner.rs
+@@ -0,0 +1,70 @@
++//! Lines and characters of a position: `internal/scanner/scanner.go` and `ComputeECMALineStarts` of `internal/core/core.go`.
++
++/// The start of each line: a line ends after LF, CR, CR LF, U+2028 or U+2029.
++pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
++    // A position is a `u32`: what lies behind that range is not mapped.
++    let text = text.get(..u32::MAX as usize).unwrap_or(text);
++    let mut result: Vec<u32> = Vec::new();
++    let mut line_start: u32 = 0;
++    let mut pos: usize = 0;
++    while let Some(&b) = text.get(pos) {
++        pos += 1;
++        let ends_line = match b {
++            b'\n' => true,
++            b'\r' => {
++                if text.get(pos) == Some(&b'\n') {
++                    pos += 1;
++                }
++                true
++            }
++            // U+2028 and U+2029 are E2 80 A8 and E2 80 A9.
++            0xE2 => {
++                let is_separator = text.get(pos) == Some(&0x80)
++                    && matches!(text.get(pos + 1), Some(&0xA8) | Some(&0xA9));
++                if is_separator {
++                    pos += 2;
++                }
++                is_separator
++            }
++            _ => false,
++        };
++        if ends_line {
++            result.push(line_start);
++            line_start = u32::try_from(pos).unwrap_or(u32::MAX);
++        }
++    }
++    result.push(line_start);
++    result
++}
++
++/// The 0-based line whose start is the last one at or before `pos`.
++pub fn compute_line_of_position(line_starts: &[u32], pos: u32) -> usize {
++    match line_starts.binary_search(&pos) {
++        Ok(line) => line,
++        Err(next_line) => next_line.saturating_sub(1),
++    }
++}
++
++/// The 0-based line and the 0-based character, in UTF-16 code units, of a byte position.
++pub fn get_ecma_line_and_utf16_character_of_position(
++    text: &[u8],
++    line_starts: &[u32],
++    pos: u32,
++) -> (usize, usize) {
++    // Where the reference panics on a position outside the text, this takes the end of the text.
++    let pos = (pos as usize).min(text.len());
++    let line = compute_line_of_position(line_starts, u32::try_from(pos).unwrap_or(u32::MAX));
++    let line_start = line_starts.get(line).map_or(0, |&start| start as usize);
++    let character = text.get(line_start..pos).map_or(0, utf16_len);
++    (line, character)
++}
++
++/// The number of UTF-16 code units of UTF-8 text; each byte that is not part of valid UTF-8 counts as one.
++pub fn utf16_len(s: &[u8]) -> usize {
++    let mut n: usize = 0;
++    for chunk in s.utf8_chunks() {
++        n += chunk.valid().chars().map(char::len_utf16).sum::<usize>();
++        n += chunk.invalid().len();
++    }
++    n
++}
+diff --git a/src/lint/tests.rs b/src/lint/tests.rs
+new file mode 100644
+index 0000000..285b306
+--- /dev/null
++++ b/src/lint/tests.rs
+@@ -0,0 +1,535 @@
++use std::borrow::Cow;
++
++use bun_ast::{Loc, Log, Range, Source};
++
++use crate::code_frame::write_code_frames;
++use crate::diagnostic::{
++    Category, Code, Diagnostic, FileId, MessageChain, SourceFile, compare_diagnostics,
++};
++use crate::diagnosticwriter::{FormattingOptions, write_format_diagnostics};
++use crate::program::sort_and_deduplicate_diagnostics;
++use crate::scanner::{
++    compute_ecma_line_starts, get_ecma_line_and_utf16_character_of_position, utf16_len,
++};
++use crate::tspath::{
++    ComparePathsOptions, convert_to_relative_path, get_normalized_absolute_path, get_root_length,
++};
++
++fn file(name: &'static str, display: &'static str, text: &'static str) -> SourceFile {
++    SourceFile::new(
++        name.as_bytes().into(),
++        Source::init_path_string(display.as_bytes(), text.as_bytes()),
++    )
++}
++
++fn rule(file: u32, start: u32, length: u32, name: &'static str, text: &'static str) -> Diagnostic {
++    Diagnostic {
++        file: Some(FileId(file)),
++        start,
++        length,
++        category: Category::Error,
++        code: Code::Name(name),
++        text: Cow::Borrowed(text.as_bytes()),
++        chain: Vec::new(),
++        related: Vec::new(),
++    }
++}
++
++fn opts(current_directory: &'static str) -> FormattingOptions<'static> {
++    FormattingOptions {
++        compare_paths_options: ComparePathsOptions {
++            use_case_sensitive_file_names: true,
++            current_directory: current_directory.as_bytes(),
++        },
++        new_line: b"\n",
++    }
++}
++
++fn plain(files: &[SourceFile], diagnostics: &[Diagnostic], cwd: &'static str) -> Vec<u8> {
++    let mut out = Vec::new();
++    write_format_diagnostics(&mut out, files, diagnostics, &opts(cwd));
++    out
++}
++
++fn frames<const COLORS: bool>(
++    files: &[SourceFile],
++    diagnostics: &[Diagnostic],
++    cwd: &'static str,
++) -> Vec<u8> {
++    let mut out = Vec::new();
++    write_code_frames::<COLORS>(&mut out, files, diagnostics, &opts(cwd));
++    out
++}
++
++#[track_caller]
++fn assert_bytes(got: &[u8], expected: &str) {
++    assert_eq!(bstr::BStr::new(got), bstr::BStr::new(expected.as_bytes()));
++}
++
++const B_JS: &str = "debugger;\nx === NaN === NaN;\n({a, a} = {a});\nNaN === -0;\n";
++
++fn the_run() -> (Vec<SourceFile>, Vec<Diagnostic>) {
++    let files = vec![
++        file("/proj/sub/d.js", "sub/d.js", "return\n1;\n"),
++        file("/proj/c.js", "c.js", "let x = 1 }"),
++        file("/proj/b.js", "b.js", B_JS),
++        file("/proj/a.ts", "a.ts", "let x: = 1;\n"),
++    ];
++    let mut diagnostics: Vec<Diagnostic> = Vec::new();
++
++    let mut log = Log::init();
++    log.add_warning(
++        Some(files[0].source()),
++        Loc { start: 7 },
++        b"The following expression is not returned because of an automatically-inserted semicolon"
++            as &[u8],
++    );
++    for msg in log.msgs.drain(..) {
++        diagnostics.extend(Diagnostic::from_msg(FileId(0), msg));
++    }
++
++    let mut log = Log::init();
++    log.add_range_error_fmt(
++        Some(files[1].source()),
++        Range {
++            loc: Loc { start: 10 },
++            len: 1,
++        },
++        format_args!("Unexpected }}"),
++    );
++    for msg in log.msgs.drain(..) {
++        diagnostics.extend(Diagnostic::from_msg(FileId(1), msg));
++    }
++
++    let isnan = "Use the isNaN function to compare with NaN.";
++    let self_assign = "'a' is assigned to itself.";
++    diagnostics.push(rule(2, 45, 10, "use-isnan", isnan));
++    diagnostics.push(rule(
++        2,
++        45,
++        10,
++        "no-compare-neg-zero",
++        "Do not use the '===' operator to compare against -0.",
++    ));
++    diagnostics.push(rule(2, 40, 1, "no-self-assign", self_assign));
++    diagnostics.push(rule(2, 40, 1, "no-self-assign", self_assign));
++    diagnostics.push(rule(2, 10, 17, "use-isnan", isnan));
++    diagnostics.push(rule(2, 10, 9, "use-isnan", isnan));
++    diagnostics.push(rule(
++        2,
++        0,
++        9,
++        "no-debugger",
++        "Unexpected 'debugger' statement.",
++    ));
++
++    let mut log = Log::init();
++    log.add_range_error_with_code(
++        Some(files[3].source()),
++        Range {
++            loc: Loc { start: 7 },
++            len: 1,
++        },
++        1110,
++        Cow::Borrowed(b"Type expected."),
++        Box::default(),
++    );
++    for msg in log.msgs.drain(..) {
++        diagnostics.extend(Diagnostic::from_msg(FileId(3), msg));
++    }
++
++    diagnostics.push(Diagnostic {
++        file: None,
++        start: 0,
++        length: 0,
++        category: Category::Error,
++        code: Code::CANNOT_READ_FILE,
++        text: Cow::Borrowed(b"File 'nope.ts' not found."),
++        chain: Vec::new(),
++        related: Vec::new(),
++    });
++    (files, diagnostics)
++}
++
++#[test]
++fn the_plain_format_is_sorted_and_has_no_duplicate() {
++    let (files, diagnostics) = the_run();
++    assert_eq!(diagnostics.len(), 11);
++    let diagnostics = sort_and_deduplicate_diagnostics(&files, diagnostics);
++    assert_eq!(diagnostics.len(), 10);
++    assert_bytes(
++        &plain(&files, &diagnostics, "/proj"),
++        "error cannot-read-file: File 'nope.ts' not found.\n\
++         a.ts(1,8): error TS1110: Type expected.\n\
++         b.js(1,1): error no-debugger: Unexpected 'debugger' statement.\n\
++         b.js(2,1): error use-isnan: Use the isNaN function to compare with NaN.\n\
++         b.js(2,1): error use-isnan: Use the isNaN function to compare with NaN.\n\
++         b.js(3,12): error no-self-assign: 'a' is assigned to itself.\n\
++         b.js(4,1): error no-compare-neg-zero: Do not use the '===' operator to compare against -0.\n\
++         b.js(4,1): error use-isnan: Use the isNaN function to compare with NaN.\n\
++         c.js(1,11): error syntax: Unexpected }\n\
++         sub/d.js(2,1): warning syntax: The following expression is not returned because of an automatically-inserted semicolon\n",
++    );
++    // The shorter of two diagnostics with one start comes first.
++    assert_eq!((diagnostics[3].length, diagnostics[4].length), (9, 17));
++    // Only a diagnostic of the category error makes the run fail.
++    let errors = diagnostics
++        .iter()
++        .filter(|d| d.category == Category::Error)
++        .count();
++    assert_eq!(errors, 9);
++}
++
++#[test]
++fn the_frame_format() {
++    let (files, diagnostics) = the_run();
++    let diagnostics = sort_and_deduplicate_diagnostics(&files, diagnostics);
++    let picked: Vec<Diagnostic> = [0usize, 1, 2, 8, 9]
++        .iter()
++        .filter_map(|&i| diagnostics.get(i).cloned())
++        .collect();
++    assert_bytes(
++        &frames::<false>(&files, &picked, "/proj"),
++        "error: cannot-read-file: File 'nope.ts' not found.\n\
++         \n\
++         1 | let x: = 1;\n           ^\n\
++         error: TS1110: Type expected.\n    at a.ts:1:8\n\
++         \n\
++         1 | debugger;\n    ^\n\
++         error: no-debugger: Unexpected 'debugger' statement.\n    at b.js:1:1\n\
++         \n\
++         1 | let x = 1 }\n              ^\n\
++         error: syntax: Unexpected }\n    at c.js:1:11\n\
++         \n\
++         2 | 1;\n    ^\n\
++         warn: syntax: The following expression is not returned because of an automatically-inserted semicolon\n   at sub/d.js:2:1\n",
++    );
++    let colored: Vec<Diagnostic> = picked.iter().take(2).cloned().collect();
++    assert_bytes(
++        &frames::<true>(&files, &colored, "/proj"),
++        "\x1b[31merror\x1b[0m\x1b[2m: \x1b[0m\x1b[1mcannot-read-file: File 'nope.ts' not found.\x1b[0m\n\
++         \n\
++         \x1b[1m1 | \x1b[0m\x1b[0m\x1b[35mlet\x1b[0m x: = \x1b[0m\x1b[33m1\x1b[0m\x1b[0m\x1b[2m;\x1b[0m\n           \x1b[1m\x1b[31m\x1b[1m^\x1b[0m\n\
++         \x1b[31merror\x1b[0m\x1b[2m: \x1b[0m\x1b[1mTS1110: Type expected.\x1b[0m\n    \x1b[2mat \x1b[0m\x1b[36ma.ts\x1b[0m\x1b[2m:\x1b[0m\x1b[33m1\x1b[0m\x1b[2m:\x1b[0m\x1b[33m8\x1b[0m\n",
++    );
++}
++
++#[test]
++fn a_chain_is_indented_and_related_information_is_a_note() {
++    let files = vec![file(
++        "/proj/m.ts",
++        "m.ts",
++        "let a: {x: number} = {x: \"s\"};\nlet b = 1;\nlet b = 2;\n",
++    )];
++    let chain = Diagnostic {
++        file: Some(FileId(0)),
++        start: 4,
++        length: 1,
++        category: Category::Error,
++        code: Code::Ts(2322),
++        text: Cow::Borrowed(b"Type '{ x: string; }' is not assignable to type '{ x: number; }'."),
++        chain: vec![MessageChain {
++            text: Cow::Borrowed(b"Types of property 'x' are incompatible."),
++            next: vec![MessageChain {
++                text: Cow::Borrowed(b"Type 'string' is not assignable to type 'number'."),
++                next: Vec::new(),
++            }],
++        }],
++        related: Vec::new(),
++    };
++    let mut log = Log::init();
++    log.add_symbol_already_declared_error(
++        files[0].source(),
++        b"b",
++        Loc { start: 46 },
++        Loc { start: 35 },
++    );
++    let mut diagnostics = vec![chain];
++    for msg in log.msgs.drain(..) {
++        diagnostics.extend(Diagnostic::from_msg(FileId(0), msg));
++    }
++    let diagnostics = sort_and_deduplicate_diagnostics(&files, diagnostics);
++    assert_bytes(
++        &plain(&files, &diagnostics, "/proj"),
++        "m.ts(1,5): error TS2322: Type '{ x: string; }' is not assignable to type '{ x: number; }'.\n  \
++         Types of property 'x' are incompatible.\n    \
++         Type 'string' is not assignable to type 'number'.\n\
++         m.ts(3,5): error syntax: \"b\" has already been declared\n",
++    );
++    assert_bytes(
++        &frames::<false>(&files, &diagnostics, "/proj"),
++        "1 | let a: {x: number} = {x: \"s\"};\n        ^\n\
++         error: TS2322: Type '{ x: string; }' is not assignable to type '{ x: number; }'.\n  \
++         Types of property 'x' are incompatible.\n    \
++         Type 'string' is not assignable to type 'number'.\n    at m.ts:1:5\n\
++         \n\
++         3 | let b = 2;\n        ^\n\
++         error: syntax: \"b\" has already been declared\n    at m.ts:3:5\n\
++         \n\
++         2 | let b = 1;\n        ^\n\
++         note: \"b\" was originally declared here\n   at m.ts:2:5\n",
++    );
++    assert_eq!(diagnostics[1].related.len(), 1);
++    assert_eq!(
++        (
++            diagnostics[1].related[0].start,
++            diagnostics[1].related[0].length
++        ),
++        (35, 1)
++    );
++}
++
++#[test]
++fn a_column_counts_utf16_code_units() {
++    let text = "const s = \"\u{1F600}\u{e9}\"; debugger;";
++    let files = vec![file("/proj/e.ts", "e.ts", text)];
++    let start = 20;
++    assert_eq!(text.as_bytes().get(20..), Some(&b"debugger;"[..]));
++    let diagnostics = vec![rule(
++        0,
++        start,
++        9,
++        "no-debugger",
++        "Unexpected 'debugger' statement.",
++    )];
++    assert_bytes(
++        &plain(&files, &diagnostics, "/proj"),
++        "e.ts(1,18): error no-debugger: Unexpected 'debugger' statement.\n",
++    );
++    assert_bytes(
++        &frames::<false>(&files, &diagnostics, "/proj"),
++        "1 | const s = \"\u{1F600}\u{e9}\"; debugger;\n                     ^\n\
++         error: no-debugger: Unexpected 'debugger' statement.\n    at e.ts:1:18\n",
++    );
++    assert_eq!(utf16_len("a\u{1F600}\u{e9}".as_bytes()), 4);
++    assert_eq!(utf16_len(b"a\xF0\x9F\x98"), 4);
++    assert_eq!(utf16_len(b"\xED\xA0\x80"), 3);
++}
++
++#[test]
++fn every_line_terminator_of_ecmascript_starts_a_line() {
++    let text = "a\rb\r\nc\u{2028}d\u{2029}e\nf";
++    let starts = compute_ecma_line_starts(text.as_bytes());
++    assert_eq!(starts, vec![0, 2, 5, 9, 13, 15]);
++    let at = |pos: u32| {
++        let (line, character) =
++            get_ecma_line_and_utf16_character_of_position(text.as_bytes(), &starts, pos);
++        (line + 1, character + 1)
++    };
++    assert_eq!(at(0), (1, 1));
++    assert_eq!(at(1), (1, 2));
++    assert_eq!(at(2), (2, 1));
++    assert_eq!(at(4), (2, 3));
++    assert_eq!(at(5), (3, 1));
++    assert_eq!(at(9), (4, 1));
++    assert_eq!(at(13), (5, 1));
++    assert_eq!(at(15), (6, 1));
++    // The end of the text is a position, and a position behind it is taken as the end.
++    assert_eq!(at(16), (6, 2));
++    assert_eq!(at(1000), (6, 2));
++    assert_eq!(compute_ecma_line_starts(b""), vec![0]);
++    assert_eq!(compute_ecma_line_starts(b"a\n"), vec![0, 2]);
++}
++
++#[test]
++fn bun_and_tsc_differ_at_the_end_of_the_file_and_after_a_lone_cr() {
++    let files = vec![
++        file("/proj/eof.js", "eof.js", "function f() {\n"),
++        file("/proj/cr.js", "cr.js", "a\rb c"),
++    ];
++    let diagnostics = vec![
++        rule(1, 4, 1, "x", "after a lone CR"),
++        rule(0, 15, 0, "x", "end of file"),
++    ];
++    let diagnostics = sort_and_deduplicate_diagnostics(&files, diagnostics);
++    assert_bytes(
++        &plain(&files, &diagnostics, "/proj"),
++        "cr.js(2,3): error x: after a lone CR\neof.js(2,1): error x: end of file\n",
++    );
++    assert_bytes(
++        &frames::<false>(&files, &diagnostics, "/proj"),
++        "2 | b c\n     ^\nerror: x: after a lone CR\n    at cr.js:2:2\n\
++         \n\
++         1 | function f() {\n                  ^\nerror: x: end of file\n    at eof.js:1:15\n",
++    );
++}
++
++#[test]
++fn paths_are_printed_as_tsc_prints_them() {
++    let posix = ComparePathsOptions {
++        use_case_sensitive_file_names: true,
++        current_directory: b"/proj",
++    };
++    #[track_caller]
++    fn rel(path: &str, options: ComparePathsOptions<'_>, expected: &str) {
++        assert_bytes(
++            &convert_to_relative_path(path.as_bytes(), options),
++            expected,
++        );
++    }
++    rel("/proj/src/a.ts", posix, "src/a.ts");
++    rel("/other/z.ts", posix, "../other/z.ts");
++    rel("/z.ts", posix, "../z.ts");
++    rel("/Proj/a.ts", posix, "../Proj/a.ts");
++    rel("relative/a.ts", posix, "relative/a.ts");
++    rel("/proj", posix, "");
++    let insensitive = ComparePathsOptions {
++        use_case_sensitive_file_names: false,
++        current_directory: b"/proj",
++    };
++    rel("/Proj/a.ts", insensitive, "a.ts");
++    let windows = ComparePathsOptions {
++        use_case_sensitive_file_names: false,
++        current_directory: b"C:\\proj",
++    };
++    rel("c:/proj/src/a.ts", windows, "src/a.ts");
++    rel("C:\\proj\\src\\a.ts", windows, "src/a.ts");
++    rel("D:/x/a.ts", windows, "D:/x/a.ts");
++    rel("C:/a.ts", windows, "../a.ts");
++    rel("//server/share/a.ts", windows, "//server/share/a.ts");
++
++    #[track_caller]
++    fn abs(path: &str, cwd: &str, expected: &str) {
++        assert_bytes(
++            &get_normalized_absolute_path(path.as_bytes(), cwd.as_bytes()),
++            expected,
++        );
++    }
++    abs("a.ts", "/proj", "/proj/a.ts");
++    abs("./src/../a.ts", "/proj", "/proj/a.ts");
++    abs("../a.ts", "/proj", "/a.ts");
++    abs("../../../a.ts", "/proj", "/a.ts");
++    abs("/x//y/./a.ts", "/proj", "/x/y/a.ts");
++    abs("src\\a.ts", "C:\\proj", "C:/proj/src/a.ts");
++    abs("D:\\a.ts", "C:\\proj", "D:/a.ts");
++    assert_eq!(get_root_length(b"/a"), 1);
++    assert_eq!(get_root_length(b"c:/a"), 3);
++    assert_eq!(get_root_length(b"c:"), 2);
++    assert_eq!(get_root_length(b"c:a"), 0);
++    assert_eq!(get_root_length(b"//server/share"), 9);
++    assert_eq!(get_root_length(b"//server"), 8);
++    assert_eq!(get_root_length(b"a/b"), 0);
++    assert_eq!(get_root_length(b""), 0);
++}
++
++#[test]
++fn the_order_of_the_reference() {
++    let files = vec![file("/proj/a.ts", "a.ts", "0123456789")];
++    let d =
++        |start: u32, length: u32, code: Code, category: Category, text: &'static str| Diagnostic {
++            file: Some(FileId(0)),
++            start,
++            length,
++            category,
++            code,
++            text: Cow::Borrowed(text.as_bytes()),
++            chain: Vec::new(),
++            related: Vec::new(),
++        };
++    let less = |a: &Diagnostic, b: &Diagnostic| {
++        compare_diagnostics(&files, a, b) == core::cmp::Ordering::Less
++    };
++    let e = Category::Error;
++    // The end comes before the code: arithmeticOnInvalidTypes has TS2454 with the end 39 before TS2365 with the end 43.
++    assert!(less(
++        &d(1, 2, Code::Ts(2454), e, "x"),
++        &d(1, 6, Code::Ts(2365), e, "x")
++    ));
++    // A code is compared as a number.
++    assert!(less(
++        &d(1, 2, Code::Ts(2322), e, "x"),
++        &d(1, 2, Code::Ts(10000), e, "x")
++    ));
++    // A name is the number 0: it comes before every TypeScript number at one span.
++    assert!(less(
++        &d(1, 2, Code::Name("use-isnan"), e, "x"),
++        &d(1, 2, Code::Ts(1005), e, "x")
++    ));
++    // The category comes before the name: a warning is 0, an error is 1.
++    assert!(less(
++        &d(1, 2, Code::Name("z-rule"), Category::Warning, "x"),
++        &d(1, 2, Code::Name("a-rule"), e, "x")
++    ));
++    assert!(less(
++        &d(1, 2, Code::Name("a-rule"), e, "x"),
++        &d(1, 2, Code::Name("b-rule"), e, "x")
++    ));
++    assert!(less(
++        &d(1, 2, Code::Ts(2322), e, "a"),
++        &d(1, 2, Code::Ts(2322), e, "b")
++    ));
++    // A diagnostic without a file comes first.
++    let mut global = d(9, 0, Code::Ts(6053), e, "x");
++    global.file = None;
++    assert!(less(&global, &d(0, 0, Code::Ts(1005), e, "x")));
++    // More chain comes first, then more related information.
++    let mut chained = d(1, 2, Code::Ts(2322), e, "a");
++    chained.chain.push(MessageChain {
++        text: Cow::Borrowed(b"c"),
++        next: Vec::new(),
++    });
++    assert!(less(&chained, &d(1, 2, Code::Ts(2322), e, "a")));
++    let mut related = d(1, 2, Code::Ts(2322), e, "a");
++    related
++        .related
++        .push(d(0, 1, Code::Ts(2728), Category::Message, "r"));
++    assert!(less(&related, &d(1, 2, Code::Ts(2322), e, "a")));
++}
++
++#[test]
++fn duplicates_give_their_related_information_to_the_first() {
++    let files = vec![file("/proj/a.ts", "a.ts", "0123456789")];
++    let related = |start: u32| Diagnostic {
++        file: Some(FileId(0)),
++        start,
++        length: 1,
++        category: Category::Message,
++        code: Code::Ts(2728),
++        text: Cow::Borrowed(b"'x' is declared here."),
++        chain: Vec::new(),
++        related: Vec::new(),
++    };
++    let head = |related: Vec<Diagnostic>| Diagnostic {
++        file: Some(FileId(0)),
++        start: 5,
++        length: 1,
++        category: Category::Error,
++        code: Code::Ts(2322),
++        text: Cow::Borrowed(b"t"),
++        chain: Vec::new(),
++        related,
++    };
++    let out = sort_and_deduplicate_diagnostics(
++        &files,
++        vec![
++            head(vec![related(3)]),
++            head(vec![related(1), related(3)]),
++            head(Vec::new()),
++        ],
++    );
++    assert_eq!(out.len(), 1);
++    let starts: Vec<u32> = out[0].related.iter().map(|r| r.start).collect();
++    assert_eq!(starts, vec![1, 3]);
++}
++
++#[test]
++fn a_line_break_inside_a_text_is_one_space() {
++    let files = vec![file("/proj/t1.js", "t1.js", "class A { `a\nb` }\n")];
++    let mut log = Log::init();
++    log.add_range_error_fmt(
++        Some(files[0].source()),
++        Range {
++            loc: Loc { start: 10 },
++            len: 5,
++        },
++        format_args!("Expected identifier but found \"`a\nb`\""),
++    );
++    let mut diagnostics = Vec::new();
++    for msg in log.msgs.drain(..) {
++        diagnostics.extend(Diagnostic::from_msg(FileId(0), msg));
++    }
++    assert_bytes(
++        &plain(&files, &diagnostics, "/proj"),
++        "t1.js(1,11): error syntax: Expected identifier but found \"`a b`\"\n",
++    );
++}
+diff --git a/src/lint/tspath.rs b/src/lint/tspath.rs
+new file mode 100644
+index 0000000..ab141db
+--- /dev/null
++++ b/src/lint/tspath.rs
+@@ -0,0 +1,189 @@
++//! Paths as tsc prints them: a part of `internal/tspath/path.go` of typescript-go.
++
++use bun_core::strings;
++
++const DIRECTORY_SEPARATOR: u8 = b'/';
++
++#[derive(Clone, Copy)]
++pub struct ComparePathsOptions<'a> {
++    pub use_case_sensitive_file_names: bool,
++    pub current_directory: &'a [u8],
++}
++
++/// The value for the file system of the platform; the reference asks the file system.
++pub const USE_CASE_SENSITIVE_FILE_NAMES: bool = !cfg!(any(windows, target_os = "macos"));
++
++fn is_any_directory_separator(char: u8) -> bool {
++    char == b'/' || char == b'\\'
++}
++
++fn is_volume_character(char: u8) -> bool {
++    char.is_ascii_alphabetic()
++}
++
++/// The length of the root of a path on disk; 0 for a relative path. URLs are not roots here.
++pub fn get_root_length(path: &[u8]) -> usize {
++    let Some(&ch0) = path.first() else {
++        return 0;
++    };
++    if is_any_directory_separator(ch0) {
++        if path.get(1) != Some(&ch0) {
++            return 1;
++        }
++        let rest = path.get(2..).unwrap_or_default();
++        return match strings::index_of_char_usize(rest, ch0) {
++            Some(p1) => p1 + 2 + 1,
++            None => path.len(),
++        };
++    }
++    if is_volume_character(ch0) && path.get(1) == Some(&b':') {
++        return match path.get(2) {
++            None => 2,
++            Some(&ch2) if is_any_directory_separator(ch2) => 3,
++            Some(_) => 0,
++        };
++    }
++    0
++}
++
++pub fn is_rooted_disk_path(path: &[u8]) -> bool {
++    get_root_length(path) > 0
++}
++
++fn has_trailing_directory_separator(path: &[u8]) -> bool {
++    path.last().is_some_and(|&b| is_any_directory_separator(b))
++}
++
++pub fn normalize_slashes(path: &[u8]) -> Vec<u8> {
++    path.iter()
++        .map(|&b| if b == b'\\' { DIRECTORY_SEPARATOR } else { b })
++        .collect()
++}
++
++/// `path` replaces `first_path` when it is absolute, else it is appended to it.
++pub fn combine_paths(first_path: &[u8], path: &[u8]) -> Vec<u8> {
++    let mut result = normalize_slashes(first_path);
++    if path.is_empty() {
++        return result;
++    }
++    let path = normalize_slashes(path);
++    if result.is_empty() || get_root_length(&path) != 0 {
++        return path;
++    }
++    if !has_trailing_directory_separator(&result) {
++        result.push(DIRECTORY_SEPARATOR);
++    }
++    result.extend_from_slice(&path);
++    result
++}
++
++/// The root, then each name; an absent root is the empty first component.
++fn get_path_components<'a>(path: &'a [u8]) -> Vec<&'a [u8]> {
++    let root_length = get_root_length(path);
++    let (root, rest) = path.split_at_checked(root_length).unwrap_or((path, b""));
++    let mut components: Vec<&'a [u8]> = vec![root];
++    let mut names = strings::split(rest, b"/");
++    while let Some(name) = names.next() {
++        components.push(name);
++    }
++    if components.len() > 1 && components.last().is_some_and(|last| last.is_empty()) {
++        components.pop();
++    }
++    components
++}
++
++fn reduce_path_components<'a>(components: &[&'a [u8]]) -> Vec<&'a [u8]> {
++    let Some((&root, names)) = components.split_first() else {
++        return Vec::new();
++    };
++    let mut reduced: Vec<&'a [u8]> = vec![root];
++    for &component in names {
++        if component.is_empty() || component == b"." {
++            continue;
++        }
++        if component == b".." {
++            if reduced.len() > 1 {
++                if reduced.last().is_some_and(|&last| last != b"..") {
++                    reduced.pop();
++                    continue;
++                }
++            } else if !root.is_empty() {
++                continue;
++            }
++        }
++        reduced.push(component);
++    }
++    reduced
++}
++
++fn get_path_from_path_components(path_components: &[&[u8]]) -> Vec<u8> {
++    let Some((&root, names)) = path_components.split_first() else {
++        return Vec::new();
++    };
++    let mut result = root.to_vec();
++    if !root.is_empty() && !has_trailing_directory_separator(root) {
++        result.push(DIRECTORY_SEPARATOR);
++    }
++    for (i, name) in names.iter().enumerate() {
++        if i > 0 {
++            result.push(DIRECTORY_SEPARATOR);
++        }
++        result.extend_from_slice(name);
++    }
++    result
++}
++
++/// The absolute form of a file name, with forward slashes and without `.` and `..`.
++pub fn get_normalized_absolute_path(file_name: &[u8], current_directory: &[u8]) -> Vec<u8> {
++    let combined = combine_paths(current_directory, file_name);
++    get_path_from_path_components(&reduce_path_components(&get_path_components(&combined)))
++}
++
++/// ASCII letters only; the reference folds the case of every letter.
++fn equate_string_case_insensitive(a: &[u8], b: &[u8]) -> bool {
++    a.eq_ignore_ascii_case(b)
++}
++
++fn get_path_components_relative_to<'a>(
++    from: &'a [u8],
++    to: &'a [u8],
++    options: ComparePathsOptions<'_>,
++) -> Vec<&'a [u8]> {
++    let from_components = reduce_path_components(&get_path_components(from));
++    let to_components = reduce_path_components(&get_path_components(to));
++
++    let mut start = 0;
++    for (from_component, to_component) in from_components.iter().zip(&to_components) {
++        let equal = if start == 0 || !options.use_case_sensitive_file_names {
++            equate_string_case_insensitive(from_component, to_component)
++        } else {
++            from_component == to_component
++        };
++        if !equal {
++            break;
++        }
++        start += 1;
++    }
++
++    if start == 0 {
++        return to_components;
++    }
++
++    let mut result: Vec<&'a [u8]> = vec![b""];
++    result.extend(from_components.iter().skip(start).map(|_| &b".."[..]));
++    result.extend(to_components.iter().skip(start));
++    result
++}
++
++/// The name that a diagnostic prints: relative to the current directory when both have one root.
++pub fn convert_to_relative_path(
++    absolute_or_relative_path: &[u8],
++    options: ComparePathsOptions<'_>,
++) -> Vec<u8> {
++    if !is_rooted_disk_path(absolute_or_relative_path) {
++        return absolute_or_relative_path.to_vec();
++    }
++    let from = normalize_slashes(options.current_directory);
++    let to = combine_paths(options.current_directory, absolute_or_relative_path);
++    get_path_from_path_components(&get_path_components_relative_to(&from, &to, options))
++}

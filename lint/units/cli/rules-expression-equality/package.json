@@ -1,0 +1,6 @@
+{
+  "name": "rules-expression-equality-oracle",
+  "private": true,
+  "description": "ESLint as the oracle for no-duplicate-case and no-self-assign: `bun install`, then `node run.cjs <rule> cases/<list>.json`",
+  "dependencies": { "eslint": "10.11.0" }
+}

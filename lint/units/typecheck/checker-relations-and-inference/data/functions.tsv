@@ -1,0 +1,278 @@
+layer	file	lines	function	closures	codes	panic lines
+prior T-CONSTRAINT	relater.go	93-96	asRecursionId	0		
+R-REL	relater.go	102-104	Relation.get	0		
+R-REL	relater.go	106-111	Relation.set	0		
+R-REL	relater.go	113-115	Relation.size	0		
+R-REL	relater.go	117-119	c.isTypeIdenticalTo	0		
+R-REL	relater.go	121-126	c.compareTypesIdentical	0		
+R-REL	relater.go	128-133	c.compareTypesAssignableSimple	0		
+R-REL	relater.go	135-140	c.compareTypesAssignableWorker	0		
+R-REL	relater.go	142-147	c.compareTypesSubtypeOf	0		
+R-REL	relater.go	149-151	c.isTypeAssignableTo	0		
+R-REL	relater.go	153-155	c.isTypeSubtypeOf	0		
+R-REL	relater.go	157-159	c.isTypeStrictSubtypeOf	0		
+R-REL	relater.go	161-163	c.isTypeComparableTo	0		
+R-REL	relater.go	165-167	c.areTypesComparable	0		
+R-REL	relater.go	169-203	c.isTypeRelatedTo	0		
+R-REL	relater.go	205-279	c.isSimpleTypeRelatedTo	0		
+R-REL	relater.go	281-337	c.isEnumTypeRelatedTo	0	2324,4125,4126	
+R-REL	relater.go	339-341	c.checkTypeAssignableTo	0		
+R-REL	relater.go	343-345	c.checkTypeAssignableToEx	0		
+R-REL	relater.go	347-349	c.checkTypeComparableTo	0		
+R-REL	relater.go	351-353	c.checkTypeRelatedTo	0		
+R-REL	relater.go	355-398	c.checkTypeRelatedToEx	0	2859,7038	
+R-REL	relater.go	400-412	createDiagnosticChainFromErrorChain	0		
+R-REL	relater.go	414-422	c.reportDiagnostic	0		
+R-ELAB	relater.go	424-426	c.checkTypeAssignableToAndOptionallyElaborate	0		
+R-ELAB	relater.go	428-436	c.checkTypeRelatedToAndOptionallyElaborate	0		
+R-ELAB	relater.go	438-472	c.elaborateError	0		
+R-ELAB	relater.go	474-476	c.isOrHasGenericConditional	0		
+R-ELAB	relater.go	478-494	c.elaborateDidYouMeanToCallOrConstruct	1	6212,6213	
+R-ELAB	relater.go	496-518	c.elaborateObjectLiteral	0	2418	
+R-ELAB	relater.go	520-542	c.elaborateArrayLiteral	0		
+R-ELAB	relater.go	544-616	c.elaborateElement	0	2412,6500,6501	
+R-ELAB	relater.go	618-630	c.getBestMatchIndexedAccessTypeOrUndefined	0		
+R-ELAB	relater.go	632-637	c.checkExpressionForMutableLocationWithContextualType	0		
+R-ELAB	relater.go	639-675	c.elaborateArrowFunction	0	1356,6502	
+R-REL	relater.go	677-693	c.isWeakType	1		
+R-REL	relater.go	695-702	c.hasCommonProperties	0		
+R-REL	relater.go	704-741	c.isKnownProperty	0		
+R-REL	relater.go	743-745	isHyphenatedJsxName	0		
+R-REL	relater.go	747-753	isExcessPropertyCheckTarget	0		
+R-REL	relater.go	755-795	c.isDeeplyNestedType	0		
+R-REL	relater.go	797-808	hasMatchingRecursionIdentity	0		
+prior T-CONSTRAINT	relater.go	810-812	getRecursionIdentity	0		
+prior T-CONSTRAINT	relater.go	814-832	getRecursionIdentityTarget	1		
+prior T-CONSTRAINT	relater.go	834-870	getRecursionIdentityFromTarget	0		
+R-DISCRIM	relater.go	872-889	c.getBestMatchingType	0		
+R-DISCRIM	relater.go	891-907	c.findMatchingTypeReferenceOrTypeAliasReference	0		
+R-DISCRIM	relater.go	909-914	c.findBestTypeForInvokable	1		
+R-DISCRIM	relater.go	916-943	c.findMostOverlappyType	0		
+R-DISCRIM	relater.go	945-950	c.findBestTypeForObjectLiteral	1		
+R-REL	relater.go	952-965	c.shouldReportUnmatchedPropertyError	0		
+R-REL	relater.go	967-969	c.getUnmatchedProperty	0		
+R-REL	relater.go	971-975	c.getUnmatchedProperties	0		
+R-REL	relater.go	977-1006	c.getUnmatchedPropertiesWorker	0		
+R-REL	relater.go	1008-1028	excludeProperties	0		
+R-DISCRIM	relater.go	1036-1038	TypeDiscriminator.len	0		
+R-DISCRIM	relater.go	1040-1042	TypeDiscriminator.name	0		
+R-DISCRIM	relater.go	1044-1052	TypeDiscriminator.matches	0		
+R-DISCRIM	relater.go	1054-1068	c.findMatchingDiscriminantType	0		
+R-DISCRIM	relater.go	1070-1078	c.findDiscriminantProperties	0		
+R-DISCRIM	relater.go	1080-1094	c.isDiscriminantProperty	0		
+R-DISCRIM	relater.go	1096-1106	c.getMatchingUnionConstituentForType	0		
+R-DISCRIM	relater.go	1108-1120	c.getKeyPropertyName	0		
+R-DISCRIM	relater.go	1122-1130	c.getConstituentTypeForKeyType	0		
+R-DISCRIM	relater.go	1132-1146	c.computeKeyPropertyNameAndMap	0		
+R-DISCRIM	relater.go	1148-1150	isObjectOrInstantiableNonPrimitive	0		
+R-DISCRIM	relater.go	1152-1163	c.getKeyPropertyCandidateName	0		
+R-DISCRIM	relater.go	1165-1197	c.mapTypesByKeyProperty	0		
+R-DISCRIM	relater.go	1205-1254	c.discriminateTypeByDiscriminableItems	0		
+R-DISCRIM	relater.go	1256-1264	c.filterPrimitivesIfContainsNonPrimitive	0		
+R-DISCRIM	relater.go	1266-1268	isNonPrimitiveType	0		
+R-REL	relater.go	1270-1288	c.getTypeNamesForErrorDisplay	0		
+R-REL	relater.go	1290-1292	c.getTypeNameForErrorDisplay	0		
+R-REL	relater.go	1294-1296	c.symbolValueDeclarationIsContextSensitive	0		
+R-REL	relater.go	1298-1315	c.typeCouldHaveTopLevelSingletonTypes	0		
+R-VARIANCE	relater.go	1317-1323	c.getVariances	0		
+R-VARIANCE	relater.go	1325-1327	c.getAliasVariances	0		
+R-VARIANCE	relater.go	1329-1435	c.getVariancesWorker	1		
+R-VARIANCE	relater.go	1437-1444	c.getVarianceStackIndex	0		
+R-VARIANCE	relater.go	1446-1460	c.createMarkerType	0		
+R-VARIANCE	relater.go	1462-1464	c.isMarkerType	0		
+R-VARIANCE	relater.go	1466-1474	c.getTypeParameterModifiers	0		
+R-VARIANCE	relater.go	1476-1485	c.hasCovariantVoidArgument	0		
+R-SIGREL	relater.go	1487-1489	c.isSignatureAssignableTo	0		
+R-SIGREL	relater.go	1491-1673	c.compareSignaturesRelated	0	1224,2202,2203,2204,2205,2328,2685,2849	
+R-SIGREL	relater.go	1675-1705	c.compareTypePredicateRelatedTo	0	1226,1227,2518	
+prior T-SIGSHAPE	relater.go	1707-1720	c.isTopSignature	0		
+prior T-SIGSHAPE	relater.go	1722-1735	c.getParameterCount	0		
+prior T-SIGSHAPE	relater.go	1737-1739	c.getMinArgumentCount	0		
+prior T-SIGSHAPE	relater.go	1741-1780	c.getMinArgumentCountEx	2		
+prior T-SIGSHAPE	relater.go	1782-1788	c.hasEffectiveRestParameter	0		
+prior T-SIGSHAPE	relater.go	1790-1796	c.getTypeAtPosition	0		
+prior T-SIGSHAPE	relater.go	1798-1814	c.tryGetTypeAtPosition	0		
+prior T-SIGSHAPE	relater.go	1816-1827	c.getRestOrAnyTypeAtPosition	0		
+prior T-SIGSHAPE	relater.go	1829-1858	c.getRestTypeAtPosition	0		
+prior T-SIGSHAPE	relater.go	1860-1885	c.getNameableDeclarationAtPosition	0		
+prior T-SIGSHAPE	relater.go	1887-1889	c.isValidDeclarationForTupleLabel	0		
+prior T-SIGSHAPE	relater.go	1891-1897	c.getNonArrayRestType	0		
+prior T-SIGSHAPE	relater.go	1899-1913	c.getEffectiveRestType	0		
+prior T-TUPLE	relater.go	1915-1928	c.sliceTupleType	0		
+prior T-TUPLE	relater.go	1930-1938	c.getKnownKeysOfTupleType	0		
+prior T-TUPLE	relater.go	1940-1945	c.getRestArrayTypeOfTupleType	0		
+prior T-SIGSHAPE	relater.go	1947-1952	c.getThisTypeOfSignature	0		
+prior T-SIGSHAPE	relater.go	1954-1960	c.isInstantiatedGenericParameter	0		
+prior T-SIGSHAPE	relater.go	1962-1974	c.getParameterNameAtPosition	0		
+prior T-SIGSHAPE	relater.go	1976-1990	c.getTupleElementLabel	0		
+prior T-SIGSHAPE	relater.go	1992-2047	c.getTupleElementLabelFromBindingElement	0		
+prior T-SIGSHAPE or K-PRED	relater.go	2049-2081	c.getTypePredicateOfSignature	0		
+prior T-SIGSHAPE or K-PRED	relater.go	2083-2111	c.getUnionOrIntersectionTypePredicate	0		
+prior T-SIGSHAPE or K-PRED	relater.go	2113-2115	c.typePredicateKindsMatch	0		
+prior T-SIGSHAPE or K-PRED	relater.go	2117-2131	c.createTypePredicateFromTypePredicateNode	1		
+prior T-SIGSHAPE or K-PRED	relater.go	2133-2139	c.instantiateTypePredicate	0		
+prior T-SIGSHAPE or K-PRED	relater.go	2141-2143	c.newTypePredicate	0		
+prior T-SIGSHAPE	relater.go	2145-2150	c.isResolvingReturnTypeOfSignature	0		
+R-SIGREL	relater.go	2152-2185	c.findMatchingSignatures	0		
+R-SIGREL	relater.go	2187-2195	c.findMatchingSignature	0		
+R-SIGREL	relater.go	2197-2258	c.compareSignaturesIdentical	0		
+R-SIGREL	relater.go	2260-2278	c.isMatchingSignature	0		
+R-SIGREL	relater.go	2280-2301	c.compareTypeParametersIdentical	0		
+R-SIGREL	relater.go	2303-2313	c.compareTypePredicatesIdentical	0		
+R-REL	relater.go	2315-2352	c.getEffectiveConstraintOfIntersection	0		
+later K-TEMPLATE	relater.go	2354-2363	c.templateLiteralTypesDefinitelyUnrelated	0		
+later K-TEMPLATE	relater.go	2365-2376	c.isTypeMatchedByTemplateLiteralType	0		
+later K-TEMPLATE	relater.go	2378-2395	c.inferTypesFromTemplateLiteralType	1		
+later K-TEMPLATE	relater.go	2397-2500	c.inferFromLiteralPartsToTemplateLiteral	2		
+later K-TEMPLATE	relater.go	2502-2507	c.getStringLikeTypeForType	0		
+later K-TEMPLATE	relater.go	2509-2529	c.isValidTypeForTemplateLiteralPlaceholder	1		
+later K-TEMPLATE	relater.go	2531-2549	c.isMemberOfStringMapping	0		
+later K-TEMPLATE	relater.go	2551-2557	c.applyTargetStringMappingToSource	0		
+R-SIGREL	relater.go	2559-2567	visibilityToString	0		
+R-REL	relater.go	2599-2606	c.getRelater	0		
+R-REL	relater.go	2608-2619	c.putRelater	0		
+R-REL	relater.go	2621-2623	r.isRelatedToSimple	0		
+R-REL	relater.go	2625-2627	r.isRelatedToWorker	0		
+R-REL	relater.go	2629-2631	r.isRelatedTo	0		
+R-REL	relater.go	2633-2745	r.isRelatedToEx	0	2559,2560	
+R-REL	relater.go	2747-2827	r.hasExcessProperties	1	2326,2339,2353,2551,2561	2776
+R-REL	relater.go	2829-2835	c.getTypeOfPropertyInTypes	0		
+R-REL	relater.go	2837-2853	c.getTypeOfPropertyInType	0		
+R-REL	relater.go	2855-2857	shouldCheckAsExcessProperty	0		
+R-REL	relater.go	2859-2861	isIgnoredJsxProperty	0		
+R-REL	relater.go	2863-2865	c.isTypeSubsetOf	0		
+R-REL	relater.go	2867-2880	c.isTypeSubsetOfUnion	0		
+R-REL	relater.go	2882-2949	r.unionOrIntersectionRelatedTo	1		
+R-REL	relater.go	2951-2963	r.someTypeRelatedToType	0		
+R-REL	relater.go	2965-2995	r.eachTypeRelatedToType	0		
+R-REL	relater.go	2997-3002	r.getUndefinedStrippedTargetIfNeeded	0		
+R-REL	relater.go	3004-3061	r.typeRelatedToSomeType	0		
+R-REL	relater.go	3063-3074	r.typeRelatedToEachType	0		
+R-REL	relater.go	3076-3087	r.eachTypeRelatedToSomeType	0		
+R-REL	relater.go	3089-3199	r.recursiveTypeRelatedTo	0	2859	
+R-REL	relater.go	3201-3210	r.resetMaybeStack	0		
+R-REL	relater.go	3212-3217	r.getErrorState	0		
+R-REL	relater.go	3219-3222	r.restoreErrorState	0		
+R-REL	relater.go	3224-3284	r.structuredTypeRelatedTo	1		
+R-REL	relater.go	3286-3291	r.isSourceIntersectionNeedingExtraCheck	1		
+R-REL	relater.go	3293-3933	r.structuredTypeRelatedToWorker	4		
+R-VARIANCE	relater.go	3935-3999	r.typeArgumentsRelatedTo	0		
+R-REL	relater.go	4001-4019	r.mappedTypeRelatedTo	0		
+R-DISCRIM	relater.go	4021-4130	r.typeRelatedToDiscriminatedType	1		
+R-REL	relater.go	4132-4300	r.propertiesRelatedTo	0	2339,2618,2619,2620,2621,2623,2624,2625,2626,2627	
+R-REL	relater.go	4302-4364	r.propertyRelatedTo	0	2325,2326,2327,2442,2443,2444	
+R-REL	relater.go	4366-4375	r.isPropertySymbolTypeRelated	0		
+R-REL	relater.go	4377-4409	r.reportUnmatchedProperty	0	2728,2739,2740,2741,18015	
+R-REL	relater.go	4411-4438	r.tryElaborateArrayLikeErrors	0	4104	
+R-REL	relater.go	4440-4447	r.tryElaborateErrorsForPrimitivesAndObjects	0	2692	
+R-REL	relater.go	4449-4471	r.propertiesIdenticalTo	0		
+R-SIGREL	relater.go	4473-4548	r.signaturesRelatedTo	0	2517,2658	
+R-SIGREL	relater.go	4550-4572	r.constructorVisibilitiesAreCompatible	0	2672	
+R-SIGREL	relater.go	4574-4591	r.signatureRelatedTo	1		
+R-SIGREL	relater.go	4593-4608	r.signaturesIdenticalTo	0		
+R-REL	relater.go	4610-4633	r.indexSignaturesRelatedTo	1		
+R-REL	relater.go	4635-4650	r.typeRelatedToIndexInfo	0	2329	
+R-REL	relater.go	4652-4664	c.isObjectTypeWithInferableIndex	0		
+R-REL	relater.go	4666-4708	r.membersRelatedToIndexInfo	0	2530	
+R-REL	relater.go	4710-4720	r.indexInfoRelatedTo	0	2330,2634	
+R-REL	relater.go	4722-4735	r.indexSignaturesIdenticalTo	0		
+R-REL	relater.go	4737-4781	r.reportErrorResults	0	2208,2696,18031,18032	
+R-REL	relater.go	4783-4860	r.reportRelationError	0	2322,2345,2353,2375,2379,2561,2678,2719,2739,2740,2741,2820,2859,4104,5075,5082	
+R-REL	relater.go	4862-4908	r.reportError	0	2200,2201,2202,2203,2204,2205,2326,2353,2561	
+R-REL	relater.go	4910-4930	addToDottedName	0		
+R-REL	relater.go	4932-4944	r.getChainMessage	0		
+R-REL	relater.go	4946-4955	r.chainArgsMatch	0		
+R-REL	relater.go	4957-4963	getPropertyNameArg	0		
+R-REL	relater.go	4965-4972	isConversionOrInterfaceImplementationMessage	0	2352,2420,2720,2787,2788,2789	
+R-REL	relater.go	4974-4981	chainDepth	0		
+R-REL	relater.go	4983-5022	c.isTypeDerivedFrom	3		
+R-REL	relater.go	5024-5026	c.isDistributionDependent	0		
+omitted: tracing only	relater.go	5028-5044	r.traceUnionsOrIntersectionsTooLarge	0		
+I-INFER	inference.go	32-39	c.getInferenceState	0		
+I-INFER	inference.go	41-51	c.putInferenceState	0		
+I-INFER	inference.go	53-63	c.inferTypes	0		
+I-INFER	inference.go	65-282	c.inferFromTypes	0		
+I-INFER	inference.go	284-292	c.inferFromTypeArguments	0		
+I-INFER	inference.go	294-299	c.inferWithPriority	0		
+I-INFER	inference.go	301-306	c.inferFromContravariantTypesWithPriority	0		
+I-INFER	inference.go	308-312	c.inferFromContravariantTypes	0		
+I-INFER	inference.go	314-320	c.inferFromContravariantTypesIfStrictFunctionTypes	0		
+I-INFER	inference.go	322-368	c.invokeOnce	0		
+I-INFER	inference.go	370-407	c.inferFromMatchingTypes	2		
+I-INFER	inference.go	409-417	compareTypesAndDepth	0		
+I-INFER	inference.go	419-438	getTypeDepth	0		
+I-INFER	inference.go	440-446	getTypeListDepth	0		
+I-INFER	inference.go	448-530	c.inferToMultipleTypes	0		
+I-INFER	inference.go	532-545	getSingleTypeVariableFromIntersectionTypes	1		
+I-INFER	inference.go	547-552	c.inferToMultipleTypesWithPriority	0		
+I-INFER	inference.go	554-564	c.inferToConditionalType	0		
+I-INFER	inference.go	566-685	c.inferToTemplateLiteralType	2		
+I-INFER	inference.go	687-697	c.inferFromGenericMappedTypes	0		
+I-INFER	inference.go	699-826	c.inferFromObjectTypes	0		
+I-INFER	inference.go	828-836	c.inferFromProperties	0		
+I-INFER	inference.go	838-851	c.inferFromSignatures	0		
+I-INFER	inference.go	853-866	c.inferFromSignature	2		
+I-INFER	inference.go	868-894	c.applyToParameterTypes	0		
+I-INFER	inference.go	896-909	c.applyToReturnTypes	0		
+I-INFER	inference.go	911-946	c.inferFromIndexTypes	0		
+I-INFER	inference.go	948-998	c.inferToMappedType	1		
+I-REVMAP	inference.go	1000-1012	c.inferTypeForHomomorphicMappedType	0		
+I-REVMAP	inference.go	1014-1054	c.createReverseMappedType	3		
+I-REVMAP	inference.go	1056-1064	c.isPartiallyInferableType	1		
+I-REVMAP	inference.go	1066-1089	c.inferReverseMappedType	0		
+I-REVMAP	inference.go	1091-1097	c.inferReverseMappedTypeWorker	0		
+I-REVMAP	inference.go	1099-1143	c.resolveReverseMappedTypeMembers	0		
+I-REVMAP	inference.go	1145-1152	c.getTypeOfReverseMappedSymbol	0		
+I-REVMAP	inference.go	1154-1176	c.getLimitedConstraint	1		
+I-REVMAP	inference.go	1178-1183	c.replaceIndexedAccess	0		
+I-INFER	inference.go	1185-1193	c.typesDefinitelyUnrelated	0		
+I-INFER	inference.go	1195-1200	tupleTypesDefinitelyUnrelated	0		
+I-INFER	inference.go	1202-1212	c.isTupleTypeStructureMatching	0		
+I-INFER	inference.go	1214-1221	c.isTypeOrBaseIdenticalTo	0		
+I-INFER	inference.go	1223-1226	c.isTypeCloselyMatchedBy	0		
+I-INFER	inference.go	1228-1249	c.createEmptyObjectTypeFromStringLiteral	0		
+I-INFER	inference.go	1251-1256	c.newInferenceContext	0		
+I-INFER	inference.go	1258-1263	c.cloneInferenceContext	0		
+I-INFER	inference.go	1265-1271	c.cloneInferredPartOfContext	0		
+I-INFER	inference.go	1273-1283	c.newInferenceContextWorker	0		
+I-INFER	inference.go	1285-1287	c.addIntraExpressionInferenceSite	0		
+I-INFER	inference.go	1289-1315	c.inferFromIntraExpressionSites	0		
+I-INFER	inference.go	1317-1404	c.getInferredType	4		
+I-INFER	inference.go	1406-1412	c.getInferredTypes	0		
+I-INFER	inference.go	1414-1419	c.getMapperFromContext	0		
+I-INFER	inference.go	1421-1432	c.createOuterReturnMapper	0		
+I-INFER	inference.go	1434-1461	c.getCovariantInference	0		
+I-INFER	inference.go	1463-1468	c.getContravariantInference	0		
+I-INFER	inference.go	1470-1480	c.unionObjectAndArrayLiteralCandidates	1		
+I-INFER	inference.go	1482-1491	c.hasPrimitiveConstraint	0		
+I-INFER	inference.go	1493-1499	c.isTypeParameterAtTopLevel	1		
+I-INFER	inference.go	1501-1507	c.isTypeParameterAtTopLevelInReturnType	0		
+I-INFER	inference.go	1509-1517	c.getTypeFromInference	0		
+I-INFER	inference.go	1519-1528	getInferenceInfoForType	0		
+I-INFER	inference.go	1530-1555	c.getCommonSupertype	2		
+I-INFER	inference.go	1557-1566	c.getSingleCommonSupertype	1		
+I-INFER	inference.go	1568-1576	c.findLeftmostType	0		
+I-INFER	inference.go	1578-1587	c.getCommonSubtype	0		
+I-INFER	inference.go	1589-1599	c.getCombinedTypeFlags	0		
+I-INFER	inference.go	1601-1615	c.literalTypesWithSameBaseType	0		
+I-INFER	inference.go	1617-1619	c.isFromInferenceBlockedSource	0		
+I-INFER	inference.go	1621-1623	c.isSkipDirectInferenceNode	0		
+I-INFER	inference.go	1625-1627	newInferenceInfo	0		
+I-INFER	inference.go	1629-1640	cloneInferenceInfo	0		
+I-INFER	inference.go	1642-1648	clearCachedInferences	0		
+I-INFER	inference.go	1650-1652	hasInferenceCandidates	0		
+I-INFER	inference.go	1654-1656	hasInferenceCandidatesOrDefault	0		
+I-INFER	inference.go	1658-1667	hasTypeParameterDefault	0		
+I-INFER	inference.go	1669-1676	hasOverlappingInferences	0		
+I-INFER	inference.go	1678-1684	c.mergeInferences	0		
+R-REL	checker.go	11995-12008	c.forEachProperty	0		
+R-REL	checker.go	12010-12016	c.getDeclaringClass	0		
+R-REL	checker.go	12018-12026	c.isValidOverrideOf	1		
+R-REL	checker.go	12028-12038	c.isPropertyInClassDerivedFrom	1		
+R-REL	checker.go	13208-13215	c.getExactOptionalUnassignableProperties	1		
+R-REL	checker.go	13217-13219	c.isExactOptionalPropertyMismatch	0		
+R-REL	checker.go	27988-28023	c.getNormalizedType	0		
+R-REL	checker.go	28163-28181	c.getNormalizedUnionOrIntersectionType	1		
+R-REL	checker.go	28183-28194	c.shouldNormalizeIntersection	0		
+R-REL	checker.go	28196-28208	c.getNormalizedTupleType	1		
+R-REL	checker.go	28210-28248	c.getSingleBaseForNonAugmentingSubtype	0		

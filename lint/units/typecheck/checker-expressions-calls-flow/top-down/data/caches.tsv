@@ -1,0 +1,30 @@
+cache	declared	key	value	written	read	cleared	notes
+flowLoopCache	checker.go:803 map[FlowLoopKey]*Type	FlowLoopKey{flowNode, refKey} (checker.go:253)	type of the reference at the loop label	flow.go:1400, only when the first antecedent is complete	1336, 1376	never	refKey is FlowState.refKey, computed once per FlowState at 1327 by getFlowReferenceKey; the key nonDottedNameCacheKey (hash of "?") means no caching and the declared type is returned (1329-1332)
+flowLoopStack	checker.go:804 []FlowLoopInfo	FlowLoopInfo{key, types}	the types seen so far for a loop in process	push 1367, pop 1372	1347 from index 0 up, first entry with the key and a non-empty list wins; len read at checker.go:8534 and 30204	swapped to nil in checkExpressionCachedEx 7618	types is the caller's slice at the time of the push (length frozen): push a copy
+flowTypeCache	checker.go:809 map[*ast.Node]*Type	expression node	type from getTypeOfExpression	checker.go:7444, created lazily at 7442	7434 (a nil map reads as empty)	set nil at 7619 and flow.go:1369, restored after	filled only when flowInvocationCount moved during the check
+sharedFlows	checker.go:805 []SharedFlow	flow node, within the segment of one getFlowTypeOfReference call	FlowType	flow.go:201	136-141	truncated at 99	only nodes with FlowFlagsShared
+FlowState.refKey	flow.go:45 CacheHashKey	-	key text: symbol id, ':' declared type id, '=' initial type id when different, '@' flow container node id; '.' name per access; ".@" symbol id for an element access by a constant or unassigned identifier; for a binding pattern or function reference: node id '#' declared type id (writeFlowCacheKey flow.go:1665-1725)	1327	1326, 1329, 1333	with the FlowState	IsZero means not computed yet
+flowNodeReachable	checker.go:812 map[*ast.FlowNode]bool	flow node	reachable	flow.go:2534	2530	never	only nodes with FlowFlagsShared, only when no reduce label is active and noCacheCheck is false
+flowNodePostSuper	checker.go:813 map[*ast.FlowNode]bool	flow node	post super	flow.go:2620	2616	never	after the store at 2620 upstream does not return: the value is computed a second time by the switch below
+lastFlowNode, lastFlowNodeReachable	checker.go:810-811	the flow node of the last isReachableFlowNode call	bool	2517-2518	2524	2578	
+narrowedTypes	checker.go:640 map[NarrowedTypeKey]*Type	{t, candidate, assumeTrue, checkDerived} (checker.go:153)	narrowed type	flow.go:855	851	never	only when t is a union
+assignmentReducedTypes	checker.go:641 map[AssignmentReducedKey]*Type	{id1: declared type id, id2: assigned type id}	reduced type	flow.go:2410	2407	never	
+cachedTypes kind EvolvingArrayType	checker.go:637	{CachedTypeKindEvolvingArrayType, element type id}	evolving array type	flow.go:1515	1511	never	EvolvingArrayType.finalArrayType is filled lazily at 1575
+cachedTypes kind ArrayLiteralType	checker.go:637	{CachedTypeKindArrayLiteralType, type id}	clone with ArrayLiteral flags	checker.go:8203	8198	never	
+cachedTypes kinds DecoratorContext*	checker.go:637	{kind by static and private, type id}	override type	checker.go:30571	30563	never	
+cachedSignatures	checker.go:638 map[CachedSignatureKey]*Signature	{sig, SignatureKeyInner or SignatureKeyOuter}	clone with call chain flags	checker.go:9111	9106	never	
+instantiationExpressionTypes	checker.go:643	{node id, expression type id}	instantiated type	checker.go:10816, before the error is reported	10756	never	
+discriminatedContextualTypes	checker.go:642	{node id, contextual type id}	discriminated type	checker.go:30904	30880	never	
+contextFreeTypes	checker.go:703 map[*ast.Node]*Type	node	type	checker.go:7638, 10222 (return-only function type)	7633, 10215	never	
+patternForType	checker.go:702 map[*Type]*ast.Node	object literal type of a destructuring pattern	the pattern node	checker.go:13305	13261, 29954	never	
+typeNodeLinks.resolvedType	links	expression node	type	checker.go:7620 (checkExpressionCachedEx, mode Normal only)	7612	never	
+symbolNodeLinks.resolvedSymbol	links	node	symbol	7939, 11464	7938	never	
+signatureLinks	links	call-like node	resolvedSignature (8517, 8535, 8537, 9030, 29595, 29605), effectsSignature (flow.go:2082, unknownSignature means none), decoratorSignature (30289-30521, anySignature means none)	-	-	never	
+assertionLinks.exprType	links	assertion node	type	12401	12408 (deferred check)	never	
+arrayLiteralLinks	links	array literal	firstSpreadIndex, lastSpreadIndex, indicesComputed	30258-30259	30248	never	
+switchStatementLinks	links	switch statement	exhaustiveState, witnesses + witnessesComputed, switchTypes + switchTypesComputed	flow.go:1937-1944, 2005-2006, 2034-2035	1935, 1991, 2028	never	
+markedAssignmentSymbolLinks	links	symbol	lastAssignmentPos (int32: 0 none, MaxInt32 in a nested function or export specifier), hasDefiniteAssignment	flow.go:2715, 2717, 2721, 2733	2657, 2663, 2670, 2675	never	filled by one walk per function or source file, guarded by nodeLinks.flags AssignmentsMarked (2683-2684)
+valueSymbolLinks	links	symbol	resolvedType, nameType, target of the symbols made here	13338, 13357-13358 (object literal members), 13576-13583 (spread), 13665-13670, 13695-13700, 10508-10512 and 10526 (contextual parameter types, written once)	-	never	spreadLinks.leftSpread and rightSpread 13580-13581, mappedSymbolLinks.syntheticOrigin 13671, 13701
+nodeLinks.flags	links	node	TypeChecked (8105, 11630), ContextChecked (10251), ContainsSuperPropertyInStaticInitializer (8045), ContainsClassWithPrivateIdentifiers (10623), InitializerIsUndefinedComputed and InitializerIsUndefined (11322), InCheckIdentifier (13865, 13872), AssignmentsMarked (flow.go:2684)	-	-	never	
+nonExistentProperties	checker.go:900 set	{propNode, containingType, isUncheckedJS}	-	Add at 11625	Has at 11622	never	
+contextualBindingPatterns	checker.go:788 []*ast.Node	binding pattern node	-	push 18016, pop 18025 (getTypeFromBindingPattern, the type layers)	checker.go:11160 (checkIdentifier)	-	a stack of another layer that checkIdentifier searches with slices.Contains

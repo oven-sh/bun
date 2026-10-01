@@ -1,0 +1,1583 @@
+[type-arguments] "x = a<b>(c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "a<b>(c)"
+    bun: DIFFERENT OUTPUT
+      js: a < b > c;
+      ts: a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b>`t`"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > "t";
+      ts: x = a`t`;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = new a<b>(c)"
+    bun: DIFFERENT OUTPUT
+      js: x = new a < b > c;
+      ts: x = new a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = new a<b>"
+    bun: ts-only  js: Unexpected end of file
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>>(c)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<<b>(c)>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a << b > c > d;
+      ts: x = a(d);
+    tsc .js: clean; .ts: parse TS1005; shape!=
+[type-arguments] "x = a<b>\ny"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > y;
+      ts: x = a; y;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b>;"
+    bun: ts-only  js: Unexpected ;
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>.c"
+    bun: ts-only  js: Unexpected .
+    tsc .js: parse TS1109; .ts: parse TS1477; shape!=
+[type-arguments] "x = a<b>[c]"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>=c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>>c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b,c>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b, c > d;
+      ts: x = a(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "f(a<b,c>(d))"
+    bun: DIFFERENT OUTPUT
+      js: f(a < b, c > d);
+      ts: f(a(d));
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "f(a < b, c > (d))"
+    bun: DIFFERENT OUTPUT
+      js: f(a < b, c > d);
+      ts: f(a(d));
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = [a < b, c > (d)]"
+    bun: DIFFERENT OUTPUT
+      js: x = [a < b, c > d];
+      ts: x = [a(d)];
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < b | c > (d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b | c > d;
+      ts: x = a(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < b & c > (d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b & c > d;
+      ts: x = a(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < b.c > (d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b.c > d;
+      ts: x = a(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < typeof b > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < typeof b > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < (b) > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < b[0] > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b[0] > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < 'b' > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < "b" > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < 1 > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < 1 > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < -1 > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < -1 > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < this > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < exports > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < null > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < null > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < {} > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < {} > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < [b] > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < [b] > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a < (b) => c > (d)"
+    bun: ts-only  js: Expected ";" but found "=>"
+    tsc .js: parse TS1005; .ts: clean; shape!=
+[type-arguments] "x = a < b > (c) => d"
+    bun: both reject  js: Expected ";" but found "=>"  ts: Expected ";" but found "=>"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape!=
+[type-arguments] "x = a<b>(c) + 1"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c + 1;
+      ts: x = a(c) + 1;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b> - c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>+c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>/c/.test(d)"
+    bun: TS REJECTS  ts: Unexpected .
+    tsc .js: clean; .ts: parse TS1109; shape!=
+[type-arguments] "x = a<b>(c)<d>(e)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c < d > e;
+      ts: x = a(c)(e);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "if (a<b>(c)) {}"
+    bun: DIFFERENT OUTPUT
+      js: if (a < b > c) ;
+      ts: if (a(c)) ;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "if (a < b && c > (d)) {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a < b > (c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b>\n(c)"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c;
+      ts: x = a(c);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a?.b<c>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a?.b < c > d;
+      ts: x = a?.b(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a.b<c>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a.b < c > d;
+      ts: x = a.b(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a[b]<c>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a[b] < c > d;
+      ts: x = a[b](d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a()<c>(d)"
+    bun: DIFFERENT OUTPUT
+      js: x = a() < c > d;
+      ts: x = a()(d);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b>(c) ? d : e"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > c ? d : e;
+      ts: x = a(c) ? d : e;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = async<T>(y)"
+    bun: DIFFERENT OUTPUT
+      js: x = async < T > y;
+      ts: x = async(y);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = async <T>(y)"
+    bun: DIFFERENT OUTPUT
+      js: x = async < T > y;
+      ts: x = async(y);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = async < T > (y)"
+    bun: DIFFERENT OUTPUT
+      js: x = async < T > y;
+      ts: x = async(y);
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a << b > (c)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a < b >>> (c)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a < b >= (c)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[type-arguments] "x = a<b>++"
+    bun: both reject  js: Unexpected end of file  ts: Unexpected end of file
+    tsc .js: parse TS1109; .ts: parse TS1109; shape=
+[type-arguments] "x = a<b>\n++c"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > ++c;
+      ts: x = a; ++c;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "x = a<b>?c:d"
+    bun: ts-only  js: Unexpected ?
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>in c"
+    bun: ts-only  js: Unexpected in
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>instanceof c"
+    bun: ts-only  js: Unexpected instanceof
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>,c"
+    bun: ts-only  js: Unexpected ,
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = (a<b>)"
+    bun: ts-only  js: Unexpected )
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = [a<b>]"
+    bun: ts-only  js: Unexpected ]
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = {y: a<b>}"
+    bun: ts-only  js: Unexpected }
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = `${a<b>}`"
+    bun: ts-only  js: Unexpected }
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>?.()"
+    bun: ts-only  js: Unexpected ?.
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>?.c"
+    bun: ts-only  js: Unexpected ?.
+    tsc .js: parse TS1109; .ts: parse TS1477; shape!=
+[type-arguments] "x = a<b>!==c"
+    bun: ts-only  js: Unexpected !==
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>=>c"
+    bun: both reject  js: Unexpected >  ts: Unexpected >
+    tsc .js: parse TS1109; .ts: parse TS1109; shape=
+[type-arguments] "x = a<b>&&c"
+    bun: ts-only  js: Unexpected &&
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>||c"
+    bun: ts-only  js: Unexpected ||
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>??c"
+    bun: ts-only  js: Unexpected ??
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[type-arguments] "x = a<b>as"
+    bun: TS REJECTS  ts: Unexpected end of file
+    tsc .js: clean; .ts: parse TS1110; shape!=
+[type-arguments] "x = a<b>\nas"
+    bun: DIFFERENT OUTPUT
+      js: x = a < b > as;
+      ts: x = a; as;
+    tsc .js: clean; .ts: clean; shape!=
+[type-arguments] "for (;a<b>(c);) break"
+    bun: DIFFERENT OUTPUT
+      js: for (;a < b > c; ) break;
+      ts: for (;a(c); ) break;
+    tsc .js: clean; .ts: clean; shape!=
+[conditional-arrow] "x = a ? (b) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? (c) : d => e : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? (c) : (d) => e : f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? (c) : d : e"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? (c) : d => {} : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? (c, d) : e => f : g"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? ({c}) : d => e : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? ([c]) : d => e : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? (c = 1) : d => e : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? (1) : d => e : f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? (c.d) : e => f : g"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? async (c) : d => e : f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? b ? () => c : d => e : f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c => d ? e : f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b, c) : d => e"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : (c) => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b = 1) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? ({b}) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? ([b]) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? async (b) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : async c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => c : d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c => (d)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c => d, e"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b)\n: c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) ? c : d => e : f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? function(){} : (b) => c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c ? d : e => f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c => d ? (e) : f => g"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? ((b)) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b : (c) ? d : e => f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = (a ? (b) : c => d)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = [a ? (b) : c => d]"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "f(a ? (b) : c => d)"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) : c => { return d }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? () : b => c"
+    bun: both reject  js: Expected "=>" but found ":"  ts: Expected "=>" but found ":"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? (b) : c => d : e"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b): c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b => (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? async (b) => (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? async b => (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? () => (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "x = a ? (b) => (c) : d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => ((c)) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => (c, d) : e => f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => c => (d) : e => f"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b = (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b += (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ??= (c) : d => e"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? c : (d) : e => f"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b ? c : d = (e) : f => g"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? function () { return (b) } : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? { k: (b) } : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? [(b)] : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? f((b)) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? b + (c) : d => e"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? `${(b)}` : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => { return (c) } : d => e"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? yield_ => (b) : c => d"
+    bun: TS REJECTS  ts: Expected ":" but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "function* g() { x = a ? yield (b) : c => d }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[conditional-arrow] "async function g() { x = a ? await (b) : c => d }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[conditional-arrow] "x = a ? (b) => (c) : d => e : f"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[class-members] "class A { public\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; x; }
+      ts: class A { x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { private\n x = 1 }"
+    bun: DIFFERENT OUTPUT
+      js: class A { private; x = 1; }
+      ts: class A { x = 1; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { protected\n foo() {} }"
+    bun: DIFFERENT OUTPUT
+      js: class A { protected; foo() {} }
+      ts: class A { foo() {} }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { readonly; x; }
+      ts: class A { x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { override\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { override; x; }
+      ts: class A { x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { declare\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { abstract\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { accessor\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static readonly\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { static readonly; x; }
+      ts: class A { static x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n static\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; static x; }
+      ts: class A { static x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n [x] = 1 }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; [x] = 1; }
+      ts: class A { [x] = 1; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n 'x' = 1 }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; x = 1; }
+      ts: class A { x = 1; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n 1 = 1 }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; 1 = 1; }
+      ts: class A { 1 = 1; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n #x = 1 }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; #x = 1; }
+      ts: class A { #x = 1; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n *x() {} }"
+    bun: DIFFERENT OUTPUT
+      js: class A { public; *x() {} }
+      ts: class A { *x() {} }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly\n get x() { return 1 } }"
+    bun: DIFFERENT OUTPUT
+      js: class A { readonly; get x() { return 1; } }
+      ts: class A { get x() { return 1; } }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { override\n async x() {} }"
+    bun: DIFFERENT OUTPUT
+      js: class A { override; async x() {} }
+      ts: class A { async x() {} }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly; x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly = 1 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { declare = 1; abstract = 2; public = 3 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { declare() {} abstract() {} public() {} private() {} protected() {} override() {} readonly() {} accessor() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static public() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static declare() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { get\n x() { return 1 } }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { async\n x() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static async\n x() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static accessor x = 1 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { accessor x = 1 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { accessor = 1 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { constructor(public_, x) {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { constructor(readonly) {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { constructor(private_ = 1) {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { 'constructor'() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { x\n y\n z }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static\n static\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { declare\n declare\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { abstract\n foo() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "x = { declare() {}, abstract: 1, public_: 2, readonly: 3 }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "x = class { public\n x }"
+    bun: DIFFERENT OUTPUT
+      js: x = class { public; x; };
+      ts: x = class { x; };
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class implements_ {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A extends B {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "x = class extends B {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { static\n{ } }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { x\n['y'] }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { x\n*y() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { readonly\n static x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { readonly; static x; }
+      ts: class A { static x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { override\n static\n x }"
+    bun: DIFFERENT OUTPUT
+      js: class A { override; static x; }
+      ts: class A { static x; }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { protected\n async\n x() {} }"
+    bun: DIFFERENT OUTPUT
+      js: class A { protected; async; x() {} }
+      ts: class A { async; x() {} }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { private\n constructor() {} }"
+    bun: DIFFERENT OUTPUT
+      js: class A { private; constructor() {} }
+      ts: class A { constructor() {} }
+    tsc .js: clean; .ts: clean; shape=
+[class-members] "class A { public\n accessor x }"
+    bun: DIFFERENT OUTPUT
+      js: import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from "bun:wrap"; var _x$1; class A { constructor() { __privateAdd_jy12bb7f(this, _x$1, void 0); } static { _x$1 = new WeakMap; } public; get x() { return __privateGet_t4v9rzz2(this, _x$1); } set x(v) { __privateSet_3ajc9ey2(this, _x$1, v); } }
+      ts: import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from "bun:wrap"; var _x$1; class A { constructor() { __privateAdd_jy12bb7f(this, _x$1, void 0); } static { _x$1 = new WeakMap; } get x() { return __privateGet_t4v9rzz2(this, _x$1); } set x(v) { __privateSet_3ajc9ey2(this, _x$1, v); } }
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface;"
+    bun: TS REJECTS  ts: Expected identifier but found ";"
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface"
+    bun: TS REJECTS  ts: Expected identifier but found end of file
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface\nFoo\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type; type\nA = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type; type;"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "type = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type, Foo; type\nFoo\n= 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare;"
+    bun: DIFFERENT OUTPUT
+      js: var declare; declare;
+      ts: var declare;
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare"
+    bun: TS REJECTS  ts: Unexpected end of file
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare\nvar x"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare\nfunction f() {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare\nclass A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare, global; declare\nglobal\n{}"
+    bun: same
+    tsc .js: js TS8006; .ts: clean; shape=
+[statement-keywords] "var abstract; abstract\nclass A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var abstract; abstract;"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var namespace, foo; namespace\nfoo\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var module, foo; module\nfoo\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var module; module\n'x'\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "module.exports = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var namespace; namespace.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type; type.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var abstract; abstract.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "global.x = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var global; global\n{}"
+    bun: same
+    tsc .js: js TS8006; .ts: clean; shape=
+[statement-keywords] "declare: for(;;) break declare"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "type: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "interface: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "namespace: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "abstract: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "module: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "global: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var as, y, z; x = y\nas\nz"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var satisfies, y, z; x = y\nsatisfies\nz"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "x = y\n!z"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var async, x; async\nx"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var async; x = async < 1 > (2)"
+    bun: DIFFERENT OUTPUT
+      js: var async; x = async < 1 > 2;
+      ts: var async; x = async(2);
+    tsc .js: clean; .ts: clean; shape!=
+[statement-keywords] "var declare, x; declare in x"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type, x; type in x"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare++"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type; type()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var namespace; namespace()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var module; module()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var abstract; abstract()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare`x`"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var abstract; if (x) abstract\nclass A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type; if (x) type\nelse y"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; { declare\nlet x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "function f() { var declare; declare\nreturn }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var as; as"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var satisfies; satisfies()"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var any, unknown, never, keyof, infer, is, asserts, unique, out, override, readonly, accessor; x = [any, unknown, never, keyof, infer, is, asserts, unique, out, override, readonly, accessor]"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "let x\n!y"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var x\n!y"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; interface\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var type, a, b; type\n[a] = b"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare\n;"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; declare\n"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; if (x) declare; else y"
+    bun: DIFFERENT OUTPUT
+      js: var declare; if (x) declare; else y;
+      ts: var declare; if (x) ; else y;
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; if (x) interface; else y"
+    bun: TS REJECTS  ts: Expected identifier but found ";"
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var declare; x => { declare; }"
+    bun: DIFFERENT OUTPUT
+      js: var declare; (x) => { declare; };
+      ts: var declare; (x) => {};
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var interface; function f() { interface; }"
+    bun: TS REJECTS  ts: Expected identifier but found ";"
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var enum_; enum_\nA\n{}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var namespace; namespace\n.x"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "using: 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var using; using\nx = 1"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[statement-keywords] "var await_; await_\nusing\nx"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import type from 'x'; type"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import type, {a} from 'x'; type; a"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import type, * as ns from 'x'; type; ns"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {type} from 'x'; type"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {type as foo} from 'x'; foo"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {type as as} from 'x'; as"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {type, a} from 'x'; type; a"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {a, type} from 'x'; type; a"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {as} from 'x'; as"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {as as as} from 'x'; as"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import {default as type} from 'x'; type"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var type; export {type}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var type; export {type as foo}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var type; export {type as as}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var type; export {type as default}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var type; export {type as 'str'}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var as; export {as}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var as; export {as as as}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "export * as type from 'x'"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "export {type} from 'x'"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "export {type as foo} from 'x'"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "export {default as type} from 'x'"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import * as type from 'x'; type"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import type from 'x'; export default type"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var abstract; export default abstract;"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "var abstract; export default abstract\nclass A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "export default async\nfunction f() {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import from_ from 'x'; from_"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import from from 'x'; from"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import type from from 'x'"
+    bun: ts-only  js: Expected string but found "from"
+    tsc .js: js TS8006; .ts: clean; shape=
+[imports-exports] "import defer from 'x'; defer"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[imports-exports] "import source from 'x'; source"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[jsx] "x = <A extends B>t</A>"
+    bun: TS REJECTS  ts: Expected "(" but found "t"
+    tsc .jsx: parse TS1005,TS1005,TS1109; .tsx: parse TS1005,TS1005,TS1109; shape=
+[jsx] "x = <A extends>t</A>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <A extends={1}>t</A>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <A extends B C>t</A>"
+    bun: TS REJECTS  ts: Expected ">" but found "C"
+    tsc .jsx: parse TS1005,TS1005,TS1005,TS1109; .tsx: parse TS1005,TS1005,TS1005,TS1109; shape=
+[jsx] "x = <A>(y) => z</A>"
+    bun: same
+    tsc .jsx: parse TS1382; .tsx: parse TS1382; shape=
+[jsx] "x = <A b={c<d>(e)}/>"
+    bun: DIFFERENT OUTPUT
+      js: x = jsxDEV_7x81h0kn(A, { b: c < d > e }, void 0, !1, void 0, this);
+      ts: x = jsxDEV_7x81h0kn(A, { b: c(e) }, void 0, !1, void 0, this);
+    tsc .jsx: clean; .tsx: clean; shape!=
+[jsx] "x = <div>{a<b>(c)}</div>"
+    bun: DIFFERENT OUTPUT
+      js: x = jsxDEV_7x81h0kn("div", { children: a < b > c }, void 0, !1, void 0, this);
+      ts: x = jsxDEV_7x81h0kn("div", { children: a(c) }, void 0, !1, void 0, this);
+    tsc .jsx: clean; .tsx: clean; shape!=
+[jsx] "x = <div>{a ? b ? (c) : d => e : f}</div>"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .jsx: parse TS1005; .tsx: parse TS1005; shape=
+[jsx] "x = <T,>(y) => z"
+    bun: ts-only  js: Expected ">" but found ","
+    tsc .jsx: js TS8004; .tsx: clean; shape=
+[jsx] "x = <a.b/>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <a:b/>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <A const/>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <A const B>t</A>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <A in out>t</A>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <const T>t</const>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <div/>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = <>{y}</>"
+    bun: same
+    tsc .jsx: clean; .tsx: clean; shape=
+[jsx] "x = a < b > c</b>"
+    bun: both reject  js: Syntax Error  ts: Syntax Error
+    tsc .jsx: parse TS1005,TS1109; .tsx: parse TS1005,TS1109; shape=
+[jsx] "x = y\n<div/>"
+    bun: both reject  js: Unexpected >  ts: Unexpected >
+    tsc .jsx: parse TS1109,TS1109; .tsx: parse TS1109,TS1109; shape=
+[decorators] "@dec class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@dec\nclass A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@a.b() class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@(a) class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@dec export class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "export @dec class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@dec export default class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "export default @dec class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec static x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec accessor x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec foo() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec get x() { return 1 } }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec #x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec ['x']() {} }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { @dec\n x }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "x = @dec class {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "class A { foo(@dec x) {} }"
+    bun: same
+    tsc .js: js TS1206; .ts: clean; shape=
+[decorators] "class A { constructor(@dec x) {} }"
+    bun: same
+    tsc .js: js TS1206; .ts: clean; shape=
+[decorators] "@dec abstract_\nclass A {}"
+    bun: both reject  js: Expected "class" but found "abstract_"  ts: Expected "class" but found "abstract_"
+    tsc .js: parse TS1146; .ts: parse TS1146; shape=
+[decorators] "@a @b class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@a.b.c class A {}"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@a[b] class A {}"
+    bun: both reject  js: Expected "class" but found "["  ts: Expected "class" but found "["
+    tsc .js: parse TS1146,TS1005; .ts: parse TS1146,TS1005; shape=
+[decorators] "@a`b` class A {}"
+    bun: both reject  js: Expected "class" but found "`b`"  ts: Expected "class" but found "`b`"
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@a?.b class A {}"
+    bun: both reject  js: Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator  ts: Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@new a class A {}"
+    bun: both reject  js: Expected identifier but found "new"  ts: Expected identifier but found "new"
+    tsc .js: clean; .ts: clean; shape=
+[decorators] "@a<b> class A {}"
+    bun: ts-only  js: Expected "class" but found "<"
+    tsc .js: parse TS1146,TS17008,TS1005; .ts: parse TS1146; shape!=
+[typescript-only] "let x: number = 1"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "function f(a: number) {}"
+    bun: ts-only  js: Expected ")" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "function f(): void {}"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "function f(a?) {}"
+    bun: ts-only  js: Expected ")" but found "?"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "function f<T>() {}"
+    bun: ts-only  js: Expected "(" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "function f();"
+    bun: ts-only  js: Expected "{" but found ";"
+    tsc .js: js TS8017; .ts: clean; shape=
+[typescript-only] "class A<T> {}"
+    bun: ts-only  js: Expected "{" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "class A implements B {}"
+    bun: ts-only  js: Expected "{" but found "implements"
+    tsc .js: js TS8005; .ts: clean; shape=
+[typescript-only] "class A extends B<T> {}"
+    bun: ts-only  js: Expected "{" but found "<"
+    tsc .js: js TS8011; .ts: clean; shape=
+[typescript-only] "class A { x: number }"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { x?: number }"
+    bun: ts-only  js: Expected ";" but found "?"
+    tsc .js: js TS8009,TS8010; .ts: clean; shape=
+[typescript-only] "class A { x! }"
+    bun: ts-only  js: Expected ";" but found "!"
+    tsc .js: clean; .ts: clean; shape=
+[typescript-only] "class A { public x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { private x = 1 }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { readonly x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { declare x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { abstract x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "abstract class A {}"
+    bun: ts-only  js: Expected ";" but found "class"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { override foo() {} }"
+    bun: ts-only  js: Expected ";" but found "foo"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { foo?() {} }"
+    bun: ts-only  js: Expected ";" but found "?"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { foo(): void {} }"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { foo<T>() {} }"
+    bun: ts-only  js: Expected ";" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "class A { foo(); foo() {} }"
+    bun: ts-only  js: Expected "{" but found ";"
+    tsc .js: js TS8017; .ts: clean; shape=
+[typescript-only] "class A { constructor(public x) {} }"
+    bun: ts-only  js: Expected ")" but found "x"
+    tsc .js: js TS8012; .ts: clean; shape=
+[typescript-only] "class A { [k: string]: any }"
+    bun: ts-only  js: Expected "]" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { static x: number }"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { async foo(): Promise<void> {} }"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "interface A {}"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "type A = 1"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8008; .ts: clean; shape=
+[typescript-only] "enum A {}"
+    bun: ts-only  js: Unexpected enum
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "const enum A {}"
+    bun: ts-only  js: Expected identifier but found "enum"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "declare const x"
+    bun: ts-only  js: Expected ";" but found "const"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "declare function f()"
+    bun: ts-only  js: Expected ";" but found "function"
+    tsc .js: js TS8017; .ts: clean; shape=
+[typescript-only] "declare class A {}"
+    bun: ts-only  js: Expected ";" but found "class"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "declare module 'm' {}"
+    bun: ts-only  js: Expected ";" but found "module"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "declare global {}"
+    bun: ts-only  js: Expected ";" but found "global"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "namespace A {}"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "module A {}"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "import x = require('y')"
+    bun: ts-only  js: Expected "from" but found "="
+    tsc .js: js TS8002; .ts: clean; shape=
+[typescript-only] "import x = y.z"
+    bun: ts-only  js: Expected "from" but found "="
+    tsc .js: js TS8002; .ts: clean; shape=
+[typescript-only] "export = x"
+    bun: ts-only  js: Unexpected =
+    tsc .js: js TS8003; .ts: clean; shape=
+[typescript-only] "export as namespace x"
+    bun: ts-only  js: Unexpected as
+    tsc .js: clean; .ts: clean; shape=
+[typescript-only] "import type x from 'y'"
+    bun: ts-only  js: Expected "from" but found "x"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "import type {x} from 'y'"
+    bun: ts-only  js: Expected "from" but found "{"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "import {type x} from 'y'"
+    bun: ts-only  js: Expected "}" but found "x"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "export type {x}"
+    bun: ts-only  js: Unexpected type
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "export {type x}"
+    bun: ts-only  js: Expected "}" but found "x"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "export type * from 'y'"
+    bun: ts-only  js: Unexpected type
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "x = y as any"
+    bun: ts-only  js: Expected ";" but found "as"
+    tsc .js: js TS8016; .ts: clean; shape=
+[typescript-only] "x = y as const"
+    bun: ts-only  js: Expected ";" but found "as"
+    tsc .js: js TS8016; .ts: clean; shape=
+[typescript-only] "x = y satisfies z"
+    bun: ts-only  js: Expected ";" but found "satisfies"
+    tsc .js: js TS8037; .ts: clean; shape=
+[typescript-only] "x = y!"
+    bun: ts-only  js: Unexpected !
+    tsc .js: js TS8013; .ts: clean; shape=
+[typescript-only] "x = y!.z"
+    bun: ts-only  js: Unexpected !
+    tsc .js: js TS8013; .ts: clean; shape=
+[typescript-only] "x = <any>y"
+    bun: ts-only  js: Unexpected <
+    tsc .js: parse TS17008,TS1005; .ts: clean; shape!=
+[typescript-only] "x = (a): b => c"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = (a: b) => c"
+    bun: ts-only  js: Expected ")" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = (a?) => c"
+    bun: ts-only  js: Unexpected )
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "x = <T>(a) => c"
+    bun: ts-only  js: Unexpected <
+    tsc .js: parse TS1382,TS17008,TS1005; .ts: clean; shape!=
+[typescript-only] "x = <T,>(a) => c"
+    bun: ts-only  js: Unexpected <
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "x = async <T>(a) => c"
+    bun: ts-only  js: Expected ";" but found "=>"
+    tsc .js: parse TS1005; .ts: clean; shape!=
+[typescript-only] "x = async (a): b => c"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = a ? (b) : c => d : e"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = function <T>() {}"
+    bun: ts-only  js: Expected "(" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "x = function (): void {}"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = { foo<T>() {} }"
+    bun: ts-only  js: Expected ":" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "x = { foo(): void {} }"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = { foo?() {} }"
+    bun: both reject  js: Expected "}" but found "?"  ts: Expected "}" but found "?"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "try {} catch (e: any) {}"
+    bun: ts-only  js: Expected ")" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "for (let x: number of y) ;"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "function f(this) {}"
+    bun: ts-only  js: Expected identifier but found "this"
+    tsc .js: clean; .ts: clean; shape=
+[typescript-only] "function f(this: any) {}"
+    bun: ts-only  js: Expected identifier but found "this"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "var x!: number"
+    bun: ts-only  js: Expected ";" but found "!"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "x = a?.<T>()"
+    bun: ts-only  js: Expected identifier but found "<"
+    tsc .js: parse TS1003,TS1109; .ts: clean; shape!=
+[typescript-only] "x = new a<b>"
+    bun: ts-only  js: Unexpected end of file
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[typescript-only] "x = f<T>"
+    bun: ts-only  js: Unexpected end of file
+    tsc .js: parse TS1109; .ts: clean; shape!=
+[typescript-only] "x = <A<T>/>"
+    bun: both reject  js: Unexpected <  ts: Expected ">" but found "/"
+    tsc .js: parse TS1003,TS1382,TS17008,TS1005,TS2657; .ts: parse TS1005; shape!=
+[typescript-only] "x = <A<T>>t</A>"
+    bun: both reject  js: Unexpected <  ts: Syntax Error
+    tsc .js: parse TS1003,TS1382,TS17002,TS2657; .ts: parse TS1161; shape!=
+[typescript-only] "@dec declare class A {}"
+    bun: ts-only  js: Expected "class" but found "declare"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "export default interface A {}"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8006; .ts: clean; shape=
+[typescript-only] "export default abstract class A {}"
+    bun: ts-only  js: Expected ";" but found "class"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "export declare const x: number"
+    bun: ts-only  js: Unexpected declare
+    tsc .js: js TS8009,TS8010; .ts: clean; shape=
+[typescript-only] "export import a = b.c"
+    bun: ts-only  js: Unexpected import
+    tsc .js: js TS8002; .ts: clean; shape=
+[typescript-only] "function f(public x) {}"
+    bun: both reject  js: Expected ")" but found "x"  ts: Expected ")" but found "x"
+    tsc .js: js TS8012; .ts: clean; shape=
+[typescript-only] "x = (public x) => 1"
+    bun: both reject  js: Expected ")" but found "x"  ts: Expected ")" but found "x"
+    tsc .js: js TS8012; .ts: clean; shape=
+[typescript-only] "let x: typeof import('y')"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "function f(...a?) {}"
+    bun: ts-only  js: Expected ")" but found "?"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "function f(a?: number = 1) {}"
+    bun: ts-only  js: Expected ")" but found "?"
+    tsc .js: js TS8009,TS8010; .ts: clean; shape=
+[typescript-only] "class A { accessor x: number }"
+    bun: ts-only  js: Expected ";" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { static accessor x?: number }"
+    bun: ts-only  js: Expected ";" but found "?"
+    tsc .js: js TS8009,TS8010; .ts: clean; shape=
+[typescript-only] "class A { get x(): number { return 1 } }"
+    bun: ts-only  js: Expected "{" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { set x(v: number) {} }"
+    bun: ts-only  js: Expected ")" but found ":"
+    tsc .js: js TS8010; .ts: clean; shape=
+[typescript-only] "class A { constructor(); constructor() {} }"
+    bun: ts-only  js: Expected "{" but found ";"
+    tsc .js: js TS8017; .ts: clean; shape=
+[typescript-only] "class A { declare static x }"
+    bun: ts-only  js: Expected ";" but found "static"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { static declare x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { private static x }"
+    bun: ts-only  js: Expected ";" but found "static"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { static private x }"
+    bun: ts-only  js: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { public readonly x }"
+    bun: ts-only  js: Expected ";" but found "readonly"
+    tsc .js: js TS8009,TS8009; .ts: clean; shape=
+[typescript-only] "class A { in x }"
+    bun: both reject  js: Expected ";" but found "x"  ts: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "class A { out x }"
+    bun: both reject  js: Expected ";" but found "x"  ts: Expected ";" but found "x"
+    tsc .js: js TS8009; .ts: clean; shape=
+[typescript-only] "function f<const T>() {}"
+    bun: ts-only  js: Expected "(" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "class A<in T, out U> {}"
+    bun: ts-only  js: Expected "{" but found "<"
+    tsc .js: js TS8004; .ts: clean; shape=
+[typescript-only] "using x = y as z"
+    bun: ts-only  js: Expected ";" but found "as"
+    tsc .js: js TS8016; .ts: clean; shape=
+[typescript-only] "label: type A = 1"
+    bun: ts-only  js: Expected ";" but found "A"
+    tsc .js: js TS8008; .ts: clean; shape=
+[paren-colon] "switch (x) { case (a): b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (a): b => {} }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (a, b): c => d }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (a): (b) => c }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "switch (x) { case (a): b }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "switch (x) { case a: b => c }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "switch (x) { case async (a): b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (a):\n b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case ({a}): b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case ([a]): b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (a = 1): b => c }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "switch (x) { case (1): b => c }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "switch (x) { case (a): b => c; break; case (d): e => f }"
+    bun: TS REJECTS  ts: Expected ":" but found ";"
+    tsc .js: parse TS1005,TS1005; .ts: parse TS1005,TS1005; shape=
+[paren-colon] "switch (x) { case y ? (a) : b => c: d }"
+    bun: TS REJECTS  ts: Expected ":" but found "}"
+    tsc .js: parse TS1005; .ts: parse TS1005; shape=
+[paren-colon] "x = { k: (a) }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "x = { [(a)]: b => c }"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "x = y ? { k: (a) } : b => c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "x = a ? (b) : c"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+[paren-colon] "x = a ? ((b)) : c => d"
+    bun: same
+    tsc .js: clean; .ts: clean; shape=
+
+SUMMARY
+type-arguments
+     39 bun js/ts: DIFFERENT OUTPUT
+      2 bun js/ts: TS REJECTS
+      3 bun js/ts: both reject
+     12 bun js/ts: same
+     18 bun js/ts: ts-only
+     12 tsc .js: clean
+     39 tsc .js: clean [DIFFERENT OUTPUT]
+      2 tsc .js: clean [TS REJECTS]
+      3 tsc .js: parse error
+     18 tsc .js: parse error [ts-only]
+conditional-arrow
+     21 bun js/ts: TS REJECTS
+      1 bun js/ts: both reject
+     40 bun js/ts: same
+      2 bun js/ts: ts-only
+      2 tsc .js: TS8xxx [ts-only]
+     40 tsc .js: clean
+     12 tsc .js: clean [TS REJECTS]
+      1 tsc .js: parse error
+      9 tsc .js: parse error [TS REJECTS]
+class-members
+     20 bun js/ts: DIFFERENT OUTPUT
+     32 bun js/ts: same
+     32 tsc .js: clean
+     20 tsc .js: clean [DIFFERENT OUTPUT]
+statement-keywords
+      4 bun js/ts: DIFFERENT OUTPUT
+      5 bun js/ts: TS REJECTS
+     61 bun js/ts: same
+      2 tsc .js: TS8xxx
+     59 tsc .js: clean
+      4 tsc .js: clean [DIFFERENT OUTPUT]
+      5 tsc .js: clean [TS REJECTS]
+imports-exports
+     31 bun js/ts: same
+      1 bun js/ts: ts-only
+      1 tsc .js: TS8xxx [ts-only]
+     31 tsc .js: clean
+jsx
+      2 bun jsx/tsx: DIFFERENT OUTPUT
+      3 bun jsx/tsx: TS REJECTS
+      2 bun jsx/tsx: both reject
+     11 bun jsx/tsx: same
+      1 bun jsx/tsx: ts-only
+      1 tsc .jsx: TS8xxx [ts-only]
+     10 tsc .jsx: clean
+      2 tsc .jsx: clean [DIFFERENT OUTPUT]
+      3 tsc .jsx: parse error
+      3 tsc .jsx: parse error [TS REJECTS]
+decorators
+      5 bun js/ts: both reject
+     21 bun js/ts: same
+      1 bun js/ts: ts-only
+      2 tsc .js: TS8xxx
+     22 tsc .js: clean
+      2 tsc .js: parse error
+      1 tsc .js: parse error [ts-only]
+typescript-only
+      7 bun js/ts: both reject
+     96 bun js/ts: ts-only
+      5 tsc .js: TS8xxx
+     87 tsc .js: TS8xxx [ts-only]
+      3 tsc .js: clean [ts-only]
+      2 tsc .js: parse error
+      6 tsc .js: parse error [ts-only]
+paren-colon
+     10 bun js/ts: TS REJECTS
+      9 bun js/ts: same
+      9 tsc .js: clean
+     10 tsc .js: parse error [TS REJECTS]

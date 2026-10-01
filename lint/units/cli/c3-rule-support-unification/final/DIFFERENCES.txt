@@ -1,0 +1,194 @@
+no-debugger: 70 cases: same 70
+no-sparse-arrays: 142 cases: same 141, both-reject 1
+no-empty-pattern: 183 cases: same 183
+no-dupe-keys: 468 cases: same 450, missing 2, eslint-rejects 15, both-reject 1
+eslint-rejects: "({__proto__: 1, __proto__: 2})" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "({\"__proto__\": 1, __proto__: 2})" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+missing: "({\"\\ud800\": 1, \"\\ud800\": 2})" [script]
+    eslint: 1:16 Duplicate key '�'.
+    bun:    (none)
+eslint-rejects: "[{a: 1, a: 2}] = b" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({x: {a: 1, a: 2}} = b)" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+missing: "var x = { '\\uD800': 1, '\\uD800': 2 };" [script]
+    eslint: 1:24 Duplicate key '�'.
+    bun:    (none)
+eslint-rejects: "var x = { __proto__: 1, __proto__: 2 };" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "var x = { '__proto__': 1, \"__proto__\": 2 };" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "var x = { __proto__: 1, '__proto__': 2, a: 1, a: 2 };" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    1:47 Duplicate key 'a'.
+eslint-rejects: "({ \"__proto\\u005f_\": 1, __proto__: 2 });" [script]
+    eslint: FATAL Parsing error: Redefinition of __proto__ property
+    bun:    (none)
+eslint-rejects: "({a, a}) = obj;" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "[({a, a})] = obj;" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a: 1, a: 2} = obj);" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a, a} += obj);" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    1:6 Duplicate key 'a'.
+eslint-rejects: "for ({a, a} = 1 of list);" [script]
+    eslint: FATAL Parsing error: Assigning to rvalue
+    bun:    (none)
+eslint-rejects: "({a, a}) => 1;" [script]
+    eslint: FATAL Parsing error: Argument name clash
+    bun:    (none)
+eslint-rejects: "async ({a, a}) => 1;" [script]
+    eslint: FATAL Parsing error: Argument name clash
+    bun:    (none)
+no-dupe-class-members: 295 cases: same 284, eslint-rejects 3, both-reject 8
+eslint-rejects: "class A { constructor() {} constructor() {} }" [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+eslint-rejects: "class A { constructor() {} 'constructor'() {} }" [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+eslint-rejects: "class A { 'constructor'() {} 'constructor'() {} }" [script]
+    eslint: FATAL Parsing error: Duplicate constructor in the same class
+    bun:    (none)
+no-compare-neg-zero: 86 cases: same 85, moved 1
+moved: "(/* c */ x) === -0" [script]
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    bun:    1:10 Do not use the '===' operator to compare against -0.
+use-isnan: 316 cases: same 307, moved 2, missing 6, both-reject 1
+moved: "switch (x) { case /* c */ NaN: }" [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    1:27 'case NaN' can never match. Use Number.isNaN before the switch.
+moved: "switch (x) { case\n NaN: }" [script]
+    eslint: 1:14 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    2:2 'case NaN' can never match. Use Number.isNaN before the switch.
+missing: "x === NaN; function g(NaN) {}" [script]
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function g(Number) {} x === Number.NaN" [script]
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function g(NaN) {} switch (NaN) { case NaN: }" [script]
+    eslint: 1:20 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 1:35 'case NaN' can never match. Use Number.isNaN before the switch.
+    bun:    (none)
+missing: "(function NaN() {}); x == NaN" [script]
+    eslint: 1:22 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "(class NaN {}); x == NaN" [script]
+    eslint: 1:17 Use the isNaN function to compare with NaN.
+    bun:    (none)
+missing: "function f(a = x === NaN) { var NaN; }" [script]
+    eslint: 1:16 Use the isNaN function to compare with NaN.
+    bun:    (none)
+valid-typeof: 202 cases: same 195, missing 6, both-reject 1
+missing: "function f(undefined) {} typeof x === undefined" [script]
+    eslint: 1:39 Invalid typeof comparison value.
+    bun:    (none)
+missing: "{ let undefined = 1; } typeof x === undefined" [script]
+    eslint: 1:37 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f() { var undefined; } typeof x === undefined" [script]
+    eslint: 1:46 Invalid typeof comparison value.
+    bun:    (none)
+missing: "try {} catch (undefined) {} typeof x === undefined" [script]
+    eslint: 1:42 Invalid typeof comparison value.
+    bun:    (none)
+missing: "(function undefined() {}); typeof x === undefined" [script]
+    eslint: 1:41 Invalid typeof comparison value.
+    bun:    (none)
+missing: "function f(a = typeof x === undefined) { var undefined; }" [script]
+    eslint: 1:29 Invalid typeof comparison value.
+    bun:    (none)
+no-unsafe-negation: 102 cases: same 102
+no-duplicate-case: 354 cases: same 329, moved 17, missing 2, bun-rejects 1, eslint-rejects 1, both-reject 4
+bun-rejects: "switch (a) { case await: case await: }" [script]
+    eslint: 1:26 Duplicate case label.
+    bun:    PARSE
+missing: "switch (a) { case <a/>: case <a/>: case <a />: }" [jsx] [script]
+    eslint: 1:25 Duplicate case label. | 1:36 Duplicate case label.
+    bun:    1:25 Duplicate case label.
+moved: "switch (a) { case a\n: break; case // c\n a: break; }" [script]
+    eslint: 2:10 Duplicate case label.
+    bun:    3:2 Duplicate case label.
+moved: "switch (a) { case a: break; case // case\n a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case // case (\n a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case /* case /* x */ a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:50 Duplicate case label.
+moved: "switch (a) { case a: x = \"case /*\"; case /* x */ a: break; }" [script]
+    eslint: 1:37 Duplicate case label.
+    bun:    1:50 Duplicate case label.
+moved: "switch (a) { case a: break; case/**/a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:37 Duplicate case label.
+moved: "switch (a) { case a: break; case\na: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:1 Duplicate case label.
+moved: "switch (a) { case a: break; case\n\n(\n(\na\n)\n)\n: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    5:1 Duplicate case label.
+moved: "switch (a) { case a: break; case ( // c\n a ): break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break; case ( /* ( */ a ): break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:44 Duplicate case label.
+moved: "switch (a) { case a: break; case /* ( */ a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:42 Duplicate case label.
+moved: "switch (a) { case a: break; case /* x; case */ a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    1:48 Duplicate case label.
+moved: "switch (a) { case a: break; case /* x;\n case */ a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:10 Duplicate case label.
+moved: "switch (a) { case a: break; case // x; case\n a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+missing: "switch (x) { case <a/>: break; case <a />: break; }" [jsx] [script]
+    eslint: 1:32 Duplicate case label.
+    bun:    (none)
+moved: "switch (a) { case a: break; case // c\n a: break; }" [script]
+    eslint: 1:29 Duplicate case label.
+    bun:    2:2 Duplicate case label.
+moved: "switch (a) { case a: break;\n  case /* case */ a: break; }" [script]
+    eslint: 2:3 Duplicate case label.
+    bun:    2:19 Duplicate case label.
+eslint-rejects: "switch (a) { case new.target: break; case new.target: break; }" [script]
+    eslint: FATAL Parsing error: 'new.target' can only be used in functions and class static block
+    bun:    1:38 Duplicate case label.
+moved: "switch (a) { case a: break;\n  case // case\n a: break; }" [script]
+    eslint: 2:3 Duplicate case label.
+    bun:    3:2 Duplicate case label.
+no-self-assign: 501 cases: same 492, moved 1, other-text 2, eslint-rejects 2, both-reject 4
+moved: "a.b = (\na).b" [script]
+    eslint: 1:7 '(a).b' is assigned to itself.
+    bun:    2:1 '(a).b' is assigned to itself.
+other-text: "a.b = ( /* c */ a).b" [script]
+    eslint: 1:7 '(/*c*/a).b' is assigned to itself.
+    bun:    1:17 '(a).b' is assigned to itself.
+other-text: "a.b = (// c\na).b" [script]
+    eslint: 1:7 '(//ca).b' is assigned to itself.
+    bun:    2:1 '(a).b' is assigned to itself.
+eslint-rejects: "a?.b.c = a.b.c" [script]
+    eslint: FATAL Parsing error: Optional chaining cannot appear in left-hand side
+    bun:    1:10 'a.b.c' is assigned to itself.
+eslint-rejects: "a?.[b] = 1" [script]
+    eslint: FATAL Parsing error: Optional chaining cannot appear in left-hand side
+    bun:    (none)

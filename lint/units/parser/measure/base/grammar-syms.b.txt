@@ -1,0 +1,39 @@
+     781  28e3e00  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+                   = <bun_js_parser::p::P<true, true>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, true>>::skip_type_script_arrow_args_with_backtracking, bool>
+     609  2990180  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_binding
+     949  2990630  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_object_type
+     349  28e8830  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+     162  28e6c10  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+     181  28e4110  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, false>
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+    1674  29909f0  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_type_parameters
+     569  2991c40  <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+     121  2991e80  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+    7017  28e6cc0  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+    3446  28e5d30  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+                   = <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+     273  2990060  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+                   = <bun_js_parser::p::P<true, true>>::skip_typescript_fn_args
+     124  2991f00  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+    1052  2991540  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+                   = <bun_js_parser::p::P<true, true>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+     958  2991180  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+                   = <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+     726  2991960  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+                   = <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+     349  28e6ab0  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+     569  29903f0  <bun_js_parser::p::P<true, true>>::skip_type_script_type_stmt
+     121  2991080  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_metadata
+    7001  28e41d0  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+     124  2991100  <bun_js_parser::p::P<true, true>>::skip_typescript_return_type_with_metadata
+
+total P<true,false>  -                    12 symbols      8017 bytes
+total P<true,false>  DecoratorMetadata     2 symbols      7366 bytes
+total P<true,false>  Discard               2 symbols      3608 bytes
+total P<true,true>   -                     3 symbols       814 bytes
+total P<true,true>   DecoratorMetadata     2 symbols      7350 bytes
+total type grammar                        21 symbols     27155 bytes

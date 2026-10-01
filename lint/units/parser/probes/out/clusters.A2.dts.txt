@@ -1,0 +1,328 @@
+class A2  dialect dts  config plain: 176 inputs in 67 clusters
+
+[08-declare-namespace-enum / declare]  bun A return statement cannot be used here  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    "declare namespace N { return; }"  [-]
+
+[08-declare-namespace-enum / declare]  bun Cannot use "…" with a "…" declaration  /  tsc TS1491 'declare' modifier cannot appear on a 'using' declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare using x: T;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Cannot use "…" with a "…" declaration  /  tsc TS1545 'using' declarations are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare namespace N { using x: T; }"  [-]
+
+[08-declare-namespace-enum / declare]  bun Cannot use "…" with an "…" declaration  /  tsc TS1495 'declare' modifier cannot appear on an 'await using' declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare await using x: T;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"  /  tsc TS1014 A rest parameter must be last in a parameter list.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare function f(...a: A[], b: B): void;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"  /  tsc TS1036 Statements are not allowed in ambient contexts.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2, TS2669 x1
+    "declare global;"  [-]
+    "declare\nglobal {}"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (4 inputs, 4 distinct)
+    tsc also: TS2669 x3, TS2304 x1
+    "global {}"  [-]
+    "global { var x: T; }"  [-]
+    "namespace N { global {} }"  [-]
+    "function f() { declare namespace N {} }"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"m"…"  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare\nmodule \"m\" {}"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found end of file  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare global"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected identifier but found "…"  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare interface;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected identifier but found "…"  /  tsc TS1123 Variable declaration list cannot be empty.   (2 inputs, 2 distinct)
+    "declare const;"  [-]
+    "declare var;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected identifier but found "…"  /  tsc TS1206 Decorators are not valid here.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare function f(@d a: A): void;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected identifier but found "…"  /  tsc TS1211 A class declaration without the 'default' modifier must have a name.   (1 inputs, 1 distinct)
+    "declare class {}"  [-]
+
+[08-declare-namespace-enum / declare]  bun Unexpected …  /  tsc TS1036 Statements are not allowed in ambient contexts.   (28 inputs, 28 distinct)
+    tsc also: TS2304 x28, TS2318 x3, TS2591 x2, TS2583 x1, TS2697 x1, TS2711 x1, TS2307 x1
+    "declare async\nfunction f(): Promise<void>;"  [-]
+    "declare abstract\nclass C {}"  [-]
+    "declare namespace;"  [-]
+    "declare module;"  [-]
+    "declare module"  [-]
+    "declare x;"  [-]
+    "declare x: T;"  [-]
+    "declare 1;"  [-]
+    "declare \"s\";"  [-]
+    "declare"  [-]
+    "declare as any"  [-]
+    "declare!"  [-]
+    … 16 more
+
+[08-declare-namespace-enum / declare]  bun Unexpected …  /  tsc TS1079 A 'declare' modifier cannot be used with an import declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2307 x1
+    "declare import a from \"b\";"  [-]
+
+[08-declare-namespace-enum / declare]  bun Unexpected …  /  tsc TS1120 An export assignment cannot have modifiers.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare export default x;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Unexpected …  /  tsc TS1123 Variable declaration list cannot be empty.   (1 inputs, 1 distinct)
+    "declare let;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Unexpected …  /  tsc TS1193 An export declaration cannot have modifiers.   (2 inputs, 2 distinct)
+    tsc also: TS2307 x1
+    "declare export {};"  [-]
+    "declare export * from \"x\";"  [-]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" as an identifier here  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "await"  [abstractClass]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" or "…" here.  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "await"  [varNamed]
+
+[08-declare-namespace-enum / declName]  bun Expected identifier but found "…"  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "interface"  [keywordAsStmt]
+
+[08-declare-namespace-enum / declName]  bun Expected identifier but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (4 inputs, 4 distinct)
+    "extends"  [abstractClass]
+    "var"  [keywordAsStmt]
+    "const"  [keywordAsStmt]
+    "class"  [keywordNewlineBlock]
+
+[08-declare-namespace-enum / declName]  bun Expected identifier but found "…"  /  tsc TS1211 A class declaration without the 'default' modifier must have a name.   (1 inputs, 1 distinct)
+    "extends"  [declareClass]
+
+[08-declare-namespace-enum / declName]  bun Invalid assignment target  /  tsc TS1036 Statements are not allowed in ambient contexts.   (5 inputs, 5 distinct)
+    tsc also: TS2364 x3, TS2304 x2
+    "null"  [keywordAssign]
+    "this"  [keywordAssign]
+    "true"  [keywordAssign]
+    "arguments"  [keywordAssign]
+    "eval"  [keywordAssign]
+
+[08-declare-namespace-enum / declName]  bun The constant "…" must be initialized  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS7005 x1
+    "const"  [keywordNewlineIdent]
+
+[08-declare-namespace-enum / declName]  bun This constant must be initialized  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "const"  [keywordNewlineBlock]
+
+[08-declare-namespace-enum / declName]  bun Unexpected …  /  tsc TS1036 Statements are not allowed in ambient contexts.   (5 inputs, 3 distinct)
+    tsc also: TS2304 x5, TS2591 x1, TS2337 x1
+    "in"  [declareNamespace,declareModule]
+    "await"  [keywordAsStmt,keywordAssign]
+    "super"  [keywordCall]
+
+[08-declare-namespace-enum / declName]  bun Unexpected …  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (4 inputs, 2 distinct)
+    "as"  [namespaceDotted,namespaceBody]
+    "satisfies"  [namespaceDotted,namespaceBody]
+
+[08-declare-namespace-enum / declName]  bun Unexpected …  /  tsc TS1540 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.   (2 inputs, 2 distinct)
+    "as"  [declareModule]
+    "satisfies"  [declareModule]
+
+[08-declare-namespace-enum / enum]  bun "…" can only be used inside an "…" function  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "enum E { A = await x }"  [-]
+
+[08-declare-namespace-enum / enum]  bun "…" has already been declared  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    tsc also: TS2300 x2
+    "enum E { \"a\", \"a\" }"  [-]
+    "enum E { A, A }"  [-]
+
+[08-declare-namespace-enum / enum]  bun Cannot use "…" here  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2332 x1, TS2683 x1
+    "enum E { A = this }"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected "…" but found "…"  /  tsc TS1024 'readonly' modifier can only appear on a property declaration or index signature.   (1 inputs, 1 distinct)
+    "readonly enum E {}"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected "…" but found "…"  /  tsc TS1040 'async' modifier cannot be used in an ambient context.   (1 inputs, 1 distinct)
+    "async enum E {}"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected "…" but found "…"  /  tsc TS1044 'public' modifier cannot appear on a module or namespace element.   (1 inputs, 1 distinct)
+    "public enum E {}"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected "…" but found "…"  /  tsc TS1044 'static' modifier cannot appear on a module or namespace element.   (1 inputs, 1 distinct)
+    "static enum E {}"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    "abstract enum E {}"  [-]
+    "@d enum E {}"  [-]
+
+[08-declare-namespace-enum / enum]  bun Expected identifier but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (17 inputs, 17 distinct)
+    tsc also: TS2452 x7
+    "enum E { A = 1, 2 }"  [-]
+    "enum E { 1 }"  [-]
+    "enum E { 1 = 1 }"  [-]
+    "enum E { 1.5 }"  [-]
+    "enum E { 0x10 }"  [-]
+    "enum E { 1n }"  [-]
+    "enum E { [x] }"  [-]
+    "enum E { [x] = 1 }"  [-]
+    "enum E { [\"x\"] }"  [-]
+    "enum E { [\"x\"] = 1 }"  [-]
+    "enum E { ['x'] = 1, B = E.x }"  [-]
+    "enum E { [`x`] = 1 }"  [-]
+    … 5 more
+
+[08-declare-namespace-enum / enum]  bun Unexpected …  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2660 x1
+    "enum E { A = super.x }"  [-]
+
+[08-declare-namespace-enum / fnSyntax]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (6 inputs, 6 distinct)
+    tsc also: TS2304 x3, TS7019 x2, TS7006 x1
+    "function f(...a: T[] = []) {}"  [-]
+    "function f(...a = []) {}"  [-]
+    "function f(...a, b) {}"  [-]
+    "function f(...a: T[], b: U) {}"  [-]
+    "function f(...a,) {}"  [-]
+    "function f(...a: T[],) {}"  [-]
+
+[08-declare-namespace-enum / fnSyntax]  bun Expected identifier but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "function f<>() {}"  [-]
+
+[08-declare-namespace-enum / fnSyntax]  bun The modifier "…" is not valid here  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    "function f<in T>() {}"  [-]
+    "function f<out T>() {}"  [-]
+
+[08-declare-namespace-enum / fnSyntax]  bun Unexpected …  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    tsc also: TS2304 x1
+    "function f(): ?A {}"  [-]
+    "function f(): * {}"  [-]
+
+[08-declare-namespace-enum / namespace]  bun "…" can only be used inside an "…" function  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "namespace N { await x }"  [-]
+
+[08-declare-namespace-enum / namespace]  bun A return statement cannot be used here  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "namespace N { return }"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Cannot use "…" here  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    tsc also: TS2331 x1, TS2683 x1
+    "namespace N { this.x }"  [-]
+    "namespace N { break }"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"  /  tsc TS1036 Statements are not allowed in ambient contexts.   (9 inputs, 9 distinct)
+    tsc also: TS2304 x3
+    "if (a) namespace N {}"  [-]
+    "if (a) { namespace N {} }"  [-]
+    "{ namespace N {} }"  [-]
+    "{ module N {} }"  [-]
+    "for (;;) namespace N {}"  [-]
+    "label: namespace N {}"  [-]
+    "() => { namespace N {} }"  [-]
+    "switch (a) { case 1: namespace N {} }"  [-]
+    "try { namespace N {} } catch {}"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"  /  tsc TS1040 'async' modifier cannot be used in an ambient context.   (1 inputs, 1 distinct)
+    "async namespace N {}"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"  /  tsc TS1044 'public' modifier cannot appear on a module or namespace element.   (1 inputs, 1 distinct)
+    "public namespace N {}"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"  /  tsc TS1044 'static' modifier cannot appear on a module or namespace element.   (1 inputs, 1 distinct)
+    "static namespace N {}"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (10 inputs, 10 distinct)
+    tsc also: TS2304 x1
+    "namespace N { import x from \"y\" }"  [-]
+    "module 'm' {}"  [-]
+    "abstract namespace N {}"  [-]
+    "@d namespace N {}"  [-]
+    "function f() { namespace N {} }"  [-]
+    "function f() { module N {} }"  [-]
+    "class C { static { namespace N {} } }"  [-]
+    "namespace N { { namespace M {} } }"  [-]
+    "namespace N { function f() { namespace M {} } }"  [-]
+    "namespace N { if (a) namespace M {} }"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"m"…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    "module \"m\" {}"  [-]
+    "module \"m\";"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Expected identifier but found "…"y"…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    "namespace N { import \"y\" }"  [-]
+
+[08-declare-namespace-enum / namespace]  bun Unexpected …  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (11 inputs, 11 distinct)
+    tsc also: TS2304 x2, TS2660 x1, TS2318 x1
+    "namespace N { export default 1 }"  [-]
+    "namespace N { export default x }"  [-]
+    "namespace N { export default class {} }"  [-]
+    "namespace N { export default function () {} }"  [-]
+    "namespace N { export * from \"x\" }"  [-]
+    "namespace N { export * as a from \"x\" }"  [-]
+    "namespace N { export { x } }"  [-]
+    "namespace N { export { x } from \"y\" }"  [-]
+    "namespace N { export {} }"  [-]
+    "namespace N { super.x }"  [-]
+    "namespace N { export using x = y }"  [-]
+
+[08-declare-namespace-enum / overload]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    tsc also: TS2369 x1, TS2304 x1
+    "function f(public a: A): void; function f(a: any) {}"  [-]
+    "const o = { m(): void; };"  [-]
+
+[08-declare-namespace-enum / overload]  bun Expected identifier but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "function f(@d a: A): void; function f(a: any) {}"  [-]
+
+[10-declaration-files / bodyless]  bun Expected "…" but found "…"  /  tsc TS1228 A type predicate is only allowed in return type position for functions and methods.   (1 inputs, 1 distinct)
+    "export const x: asserts y;"  [-]
+
+[10-declaration-files / module]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2669 x1, TS2304 x1
+    "global { var x: T; }"  [-]
+
+[10-declaration-files / module]  bun Expected "…" but found "…"m"…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "module \"m\" { export const x: T; }"  [-]
+
+[10-declaration-files / module]  bun The constant "…" must be initialized  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (3 inputs, 3 distinct)
+    tsc also: TS2304 x3
+    "namespace N { export const x: T; function f(): void; }"  [-]
+    "namespace N.M { const x: T; }"  [-]
+    "module N { const x: T; }"  [-]
+
+[10-declaration-files / topLevel]  bun Cannot use "…" here  /  tsc TS1036 Statements are not allowed in ambient contexts.   (2 inputs, 2 distinct)
+    "break;"  [-]
+    "continue;"  [-]
+
+[10-declaration-files / topLevel]  bun Expected "…" but found "…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2669 x1
+    "global {}"  [-]
+
+[10-declaration-files / topLevel]  bun Expected "…" but found "…"m"…"  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (2 inputs, 2 distinct)
+    "module \"m\" {}"  [-]
+    "module \"m\";"  [-]
+
+[10-declaration-files / topLevel]  bun The constant "…" must be initialized  /  tsc TS1036 Statements are not allowed in ambient contexts.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "{ const x: T; }"  [-]
+
+[10-declaration-files / topLevel]  bun The constant "…" must be initialized  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (3 inputs, 3 distinct)
+    tsc also: TS7005 x1, TS2304 x1
+    "const x: number;"  [-]
+    "const x;"  [-]
+    "namespace N { const x: T; }"  [-]
+
+[10-declaration-files / topLevel]  bun The declaration "…" must be initialized  /  tsc TS1046 Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "using x: T;"  [-]
+
+[10-declaration-files / topLevel]  bun Unexpected …  /  tsc TS1491 'export' modifier cannot appear on a 'using' declaration.   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "export using x: T;"  [-]

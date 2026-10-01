@@ -1,0 +1,250 @@
+== args-gg  "let x: A<B<C>>"
+   TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+    list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+    TypeReference start 9 end 13 (full start 9) "B<C>"
+     list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+     TypeReference start 11 end 12 (full start 11) "C"
+== args-ggg  "let x: A<B<C<D>>>"
+   TypeReference start 7 end 17 (full start 6) "A<B<C<D>>>"
+    list TypeReference.typeArguments pos 9 end 16 count 1 trailingComma false
+    TypeReference start 9 end 16 (full start 9) "B<C<D>>"
+     list TypeReference.typeArguments pos 11 end 15 count 1 trailingComma false
+     TypeReference start 11 end 15 (full start 11) "C<D>"
+      list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+      TypeReference start 13 end 14 (full start 13) "D"
+== args-ge  "let x: A<B>= y"
+   TypeReference start 7 end 11 (full start 6) "A<B>"
+    list TypeReference.typeArguments pos 9 end 10 count 1 trailingComma false
+    TypeReference start 9 end 10 (full start 9) "B"
+== args-gge  "let x: A<B<C>>= y"
+   TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+    list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+    TypeReference start 9 end 13 (full start 9) "B<C>"
+     list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+     TypeReference start 11 end 12 (full start 11) "C"
+== args-ggge  "let x: A<B<C<D>>>= y"
+   TypeReference start 7 end 17 (full start 6) "A<B<C<D>>>"
+    list TypeReference.typeArguments pos 9 end 16 count 1 trailingComma false
+    TypeReference start 9 end 16 (full start 9) "B<C<D>>"
+     list TypeReference.typeArguments pos 11 end 15 count 1 trailingComma false
+     TypeReference start 11 end 15 (full start 11) "C<D>"
+      list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+      TypeReference start 13 end 14 (full start 13) "D"
+== args-extra-gt  "let x: A<B>> = y"
+   diag TS1005 at 11+1: ',' expected.
+   diag TS1109 at 13+1: Expression expected.
+   TypeReference start 7 end 11 (full start 6) "A<B>"
+    list TypeReference.typeArguments pos 9 end 10 count 1 trailingComma false
+    TypeReference start 9 end 10 (full start 9) "B"
+== fn-tp-gg  "let x: <T extends A<B>>() => void"
+   FunctionType start 7 end 33 (full start 6) "<T extends A<B>>() => void"
+    list FunctionType.typeParameters pos 8 end 22 count 1 trailingComma false
+    list FunctionType.parameters pos 24 end 24 count 0 trailingComma false
+    TypeParameter start 8 end 22 (full start 8) "T extends A<B>"
+     TypeReference start 18 end 22 (full start 17) "A<B>"
+      list TypeReference.typeArguments pos 20 end 21 count 1 trailingComma false
+      TypeReference start 20 end 21 (full start 20) "B"
+    VoidKeyword start 29 end 33 (full start 28) "void"
+== fn-tp-ggg  "let x: <T extends A<B<C>>>(x: T) => void"
+   FunctionType start 7 end 40 (full start 6) "<T extends A<B<C>>>(x: T) => void"
+    list FunctionType.typeParameters pos 8 end 25 count 1 trailingComma false
+    list FunctionType.parameters pos 27 end 31 count 1 trailingComma false
+    TypeParameter start 8 end 25 (full start 8) "T extends A<B<C>>"
+     TypeReference start 18 end 25 (full start 17) "A<B<C>>"
+      list TypeReference.typeArguments pos 20 end 24 count 1 trailingComma false
+      TypeReference start 20 end 24 (full start 20) "B<C>"
+       list TypeReference.typeArguments pos 22 end 23 count 1 trailingComma false
+       TypeReference start 22 end 23 (full start 22) "C"
+    Parameter start 27 end 31 (full start 27) "x: T"
+     TypeReference start 30 end 31 (full start 29) "T"
+    VoidKeyword start 36 end 40 (full start 35) "void"
+== fn-tp-default-gg  "let x: <T = A<B>>() => T"
+   FunctionType start 7 end 24 (full start 6) "<T = A<B>>() => T"
+    list FunctionType.typeParameters pos 8 end 16 count 1 trailingComma false
+    list FunctionType.parameters pos 18 end 18 count 0 trailingComma false
+    TypeParameter start 8 end 16 (full start 8) "T = A<B>"
+     TypeReference start 12 end 16 (full start 11) "A<B>"
+      list TypeReference.typeArguments pos 14 end 15 count 1 trailingComma false
+      TypeReference start 14 end 15 (full start 14) "B"
+    TypeReference start 23 end 24 (full start 22) "T"
+== ctor-tp-gg  "let x: new <T extends A<B>>() => T"
+   ConstructorType start 7 end 34 (full start 6) "new <T extends A<B>>() => T"
+    list ConstructorType.typeParameters pos 12 end 26 count 1 trailingComma false
+    list ConstructorType.parameters pos 28 end 28 count 0 trailingComma false
+    TypeParameter start 12 end 26 (full start 12) "T extends A<B>"
+     TypeReference start 22 end 26 (full start 21) "A<B>"
+      list TypeReference.typeArguments pos 24 end 25 count 1 trailingComma false
+      TypeReference start 24 end 25 (full start 24) "B"
+    TypeReference start 33 end 34 (full start 32) "T"
+== members-tp-gg  "let x: { m<T extends A<B>>(): void; <U extends A<B>>(): U; new <V = A<B>>(): V }"
+   TypeLiteral start 7 end 80 (full start 6) "{ m<T extends A<B>>(): void; <U extends A<B>>(): U; new <V = A<B>>(): V }"
+    list TypeLiteral.members pos 8 end 78 count 3 trailingComma false
+    MethodSignature start 9 end 35 (full start 8) "m<T extends A<B>>(): void;"
+     list MethodSignature.typeParameters pos 11 end 25 count 1 trailingComma false
+     list MethodSignature.parameters pos 27 end 27 count 0 trailingComma false
+     TypeParameter start 11 end 25 (full start 11) "T extends A<B>"
+      TypeReference start 21 end 25 (full start 20) "A<B>"
+       list TypeReference.typeArguments pos 23 end 24 count 1 trailingComma false
+       TypeReference start 23 end 24 (full start 23) "B"
+     VoidKeyword start 30 end 34 (full start 29) "void"
+    CallSignature start 36 end 58 (full start 35) "<U extends A<B>>(): U;"
+     list CallSignature.typeParameters pos 37 end 51 count 1 trailingComma false
+     list CallSignature.parameters pos 53 end 53 count 0 trailingComma false
+     TypeParameter start 37 end 51 (full start 37) "U extends A<B>"
+      TypeReference start 47 end 51 (full start 46) "A<B>"
+       list TypeReference.typeArguments pos 49 end 50 count 1 trailingComma false
+       TypeReference start 49 end 50 (full start 49) "B"
+     TypeReference start 56 end 57 (full start 55) "U"
+    ConstructSignature start 59 end 78 (full start 58) "new <V = A<B>>(): V"
+     list ConstructSignature.typeParameters pos 64 end 72 count 1 trailingComma false
+     list ConstructSignature.parameters pos 74 end 74 count 0 trailingComma false
+     TypeParameter start 64 end 72 (full start 64) "V = A<B>"
+      TypeReference start 68 end 72 (full start 67) "A<B>"
+       list TypeReference.typeArguments pos 70 end 71 count 1 trailingComma false
+       TypeReference start 70 end 71 (full start 70) "B"
+     TypeReference start 77 end 78 (full start 76) "V"
+== open-ll  "let x: A<<T>() => void>"
+   TypeReference start 7 end 23 (full start 6) "A<<T>() => void>"
+    list TypeReference.typeArguments pos 9 end 22 count 1 trailingComma false
+    FunctionType start 9 end 22 (full start 9) "<T>() => void"
+     list FunctionType.typeParameters pos 10 end 11 count 1 trailingComma false
+     list FunctionType.parameters pos 13 end 13 count 0 trailingComma false
+     TypeParameter start 10 end 11 (full start 10) "T"
+     VoidKeyword start 18 end 22 (full start 17) "void"
+== open-ll-nested-close  "let x: A<<T extends B<C>>() => D<E>>"
+   TypeReference start 7 end 36 (full start 6) "A<<T extends B<C>>() => D<E>>"
+    list TypeReference.typeArguments pos 9 end 35 count 1 trailingComma false
+    FunctionType start 9 end 35 (full start 9) "<T extends B<C>>() => D<E>"
+     list FunctionType.typeParameters pos 10 end 24 count 1 trailingComma false
+     list FunctionType.parameters pos 26 end 26 count 0 trailingComma false
+     TypeParameter start 10 end 24 (full start 10) "T extends B<C>"
+      TypeReference start 20 end 24 (full start 19) "B<C>"
+       list TypeReference.typeArguments pos 22 end 23 count 1 trailingComma false
+       TypeReference start 22 end 23 (full start 22) "C"
+     TypeReference start 31 end 35 (full start 30) "D<E>"
+      list TypeReference.typeArguments pos 33 end 34 count 1 trailingComma false
+      TypeReference start 33 end 34 (full start 33) "E"
+== args-then-index  "let x: A<B>[C<D>]"
+   IndexedAccessType start 7 end 17 (full start 6) "A<B>[C<D>]"
+    TypeReference start 7 end 11 (full start 6) "A<B>"
+     list TypeReference.typeArguments pos 9 end 10 count 1 trailingComma false
+     TypeReference start 9 end 10 (full start 9) "B"
+    TypeReference start 12 end 16 (full start 12) "C<D>"
+     list TypeReference.typeArguments pos 14 end 15 count 1 trailingComma false
+     TypeReference start 14 end 15 (full start 14) "D"
+== args-gg-array  "let x: A<B<C>>[]"
+   ArrayType start 7 end 16 (full start 6) "A<B<C>>[]"
+    TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+     list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+     TypeReference start 9 end 13 (full start 9) "B<C>"
+      list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+      TypeReference start 11 end 12 (full start 11) "C"
+== typeof-args-gg  "let x: typeof a<B<C>>"
+   TypeQuery start 7 end 21 (full start 6) "typeof a<B<C>>"
+    list TypeQuery.typeArguments pos 16 end 20 count 1 trailingComma false
+    TypeReference start 16 end 20 (full start 16) "B<C>"
+     list TypeReference.typeArguments pos 18 end 19 count 1 trailingComma false
+     TypeReference start 18 end 19 (full start 18) "C"
+== import-args-gg  "let x: import(\"m\").X<Y<Z>>"
+   LastTypeNode start 7 end 26 (full start 6) "import(\"m\").X<Y<Z>>"
+    list LastTypeNode.typeArguments pos 21 end 25 count 1 trailingComma false
+    LiteralType start 14 end 17 (full start 14) "\"m\""
+    TypeReference start 21 end 25 (full start 21) "Y<Z>"
+     list TypeReference.typeArguments pos 23 end 24 count 1 trailingComma false
+     TypeReference start 23 end 24 (full start 23) "Z"
+== args-trailing-comma  "let x: A<B, >"
+   TypeReference start 7 end 13 (full start 6) "A<B, >"
+    list TypeReference.typeArguments pos 9 end 11 count 1 trailingComma true
+    TypeReference start 9 end 10 (full start 9) "B"
+== args-trailing-comma-gg  "let x: A<B<C,>>"
+   TypeReference start 7 end 15 (full start 6) "A<B<C,>>"
+    list TypeReference.typeArguments pos 9 end 14 count 1 trailingComma false
+    TypeReference start 9 end 14 (full start 9) "B<C,>"
+     list TypeReference.typeArguments pos 11 end 13 count 1 trailingComma true
+     TypeReference start 11 end 12 (full start 11) "C"
+== args-empty  "let x: A<>"
+   TypeReference start 7 end 10 (full start 6) "A<>"
+    list TypeReference.typeArguments pos 9 end 9 count 0 trailingComma false
+== tp-trailing-comma  "let x: <T,>() => void"
+   FunctionType start 7 end 21 (full start 6) "<T,>() => void"
+    list FunctionType.typeParameters pos 8 end 10 count 1 trailingComma true
+    list FunctionType.parameters pos 12 end 12 count 0 trailingComma false
+    TypeParameter start 8 end 9 (full start 8) "T"
+    VoidKeyword start 17 end 21 (full start 16) "void"
+== comments  "let x: /*1*/ A /*2*/ < /*3*/ B /*4*/ < /*5*/ C /*6*/ >> /*7*/ = y"
+   TypeReference start 13 end 55 (full start 6) "A /*2*/ < /*3*/ B /*4*/ < /*5*/ C /*6*/ >>"
+    list TypeReference.typeArguments pos 22 end 54 count 1 trailingComma false
+    TypeReference start 29 end 54 (full start 22) "B /*4*/ < /*5*/ C /*6*/ >"
+     list TypeReference.typeArguments pos 38 end 46 count 1 trailingComma false
+     TypeReference start 45 end 46 (full start 38) "C"
+== conditional-gge  "let x: A extends B<C> ? D : E<F<G>>= y"
+   ConditionalType start 7 end 35 (full start 6) "A extends B<C> ? D : E<F<G>>"
+    TypeReference start 7 end 8 (full start 6) "A"
+    TypeReference start 17 end 21 (full start 16) "B<C>"
+     list TypeReference.typeArguments pos 19 end 20 count 1 trailingComma false
+     TypeReference start 19 end 20 (full start 19) "C"
+    TypeReference start 24 end 25 (full start 23) "D"
+    TypeReference start 28 end 35 (full start 27) "E<F<G>>"
+     list TypeReference.typeArguments pos 30 end 34 count 1 trailingComma false
+     TypeReference start 30 end 34 (full start 30) "F<G>"
+      list TypeReference.typeArguments pos 32 end 33 count 1 trailingComma false
+      TypeReference start 32 end 33 (full start 32) "G"
+== tuple-gg  "let x: [A<B<C>>, D<E>]"
+   TupleType start 7 end 22 (full start 6) "[A<B<C>>, D<E>]"
+    list TupleType.elements pos 8 end 21 count 2 trailingComma false
+    TypeReference start 8 end 15 (full start 8) "A<B<C>>"
+     list TypeReference.typeArguments pos 10 end 14 count 1 trailingComma false
+     TypeReference start 10 end 14 (full start 10) "B<C>"
+      list TypeReference.typeArguments pos 12 end 13 count 1 trailingComma false
+      TypeReference start 12 end 13 (full start 12) "C"
+    TypeReference start 17 end 21 (full start 16) "D<E>"
+     list TypeReference.typeArguments pos 19 end 20 count 1 trailingComma false
+     TypeReference start 19 end 20 (full start 19) "E"
+== union-gg  "let x: A<B<C>> | D<E<F>>= y"
+   UnionType start 7 end 24 (full start 6) "A<B<C>> | D<E<F>>"
+    list UnionType.types pos 6 end 24 count 2 trailingComma false
+    TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+     list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+     TypeReference start 9 end 13 (full start 9) "B<C>"
+      list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+      TypeReference start 11 end 12 (full start 11) "C"
+    TypeReference start 17 end 24 (full start 16) "D<E<F>>"
+     list TypeReference.typeArguments pos 19 end 23 count 1 trailingComma false
+     TypeReference start 19 end 23 (full start 19) "E<F>"
+      list TypeReference.typeArguments pos 21 end 22 count 1 trailingComma false
+      TypeReference start 21 end 22 (full start 21) "F"
+== predicate-ge-arrow  "let f = (a): a is A<B>=> a"
+   FirstTypeNode start 13 end 22 (full start 12) "a is A<B>"
+    TypeReference start 18 end 22 (full start 17) "A<B>"
+     list TypeReference.typeArguments pos 20 end 21 count 1 trailingComma false
+     TypeReference start 20 end 21 (full start 20) "B"
+== newline-before-lt  "let x: A\n<B>(y)"
+   TypeReference start 7 end 8 (full start 6) "A"
+   TypeReference start 10 end 11 (full start 10) "B"
+== dot-then-args  "let x: a.b<C<D>>"
+   TypeReference start 7 end 16 (full start 6) "a.b<C<D>>"
+    list TypeReference.typeArguments pos 11 end 15 count 1 trailingComma false
+    FirstNode start 7 end 10 (full start 6) "a.b"
+    TypeReference start 11 end 15 (full start 11) "C<D>"
+     list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+     TypeReference start 13 end 14 (full start 13) "D"
+== gggg  "let x: A<B<C<D<E>>>>"
+   TypeReference start 7 end 20 (full start 6) "A<B<C<D<E>>>>"
+    list TypeReference.typeArguments pos 9 end 19 count 1 trailingComma false
+    TypeReference start 9 end 19 (full start 9) "B<C<D<E>>>"
+     list TypeReference.typeArguments pos 11 end 18 count 1 trailingComma false
+     TypeReference start 11 end 18 (full start 11) "C<D<E>>"
+      list TypeReference.typeArguments pos 13 end 17 count 1 trailingComma false
+      TypeReference start 13 end 17 (full start 13) "D<E>"
+       list TypeReference.typeArguments pos 15 end 16 count 1 trailingComma false
+       TypeReference start 15 end 16 (full start 15) "E"
+== gggge  "let x: A<B<C<D<E>>>>= y"
+   TypeReference start 7 end 20 (full start 6) "A<B<C<D<E>>>>"
+    list TypeReference.typeArguments pos 9 end 19 count 1 trailingComma false
+    TypeReference start 9 end 19 (full start 9) "B<C<D<E>>>"
+     list TypeReference.typeArguments pos 11 end 18 count 1 trailingComma false
+     TypeReference start 11 end 18 (full start 11) "C<D<E>>"
+      list TypeReference.typeArguments pos 13 end 17 count 1 trailingComma false
+      TypeReference start 13 end 17 (full start 13) "D<E>"
+       list TypeReference.typeArguments pos 15 end 16 count 1 trailingComma false
+       TypeReference start 15 end 16 (full start 15) "E"

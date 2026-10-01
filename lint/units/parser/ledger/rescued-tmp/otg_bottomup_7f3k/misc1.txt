@@ -1,0 +1,105 @@
+# conditional flag propagation
+export const v = a ? <T>(b) : c => d
+export const v = a ? async <T>(b) : c => d
+export const v = a ? async <T>(b) : c => d : e
+export const v = a ? x = (b) : c => d
+export const v = a ? x = (b) : c => d : e
+export const v = a ? b => (c) : d => e
+export const v = a ? b => c => (d) : e => f
+export const v = a ? async b => (c) : d => e
+export const v = a ? (b) => (c) : d => e
+export const v = a ? async (b) => (c) : d => e
+export const v = a ? b => { return (c) } : d => e
+export const v = a ? b => ({}) : c => d
+export const v = a ? (b): c => (d) : e => f : g
+export const v = a ? b ? (c) : d => e : f : g
+export const v = a ? (b) : c ? (d) : e => f
+export const v = a ? x += (b) : c => d
+export const v = a ? x ??= (b) : c => d
+export const v = a ? <T>(b) => (c) : d => e
+tsx: export const v = a ? <T,>(b) : c => d
+tsx: export const v = a ? <T,>(b) : c => d : e
+tsx: export const v = a ? <T,>(b) => (c) : d => e
+export const v = a ? new (b) : c => d
+export const v = a ? (b)! : c => d
+export const v = a ? (b) as any : c => d
+# as before <= and other operators
+export const v = a as Foo <= b
+export const v = a as Foo < b
+export const v = a as Foo << b
+export const v = a as Foo <<= b
+export const v = a as Foo >= b
+export const v = a as Foo > b
+export const v = a as Foo >> b
+export const v = a satisfies Foo <= b
+export const v = a as Foo<Bar> <= b
+export const v = a as Foo.Bar <= b
+export const v = a as typeof b <= c
+export const v = a as Foo<=b
+export const v = a as Foo\n<= b
+let x: Foo <= 1
+export const v = <Foo <= b>a
+export const v = f<=b
+export const v = a < b
+export const v = new Foo<=b
+# definite assignment
+let a!;
+let a!: T;
+let a!: T = 1;
+var a!: T;
+const a!: T = 1;
+let a!, b!: T;
+let a!: T, b;
+let [a]!: T;
+let {a}!: T;
+let a\n!: T;
+for (let a!: T;;) {}
+for (let a!: T of b) {}
+for (let a! of b) {}
+declare let a!: T;
+using a!: T = b;
+export let a!: T;
+# catch
+try {} catch (e = 1) {}
+try {} catch (e: any = 1) {}
+try {} catch (e: any) {}
+try {} catch (e: unknown) {}
+try {} catch (e: T) {}
+try {} catch ({a}: any) {}
+try {} catch ([a]: any) {}
+try {} catch ({a} = 1) {}
+try {} catch (e!: any) {}
+try {} catch (e?: any) {}
+try {} catch (e!) {}
+try {} catch () {}
+try {} catch (e,) {}
+try {} catch (...e) {}
+try {} catch (public e) {}
+# empty type arguments
+f<>()
+f<>
+new F<>()
+new F<>
+f<>`x`
+a.b<>()
+a?.b<>()
+a?.<>()
+let x: F<>
+type T = F<>
+class C extends B<> {}
+class C implements I<> {}
+interface I extends J<> {}
+tsx: <Foo<> />
+tsx: <Foo<>></Foo>
+tsx: <Foo<T> />
+x as F<>
+typeof x<>
+let y: typeof x<>
+import("x")<>
+f<,>()
+f<T,>()
+f<T,>
+new F<T,>()
+let x: F<T,>
+tsx: <Foo<T,> />
+class C extends B<T,> {}

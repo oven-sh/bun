@@ -1,0 +1,4 @@
+crate/scripts/diagnosticMessages.json
+crate/scripts/extraDiagnosticMessages.json
+crate/diagnostics/diagnostics_generated.rs
+out/

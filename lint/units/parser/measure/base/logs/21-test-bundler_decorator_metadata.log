@@ -1,0 +1,12 @@
+# HEAD e3566be889 dirty: []
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/bundler_decorator_metadata.test.ts --timeout "180000"
+bun test v1.4.3 (e3566be88)
+
+test/bundler/bundler_decorator_metadata.test.ts:
+(pass) bundler > decorator_metadata/TypeSerialization [5020.16ms]
+(pass) bundler > decorator_metadata/ImportIdentifiers [5050.42ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [16.17s]

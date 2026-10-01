@@ -1,0 +1,195 @@
+binder.go	92	92	ActiveLabel	BreakTarget	break_target	B-FLOW	
+binder.go	93	93	ActiveLabel	ContinueTarget	continue_target	B-FLOW	
+binder.go	95	101		BindSourceFile	bind_source_file	B-DECL	
+binder.go	111	113		getBinder	get_binder	B-DECL	
+binder.go	115	118		putBinder	put_binder	B-DECL	
+binder.go	120	130		bindSourceFile	bind_source_file	B-DECL	
+binder.go	132	138	Binder	newSymbol	new_symbol	B-DECL	
+binder.go	148	150	Binder	declareSymbol	declare_symbol	B-DECL	
+binder.go	152	297	Binder	declareSymbolEx	declare_symbol_ex	B-DECL	panic: Existing symbol parent should match new one; assert
+binder.go	301	355	Binder	getDeclarationName	get_declaration_name	B-DECL	panic: Only computed properties with literal names have declaration names
+binder.go	357	367	Binder	getDisplayName	get_display_name	B-DECL	
+binder.go	369	371		GetSymbolNameForPrivateIdentifier	get_symbol_name_for_private_identifier	B-DECL	
+binder.go	373	412	Binder	declareModuleMember	declare_module_member	B-DECL	
+binder.go	414	419	Binder	declareClassMember	declare_class_member	B-DECL	
+binder.go	421	426	Binder	declareSourceFileMember	declare_source_file_member	B-DECL	
+binder.go	428	447	Binder	declareSymbolAndAddToSymbolTable	declare_symbol_and_add_to_symbol_table	B-DECL	panic: Unhandled case in declareSymbolAndAddToSymbolTable
+binder.go	449	453	Binder	newFlowNode	new_flow_node	B-FLOW	
+binder.go	455	460	Binder	newFlowNodeEx	new_flow_node_ex	B-FLOW	
+binder.go	462	464	Binder	createLoopLabel	create_loop_label	B-FLOW	
+binder.go	466	468	Binder	createBranchLabel	create_branch_label	B-FLOW	
+binder.go	470	472	Binder	createReduceLabel	create_reduce_label	B-FLOW	
+binder.go	474	492	Binder	createFlowCondition	create_flow_condition	B-FLOW	
+binder.go	494	502	Binder	createFlowMutation	create_flow_mutation	B-FLOW	
+binder.go	504	507	Binder	createFlowSwitchClause	create_flow_switch_clause	B-FLOW	
+binder.go	509	513	Binder	createFlowCall	create_flow_call	B-FLOW	
+binder.go	515	520	Binder	newFlowList	new_flow_list	B-FLOW	
+binder.go	522	527	Binder	combineFlowLists	combine_flow_lists	B-FLOW	
+binder.go	529	531	Binder	newSingleDeclaration	new_single_declaration	B-DECL	
+binder.go	533	540		setFlowNodeReferenced	set_flow_node_referenced	B-FLOW	
+binder.go	542	560	Binder	addAntecedent	add_antecedent	B-FLOW	
+binder.go	562	570	Binder	finishFlowLabel	finish_flow_label	B-FLOW	
+binder.go	572	745	Binder	bind	bind	B-DECL	
+binder.go	747	752	Binder	bindPropertyWorker	bind_property_worker	B-DECL	
+binder.go	754	765	Binder	bindSourceFileIfExternalModule	bind_source_file_if_external_module	B-DECL	
+binder.go	767	769	Binder	bindSourceFileAsExternalModule	bind_source_file_as_external_module	B-DECL	
+binder.go	771	811	Binder	bindModuleDeclaration	bind_module_declaration	B-DECL	
+binder.go	813	818	Binder	declareModuleSymbol	declare_module_symbol	B-DECL	
+binder.go	820	834	Binder	bindNamespaceExportDeclaration	bind_namespace_export_declaration	B-DECL	
+binder.go	836	840	Binder	bindImportClause	bind_import_clause	B-DECL	
+binder.go	842	853	Binder	bindExportDeclaration	bind_export_declaration	B-DECL	
+binder.go	855	870	Binder	bindExportAssignment	bind_export_assignment	B-DECL	
+binder.go	872	874	Binder	bindJsxAttributes	bind_jsx_attributes	B-DECL	
+binder.go	876	878	Binder	bindJsxAttribute	bind_jsx_attribute	B-DECL	
+binder.go	880	888	Binder	setExportContextFlag	set_export_context_flag	B-DECL	
+binder.go	890	904	Binder	hasExportDeclarations	has_export_declarations	B-DECL	
+binder.go	906	917	Binder	bindFunctionExpression	bind_function_expression	B-DECL	
+binder.go	919	925	Binder	bindCallExpression	bind_call_expression	B-JS	
+binder.go	927	938	Binder	setCommonJSModuleIndicator	set_common_js_module_indicator	B-JS	
+binder.go	940	969	Binder	bindClassLikeDeclaration	bind_class_like_declaration	B-DECL	
+binder.go	971	983	Binder	bindPropertyOrMethodOrAccessor	bind_property_or_method_or_accessor	B-DECL	
+binder.go	985	998	Binder	bindFunctionOrConstructorType	bind_function_or_constructor_type	B-DECL	
+binder.go	1000	1008	Binder	addLateBoundAssignmentDeclarationToSymbol	add_late_bound_assignment_declaration_to_symbol	B-JS	
+binder.go	1010	1017	Binder	bindModuleExportsAssignment	bind_module_exports_assignment	B-JS	
+binder.go	1019	1025	Binder	bindExpandoPropertyAssignment	bind_expando_property_assignment	B-JS	
+binder.go	1027	1033	Binder	bindDeferredExpandoAssignments	bind_deferred_expando_assignments	B-JS	
+binder.go	1038	1048	Binder	bindCommonJSTypeExports	bind_common_js_type_exports	B-JS	
+binder.go	1050	1068	Binder	bindDeferredExpandoAssignment	bind_deferred_expando_assignment	B-JS	
+binder.go	1070	1078		getParentOfPropertyAssignment	get_parent_of_property_assignment	B-JS	panic: Unhandled case in getParentOfPropertyAssignment
+binder.go	1080	1086	Binder	bindExportsOrObjectDefineProperty	bind_exports_or_object_define_property	B-JS	
+binder.go	1088	1113		getInitializerSymbol	get_initializer_symbol	B-JS	
+binder.go	1115	1135	Binder	bindThisPropertyAssignment	bind_this_property_assignment	B-JS	panic: Unhandled case in bindThisPropertyAssignment: 
+binder.go	1137	1154	Binder	getThisClassAndSymbolTable	get_this_class_and_symbol_table	B-JS	
+binder.go	1156	1162	Binder	bindEnumDeclaration	bind_enum_declaration	B-DECL	
+binder.go	1164	1187	Binder	bindVariableDeclarationOrBindingElement	bind_variable_declaration_or_binding_element	B-DECL	
+binder.go	1189	1209	Binder	bindParameter	bind_parameter	B-DECL	
+binder.go	1211	1217	Binder	bindFunctionDeclaration	bind_function_declaration	B-DECL	
+binder.go	1219	1228	Binder	getInferTypeContainer	get_infer_type_container	B-DECL	
+binder.go	1230	1236	Binder	bindAnonymousDeclaration	bind_anonymous_declaration	B-DECL	
+binder.go	1238	1251	Binder	bindBlockScopedDeclaration	bind_block_scoped_declaration	B-DECL	
+binder.go	1253	1264	Binder	bindTypeParameter	bind_type_parameter	B-DECL	
+binder.go	1266	1284	Binder	lookupEntity	lookup_entity	B-JS	
+binder.go	1286	1296	Binder	lookupName	lookup_name	B-JS	
+binder.go	1301	1321	Binder	checkContextualIdentifier	check_contextual_identifier	B-STRICT	
+binder.go	1323	1330	Binder	checkPrivateIdentifier	check_private_identifier	B-STRICT	
+binder.go	1332	1342	Binder	getStrictModeIdentifierMessage	get_strict_mode_identifier_message	B-STRICT	
+binder.go	1345	1350		isUseStrictPrologueDirective	is_use_strict_prologue_directive	B-STRICT	
+binder.go	1352	1364		FindUseStrictPrologue	find_use_strict_prologue	B-STRICT	
+binder.go	1366	1371	Binder	checkStrictModeFunctionName	check_strict_mode_function_name	B-STRICT	
+binder.go	1373	1382	Binder	getStrictModeBlockScopeFunctionDeclarationMessage	get_strict_mode_block_scope_function_declaration_message	B-STRICT	
+binder.go	1384	1391	Binder	checkStrictModeBinaryExpression	check_strict_mode_binary_expression	B-STRICT	
+binder.go	1393	1400	Binder	checkStrictModeCatchClause	check_strict_mode_catch_clause	B-STRICT	
+binder.go	1402	1410	Binder	checkStrictModeDeleteExpression	check_strict_mode_delete_expression	B-STRICT	
+binder.go	1412	1418	Binder	checkStrictModePostfixUnaryExpression	check_strict_mode_postfix_unary_expression	B-STRICT	
+binder.go	1420	1426	Binder	checkStrictModePrefixUnaryExpression	check_strict_mode_prefix_unary_expression	B-STRICT	
+binder.go	1428	1431	Binder	checkStrictModeWithStatement	check_strict_mode_with_statement	B-STRICT	
+binder.go	1433	1439	Binder	checkStrictModeLabeledStatement	check_strict_mode_labeled_statement	B-STRICT	
+binder.go	1441	1447		isEvalOrArgumentsIdentifier	is_eval_or_arguments_identifier	B-STRICT	
+binder.go	1449	1455	Binder	checkStrictModeEvalOrArguments	check_strict_mode_eval_or_arguments	B-STRICT	
+binder.go	1457	1466	Binder	getStrictModeEvalOrArgumentsMessage	get_strict_mode_eval_or_arguments_message	B-STRICT	
+binder.go	1471	1618	Binder	bindContainer	bind_container	B-DECL	
+binder.go	1620	1636	Binder	declareCommonJSVariable	declare_common_js_variable	B-JS	
+binder.go	1638	1735	Binder	bindChildren	bind_children	B-DECL	
+binder.go	1737	1739	Binder	bindEachChild	bind_each_child	B-DECL	
+binder.go	1741	1745	Binder	bindEach	bind_each	B-DECL	
+binder.go	1747	1751	Binder	bindNodeList	bind_node_list	B-DECL	
+binder.go	1753	1757	Binder	bindModifiers	bind_modifiers	B-DECL	
+binder.go	1759	1770	Binder	bindEachStatementFunctionsFirst	bind_each_statement_functions_first	B-DECL	
+binder.go	1772	1780	Binder	setContinueTarget	set_continue_target	B-FLOW	
+binder.go	1782	1790	Binder	doWithConditionalBranches	do_with_conditional_branches	B-FLOW	
+binder.go	1792	1798	Binder	bindCondition	bind_condition	B-FLOW	
+binder.go	1800	1808	Binder	bindIterativeStatement	bind_iterative_statement	B-FLOW	
+binder.go	1810	1812		isLogicalAssignmentExpression	is_logical_assignment_expression	B-FLOW	
+binder.go	1814	1840	Binder	bindAssignmentTargetFlow	bind_assignment_target_flow	B-FLOW	
+binder.go	1842	1848	Binder	bindDestructuringTargetFlow	bind_destructuring_target_flow	B-FLOW	
+binder.go	1850	1862	Binder	bindWhileStatement	bind_while_statement	B-FLOW	
+binder.go	1864	1876	Binder	bindDoStatement	bind_do_statement	B-FLOW	
+binder.go	1878	1906	Binder	bindForStatement	bind_for_statement	B-FLOW	
+binder.go	1908	1926	Binder	bindForInOrForOfStatement	bind_for_in_or_for_of_statement	B-FLOW	
+binder.go	1928	1941	Binder	bindIfStatement	bind_if_statement	B-FLOW	
+binder.go	1943	1951	Binder	bindReturnStatement	bind_return_statement	B-FLOW	
+binder.go	1953	1957	Binder	bindThrowStatement	bind_throw_statement	B-FLOW	
+binder.go	1959	1961	Binder	bindBreakStatement	bind_break_statement	B-FLOW	
+binder.go	1963	1965	Binder	bindContinueStatement	bind_continue_statement	B-FLOW	
+binder.go	1967	1978	Binder	bindBreakOrContinueStatement	bind_break_or_continue_statement	B-FLOW	
+binder.go	1980	1987	Binder	findActiveLabel	find_active_label	B-FLOW	
+binder.go	1989	1995	Binder	bindBreakOrContinueFlow	bind_break_or_continue_flow	B-FLOW	
+binder.go	1997	2076	Binder	bindTryStatement	bind_try_statement	B-FLOW	
+binder.go	2078	2097	Binder	bindSwitchStatement	bind_switch_statement	B-FLOW	
+binder.go	2099	2128	Binder	bindCaseBlock	bind_case_block	B-FLOW	
+binder.go	2130	2139	Binder	bindCaseOrDefaultClause	bind_case_or_default_clause	B-FLOW	
+binder.go	2141	2145	Binder	bindExpressionStatement	bind_expression_statement	B-FLOW	
+binder.go	2147	2155	Binder	maybeBindExpressionFlowIfCall	maybe_bind_expression_flow_if_call	B-FLOW	
+binder.go	2157	2176	Binder	bindLabeledStatement	bind_labeled_statement	B-FLOW	
+binder.go	2178	2193	Binder	bindPrefixUnaryExpressionFlow	bind_prefix_unary_expression_flow	B-FLOW	
+binder.go	2195	2201	Binder	bindPostfixUnaryExpressionFlow	bind_postfix_unary_expression_flow	B-FLOW	
+binder.go	2203	2221	Binder	bindDestructuringAssignmentFlow	bind_destructuring_assignment_flow	B-FLOW	
+binder.go	2223	2263	Binder	bindBinaryExpressionFlow	bind_binary_expression_flow	B-FLOW	
+binder.go	2265	2283	Binder	bindLogicalLikeExpression	bind_logical_like_expression	B-FLOW	
+binder.go	2285	2291	Binder	bindDeleteExpressionFlow	bind_delete_expression_flow	B-FLOW	
+binder.go	2293	2316	Binder	bindConditionalExpressionFlow	bind_conditional_expression_flow	B-FLOW	
+binder.go	2318	2323	Binder	bindVariableDeclarationFlow	bind_variable_declaration_flow	B-FLOW	
+binder.go	2325	2340	Binder	bindInitializedVariableFlow	bind_initialized_variable_flow	B-FLOW	
+binder.go	2342	2348	Binder	bindAccessExpressionFlow	bind_access_expression_flow	B-FLOW	
+binder.go	2350	2365	Binder	bindOptionalChainFlow	bind_optional_chain_flow	B-FLOW	
+binder.go	2367	2392	Binder	bindOptionalChain	bind_optional_chain	B-FLOW	
+binder.go	2394	2400	Binder	bindOptionalExpression	bind_optional_expression	B-FLOW	
+binder.go	2402	2416	Binder	bindOptionalChainRest	bind_optional_chain_rest	B-FLOW	
+binder.go	2418	2444	Binder	bindCallExpressionFlow	bind_call_expression_flow	B-FLOW	
+binder.go	2446	2452	Binder	bindNonNullExpressionFlow	bind_non_null_expression_flow	B-FLOW	
+binder.go	2454	2465	Binder	bindBindingElementFlow	bind_binding_element_flow	B-FLOW	
+binder.go	2467	2475	Binder	bindParameterFlow	bind_parameter_flow	B-FLOW	
+binder.go	2478	2491	Binder	bindInitializer	bind_initializer	B-FLOW	
+binder.go	2493	2498		setFlowNode	set_flow_node	B-FLOW	
+binder.go	2500	2511		setReturnFlowNode	set_return_flow_node	B-FLOW	
+binder.go	2513	2515		isGeneratorFunctionExpression	is_generator_function_expression	B-FLOW	
+binder.go	2517	2522	Binder	addToContainerChain	add_to_container_chain	B-DECL	
+binder.go	2524	2540	Binder	addDeclarationToSymbol	add_declaration_to_symbol	B-DECL	
+binder.go	2542	2551		SetValueDeclaration	set_value_declaration	B-DECL	
+binder.go	2562	2604		GetContainerFlags	get_container_flags	B-DECL	
+binder.go	2606	2622		isNarrowingExpression	is_narrowing_expression	B-FLOW	
+binder.go	2624	2635		containsNarrowableReference	contains_narrowable_reference	B-FLOW	
+binder.go	2637	2653		isNarrowableReference	is_narrowable_reference	B-FLOW	
+binder.go	2655	2668		hasNarrowableArgument	has_narrowable_argument	B-FLOW	
+binder.go	2670	2688		isNarrowingBinaryExpression	is_narrowing_binary_expression	B-FLOW	
+binder.go	2690	2704		isNarrowableOperand	is_narrowable_operand	B-FLOW	
+binder.go	2706	2708		isNarrowingTypeOfOperands	is_narrowing_type_of_operands	B-FLOW	
+binder.go	2710	2712	Binder	errorOnNode	error_on_node	B-DECL	
+binder.go	2714	2717	Binder	errorOnFirstToken	error_on_first_token	B-DECL	
+binder.go	2722	2724	Binder	createDiagnosticForNode	create_diagnostic_for_node	B-DECL	
+binder.go	2726	2728	Binder	addDiagnostic	add_diagnostic	B-DECL	
+binder.go	2730	2736		isSignedNumericLiteral	is_signed_numeric_literal	B-DECL	
+binder.go	2738	2741		getOptionalSymbolFlagForNode	get_optional_symbol_flag_for_node	B-DECL	
+binder.go	2743	2757		isFunctionSymbol	is_function_symbol	B-DECL	
+binder.go	2759	2769		isStatementCondition	is_statement_condition	B-FLOW	
+binder.go	2771	2776		isTopLevelLogicalExpression	is_top_level_logical_expression	B-FLOW	
+binder.go	2778	2780		isAssignmentDeclaration	is_assignment_declaration	B-DECL	
+binder.go	2782	2784		isEffectiveModuleDeclaration	is_effective_module_declaration	B-DECL	
+nameresolver.go	25	344	NameResolver	Resolve	resolve	B-NAME	
+nameresolver.go	346	370	NameResolver	useOuterVariableScopeInParameter	use_outer_variable_scope_in_parameter	B-NAME	
+nameresolver.go	372	375	NameResolver	requiresScopeChange	requires_scope_change	B-NAME	
+nameresolver.go	377	400	NameResolver	requiresScopeChangeWorker	requires_scope_change_worker	B-NAME	
+nameresolver.go	402	407	NameResolver	error	error	B-NAME	
+nameresolver.go	409	416	NameResolver	getSymbolOfDeclaration	get_symbol_of_declaration	B-NAME	
+nameresolver.go	418	432	NameResolver	lookup	lookup	B-NAME	
+nameresolver.go	434	440	NameResolver	argumentsSymbol	arguments_symbol	B-NAME	
+nameresolver.go	442	453		GetLocalSymbolForExportDefault	get_local_symbol_for_export_default	B-NAME	
+nameresolver.go	455	457		isExportDefaultSymbol	is_export_default_symbol	B-NAME	
+nameresolver.go	459	475		getIsDeferredContext	get_is_deferred_context	B-NAME	
+nameresolver.go	477	487		isTypeParameterSymbolDeclaredInContainer	is_type_parameter_symbol_declared_in_container	B-NAME	
+nameresolver.go	489	498		isSelfReferenceLocation	is_self_reference_location	B-NAME	
+referenceresolver.go	37	42		NewReferenceResolver	new_reference_resolver	B-REF	
+referenceresolver.go	44	51	referenceResolver	getResolvedSymbol	get_resolved_symbol	B-REF	
+referenceresolver.go	53	61	referenceResolver	getMergedSymbol	get_merged_symbol	B-REF	
+referenceresolver.go	63	71	referenceResolver	getParentOfSymbol	get_parent_of_symbol	B-REF	
+referenceresolver.go	73	81	referenceResolver	getSymbolOfDeclaration	get_symbol_of_declaration	B-REF	
+referenceresolver.go	83	105	referenceResolver	getReferencedValueSymbol	get_referenced_value_symbol	B-REF	
+referenceresolver.go	107	132	referenceResolver	isTypeOnlyAliasDeclaration	is_type_only_alias_declaration	B-REF	
+referenceresolver.go	134	136	referenceResolver	getDeclarationOfAliasSymbol	get_declaration_of_alias_symbol	B-REF	
+referenceresolver.go	138	149	referenceResolver	getExportSymbolOfValueSymbolIfExported	get_export_symbol_of_value_symbol_if_exported	B-REF	
+referenceresolver.go	151	188	referenceResolver	GetReferencedExportContainer	get_referenced_export_container	B-REF	
+referenceresolver.go	190	200	referenceResolver	GetReferencedImportDeclaration	get_referenced_import_declaration	B-REF	
+referenceresolver.go	202	207	referenceResolver	GetReferencedValueDeclaration	get_referenced_value_declaration	B-REF	
+referenceresolver.go	209	238	referenceResolver	GetReferencedValueDeclarations	get_referenced_value_declarations	B-REF	
+referenceresolver.go	240	249	referenceResolver	GetElementAccessExpressionName	get_element_access_expression_name	B-REF	
+referenceresolver.go	251	262	referenceResolver	GetReferencedMemberValueDeclaration	get_referenced_member_value_declaration	B-REF	

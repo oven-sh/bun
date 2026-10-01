@@ -1,0 +1,177 @@
+CRASH	memberPos	"const c = class { @d declare x: T; };"	[-]	bun: accepts	tsc: parses
+CRASH	memberPos	"const c = class { @d abstract x: T; };"	[-]	bun: accepts	tsc: parses
+A1c	expr	"@await"	[classDecl,classDeclNewline,field,fieldNewline,method,computed,computedField,staticField]	bun: Expected "class" but found end of file @17	tsc: parses
+A1c	expr	"@d.#e"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: Private name "#e" must be declared in an enclosing class @3	tsc: parses
+A1c	expr	"@d.#e()"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: Private name "#e" must be declared in an enclosing class @3	tsc: parses
+A1c	expr	"@d.e.#f"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: Private name "#f" must be declared in an enclosing class @5	tsc: parses
+A1c	classPos	"export default @d abstract class C {}"	[-]	bun: Expected "class" but found "abstract" @18	tsc: parses
+A1c	memberPos	"@d accessor x: T;"	[class,abstractClass,declareClass,decoratedClass]	bun: Expected ";" but found "x" @12	tsc: parses
+A1c	memberPos	"@d static accessor x = 1;"	[class,abstractClass,decoratedClass]	bun: Expected ";" but found "x" @19	tsc: parses
+A1c	memberPos	"@d accessor x = 1;"	[class,abstractClass,decoratedClass]	bun: Expected ";" but found "x" @12	tsc: parses
+A1c	memberPos	"@d accessor [x] = 1;"	[class,abstractClass,decoratedClass]	bun: Expected ";" but found "[" @12	tsc: parses
+A1c	memberPos	"@d accessor \"x\" = 1;"	[class,abstractClass,decoratedClass]	bun: Expected ";" but found ""x"" @12	tsc: parses
+A1c	otherPos	"if (a) @d class C {}"	[-]	bun: Cannot use a declaration in a single-statement context @10	tsc: parses
+A1c	otherPos	"for (;;) @d class C {}"	[-]	bun: Cannot use a declaration in a single-statement context @12	tsc: parses
+A1s	paramPos	"@d public a: A"	[method,decoratedMethod,staticMethod,setter,privateMethod]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	paramPos	"@d readonly a: A"	[method,decoratedMethod,staticMethod,setter,privateMethod]	bun: Expected ")" but found "a" @12	tsc: parses also TS2369
+A1s	paramPos	"@d public readonly a: A"	[method,decoratedMethod,staticMethod,setter,privateMethod]	bun: Expected ")" but found "readonly" @10	tsc: parses also TS2369
+A1s	paramPos	"@d private a"	[method,decoratedMethod,staticMethod,setter,privateMethod]	bun: Expected ")" but found "a" @11	tsc: parses also TS2369
+A1s	paramPos	"@d protected a?: A"	[method,decoratedMethod,staticMethod,privateMethod]	bun: Expected ")" but found "a" @13	tsc: parses also TS2369
+A1s	paramPos	"@d override a: A"	[method,decoratedMethod,staticMethod,setter,privateMethod]	bun: Expected ")" but found "a" @12	tsc: parses also TS2369
+A2	expr	"@d.#e"	[classDecl,classDeclNewline,classExpr]	bun: Expected identifier but found "#e" @3	tsc: TS18016 @3+2 Private identifiers are not allowed outside class bodies.
+A2	expr	"@d.#e()"	[classDecl,classDeclNewline,classExpr]	bun: Expected identifier but found "#e" @3	tsc: TS18016 @3+2 Private identifiers are not allowed outside class bodies.
+A2	expr	"@d.e.#f"	[classDecl,classDeclNewline,classExpr]	bun: Expected identifier but found "#f" @5	tsc: TS18016 @5+2 Private identifiers are not allowed outside class bodies.
+A2	expr	"@#d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField,param]	bun: Unexpected #d @1	tsc: TS1451 @1+2 Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
+A2	expr	"@super.d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField]	bun: Unexpected "super" @1	tsc: TS1497 @1+7 Expression must be enclosed in parentheses to be used as a decorator. also TS2660
+A2	expr	"@super.d()"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField]	bun: Unexpected "super" @1	tsc: TS1497 @1+9 Expression must be enclosed in parentheses to be used as a decorator. also TS2660
+A2	expr	"@super()"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField,param]	bun: Unexpected "super" @1	tsc: TS1238 @1+7 Unable to resolve signature of class decorator when called as an expression.
+  This expression is not callable.
+    Type 'void' has no call signatures. also TS2337
+A2	expr	"@await"	[classExpr]	bun: Expected "class" but found ";" @15	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	expr	"@(yield)"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "yield" is a reserved word and cannot be used in strict mode @2	tsc: TS1213 @2+5 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@let"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "let" is a reserved word and cannot be used in strict mode @1	tsc: TS1213 @1+3 Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@static"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "static" is a reserved word and cannot be used in strict mode @1	tsc: TS1213 @1+6 Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@yield"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: Cannot use "yield" outside a generator function @1	tsc: TS1213 @1+5 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@interface"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "interface" is a reserved word and cannot be used in strict mode @1	tsc: TS1213 @1+9 Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@public"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "public" is a reserved word and cannot be used in strict mode @1	tsc: TS1213 @1+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@private"	[field,fieldNewline,method,computed,computedField,staticField,param]	bun: "private" is a reserved word and cannot be used in strict mode @1	tsc: TS1213 @1+7 Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@yield d"	[fieldNewline]	bun: Cannot use "yield" outside a generator function @1	tsc: TS1213 @1+5 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@new"	[staticField]	bun: "static" is a reserved word and cannot be used in strict mode @5	tsc: TS1497 @1+10 Expression must be enclosed in parentheses to be used as a decorator.
+A2	expr	"@"	[staticField]	bun: "static" is a reserved word and cannot be used in strict mode @2	tsc: TS1213 @2+6 Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+A2	expr	"@(await d)"	[param]	bun: "await" can only be used inside an "async" function @8	tsc: TS1375 @2+5 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.
+A2	classPos	"@a export @b class C {}"	[-]	bun: Expected "class" but found "@" @10	tsc: TS8038 @10+2 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+A2	classPos	"@a export default @b class C {}"	[-]	bun: Expected "class" but found "@" @18	tsc: TS8038 @18+2 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+A2	classPos	"@a export @b default class C {}"	[-]	bun: Expected "class" but found "@" @10	tsc: TS8038 @10+2 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+A2	classPos	"export @a default class C {}"	[-]	bun: Expected "class" but found "default" @10	tsc: TS1206 @7+2 Decorators are not valid here.
+A2	classPos	"export @a export class C {}"	[-]	bun: Expected "class" but found "export" @10	tsc: TS1030 @10+6 'export' modifier already seen.
+A2	classPos	"@d declare var x: T;"	[-]	bun: Expected "class" but found "var" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare function f(): void;"	[-]	bun: Expected "class" but found "function" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare namespace N {}"	[-]	bun: Expected "class" but found "namespace" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare enum E {}"	[-]	bun: Expected "class" but found "enum" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare interface I {}"	[-]	bun: Expected "class" but found "interface" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare type T = 1;"	[-]	bun: Expected "class" but found "type" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare module \"m\" {}"	[-]	bun: Expected "class" but found "module" @11	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	classPos	"@d declare global {}"	[-]	bun: Expected "class" but found "global" @11	tsc: TS1206 @0+1 Decorators are not valid here. also TS2669
+A2	classPos	"const c = @d abstract class {};"	[-]	bun: Expected "class" but found "abstract" @13	tsc: TS1184 @13+8 Modifiers cannot appear here.
+A2	classPos	"const c = @d export class {};"	[-]	bun: Expected "class" but found "export" @13	tsc: TS1184 @13+6 Modifiers cannot appear here.
+A2	memberPos	"@d accessor #x = 1;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected ";" but found "#x" @12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d static accessor #x = 1;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected ";" but found "#x" @19	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d accessor x() {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected ";" but found "x" @12	tsc: TS1275 @3+8 'accessor' modifier can only appear on a property declaration.
+A2	memberPos	"@d accessor static x;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected ";" but found "static" @12	tsc: TS1029 @12+6 'static' modifier must precede 'accessor' modifier.
+A2	memberPos	"@d #x: T;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#x" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d #x = 1;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#x" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d #m() {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#m" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d static #x = 1;"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#x" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d static #m() {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#m" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d get #x() { return 1 }"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#x" @7	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d set #x(v) {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: Expected identifier but found "#x" @7	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d \"constructor\"() {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: TypeScript does not allow decorators on class constructors @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d constructor() {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: TypeScript does not allow decorators on class constructors @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d constructor(a: A) {}"	[class,abstractClass,declareClass,classExpr,decoratedClass]	bun: TypeScript does not allow decorators on class constructors @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberPos	"@d static accessor x = 1;"	[declareClass,classExpr]	bun: Expected ";" but found "x" @19	tsc: TS1039 @23+1 Initializers are not allowed in ambient contexts.
+A2	memberPos	"@d accessor x = 1;"	[declareClass,classExpr]	bun: Expected ";" but found "x" @12	tsc: TS1039 @16+1 Initializers are not allowed in ambient contexts.
+A2	memberPos	"@d accessor [x] = 1;"	[declareClass,classExpr]	bun: Expected ";" but found "[" @12	tsc: TS1039 @18+1 Initializers are not allowed in ambient contexts.
+A2	memberPos	"@d accessor \"x\" = 1;"	[declareClass,classExpr]	bun: Expected ";" but found ""x"" @12	tsc: TS1039 @18+1 Initializers are not allowed in ambient contexts.
+A2	memberPos	"@d accessor x: T;"	[classExpr]	bun: Expected ";" but found "x" @12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d(function (@e a) {}) b"	[method,decoratedMethod,staticMethod,ctor,decoratedClassCtor,setter,overload,abstractMethod,declareMethod,classExprMethod,privateMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @13	tsc: TS1206 @13+1 Decorators are not valid here.
+A2	paramPos	"@d protected a?: A"	[setter,overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "a" @13	tsc: TS1051 @14+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	paramPos	"a: A, @d b: B"	[setter,fn,fnExpr,arrow,objMethod,fnType,methodSig,declareFn]	bun: Setter p must have exactly 1 argument (there are 2) @9	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramPos	"@d a: A, b: B"	[setter,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Setter p must have exactly 1 argument (there are 2) @9	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramPos	"@d a: A, @e b: B"	[setter,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Setter p must have exactly 1 argument (there are 2) @12	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramPos	"a: A, b: B, @d c: C"	[setter,fn,fnExpr,arrow,objMethod,fnType,methodSig,declareFn]	bun: Setter p must have exactly 1 argument (there are 3) @6	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramPos	"a: A | B extends C ? D : E, @d b: B"	[setter,fn,fnExpr,arrow,objMethod,fnType,methodSig,declareFn]	bun: Setter p must have exactly 1 argument (there are 2) @31	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	paramPos	"@d public a: A"	[overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "a" @10	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramPos	"@d readonly a: A"	[overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "a" @12	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramPos	"@d public readonly a: A"	[overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "readonly" @10	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramPos	"@d private a"	[overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "a" @11	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramPos	"@d override a: A"	[overload,abstractMethod,declareMethod,classExprMethod,fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected ")" but found "a" @12	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	paramPos	"@d a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d() a: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d @e a: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a?: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a = 1"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a: A = 1"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d ...a: A[]"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d ...a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d { a }: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d [a]: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d { a } = {}"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"this: A, @d a: B"	[fn,fnExpr,arrow,objMethod,fnType,methodSig,declareFn]	bun: Expected identifier but found "@" @9	tsc: TS1206 @9+1 Decorators are not valid here.
+A2	paramPos	"@d a: A | B extends C ? D : E"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a: keyof A extends B ? C : D"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a: A extends B ? C : D | E"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a: (A)"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a,"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d.e a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d.e() a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@(d) a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d<T>() a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d! a"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d\na: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d a\n: A"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d yield"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d await"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d static"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d public"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d readonly"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d type"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d async"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	paramPos	"@d(class { m(@e a) {} }) b"	[fn,fnExpr,objMethod,methodSig,declareFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d function f() {}"	[-]	bun: Expected "class" but found "function" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d async function f() {}"	[-]	bun: Expected "class" but found "async" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d function* f() {}"	[-]	bun: Expected "class" but found "function" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d var x;"	[-]	bun: Expected "class" but found "var" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d let x;"	[-]	bun: Expected "class" but found "let" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d const x = 1;"	[-]	bun: Expected "class" but found "const" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d using x = y;"	[-]	bun: Expected "class" but found "using" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d enum E {}"	[-]	bun: Expected "class" but found "enum" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d const enum E {}"	[-]	bun: Expected "class" but found "const" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d interface I {}"	[-]	bun: Expected "class" but found "interface" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d type T = 1;"	[-]	bun: Expected "class" but found "type" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d namespace N {}"	[-]	bun: Expected "class" but found "namespace" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d module N {}"	[-]	bun: Expected "class" but found "module" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d import x from \"y\";"	[-]	bun: Expected "class" but found "import" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d import type x from \"y\";"	[-]	bun: Expected "class" but found "import" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d import x = y.z;"	[-]	bun: Expected "class" but found "import" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export {};"	[-]	bun: Expected "class" but found "{" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export { x };"	[-]	bun: Expected "class" but found "{" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export * from \"x\";"	[-]	bun: Expected "class" but found "*" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export default 1;"	[-]	bun: Expected "class" but found "1" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export default x;"	[-]	bun: Expected "class" but found "x" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export default function f() {}"	[-]	bun: Expected "class" but found "function" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export default function () {}"	[-]	bun: Expected "class" but found "function" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export default interface I {}"	[-]	bun: Expected "class" but found "interface" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export const x = 1;"	[-]	bun: Expected "class" but found "const" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export function f() {}"	[-]	bun: Expected "class" but found "function" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export enum E {}"	[-]	bun: Expected "class" but found "enum" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export interface I {}"	[-]	bun: Expected "class" but found "interface" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export type T = 1;"	[-]	bun: Expected "class" but found "type" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export namespace N {}"	[-]	bun: Expected "class" but found "namespace" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export = x;"	[-]	bun: Expected "class" but found "=" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export as namespace X;"	[-]	bun: Expected "class" but found "as" @10	tsc: TS1184 @0+25 Modifiers cannot appear here.
+A2	otherPos	"@d export import a = b.c;"	[-]	bun: Expected "class" but found "import" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d export declare const x: T;"	[-]	bun: Expected "class" but found "const" @18	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"@d class {}"	[-]	bun: Expected identifier but found "{" @9	tsc: TS1211 @0+1 A class declaration without the 'default' modifier must have a name.
+A2	otherPos	"@d abstract function f() {}"	[-]	bun: Expected "class" but found "function" @12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	otherPos	"function f() { @d export class C {} }"	[-]	bun: Unexpected export @18	tsc: TS1184 @18+6 Modifiers cannot appear here.
+A2	otherPos	"label: @d class C {}"	[-]	bun: Cannot use a declaration in a single-statement context @10	tsc: TS1344 @0+5 'A label is not allowed here.
+A2	otherPos	"type T = { m(@d a: A): void }"	[-]	bun: Backtrack @0	tsc: TS1206 @13+1 Decorators are not valid here.
+A2	otherPos	"type T = new (@d a: A) => B"	[-]	bun: Unexpected @ @14	tsc: TS1206 @14+1 Decorators are not valid here.
+A2	otherPos	"function f(@d a: A): void;"	[-]	bun: Expected identifier but found "@" @11	tsc: TS1206 @11+1 Decorators are not valid here. also TS2391
+A2	otherPos	"function f(a, @d b) {}"	[-]	bun: Expected identifier but found "@" @14	tsc: TS1206 @14+1 Decorators are not valid here.
+A2	otherPos	"const f = function* (@d a) {};"	[-]	bun: Expected identifier but found "@" @21	tsc: TS1206 @21+1 Decorators are not valid here.
+B	expr	"@d<T>.e"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField,param]	bun: accepts	tsc: TS1477 @2+3 An instantiation expression cannot be followed by a property access.
+B	expr	"@d<T>.e()"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField,param]	bun: accepts	tsc: TS1477 @2+3 An instantiation expression cannot be followed by a property access.
+B	expr	"@await d"	[classDecl,classDeclNewline,classExpr,field,method,staticField]	bun: accepts	tsc: TS1146 @6+0 Declaration expected.
+B	expr	"@typeof d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+6 Expression expected.
+B	expr	"@void d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+4 Expression expected.
+B	expr	"@delete d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+6 Expression expected.
+B	expr	"@-d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+1 Expression expected.
+B	expr	"@!d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+1 Expression expected.
+B	expr	"@++d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,staticField,param]	bun: accepts	tsc: TS1109 @1+2 Expression expected.
+B	expr	"@<any>d"	[classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,staticField,param]	bun: accepts	tsc: TS1109 @1+1 Expression expected.
+B	expr	"@d.\ne"	[classDecl,classExpr,field,method,staticField,param]	bun: accepts	tsc: TS1003 @3+0 Identifier expected.
+B	classPos	"@d abstract = 1"	[-]	bun: accepts	tsc: TS1146 @2+0 Declaration expected.
+B	classPos	"export declare @d class C {}"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	paramPos	"@d a: a is B"	[method,decoratedMethod,staticMethod,ctor,decoratedClassCtor,setter,overload,abstractMethod,declareMethod,classExprMethod,privateMethod]	bun: accepts	tsc: TS1005 @8+2 ',' expected.

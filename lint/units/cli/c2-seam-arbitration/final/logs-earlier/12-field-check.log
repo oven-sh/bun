@@ -1,0 +1,60 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling rustversion v1.0.22
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.18
+   Compiling unicode-xid v0.2.6
+   Compiling bun_core v0.0.0 (/workspace/wt/cli/src/bun_core)
+   Compiling bun_output_tags v0.0.0 (/workspace/wt/cli/src/bun_output_tags)
+    Checking memchr v2.8.0
+    Checking allocator-api2 v0.2.21
+    Checking bun_opaque v0.0.0 (/workspace/wt/cli/src/opaque)
+    Checking konst_macro_rules v0.2.19
+    Checking bun_mimalloc_sys v0.0.0 (/workspace/wt/cli/src/mimalloc_sys)
+    Checking bstr v1.12.1
+    Checking konst v0.2.20
+   Compiling rustix v0.38.44
+    Checking bun_simdutf_sys v0.0.0 (/workspace/wt/cli/src/simdutf_sys)
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+    Checking bun_highway v0.0.0 (/workspace/wt/cli/src/highway)
+    Checking bun_wyhash v0.0.0 (/workspace/wt/cli/src/wyhash)
+    Checking bytemuck v1.25.0
+    Checking bun_hash v0.0.0 (/workspace/wt/cli/src/hash)
+    Checking itoa v1.0.18
+   Compiling syn v2.0.117
+    Checking bun_alloc v0.0.0 (/workspace/wt/cli/src/bun_alloc)
+   Compiling paste v1.0.15
+    Checking scopeguard v1.2.0
+    Checking bun_windows_sys v0.0.0 (/workspace/wt/cli/src/windows_sys)
+   Compiling const_format_proc_macros v0.2.34
+    Checking linux-raw-sys v0.4.15
+    Checking bitflags v2.11.1
+    Checking hashbrown v0.15.5
+    Checking rustc-hash v2.1.2
+    Checking smallvec v1.15.1
+    Checking const_format v0.2.36
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_core_macros v0.0.0 (/workspace/wt/cli/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/workspace/wt/cli/src/dispatch)
+   Compiling enum-map-derive v0.17.0
+    Checking enum-map v2.7.3
+   Compiling darling_macro v0.21.3
+    Checking strum v0.26.3
+    Checking bun_libuv_sys v0.0.0 (/workspace/wt/cli/src/libuv_sys)
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+    Checking enumset v1.1.10
+    Checking bun_errno v0.0.0 (/workspace/wt/cli/src/errno)
+    Checking bun_ptr v0.0.0 (/workspace/wt/cli/src/ptr)
+    Checking bun_paths v0.0.0 (/workspace/wt/cli/src/paths)
+    Checking bun_collections v0.0.0 (/workspace/wt/cli/src/collections)
+    Checking bun_sys v0.0.0 (/workspace/wt/cli/src/sys)
+    Checking bun_perf v0.0.0 (/workspace/wt/cli/src/perf)
+    Checking bun_ast v0.0.0 (/tmp/c2probe/f/ast)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 39.03s
+check-exit=0

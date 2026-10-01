@@ -1,0 +1,10 @@
+in_tag_block       local = z | export function f() { let z = 1; return e("div", { id: "x", children: z }, undefined, false, undefined, this)
+in_tag_line        local = z | export function f() { let z = 1; return e("div", { id: "x", children: z }, undefined, false, undefined, this)
+outside_block      local = e | export function f() { let e = 1; return i("div", { id: "x", children: e }, undefined, false, undefined, this)
+outside_line       local = e | export function f() { let e = 1; return i("div", { id: "x", children: e }, undefined, false, undefined, this)
+in_braces          local = e | export function f() { let e = 1; return i("div", { id: "x", children: e }, undefined, false, undefined, this)
+in_attr_braces     local = e | export function f() { let e = 1; return i("div", { id: "x", children: e }, undefined, false, undefined, this)
+in_close_tag       local = z | export function f() { let z = 1; return e("div", { id: "x", children: z }, undefined, false, undefined, this)
+in_self_close      local = z | export function f() { let z = 1; return e("div", { id: "x" }, undefined, false, undefined, this); } 
+after_tag_name     local = z | export function f() { let z = 1; return e("div", { children: z }, undefined, false, undefined, this); } 
+before_tag_name    local = z | export function f() { let z = 1; return e("div", { children: z }, undefined, false, undefined, this); } 

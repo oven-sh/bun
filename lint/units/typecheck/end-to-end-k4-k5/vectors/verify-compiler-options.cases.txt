@@ -1,0 +1,52 @@
+--strictPropertyInitialization --strictNullChecks false a.ts
+--exactOptionalPropertyTypes --strictNullChecks false a.ts
+--isolatedDeclarations a.ts
+--isolatedDeclarations --allowJs --declaration a.ts
+--inlineSourceMap --sourceMap a.ts
+--inlineSourceMap --mapRoot m a.ts
+--composite --declaration false a.ts
+--composite --incremental false a.ts
+--incremental a.ts
+--inlineSources a.ts
+--sourceRoot r a.ts
+--mapRoot m a.ts
+--declarationDir d a.ts
+--declarationMap a.ts
+--lib es5 --noLib a.ts
+--isolatedModules --preserveConstEnums false a.ts
+--verbatimModuleSyntax --preserveConstEnums false a.ts
+--checkJs --allowJs false a.ts
+--emitDeclarationOnly a.ts
+--emitDecoratorMetadata a.ts
+--jsxFactory a.b --reactNamespace R a.ts
+--jsxFactory h --jsx react-jsx a.ts
+--jsxFactory 1a a.ts
+--reactNamespace 1a a.ts
+--jsxFragmentFactory F a.ts
+--jsxFragmentFactory F --jsxFactory h --jsx react-jsxdev a.ts
+--reactNamespace R --jsx react-jsx a.ts
+--jsxImportSource x --jsx react a.ts
+--allowImportingTsExtensions a.ts
+--moduleResolution bundler --module node16 a.ts
+--moduleResolution node16 --module esnext a.ts
+--moduleResolution nodenext --module commonjs a.ts
+--module node18 --moduleResolution bundler a.ts
+--baseUrl . a.ts
+--outFile x.js a.ts
+--target es5 a.ts
+--module amd a.ts
+--module system a.ts
+--module umd a.ts
+--moduleResolution classic a.ts
+--moduleResolution node10 a.ts
+--alwaysStrict false a.ts
+--esModuleInterop false a.ts
+--allowSyntheticDefaultImports false a.ts
+--downlevelIteration a.ts
+--downlevelIteration false a.ts
+--allowJs b.js
+--allowJs --outDir out b.js
+--checkJs b.js
+b.js
+--jsx preserve --outDir o a.ts c.tsx
+--strict false a.ts

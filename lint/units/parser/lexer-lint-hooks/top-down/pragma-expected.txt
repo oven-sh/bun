@@ -1,0 +1,231 @@
+"/// \u003creference path=\"a.d.ts\" /\u003e\n/// \u003creference types=\"node\" /\u003e\n/// \u003creference lib=\"es2015\" /\u003e\nlet x;"
+  ref=[a.d.ts@21-27] types=[node@54-58] lib=[es2015@83-89] checkJs=none diags=[]
+  pragmas=[reference[0-31 kind=1 nl=true]{path="a.d.ts"@21-27} reference[32-62 kind=1 nl=true]{types="node"@54-58} reference[63-93 kind=1 nl=true]{lib="es2015"@83-89}]
+"/// \u003creference types=\"node\" resolution-mode=\"import\" preserve=\"true\"/\u003e\nlet x;"
+  ref=[] types=[node@22-26 mode=import preserve] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-70 kind=1 nl=true]{preserve="true"@63-67,resolution-mode="import"@45-51,types="node"@22-26}]
+"/// \u003creference types=\"node\" resolution-mode=\"bogus\"/\u003e\nlet x;"
+  ref=[] types=[node@22-26] lib=[] checkJs=none diags=[TS1453@45+5]
+  pragmas=[reference[0-53 kind=1 nl=true]{resolution-mode="bogus"@45-50,types="node"@22-26}]
+"/// \u003creference no-default-lib=\"true\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-38 kind=1 nl=true]{no-default-lib="true"@31-35}]
+"/// \u003creference no-default-lib=\"false\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@0+39]
+  pragmas=[reference[0-39 kind=1 nl=true]{no-default-lib="false"@31-36}]
+"/// \u003creference foo=\"bar\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@0+26]
+  pragmas=[reference[0-26 kind=1 nl=true]{foo="bar"@20-23}]
+"/// \u003creference path='a.ts'\u003e\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-27 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creference path=a.ts /\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@0+27]
+  pragmas=[reference[0-27 kind=1 nl=true]{}]
+"///\u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[a.ts@20-24] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-27 kind=1 nl=true]{path="a.ts"@20-24}]
+"///  \u003cREFERENCE PATH=\"a.ts\"/\u003e\nlet x;"
+  ref=[a.ts@22-26] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-29 kind=1 nl=true]{path="a.ts"@22-26}]
+"// \u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"//// \u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference path=\"a.ts\" path=\"b.ts\"/\u003e\nlet x;"
+  ref=[b.ts@33-37] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-40 kind=1 nl=true]{path="b.ts"@33-37}]
+"/// \u003creference path=\"a.ts\" types=\"t\" lib=\"l\"/\u003e\nlet x;"
+  ref=[] types=[t@34-35] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-46 kind=1 nl=true]{lib="l"@42-43,path="a.ts"@21-25,types="t"@34-35}]
+"/// \u003creference path = \"a.ts\"  /\u003e\nlet x;"
+  ref=[a.ts@23-27] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-32 kind=1 nl=true]{path="a.ts"@23-27}]
+"/// \u003creference\tpath=\"a.ts\"/\u003e\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-28 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creferencepath=\"a.ts\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference-x path=\"a.ts\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference path=\"a.ts\"\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-26 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creference path=\"unterminated /\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@0+36]
+  pragmas=[reference[0-36 kind=1 nl=true]{}]
+"/// \u003creference /\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@0+17]
+  pragmas=[reference[0-17 kind=1 nl=true]{}]
+"/// \u003camd-module name=\"m\"/\u003e\n/// \u003camd-dependency path=\"p\" name=\"n\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"let x;\n/// \u003creference path=\"late.ts\"/\u003e\n"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"#!/usr/bin/env node\n/// \u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[a.ts@41-45] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[20-48 kind=1 nl=true]{path="a.ts"@41-45}]
+"\n\n   /// \u003creference path=\"a.ts\"/\u003e\n/* c */ /// \u003creference path=\"b.ts\"/\u003e\nlet x;"
+  ref=[a.ts@26-30 b.ts@63-67] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[5-33 kind=1 nl=true]{path="a.ts"@26-30} reference[42-70 kind=1 nl=true]{path="b.ts"@63-67}]
+"/* block */\n/// \u003creference path=\"a.ts\"/\u003e\n\"use strict\";\n/// \u003creference path=\"b.ts\"/\u003e\n"
+  ref=[a.ts@33-37] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[12-40 kind=1 nl=true]{path="a.ts"@33-37}]
+"// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-14 diags=[]
+  pragmas=[ts-nocheck[0-14 kind=1 nl=true]{}]
+"// @ts-check\n// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@13-27 diags=[]
+  pragmas=[ts-check[0-12 kind=1 nl=true]{} ts-nocheck[13-27 kind=1 nl=true]{}]
+"// @ts-nocheck\n// @ts-check\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=true@15-27 diags=[]
+  pragmas=[ts-nocheck[0-14 kind=1 nl=true]{} ts-check[15-27 kind=1 nl=true]{}]
+"//@ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-13 diags=[]
+  pragmas=[ts-nocheck[0-13 kind=1 nl=true]{}]
+"//   @TS-NoCheck   trailing text\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-32 diags=[]
+  pragmas=[ts-nocheck[0-32 kind=1 nl=true]{}]
+"/// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-15 diags=[]
+  pragmas=[ts-nocheck[0-15 kind=1 nl=true]{}]
+"/* @ts-nocheck */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"// foo @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"// @ts-nocheckx\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"// @ts-nocheck-x\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"let x;\n// @ts-nocheck\n"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"// @ts-ignore\nlet x: number = 'a';\n/* @ts-expect-error */\nlet y;\n/*\n * a\n * @ts-ignore */\nlet z;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/** @jsx h */\n/* @jsxFrag Fragment */\n/* @jsxImportSource preact\n @jsxRuntime automatic */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[jsx[0-13 kind=2 nl=true]{factory="h"@9-10} jsxfrag[14-37 kind=2 nl=true]{factory="Fragment"@26-34} jsximportsource[38-90 kind=2 nl=true]{factory="preact"@58-64} jsxruntime[38-90 kind=2 nl=true]{factory="automatic"@78-87}]
+"// @jsx h\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/* a@b.c @jsx h */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/* @JSX   h   extra */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[jsx[0-22 kind=2 nl=true]{factory="h"@10-11}]
+"/* @jsx */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/* @jsx\n h */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/* @jsx h\u2028@jsxFrag F */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[jsx[0-25 kind=2 nl=true]{factory="h\u2028@jsxFrag"@8-20} jsxfrag[0-25 kind=2 nl=true]{factory="F"@21-22}]
+"/// \u003creference path=\"a.ts\"/\u003e trailing\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-37 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creference path=\"a.ts\" /\u003e \u003creference path=\"b.ts\" /\u003e\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-55 kind=1 nl=true]{path="a.ts"@21-25}]
+"///\t\u003creference path=\"\"/\u003e\nlet x;"
+  ref=[@21-21] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-24 kind=1 nl=true]{path=""@21-21}]
+"/// \u003creference types=\"a\" preserve=\"false\"/\u003e\n/// \u003creference lib=\"b\" preserve=\"true\"/\u003e\n/// \u003creference path=\"c\" preserve=\"true\"/\u003e\nlet x;"
+  ref=[c@106-107 preserve] types=[a@22-23] lib=[b@64-65 preserve] checkJs=none diags=[]
+  pragmas=[reference[0-43 kind=1 nl=true]{preserve="false"@35-40,types="a"@22-23} reference[44-84 kind=1 nl=true]{lib="b"@64-65,preserve="true"@77-81} reference[85-126 kind=1 nl=true]{path="c"@106-107,preserve="true"@119-123}]
+"﻿/// \u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[a.ts@24-28] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[3-31 kind=1 nl=true]{path="a.ts"@24-28}]
+"/// \u003creference path=\"a.ts\"/\u003e\r\n/// \u003creference path=\"b.ts\"/\u003e\r\nlet x;"
+  ref=[a.ts@21-25 b.ts@51-55] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-28 kind=1 nl=true]{path="a.ts"@21-25} reference[30-58 kind=1 nl=true]{path="b.ts"@51-55}]
+"/* unterminated /// \u003creference path=\"a.ts\"/\u003e"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference types=\"node\" resolution-mode=\"require\"/\u003e\n/// \u003creference path=\"x\" resolution-mode=\"bogus\"/\u003e\nlet x;"
+  ref=[x@77-78] types=[node@22-26 mode=require] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-55 kind=1 nl=true]{resolution-mode="require"@45-52,types="node"@22-26} reference[56-105 kind=1 nl=true]{path="x"@77-78,resolution-mode="bogus"@97-102}]
+"// @ts-nocheck.\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-15 diags=[]
+  pragmas=[ts-nocheck[0-15 kind=1 nl=true]{}]
+"// @ts-nocheck: why\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=false@0-19 diags=[]
+  pragmas=[ts-nocheck[0-19 kind=1 nl=true]{}]
+"/// \u003creference path=\"a.ts\"\n"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-26 kind=1 nl=true]{path="a.ts"@21-25}]
+"/* @jsx h\n * @jsxFrag F\n */ /* @jsxRuntime classic */\n// @ts-check\nlet x;"
+  ref=[] types=[] lib=[] checkJs=enabled=true@54-66 diags=[]
+  pragmas=[jsx[0-27 kind=2 nl=false]{factory="h"@8-9} jsxfrag[0-27 kind=2 nl=false]{factory="F"@22-23} jsxruntime[28-53 kind=2 nl=true]{factory="classic"@43-50} ts-check[54-66 kind=1 nl=true]{}]
+"/***/ /**/ /** @jsximportsource p */ //\n//a\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[jsximportsource[11-36 kind=2 nl=false]{factory="p"@32-33}]
+"--\u003ex\n/// \u003creference path=\"a.ts\"/\u003e\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference path=\"a.ts\"/\u003e\u2028/// \u003creference path=\"b.ts\"/\u003e\nlet x;"
+  ref=[a.ts@21-25 b.ts@52-56] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-28 kind=1 nl=true]{path="a.ts"@21-25} reference[31-59 kind=1 nl=true]{path="b.ts"@52-56}]
+"/// \u003creference path=\"a\\\"b.ts\"/\u003e\nlet x;"
+  ref=[a\@21-23] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-31 kind=1 nl=true]{path="a\\"@21-23}]
+"/// \u003creference path=\"a.ts\" / \u003e\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-30 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creference PATH=\"a.ts\" Types=\"t\"/\u003e\nlet x;"
+  ref=[] types=[t@34-35] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-38 kind=1 nl=true]{path="a.ts"@21-25,types="t"@34-35}]
+"/* @jsxRuntİme classic */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[jsxruntime[0-26 kind=2 nl=true]{factory="classic"@16-23}]
+"/* @JSXK h */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"/// \u003creference path=\"a.ts\"/\u003e\n--\u003e\n/// \u003creference path=\"b.ts\"/\u003e\nlet x;"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-28 kind=1 nl=true]{path="a.ts"@21-25}]
+"/// \u003creference path=\"a.ts\"/\u003e\n/**/\n/// \u003creference types=\"t\"/\u003e\n\n// @ts-nocheck\nimport 'x';"
+  ref=[a.ts@21-25] types=[t@56-57] lib=[] checkJs=enabled=false@62-76 diags=[]
+  pragmas=[reference[0-28 kind=1 nl=true]{path="a.ts"@21-25} reference[34-60 kind=1 nl=true]{types="t"@56-57} ts-nocheck[62-76 kind=1 nl=true]{}]
+"\t\u000b\f  /// \u003creference lib=\"dom\"/\u003e\n"
+  ref=[] types=[] lib=[dom@26-29] checkJs=none diags=[]
+  pragmas=[reference[6-32 kind=1 nl=true]{lib="dom"@26-29}]
+"/// \u003creference lib=\"dom\"/\u003e"
+  ref=[] types=[] lib=[dom@20-23] checkJs=none diags=[]
+  pragmas=[reference[0-26 kind=1 nl=false]{lib="dom"@20-23}]
+""
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"#!shebang only"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[]
+"#!sh\n// @ts-check"
+  ref=[] types=[] lib=[] checkJs=enabled=true@5-17 diags=[]
+  pragmas=[ts-check[5-17 kind=1 nl=false]{}]
+"/// \u003creference path=\"a.ts\" resolution-mode=\"import\"/\u003e\n/// \u003creference types=\"t\" resolution-mode=\"IMPORT\"/\u003e\n/// \u003creference lib=\"l\" resolution-mode=\"x\"/\u003e\n"
+  ref=[a.ts@21-25] types=[t@76-77] lib=[l@126-127] checkJs=none diags=[TS1453@96+6]
+  pragmas=[reference[0-53 kind=1 nl=true]{path="a.ts"@21-25,resolution-mode="import"@44-50} reference[54-105 kind=1 nl=true]{resolution-mode="IMPORT"@96-102,types="t"@76-77} reference[106-150 kind=1 nl=true]{lib="l"@126-127,resolution-mode="x"@146-147}]
+"/// \u003creference no-default-lib=\"true\" path=\"a.ts\"/\u003e\n"
+  ref=[] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-50 kind=1 nl=true]{no-default-lib="true"@31-35,path="a.ts"@43-47}]
+"/// \u003creference path=\"a.ts\" preserve=\"TRUE\"/\u003e\n"
+  ref=[a.ts@21-25] types=[] lib=[] checkJs=none diags=[]
+  pragmas=[reference[0-44 kind=1 nl=true]{path="a.ts"@21-25,preserve="TRUE"@37-41}]
+"/* @ts-check */ // @ts-nocheck\n// x @ts-check\n"
+  ref=[] types=[] lib=[] checkJs=enabled=false@16-30 diags=[]
+  pragmas=[ts-nocheck[16-30 kind=1 nl=true]{}]
+"//\n///\n// @\n/// \u003c\n/// \u003creference\n"
+  ref=[] types=[] lib=[] checkJs=none diags=[TS1084@18+14]
+  pragmas=[reference[18-32 kind=1 nl=true]{}]

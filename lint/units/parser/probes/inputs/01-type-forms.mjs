@@ -1,0 +1,187 @@
+// Group 01: type forms. Every form goes through the PRIMARY contexts of _lib.mjs.
+// A "core" subset goes through every context.
+import { ALL_CONTEXTS, cross } from "./_lib.mjs";
+
+const G = "src/js_parser/parse/parse_skip_typescript.rs";
+const R = "parser.go";
+
+export const families = {
+  kw: { bun: `${G}:276-283,297-308,489-538`, ref: `${R}:2802-2811 parseNonArrayType keyword arm, 2870 parseKeywordTypeNode, 2877 parseThisTypeNode` },
+  lit: { bun: `${G}:260-275,309-321`, ref: `${R}:2826-2833, 2924 parseLiteralTypeNode` },
+  ref: { bun: `${G}:539-546 (name), 730-748 (dot), 556-559 (type arguments), 651-669 (default arm rejects reserved words)`, ref: `${R}:2941 parseTypeReference, 2950 parseEntityName, 2969 parseRightSideOfDot` },
+  targs: { bun: `${G}:1183-1230 skip_type_script_type_arguments`, ref: `${R}:3056 parseTypeArgumentsOfTypeReference, 3063 parseTypeArguments` },
+  arr: { bun: `${G}:749-763`, ref: `${R}:2778-2787 parsePostfixTypeOrHigher` },
+  jsdoc: { bun: `${G}:718-729 (postfix !), 651-669 (prefix ? ! * fall in the default arm)`, ref: `${R}:2768-2777 (postfix ! ?), 2812-2825 (prefix * ? !), 2888-2905` },
+  tuple: { bun: `${G}:602-631`, ref: `${R}:3662 parseTupleType, 3667 parseTupleElementNameOrTupleElementType, 3694 parseTupleElementType` },
+  label: { bun: `${G}:284-295 (const), 327-337 (import), 357-368 (new), 393-412 (keyof), 418-428 (readonly), 434-457 (infer), 561-570 (typeof), 651-666 (function and other keywords), 618-624 (? and : after the label)`, ref: `${R}:3683 scanStartOfNamedTupleElement, 3690 nextTokenIsColonOrQuestionColon` },
+  union: { bun: `${G}:322-326 (leading operator), 676-717`, ref: `${R}:2688 parseUnionOrIntersectionType, 3796 parseFunctionOrConstructorTypeToError` },
+  op: { bun: `${G}:393-417 (keyof), 418-433 (readonly), 459-467 (unique)`, ref: `${R}:2721 parseTypeOperatorOrHigher, 2732 parseTypeOperator` },
+  infer: { bun: `${G}:434-458, 1302-1320, 1441-1478`, ref: `${R}:2738 parseInferType, 2744 parseTypeParameterOfInferType, 2751 tryParseConstraintOfInferType` },
+  cond: { bun: `${G}:764-804`, ref: `${R}:2655-2678 parseType` },
+  query: { bun: `${G}:561-601`, ref: `${R}:3160 parseTypeQuery, 2842-2846` },
+  import: { bun: `${G}:327-356`, ref: `${R}:3075 parseImportType, 3117 parseImportAttribute, 3134 parseImportAttributes` },
+  fn: { bun: `${G}:357-385, 219-241 skip_type_script_paren_or_fn_type, 164-198 skip_typescript_fn_args, 67-162 skip_type_script_binding, 468-475 (abstract)`, ref: `${R}:3818 isStartOfFunctionTypeOrConstructorType, 3825 parseFunctionOrConstructorType, 3860 nextIsUnambiguouslyStartOfFunctionType, 3885 skipParameterStart, 3309 parseParameters` },
+  paren: { bun: `${G}:229-238`, ref: `${R}:3710 parseParenthesizedType` },
+  tmpl: { bun: `${G}:268-271 (no substitution), 636-649`, ref: `${R}:3734 parseTemplateType, 3757 parseTemplateTypeSpans` },
+  pred: { bun: `${G}:300-305 (this is), 476-488 (asserts), 549-554 (x is)`, ref: `${R}:3452 parseTypeOrTypePredicate, 3718 parseAssertsTypePredicate, 2883 parseThisTypePredicate, 2858-2862` },
+};
+
+const kw = [
+  "any", "unknown", "never", "void", "null", "undefined", "number", "string", "boolean", "bigint", "symbol", "object", "this",
+  "any.b", "string.b", "number.b.c", "void.b", "null.b", "this.b", "undefined.b", "object.b", "never.b", "unknown.b", "symbol.b", "bigint.b<T>", "boolean.b",
+  "string<T>", "any<T>", "void<T>", "this<T>", "object<T>",
+  "void[]", "null[]", "this[]", "this[\"x\"]", "undefined[]", "any[]", "never[]",
+];
+
+const lit = [
+  "1", "-1", "1n", "-1n", "\"s\"", "'s'", "`s`", "true", "false", "0x10", "0b1", "0o7", "1e3", "1.5", ".5", "1_000", "-0x10", "- 1", "-\n1",
+  "+1", "-\"s\"", "-x", "-true", "- -1", "--1", "-1.5e3", "-1n[]", "1[]", "\"s\"[]", "-Infinity", "-NaN", "-null", "-1 | -2", "-", "1 2", "1n n", "-`s`", "!1", "~1",
+];
+
+const ref = [
+  "A", "A.B", "A.B.C", "a.b.c.d", "A<B>", "A.B<C>", "A<B, C>", "A<B<C>>", "A<B<C<D>>>", "A<B<C<D<E>>>>",
+  "A<B>.C", "A.<B>", "A.", "A..B", "A.1", "A.#b", "A.if", "A.class.new", "A.\nB", "A\n.B", "A.B\n.C", "A.\nB C",
+  "if", "class", "function", "delete", "in", "var", "with", "yield", "await", "let", "static", "enum", "default", "super", "instanceof", "const", "extends", "export", "return", "switch", "while", "do", "for", "try", "catch", "throw", "else", "case", "break", "continue", "debugger", "finally",
+  "type", "as", "of", "async", "get", "set", "is", "asserts", "infer", "keyof", "readonly", "unique", "abstract", "declare", "module", "namespace", "global", "require", "constructor", "from", "out", "satisfies", "accessor", "override", "intrinsic", "using", "defer", "package", "implements", "interface", "private", "public", "protected", "arguments", "eval",
+  "asserts<T>", "asserts.x", "abstract.x", "unique.x", "keyof.x", "infer.x", "readonly.x", "is.x", "is<T>", "abstract<T>", "unique<T>", "out<T>", "type<T>",
+  "if.x", "class<T>", "A.if<T>",
+];
+
+const targs = [
+  "A<B | C>", "A<() => void>", "A<(B)>", "A<[B]>", "A<{ b: C }>", "A<typeof b>", "A<keyof B>", "A<B[]>", "A<B extends C ? D : E>", "A<infer B>", "A<B, C, D>",
+  "A<B,>", "A<>", "A<B,,C>", "A<,B>", "A<B C>", "A\n<B>", "A<\nB\n>", "A<B", "A B>", "A<B>>", "A<<B>>", "A<B>C", "A<B><C>", "A<-1>", "A<\"s\">", "A<`a${B}`>", "A<new () => B>", "A<abstract new () => B>", "A<<T>() => T>",
+  "A<B<C>[]>", "A<B<C>|D>", "A<B<C>,D>", "A<A<A<A<A<A<A<A>>>>>>>", "A<unique symbol>", "A<readonly B[]>", "A<this>", "A<a is B>", "A<asserts a>", "A<...B>", "A<B?>", "A<?B>", "A<B!>", "A<if>", "A<const>",
+];
+
+const arr = [
+  "A[]", "A[][]", "A[B]", "A[B][C]", "A[\"x\"]", "A[number]", "A[keyof A]", "A[][\"length\"]", "A\n[]", "A\n[B]", "A[\n]", "A[\nB\n]",
+  "A[", "A[]]", "A[B,C]", "A[...B]", "A[B?]", "A[-1]", "A[1]", "A[() => void]", "A[B | C]", "A[typeof b]", "A[B extends C ? D : E]", "A[B[C]]", "A[B[]]", "A[[B]]", "A[{ b: C }]", "A[if]", "A[this]", "A[a is B]", "A[infer U]",
+];
+
+const jsdoc = [
+  "?A", "A?", "!A", "A!", "*", "?", "A!!", "A??", "A![]", "A?[]", "?A[]", "!A[]", "!A | B", "A! | B", "A? | B", "A\n!", "A\n?", "??A", "!!A", "?!A", "A?!", "A!?",
+  "function(A): B", "function(new: A)", "function(this: A)", "function()", "...A", "A=", "Array.<string>", "[A]?", "[A]!", "(A)!", "(A)?", "?(A)", "!(() => void)", "?() => void", "A!.B", "A?.B", "A!<B>", "keyof A!", "keyof !A", "A extends B! ? C : D", "A extends ?B ? C : D",
+];
+
+const tuple = [
+  "[]", "[A]", "[A, B]", "[A,]", "[,]", "[,A]", "[A,,B]", "[A?]", "[A?, B?]", "[A?, B]", "[...A]", "[...A[]]", "[A, ...B[]]", "[...A, B]", "[...A, ...B]", "[...A?]", "[......A]", "[...]",
+  "[a: A]", "[a?: A]", "[...a: A[]]", "[...a?: A]", "[a: A, b: B]", "[a: A, B]", "[A, b: B]", "[a: A?]", "[a: ...A]", "[a!: A]", "[a: A = 1]", "[a:]", "[a?:]", "[: A]", "[a: b: C]", "[a?: b?: C]", "[a??: A]",
+  "[readonly A]", "[a: readonly A[]]", "[\"a\": A]", "[1: A]", "[a.b: A]", "[a<T>: A]", "[a[]: A]", "[A | B, C & D]", "[A extends B ? C : D]", "[(a: A) => B]", "[a: (b: B) => C]",
+  "[typeof a]", "[typeof a, typeof b.c]", "[keyof A]", "[readonly A[]]", "[new () => A]", "[import(\"x\")]", "[infer A]", "[unique symbol]", "[abstract new () => A]", "[asserts a]", "[this]", "[a is B]", "[this is B]",
+  "[\nA,\nB\n]", "[A\nB]", "[A B]", "[A; B]", "[A", "A]", "[[A]]", "[[A], [B, [C]]]", "[A][]", "[A][0]", "[a: A][\"length\"]",
+  "[a?: A, b: B]", "[a: A, ...b: B[]]", "[a: A, b?: B, ...c: C[]]", "[...a: A[], b: B]", "[a: A,]", "[a?: A,]",
+];
+
+const labelWords = [
+  "new", "function", "typeof", "import", "const", "keyof", "readonly", "infer", "unique", "abstract", "asserts", "is", "this", "void", "null", "true", "false", "in", "any", "string", "number", "class", "if", "var", "let", "yield", "await", "type", "as", "default", "delete", "enum", "export", "extends", "super", "switch", "undefined", "symbol", "object", "never", "unknown", "bigint", "boolean", "static", "async", "of", "out", "satisfies", "instanceof", "with", "return", "declare", "namespace", "module", "get", "set", "require", "global",
+];
+const label = [];
+for (const w of labelWords) {
+  label.push(`[${w}: A]`, `[${w}?: A]`, `[...${w}: A[]]`, `[a: A, ${w}: B]`);
+}
+label.push("[new: A, function: B, typeof: C]", "[typeof: A, import?: B]", "[keyof: keyof A]", "[readonly: readonly A[]]", "[infer: A extends infer U ? U : never]", "[typeof: typeof a]", "[new: new () => A]", "[import: import(\"x\")]", "[unique: unique symbol]", "[this: this]", "[asserts: asserts]", "[abstract: abstract new () => A]");
+
+const union = [
+  "A | B", "A & B", "| A", "& A", "| A | B", "& A & B", "A | B & C", "A & B | C", "| A & B", "& A | B", "| & A", "& | A", "| | A", "& & A", "| & | A", "A | | B", "A & & B", "A | & B", "A & | B", "A |", "A &", "|", "&",
+  "A | B | C | D", "A & B & C & D", "(A | B) & C", "A | (B & C)", "A\n| B", "A |\n B", "A\n& B", "\n| A\n| B",
+  "A | () => void", "A & () => void", "A | new () => B", "A & new () => B", "| () => void", "& () => void", "| new () => A", "() => A | B", "() => A & B", "A | <T>() => void", "A & <T>() => void", "A | abstract new () => B", "A | (a: B) => C", "A | (a) => C", "A | (B)", "A | (() => void)",
+  "A | keyof B", "A | typeof b", "A | readonly B[]", "A | infer B", "A | -1", "A | \"s\" | 1 | true | null | undefined | void", "A || B", "A && B", "A |= B", "A | B[]", "A[] | B", "A | unique symbol", "A | this", "A | [B]", "A | { b: C }", "A | `x${B}`", "A | import(\"x\")", "A | B extends C ? D : E", "A & B extends C ? D : E",
+  "A | a is B", "A | asserts a", "| if", "A | if", "A & class",
+];
+
+const op = [
+  "keyof A", "keyof keyof A", "keyof A[]", "keyof A | B", "keyof A & B", "keyof (A | B)", "keyof typeof a", "keyof typeof a.b", "keyof A[B]", "keyof A<B>", "keyof readonly A[]", "keyof unique symbol", "keyof", "keyof |", "keyof | A", "keyof & A",
+  "keyof () => void", "keyof new () => A", "keyof <T>() => void", "keyof abstract new () => A", "keyof (a: A) => B", "keyof (() => void)", "keyof A extends B ? C : D", "keyof [A]", "keyof { a: A }", "keyof `a${B}`", "keyof this", "keyof -1", "keyof \"s\"", "keyof import(\"x\")", "keyof infer U", "keyof\nA", "keyof A\n[]", "keyof if", "keyof a is B", "keyof asserts a",
+  "readonly A[]", "readonly A[][]", "readonly [A, B]", "readonly A", "readonly readonly A[]", "readonly keyof A", "readonly (A[])", "readonly A[] | B", "readonly A[] & B", "readonly A[] extends B ? C : D", "readonly string[]", "readonly", "readonly []", "readonly Array<A>", "readonly\nA[]", "readonly () => void", "readonly new () => A", "readonly <T>() => T", "readonly typeof a", "readonly unique symbol", "readonly { a: A }", "readonly [a: A, b?: B]", "readonly [...A]", "readonly A[B]", "readonly (() => void)[]", "readonly this[]", "readonly if",
+  "unique symbol", "unique A", "unique symbol[]", "unique unique symbol", "unique", "unique\nsymbol", "unique symbol | A", "unique symbol & A", "unique symbol extends A ? B : C", "unique keyof A", "unique readonly A[]", "unique () => void", "unique symbol.x", "unique symbol<T>", "unique (symbol)", "unique typeof a", "unique [A]", "unique { a: A }", "unique string", "unique \"s\"",
+];
+
+const infer = [
+  "A extends infer U ? U : never", "A extends (infer U)[] ? U : never", "A extends infer U[] ? U : never", "A extends infer U extends B ? U : never", "A extends [infer U extends B] ? U : never", "A extends [infer U extends B ? C : D] ? U : never",
+  "A extends infer U extends B ? C : D ? E : F", "A extends (infer U extends B ? C : D) ? E : F", "A extends { a: infer U } ? U : never", "A extends (a: infer U) => infer V ? [U, V] : never", "A extends (infer U extends B) ? U : never", "A extends infer U | infer V ? U : V", "A extends infer U & infer V ? U : V",
+  "A extends Array<infer U> ? U : never", "A extends Array<infer U extends B> ? U : never", "A extends Array<infer U extends B ? C : D> ? U : never", "A extends `${infer U}x` ? U : never", "A extends `${infer U extends number}` ? U : never", "A extends `${infer U extends number ? 1 : 2}` ? U : never",
+  "A extends (...a: infer U) => any ? U : never", "A extends (a: any) => infer U extends B ? C : D", "A extends ((a: any) => infer U extends B) ? C : D", "A extends new (...a: any) => infer U ? U : never", "A extends new (...a: any) => infer U extends B ? C : D", "A extends keyof infer U ? U : never", "A extends readonly (infer U)[] ? U : never", "A extends readonly infer U[] ? U : never", "A extends [infer U, ...infer V] ? [U, V] : never", "A extends [a: infer U, b?: infer V] ? [U, V] : never", "A extends [infer U extends B, ...infer V extends C[]] ? [U, V] : never", "A extends { [K in infer U]: any } ? U : never",
+  "infer U", "infer", "infer U extends B", "infer U[]", "(infer U)[]", "infer U | V", "infer U extends B ? C : D", "A extends infer ? 1 : 2", "A extends infer U extends ? 1 : 2", "A extends infer infer ? 1 : 2", "A extends infer U extends infer V ? 1 : 2", "A extends infer U extends infer V extends W ? 1 : 2", "A extends infer keyof ? 1 : 2", "A extends infer if ? 1 : 2", "A extends infer U.V ? 1 : 2", "A extends infer U<V> ? 1 : 2", "A extends infer\nU ? 1 : 2", "A extends infer U\nextends B ? 1 : 2", "A extends infer type ? 1 : 2", "A extends infer extends ? 1 : 2", "A extends infer extends extends B ? 1 : 2", "A extends infer U extends B | C ? 1 : 2", "A extends infer U extends keyof B ? 1 : 2", "A extends infer U extends () => void ? 1 : 2", "A extends infer U extends B[] ? 1 : 2",
+  "A extends B ? infer U : never", "A extends B ? C : infer U", "infer U extends A ? B : C extends D ? E : F",
+];
+
+const cond = [
+  "A extends B ? C : D", "A extends B ? C : D extends E ? F : G", "A extends B ? C extends D ? E : F : G", "A extends B ? (C extends D ? E : F) : G", "(A extends B ? C : D) extends E ? F : G", "A extends (B extends C ? D : E) ? F : G", "A extends B extends C ? D : E ? F : G",
+  "A | B extends C ? D : E", "A & B extends C ? D : E", "A | B & C extends D ? E : F", "A extends B | C ? D : E", "A extends B & C ? D : E", "A extends B ? C | D : E | F", "A extends B ? C : D | E", "A extends B ? C : D & E", "A extends B ? C & D : E",
+  "keyof A extends B ? C : D", "readonly A[] extends B ? C : D", "unique symbol extends B ? C : D", "A[] extends B ? C : D", "A[B] extends C ? D : E", "typeof a extends B ? C : D", "typeof a.b extends B ? C : D", "A<B> extends C ? D : E", "A.B extends C ? D : E", "[A] extends [B] ? C : D", "{ a: A } extends B ? C : D", "`a${A}` extends B ? C : D", "-1 extends A ? B : C", "\"s\" extends A ? B : C", "this extends A ? B : C", "import(\"x\") extends A ? B : C", "(A) extends B ? C : D",
+  "A extends B ? () => C : () => D", "A extends () => B ? C : D", "A extends (() => B) ? C : D", "() => A extends B ? C : D", "(() => A) extends B ? C : D", "A extends B ? C : D[]", "(A extends B ? C : D)[]", "A extends B ? C : () => D extends E ? F : G", "A extends B ? C : new () => D", "A extends new () => B ? C : D", "A extends abstract new () => B ? C : D", "A extends <T>() => B ? C : D", "A extends (a: B) => C ? D : E", "A extends (a: B) => C extends D ? E : F ? G : H",
+  "A extends keyof B ? C : D", "A extends typeof b ? C : D", "A extends [B] ? C : D", "A extends { b: C } ? D : E", "A extends `x` ? C : D", "A extends 1 ? 2 : 3", "A extends -1 ? -2 : -3", "A extends true ? false : null", "A extends readonly B[] ? C : D", "A extends unique symbol ? C : D", "A extends this ? C : D", "A extends B[] ? C : D", "A extends B[C] ? D : E", "A extends B<C> ? D : E",
+  "A extends B ? C : D extends E ? F : G extends H ? I : J", "A extends B ? C : D | E extends F ? G : H", "A extends B ? C : D & E extends F ? G : H", "A extends B ? C : keyof D extends E ? F : G", "A extends B ? C : readonly D[] extends E ? F : G", "A extends B ? C | D extends E ? F : G : H", "A extends B ? C : D[] extends E ? F : G", "A extends B ? C : typeof d extends E ? F : G", "A extends B ? C : (D | E) extends F ? G : H", "A extends B ? C : | D | E", "A extends B ? C : | D extends E ? F : G", "A extends B ? | C : D", "A extends | B ? C : D", "| A extends B ? C : D",
+  "A extends B\n? C\n: D", "A\nextends B ? C : D", "A extends\nB ? C : D", "A extends B ?\nC :\nD", "A extends B ? C", "A extends B ? : D", "A extends ? C : D", "A extends B C : D", "A extends B ? C :", "A extends B ? C ; D", "A extends B ?? C : D", "A extends B ? C : D : E", "A extends B", "A extends", "extends B ? C : D", "A extends B ?", "A implements B ? C : D", "A extends B ? C, D : E",
+  "A extends B ? a is C : D", "A extends B ? C : a is D", "A extends a is B ? C : D", "A extends B ? asserts a : D",
+];
+
+const query = [
+  "typeof a", "typeof a.b", "typeof a.b.c", "typeof a<B>", "typeof a.b<C>", "typeof a<B>.c", "typeof a<B><C>", "typeof a<B, C>", "typeof a<>", "typeof a<B,>", "typeof a.#b", "typeof a.b.#c", "typeof a.#b.c", "typeof #a",
+  "typeof import(\"x\")", "typeof import(\"x\").a", "typeof import(\"x\").a.b<C>", "typeof import(\"x\")<C>", "typeof import(\"x\", { with: { a: \"b\" } })", "typeof import", "typeof import.meta", "typeof import(x)",
+  "typeof this", "typeof this.a", "typeof this.a.b", "typeof this<A>", "typeof a[]", "typeof a[b]", "typeof a[\"b\"]", "typeof a[number]", "typeof a | b", "typeof a & b", "typeof a.b[]",
+  "typeof new", "typeof class", "typeof if", "typeof a.if", "typeof a.new", "typeof a.class.function", "typeof", "typeof 1", "typeof \"s\"", "typeof (a)", "typeof a()", "typeof a?.b", "typeof a!", "typeof a!.b", "typeof a\n.b", "typeof a.\nb", "typeof a\n<B>", "typeof\na",
+  "typeof typeof a", "typeof keyof a", "typeof a extends B ? C : D", "typeof void", "typeof null", "typeof true", "typeof super", "typeof async", "typeof await", "typeof yield", "typeof let", "typeof undefined", "typeof globalThis", "typeof typeof", "typeof function", "typeof delete", "typeof in", "typeof var", "typeof const", "typeof enum", "typeof default", "typeof export", "typeof instanceof", "typeof any", "typeof string", "typeof unique", "typeof keyof", "typeof readonly", "typeof infer", "typeof asserts", "typeof is", "typeof abstract", "typeof type", "typeof a.", "typeof a..b", "typeof a.1", "typeof .a", "typeof a.b.", "typeof [a]", "typeof {a}", "typeof `a`", "typeof a.b.c.d.e.f",
+];
+
+const importType = [
+  "import(\"x\")", "import(\"x\").A", "import(\"x\").A.B", "import(\"x\")<T>", "import(\"x\").A<T>", "import(\"x\").A<T>.B", "import('x')", "import(`x`)", "import(x)", "import(\"x\" + \"y\")", "import(1)", "import(A | B)",
+  "import(\"x\", { with: { \"resolution-mode\": \"import\" } })", "import(\"x\", { with: { \"resolution-mode\": \"require\" } }).A", "import(\"x\", { assert: { \"resolution-mode\": \"import\" } })", "import(\"x\", { with: { type: \"json\" } })", "import(\"x\", { with: {} })", "import(\"x\", {})", "import(\"x\", { with: { a: \"b\", c: \"d\" } })", "import(\"x\", { with: { a: \"b\", } })", "import(\"x\", { with: { a: \"b\" }, })", "import(\"x\", { with: { a: \"b\" } }, )", "import(\"x\",)", "import(\"x\", y)", "import(\"x\", { with: { a: 1 } })", "import(\"x\", { with: { [a]: \"b\" } })", "import(\"x\", { with: { \"a\": \"b\" } })", "import(\"x\", { with: { 1: \"b\" } })", "import(\"x\", { with: { a: \"b\" } })<T>", "import(\"x\", { with: { a: \"b\" } }).A<T>", "import(\"x\", { with: { if: \"b\" } })", "import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } })", "import(\"x\", { with: y })", "import(\"x\", { with })", "import(\"x\", { with: { a } })", "import(\"x\", { with: { a: \"b\" c: \"d\" } })", "import(\"x\", { with: { a: \"b\"; c: \"d\" } })", "import(\"x\", { a: \"b\" })", "import(\"x\", { readonly with: { a: \"b\" } })", "import(\"x\", { with?: { a: \"b\" } })", "import(\"x\", { with(): void })", "import(\"x\", { with: { a: `b` } })", "import(\"x\", { with: { a: \"b\" + \"c\" } })", "import(\"x\", { \"with\": { a: \"b\" } })",
+  "import()", "import(\"x\"", "import \"x\"", "import(\"x\").", "import(\"x\").default", "import(\"x\").if", "import(\"x\").#a", "import(\"x\")[]", "import(\"x\")[\"y\"]", "import(\"x\") | A", "keyof import(\"x\")", "typeof import(\"x\")[]", "import(\"x\").a.b.c<D, E>[]", "import.meta", "import", "import(\"x\")\n.A", "import(\"x\").\nA", "import(\"x\")\n<T>", "import\n(\"x\")", "import(\n\"x\"\n)", "import(\"x\", \"y\")", "import(\"x\").A.<T>",
+];
+
+const fn = [
+  "() => void", "(a) => void", "(a: A) => B", "(a?: A) => B", "(a?) => B", "(a, b) => void", "(a: A, b: B) => C", "(...a: A[]) => B", "(...a) => B", "(this: A) => B", "(this: A, b: B) => C", "(this) => A", "(a, this: A) => B", "(this?: A) => B", "(...this: A) => B",
+  "<T>() => T", "<T>(a: T) => T", "<T, U>(a: T, b: U) => [T, U]", "<T extends A>(a: T) => T", "<T = A>() => T", "<const T>() => T", "<in T>() => T", "<out T>() => T", "<T,>() => T", "<>() => void", "<T>", "<T> => void", "<T>(a: T)", "<T>a => void",
+  "new () => A", "new (a: A) => B", "new <T>() => T", "new <T>(a: T) => T", "abstract new () => A", "abstract new <T>() => A", "abstract\nnew () => A", "abstract () => A", "new abstract () => A", "new () => new () => A", "new", "new ()", "new () =>", "new A", "new (A)", "new () => void", "new (a) => a is B", "abstract new", "abstract abstract new () => A", "new\n() => A", "new ()\n=> A", "new (...a: any[]) => object",
+  "() => () => void", "() => new () => A", "(a: () => void) => void", "(a: (b: B) => C) => D", "() => void[]", "(() => void)[]", "() => A | B", "() => A & B", "() => keyof A", "() => typeof a", "() => A extends B ? C : D", "() => readonly A[]", "() => unique symbol", "() => this", "() => [A, B]", "() => { a: A }", "() => `a${B}`", "() => import(\"x\")", "() => -1",
+  "() =>", "() = > void", "( => void", "() void", "(): void", "(a: A): B", "(a: ) => void", "(a: A, ) => void", "(a, ) => void", "(, a) => void", "(a,, b) => void", "(a b) => void", "(a: A b: B) => void", "(a: A; b: B) => void", "(a:) => void", "(a?:) => void", "(...) => void", "(...a, b) => void", "(...a: A[], b: B) => void", "(...a?: A[]) => void", "(...a = []) => void", "(......a) => void", "()\n=> void", "(\n) => void", "(\na: A,\nb: B\n) => void",
+  "(a = 1) => void", "(a: A = 1) => void", "(a?: A = 1) => void", "(a = 1, b = 2) => void", "(a = b) => void", "(a = () => 1) => void", "(a = {}) => void", "({ a } = {}) => void", "([a] = []) => void",
+  "({ a }) => void", "({ a }: A) => void", "([a]) => void", "([a]: A) => void", "({ a, b }: A, [c, d]: B) => void", "({ a: b }) => void", "({ a = 1 }) => void", "({ a: b = 1 }) => void", "({ a: { b } }) => void", "({ ...a }) => void", "({ a, ...b }) => void", "([, a]) => void", "([...a]) => void", "([a = 1]) => void", "([{ a }]) => void", "({ a: [b] }) => void", "({ \"a\": b }) => void", "({ 1: b }) => void", "({ [k]: v }) => void", "({ if: x }) => void", "({ if }) => void", "({ a, }) => void", "([a, ]) => void", "([a, , b]) => void", "({}) => void", "([]) => void", "({ a }?) => void", "([a]?) => void", "({ a }?: A) => void", "(...{ a }) => void", "(...[a]) => void", "(...[a, b]: A) => void", "({ a b }) => void", "({ a: }) => void", "({ : a }) => void", "([a b]) => void", "({ a }: ) => void", "({ 1n: a }) => void", "({ a: b.c }) => void", "([a.b]) => void", "({ a() {} }) => void", "({ get a() {} }) => void", "({ ...{ a } }) => void", "([...[a]]) => void", "([...a, b]) => void", "({ ...a, b }) => void", "({ this: a }) => void", "({ this }) => void", "([this]) => void", "({ a: this }) => void",
+  "(a!) => void", "(a!: A) => void", "(public a: A) => void", "(readonly a: A) => void", "(private a) => void", "(protected a?: A) => void", "(override a: A) => void", "(public readonly a: A) => void", "(static a: A) => void", "(declare a: A) => void", "(abstract a: A) => void", "(async a: A) => void", "(export a: A) => void", "(const a: A) => void", "(in a: A) => void", "(out a: A) => void", "(accessor a: A) => void", "(public) => void", "(readonly) => void", "(public, private) => void", "(public: A) => void", "(public?: A) => void", "(public = 1) => void", "(public public) => void", "(public readonly) => void", "(readonly readonly) => void", "(public this: A) => void", "(public ...a: A[]) => void", "(public { a }: A) => void", "(public [a]: A) => void", "(@d a: A) => void", "(@d() a: A) => void", "(@d public a: A) => void",
+  "(a: A) => a is B", "(a: any) => asserts a", "(a: any) => asserts a is B", "(this: any) => this is B", "(this: any) => asserts this", "(this: any) => asserts this is B", "(a) => is B", "(a) => a is", "(a) => asserts", "(a) => asserts.b", "(a) => asserts a.b", "(a) => a\nis B", "(a) => asserts\na", "(a) => asserts a\nis B", "(asserts) => asserts asserts", "(is) => is is is", "(a) => asserts is", "(a) => asserts is is B", "new () => a is B", "new () => asserts a", "(a) => a is B | C", "(a) => a is B extends C ? D : E", "(a) => asserts a is B extends C ? D : E", "(a) => a is b is C", "(a) => asserts asserts a", "(a) => asserts if", "(a) => asserts 1", "(a) => asserts a[]", "(a) => asserts (a)", "(a) => (a is B)", "(a) => a is (B)", "(a) => this is B | C", "(a) => asserts this.x", "(a) => b.c is D", "(a) => a is keyof B", "(a) => a is () => void", "(a) => asserts a is () => void", "(a) => asserts a | B", "(a) => asserts a & B", "(a) => asserts a extends B ? C : D", "(a) => asserts<T>", "(a) => asserts a<T>", "(a) => a<T> is B", "(a) => asserts \"s\"", "(a) => asserts typeof", "(a) => asserts new",
+  "(yield) => void", "(await) => void", "(arguments) => void", "(eval) => void", "(static) => void", "(let) => void", "(type) => void", "(of) => void", "(async) => void", "(if) => void", "(new) => void", "(this.a) => void", "(a.b) => void", "(1) => void", "(\"a\") => void", "(a | b) => void", "(a[]) => void", "(a<T>) => void", "(typeof a) => void", "(keyof A) => void", "(void) => void", "(null) => void", "(true) => void", "(any) => void", "(string, number) => void", "(undefined) => void", "(asserts) => void", "(is) => void", "(infer) => void", "(keyof) => void", "(readonly) => void", "(unique) => void", "(abstract) => void", "(out) => void", "(as) => void", "(satisfies) => void", "(implements) => void", "(interface) => void", "(package) => void", "(enum) => void", "(class) => void", "(function) => void", "(in) => void", "(var) => void", "(const) => void", "(super) => void", "(import) => void", "(typeof) => void", "(delete) => void", "(default) => void",
+  "(a: A) => B | C", "(abstract new () => A)", "(a: A) => B[]", "(a: A) => B extends C ? D : E", "(a?: A, b?: B) => C", "(a?: A, b: B) => C", "(a: A, b?: B, ...c: C[]) => D", "(a: A,\n b: B) =>\n C",
+];
+
+const paren = [
+  "(A)", "((A))", "(A | B)", "(A)[]", "(A | B)[]", "(() => void)", "(() => void)[]", "(new () => A)", "(keyof A)[]", "(typeof a)[]", "(A extends B ? C : D)", "()", "(A", "A)", "(A,)", "(A, B)", "(A B)", "(\nA\n)", "(a)", "(a?)", "(a: A)", "(this)", "(this)[]", "(a is B)", "(asserts a)", "(infer U)", "(unique symbol)", "(-1)", "(\"s\")", "(void)", "(...A)", "(a.b)", "(a<B>)", "(a[])", "(a | b)", "(a & b)", "(a)\n[]", "((a))", "(((a)))", "((a) => void)", "((a))[]", "(a)<T>", "(a).b", "(if)", "(class)", "(new)", "(typeof a)", "(keyof A)", "(readonly A[])", "([A])", "({ a: A })", "(`a${B}`)", "(import(\"x\"))", "(a,)", "(a, b)", "(a = 1)", "({ a })", "([a])", "({})", "([])", "(a: A) =>", "(a)!", "(a)?",
+];
+
+const tmpl = [
+  "`a`", "`a${A}b`", "`${A}`", "`${A}${B}`", "`${A | B}-${C & D}`", "`${`${A}`}`", "`${A extends B ? C : D}`", "`${keyof A}`", "`${() => void}`", "`${infer U}`", "`${}`", "`${A`", "`${A B}`", "`a${1}b${\"s\"}c${true}`", "`${A}`[]", "`${A}` | B", "`\\u{zzz}`", "`\\unicode`", "`a\\nb`", "`\\x`", "`\\u{110000}`", "`${A}\\u`", "`a\nb`", "`${\nA\n}`", "`${A}`\n[]", "`${typeof a}`", "`${A[]}`", "`${A[B]}`", "`${[A]}`", "`${{ a: A }}`", "`${-1}`", "`${1n}`", "`${null}`", "`${undefined}`", "`${this}`", "`${unique symbol}`", "`${readonly A[]}`", "`${new () => A}`", "`${import(\"x\")}`", "`${a is B}`", "`${A,B}`", "`${A}${}`", "`$`", "`$A`", "`{A}`", "`$ {A}`", "`\\${A}`", "`a${A}b${B}c${C}d`", "`${`a${`b${C}`}`}`", "`${A extends `${infer U}` ? U : never}`", "`${if}`", "`${A}`.length", "`${A}`<T>",
+];
+
+const pred = [
+  "a is B", "this is B", "asserts a", "asserts a is B", "asserts this", "asserts this is B", "a is", "asserts", "is B", "a is B | C", "a is B extends C ? D : E", "asserts a | B", "a is b is C", "asserts a is b is C", "asserts asserts a", "asserts a.b", "asserts a[]", "asserts (a)", "a is B[]", "(a is B)", "a is (B)", "a\nis B", "asserts\na", "this\nis B", "asserts 1", "asserts \"s\"", "asserts a is", "asserts this.x", "asserts new", "asserts if", "asserts is", "asserts is is B", "is is B", "asserts asserts", "asserts asserts is B", "keyof is B", "a.b is C", "a<T> is B", "a[] is B", "A | a is B", "asserts a & B", "asserts this | B", "this is", "this is this", "a is this", "asserts a is this", "asserts a\nis B", "asserts this\nis B", "a is\nB", "asserts a is\nB", "asserts undefined", "asserts any", "undefined is B", "any is B", "string is B", "void is B", "null is B", "true is B", "1 is B", "asserts void", "asserts null", "asserts true", "asserts typeof a", "asserts keyof A", "asserts infer U", "asserts readonly", "asserts unique", "asserts abstract", "asserts type", "asserts of", "asserts async", "asserts await", "asserts yield", "asserts let", "asserts static", "asserts out", "asserts a is asserts b", "asserts a is b is c",
+];
+
+const core = [
+  "A", "A.B", "A<B>", "A[]", "A | B", "A & B", "keyof A", "readonly A[]", "unique symbol", "typeof a", "import(\"x\")", "() => void", "(a: A) => B", "new () => A", "<T>(a: T) => T", "(A)", "[A, B]", "[a: A, b?: B]", "{ a: A }", "{ [K in A]: B }", "`a${A}b`", "A extends B ? C : D", "A extends infer U ? U : never", "a is B", "asserts a", "asserts a is B", "this is B", "this", "void", "-1", "\"s\"", "if", "?A", "A?", "A!", "*", "| A", "& A", "(a = 1) => void", "({ a = 1 }) => void", "(a: ) => void", "A |", "keyof () => void", "A | () => void", "A<B<C>>", "A<B<C<D>>>", "abstract new () => A", "infer U",
+];
+
+export const forms = { kw, lit, ref, targs, arr, jsdoc, tuple, label, union, op, infer, cond, query, import: importType, fn, paren, tmpl, pred, core };
+
+const cases = [
+  ...cross("kw", kw),
+  ...cross("lit", lit),
+  ...cross("ref", ref),
+  ...cross("targs", targs),
+  ...cross("arr", arr),
+  ...cross("jsdoc", jsdoc),
+  ...cross("tuple", tuple),
+  ...cross("label", label, ["alias", "param", "arrowRet", "callArg"]),
+  ...cross("union", union),
+  ...cross("op", op),
+  ...cross("infer", infer),
+  ...cross("cond", cond),
+  ...cross("query", query),
+  ...cross("import", importType),
+  ...cross("fn", fn, ["alias", "param", "arrowRet", "callArg", "as", "field"]),
+  ...cross("paren", paren),
+  ...cross("tmpl", tmpl),
+  ...cross("pred", pred),
+  ...cross("core", core, ALL_CONTEXTS),
+];
+
+export default { name: "type forms", families, cases, programs: ["ts"] };

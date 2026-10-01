@@ -1,0 +1,33 @@
+A<B<C>>
+A<B<C>>= y
+A<B<C<D>>>
+A<B<C<D>>>= y
+A<B>= y
+A<B>=> a
+A | B extends C ? D : E[]
+A [ ] [ K ]
+[a: A, b?: B, ...c: C[], D, ...E]
+[A, B , ]
+{ a: A; b?: B, c: C
+ d: D ; e }
+keyof A[] | string
+( A | B )[]
+A!
+a . b . C<D>
+A<B, >
+/*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;
+typeof a.b<C>
+- 1 | "s" | void | this
+A & B | C & D
+Object | A
+any | A.b.c
+[]
+{}
+A<
+| A | B<C>
+| A
+& A
+| & A & B | C
+A | & B
+| [A] | keyof B
+A<| B>

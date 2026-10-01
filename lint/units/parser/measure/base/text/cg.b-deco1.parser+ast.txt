@@ -1,0 +1,410 @@
+total    Ir  21,908,759,731  Bc  8,613,715,359  Bi   66,117,527
+matched  Ir   2,983,365,667  Bc    295,648,663  Bi   25,706,807   (408 symbols match /bun_js_parser|bun_ast/)
+     285,258,206    31,207,014  <bun_js_parser::lexer::Lexer>::next
+     178,665,308     7,143,499  <bun_ast::scope::Members>::get_or_put_hashed
+     142,404,640    14,801,900  <bun_js_parser::p::P<true, false>>::to_ast
+     122,558,260    23,838,320  <bun_js_parser::parse::parse_entry::Parser>::_parse::<true>
+      77,675,160    17,025,060  <bun_js_parser::p::P<true, false>>::call_runtime
+      72,907,020     1,367,100  <bun_js_parser::p::P<true, false>>::init
+      72,450,080     3,868,640  <bun_js_parser::p::P<true, false>>::declare_common_js_symbol
+      72,404,700     5,518,740  <bun_js_parser::p::P<true, false>>::generate_import_stmt::<&[u8], bun_ast::runtime::Imports>
+      72,077,720     5,357,969  <alloc::vec::Vec<bun_ast::symbol::Symbol> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<bun_ast::symbol::Symbol, bun_alloc::baby_
+      70,733,840     6,451,240  <bun_js_parser::p::P<true, false>>::find_symbol_with_record_usage::<true>
+      59,782,080     5,504,600  <bun_js_parser::p::P<true, false>>::lower_class
+      58,083,750     5,390,150  <bun_js_parser::p::P<false, false>>::part_use
+      56,831,286     3,547,263  <bun_ast::scope::Members>::put
+      56,123,449     1,425,531  <bun_ast::scope::Members>::get_hashed
+      56,003,880     7,253,280  <bun_js_parser::p::P<true, false>>::parse_property
+      55,102,617     3,149,158  <bun_js_parser::p::P<false, false>>::push_scope_for_parse_pass
+      52,520,460     4,124,060  <bun_js_parser::p::P<true, false>>::parse_class
+      45,877,016     5,294,298  <bun_ast::symbol::Map>::follow
+      44,618,684     7,040,832  <bun_collections::array_hash_map::ArrayHashMap<bun_ast::Ref, bun_ast::symbol::Use, bun_collections::array_hash_map::AutoContext, bun_alloc::
+      43,002,960     7,060,900  <bun_ast::runtime::ImportsIterator>::next
+      42,310,060     5,834,740  <bun_js_parser::p::P<true, false>>::visit_stmts
+      40,245,240     2,692,820  <bun_js_parser::p::P<true, false>>::declare_symbol
+      37,850,394     2,922,480  <bun_ast::scope::Members>::to_table
+      36,987,500     4,278,300  <bun_js_parser::p::P<true, false>>::visit_class
+      36,534,760     2,877,420  <bun_js_parser::p::P<true, false>>::visit_expr_in_out
+      34,665,451     3,852,376  <bun_collections::array_hash_map::ArrayHashMap<bun_ast::Ref, bun_ast::nodes::NamedImport, bun_collections::array_hash_map::AutoContext, bun_
+      33,249,880     3,602,880  <bun_js_parser::p::P<true, false>>::parse_fn
+      31,719,880     2,948,000  <bun_js_parser::p::P<true, false>>::hoist_symbols
+      31,715,820     2,580,140  <bun_js_parser::p::P<true, false>>::append_part
+      27,730,040     1,796,340  <bun_js_parser::p::P<true, false>>::declare_generated_symbol
+      27,421,700     2,250,180  <bun_js_parser::p::P<true, false>>::emit_decorator_metadata_for_prop
+      26,316,520     2,873,180  <bun_js_parser::p::P<false, false>>::push_scope_for_visit_pass
+      26,146,260     1,977,780  <bun_js_parser::p::P<true, false>>::parse_stmts_up_to
+      24,485,840     2,578,200  <bun_js_parser::p::P<true, false>>::parse_class_stmt
+      24,364,762     2,551,717  <bun_js_parser::p::P<false, false>>::take_symbol_uses
+      22,176,900     4,229,380  <bun_ast::ErrorPositionState>::advance
+      21,785,400     2,394,000  <bun_ast::Location as core::clone::Clone>::clone
+      21,736,860     1,981,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+      20,695,800     1,806,600  <bun_js_parser::p::P<true, false>>::parse_type_script_decorators
+      19,357,076     1,759,734  <bun_alloc::baby_vec::BabyVec<bun_ast::stmt::Stmt>>::grow_exact
+      18,987,625       607,604  <bun_js_parser::parse::parse_entry::Parser>::init
+      17,306,895     2,818,170  <bun_js_parser::p::P<false, false>>::pop_scope
+      16,584,369     2,699,781  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, ()>>::grow
+      15,476,640     2,036,400  <bun_js_parser::p::P<true, false>>::record_usage_impl
+      14,953,550     2,429,300  <bun_ast::lexer_tables::__ComptimeStringMap_KEYWORDS>::__key_index
+      14,807,380     1,028,880  <bun_js_parser::p::P<true, false>>::visit_func
+      14,717,000     1,336,540  <bun_js_parser::p::P<true, false>>::parse_prefix
+      14,662,338     1,800,638  <bun_collections::multi_array_list::MultiArrayList<bun_ast::nodes::DeclaredSymbol, bun_alloc::ast_alloc::AstAlloc>>::set_capacity
+      14,409,080     1,431,660  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+      14,332,382     1,171,448  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, ()>>::get_or_put_slot
+      14,055,360     1,277,760  <bun_ast::Msg>::clone
+      13,915,180     1,826,460  <bun_ast::Location>::init_or_null_impl
+      12,940,000       767,330  <alloc::vec::Vec<bun_ast::Msg> as core::ops::drop::Drop>::drop
+      12,780,800     1,757,360  <bun_js_parser::p::P<true, false>>::handle_identifier
+      11,998,980       755,720  <bun_js_parser::p::P<true, false>>::parse_expr_common
+      11,526,533     1,210,687  <bun_ast::scope::Scope>::recursive_set_strict_mode
+      11,458,320     1,333,700  <bun_js_parser::p::P<true, false>>::parse_suffix
+      10,954,866     1,234,083  <bun_alloc::baby_vec::BabyVec<bun_ast::symbol::Symbol>>::grow_exact
+      10,779,000       934,860  <bun_js_parser::p::P<true, false>>::parse_stmt
+      10,463,060       387,500  <bun_alloc::baby_vec::BabyVec<bun_ast::stmt::Stmt>>::extend_from_slice
+      10,337,860       298,820  <bun_js_parser::p::P<true, false>>::serialize_metadata
+      10,191,468       727,962  <bun_alloc::baby_vec::BabyVec<bun_ast::stmt::Stmt>>::grow_to
+       9,676,584     1,392,147  <bun_ast::e::EString>::eql_comptime
+       9,644,720       468,400  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+       9,426,860       904,040  <bun_js_parser::p::P<true, false>>::s_class
+       9,224,500       776,800  <bun_js_parser::p::P<true, false>>::parse_fn_body
+       9,064,124     1,385,308  core::ptr::drop_glue::<bun_ast::Data>
+       8,670,500     1,040,460  <bun_alloc::baby_vec::BabyVec<bun_ast::expr::Expr>>::grow_exact
+       8,658,357     1,974,713  core::ptr::drop_glue::<bun_js_parser::parse::parse_entry::Options>
+       8,615,373       257,364  <bun_js_parser::p::P<false, false>>::add_import_record_by_range_and_path
+       8,506,451       759,508  <bun_ast::ast_memory_allocator::Scope>::enter
+       7,867,372       919,230  <bun_ast::Log>::append_to_with_recycled
+       7,854,000       561,000  <bun_js_parser::p::P<true, false>>::e_function
+       7,474,597       773,286  core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>
+       7,346,217       773,286  <bun_js_parser::p::P<false, false>>::compute_ts_enums_map
+       7,071,352       512,546  <bun_ast::Log>::clone_to_with_recycled
+       7,053,680       557,760  <bun_ast::Log>::add_formatted_msg
+       6,899,478       718,529  <std::thread::local::LocalKey<core::cell::RefCell<bun_collections::pool::DataStruct<bun_js_parser::parser::StringVoidMap>>>>::with::<<bun_js
+       6,827,558       901,500  <bun_js_parser::p::P<false, false>>::stmts_can_be_removed_if_unused_without_dce_check
+       6,775,340     1,828,440  bun_ast::scan_line_end
+       6,709,520     1,124,100  <bun_js_parser::p::P<true, false>>::visit_args
+       6,688,786       771,783  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>::grow_exact
+       6,667,520       641,040  bun_collections::index_sort::sort_slice_unstable_by::<u8, <bun_js_parser::parse::parse_entry::Parser>::_parse<false>::{closure#19}>
+       5,923,580       824,180  <bun_js_parser::p::P<true, false>>::parse_binding
+       5,777,100       256,760  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>::prepend_from
+       5,769,216       721,152  <bun_alloc::baby_vec::BabyVec<bun_ast::g::Property>>::grow_exact
+       5,759,054       411,361  <bun_alloc::baby_vec::BabyVec<bun_ast::symbol::Symbol>>::grow_to
+       5,409,287       901,640  core::ptr::drop_glue::<bun_ast::ast_result::Ast>
+       5,316,532       607,604  <bun_ast::ast_memory_allocator::Scope as core::ops::drop::Drop>::drop
+       5,316,500       303,800  <alloc::vec::Vec<bun_ast::runtime::ReplaceableExport> as core::clone::Clone>::clone
+       5,249,160       986,980  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+       5,171,602       385,607  <bun_js_parser::p::P<false, false>>::expr_can_be_removed_if_unused_without_dce_check
+       4,857,500       567,700  <bun_js_parser::p::P<true, false>>::visit_binding
+       4,855,480       346,820  <bun_alloc::baby_vec::BabyVec<bun_ast::expr::Expr>>::grow_to
+       4,825,020       160,820  <bun_js_parser::p::P<true, false>>::visit_and_append_stmt
+       4,780,800       398,400  <bun_ast::Data>::clone_line_text
+       4,747,969       250,791  <bun_js_parser::p::P<false, false>>::load_name_from_ref
+       4,708,900       759,500  <bun_ast::ast_memory_allocator::ASTMemoryAllocator as core::ops::drop::Drop>::drop
+       4,648,560       182,260  <bun_ast::Log>::tracked_range_data::<alloc::borrow::Cow<[u8]>>
+       4,626,720       632,780  <bun_js_parser::p::P<false, false>>::class_can_be_removed_if_unused
+       4,557,030       911,406  core::ptr::drop_glue::<bun_collections::array_hash_map::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>>
+       4,557,000       151,900  <bun_ast::ast_memory_allocator::ASTMemoryAllocator>::enter
+       4,529,260       373,460  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+       4,378,520       279,480  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::expr::Expr>>::from_arena_
+       4,372,990       771,704  core::ptr::drop_glue::<bun_ast::nodes::Part>
+       3,999,185       319,935  <bun_js_parser::defines::Define>::for_identifier
+       3,816,980       118,860  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+       3,601,654       257,261  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>::grow_to
+       3,466,287       128,381  <alloc::raw_vec::RawVec<bun_ast::nodes::NamedImport, bun_alloc::ast_alloc::AstAlloc>>::grow_one
+       3,458,480       175,840  <bun_js_parser::lexer::Lexer as bun_ast::lexer_log::LexerLog>::add_range_error
+       3,365,376       240,384  <bun_alloc::baby_vec::BabyVec<bun_ast::g::Property>>::grow_to
+       3,337,906       385,143  <bun_alloc::baby_vec::BabyVec<bun_ast::import_record::ImportRecord>>::grow_exact
+       3,222,025       128,881  <bun_js_parser::p::P<false, false>>::take_scope_uses
+       3,192,840       152,040  <bun_js_parser::p::P<true, false>>::t_class
+       3,189,921       303,802  <bun_alloc::baby_vec::BabyVec<bun_js_parser::parser::TempRef>>::grow_exact
+       3,090,960       147,280  <bun_js_parser::p::P<true, false>>::declare_binding
+       2,993,360       259,860  <bun_js_parser::lexer::Lexer>::expected_string
+       2,949,520       512,960  bun_collections::index_sort::sort_slice_unstable_by::<u8, <bun_js_parser::parse::parse_entry::Parser>::_parse<false>::{closure#19}>::{closur
+       2,899,184       374,089  <bun_collections::pool::ObjectPool<bun_js_parser::parser::StringVoidMap, true, 32, bun_js_parser::parser::__ObjectPoolStorage>>::release
+       2,734,218       607,604  core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+       2,734,200       455,700  core::ptr::drop_glue::<bun_ast::ast_memory_allocator::ASTMemoryAllocator>
+       2,710,589       258,134  <bun_alloc::baby_vec::BabyVec<*mut bun_ast::scope::Scope>>::grow_exact
+       2,577,620       128,881  <bun_js_parser::p::P<false, false>>::register_dynamic_import_items
+       2,577,620       128,881  <bun_js_parser::p::P<false, false>>::compute_character_frequency
+       2,575,920       112,920  <bun_js_parser::p::P<true, false>>::t_at
+       2,492,280       181,740  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::expr::Expr>>::from_slice
+       2,378,040       250,320  <bun_js_parser::p::P<true, false>>::record_usage
+       2,278,514       151,901  <bun_js_parser::parse::parse_entry::Parser>::parse
+       2,239,920       124,440  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::Array>
+       2,151,360        79,680  bun_ast::alloc_print
+       2,109,520       388,940  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+       2,025,020       233,180  <bun_ast::Log as bun_jsc::LogJsc>::to_js
+       1,958,417       178,771  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, ()>>::get_index::<bun_ast::Ref>
+       1,925,700       128,380  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>::append
+       1,923,900       160,500  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::ts::Data>>::get_index::<bun_ast::Ref>
+       1,919,360       160,040  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::Ref>>::get_index::<bun_ast::Ref>
+       1,844,340       156,300  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::expr::Expr>>::move_from_l
+       1,806,938       129,067  <bun_alloc::baby_vec::BabyVec<*mut bun_ast::scope::Scope>>::grow_to
+       1,797,334       128,381  <bun_alloc::baby_vec::BabyVec<bun_ast::import_record::ImportRecord>>::grow_to
+       1,760,640       125,760  <bun_ast::stmt::Stmt>::assign
+       1,753,460       144,120  <bun_js_parser::p::P<false, false>>::check_if_defined_helper
+       1,750,120       218,760  <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+       1,565,680       165,180  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+       1,560,762       131,094  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::get_ind
+       1,550,763       516,921  <bun_js_parser::p::P<false, false>>::record_scope_use
+       1,546,572       128,881  <bun_js_parser::p::ImportRecordList>::move_to_baby_list
+       1,415,722       128,702  <alloc::raw_vec::RawVec<bun_ast::Ref, bun_alloc::ast_alloc::AstAlloc>>::grow_one
+       1,219,140        62,520  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::expr::Expr>>::move_to_lis
+       1,143,440       124,920  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+       1,119,600        62,200  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::EString>
+       1,052,640       123,840  <bun_js_parser::p::P<true, false>>::s_return
+       1,028,742        93,522  core::ptr::drop_glue::<core::option::Option<bun_js_parser::parser::HookContext>>
+       1,022,720        63,920  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::Return>
+       1,020,880        72,920  <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_to
+         959,920        92,980  <bun_alloc::mimalloc_arena::MimallocArena>::alloc_slice_fill_with::<bun_ast::expr::Expr, <bun_alloc::mimalloc_arena::MimallocArena>::alloc_s
+         938,540        41,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+         902,100        77,100  <bun_js_parser::lexer::Lexer>::unexpected
+         876,440        72,140  <bun_js_parser::lexer::Lexer>::expected
+         874,800        38,520  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+         854,460       148,532  <bun_js_parser::lexer::Lexer>::parse_string_literal_inner::<39>
+         833,520        72,480  core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+         825,120        30,560  <alloc::raw_vec::RawVec<bun_ast::Msg>>::grow_one
+         817,738       193,926  <bun_js_parser::lexer::Lexer>::expect_or_insert_semicolon
+         690,000        40,000  <bun_js_parser::p::P<true, false>>::maybe_defined_helper
+         593,640        34,920  <bun_ast::e::EString>::string
+         455,703       151,901  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+         451,707        65,181  <bun_js_parser::lexer::Lexer>::is_contextual_keyword
+         405,840        47,460  <bun_ast::ts::Metadata>::merge_intersection
+         345,440        25,380  <bun_js_parser::p::P<true, false>>::parse_expr_or_let_stmt
+         340,560        30,960  <alloc::raw_vec::RawVec<bun_ast::expr::Expr>>::grow_one
+         305,500        36,660  <bun_js_parser::p::P<true, true>>::discard_scopes_up_to
+         253,856        99,528  <bun_js_parser::lexer::Lexer>::expect
+         227,040        21,120  <alloc::vec::Vec<bun_ast::Ref> as core::clone::Clone>::clone
+         215,140        13,880  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::If>
+         205,560        24,940  <bun_ast::ts::Metadata>::merge_union
+         178,499        21,659  <bun_js_parser::lexer::Lexer>::parse_string_literal_inner::<96>
+         165,940        24,720  <bun_js_parser::lexer::Lexer>::expect_greater_than::<false>
+         126,240         7,760  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+         119,720        11,080  <bun_js_parser::p::P<true, false>>::process_import_statement
+          94,120        14,480  <bun_js_parser::lexer::Lexer>::expect_less_than::<false>
+          85,580         8,340  <bun_js_parser::p::P<true, false>>::s_enum
+          76,620         8,000  <bun_js_parser::p::P<true, false>>::t_import
+          70,760         7,320  <bun_js_parser::p::P<true, false>>::generate_closure_for_type_script_namespace_or_enum
+          68,140         6,280  <bun_js_parser::p::P<true, false>>::parse_typescript_enum_stmt
+          52,740         6,100  <bun_js_parser::p::P<true, false>>::parse_import_clause
+          50,440         4,920  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+          48,706         4,376  <bun_js_parser::defines::Define as bun_bundler::defines::DefineExt>::insert_global
+          40,033         6,622  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::grow
+          36,140         2,980  <bun_js_parser::p::P<true, true>>::get_or_create_exported_namespace_members
+          32,494         3,376  <bun_js_parser::p::P<false, false>>::parse_path
+          30,660         2,680  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::ts::Data>>::get_or_put_slot
+          30,550         1,945  <bun_collections::array_hash_map::StringHashMap<alloc::vec::Vec<bun_js_parser::defines::DotDefine>>>::put
+          30,240         2,200  <bun_js_parser::p::P<true, false>>::parse_type_script_namespace_stmt
+          29,567         2,113  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>>::insert
+          28,072         2,940  <bun_js_parser::p::P<true, false>>::s_import
+          26,580         3,580  <bun_js_parser::p::P<true, false>>::s_local
+          26,000         4,200  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::ts::Data>>::grow
+          24,280         2,680  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::ts::TSNamespaceMember, bun_collections::array_hash_map::StringContext, bun_all
+          24,220         2,400  <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+          23,255         3,577  <bun_js_parser::lexer::Lexer>::parse_string_literal_inner::<34>
+          22,488         2,438  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::LocRef>>::put
+          21,360         2,500  <bun_js_parser::p::P<true, false>>::parse_and_declare_decls
+          20,080         2,008  <bun_js_parser::lexer::Lexer>::expect_contextual_keyword
+          18,734           646  <bun_js_parser::lexer::Lexer>::to_e_string
+          18,060         2,940  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::Ref>>::grow
+          17,720         2,160  <bun_js_parser::p::P<true, false>>::t_export
+          17,551         1,652  <bun_js_parser::p::P<false, false>>::visit_expr_in_out
+          15,040           900  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::ts::Data>>::insert
+          14,800         1,740  <bun_js_parser::p::P<true, false>>::parse_type_script_import_equals_stmt
+          13,440           480  <bun_ast::Log>::tracked_range_data::<&[u8]>
+          13,414         2,746  <bun_ast::Source>::range_of_string
+          12,960         1,120  <bun_collections::array_hash_map::ArrayHashMap<bun_ast::Loc, &[bun_js_parser::parser::ScopeOrder]>>::insert
+          12,240         1,320  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::NamedExport, bun_collections::array_hash_map::StringContext, bun_alloc:
+          11,840         1,260  <bun_js_parser::p::P<true, false>>::parse_fn_stmt
+          11,760         1,680  <bun_collections::array_hash_map::ArrayHashMap<bun_ast::Loc, &[bun_js_parser::parser::ScopeOrder]>>::get
+          11,760           790  <bun_js_parser::p::P<false, false>>::parse_string_literal
+          10,854         1,206  <bun_js_parser::p::P<false, false>>::parse_clause_alias
+           9,720           840  <bun_js_parser::p::P<true, false>>::s_namespace
+           9,380         1,180  <bun_js_parser::p::P<true, false>>::s_export_default
+           8,320           160  <bun_ast::Log>::add_range_error
+           7,981           900  <bun_js_parser::p::P<false, false>>::parse_suffix
+           7,398           987  <bun_js_parser::p::P<false, false>>::visit_stmts
+           7,050           846  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::ClauseItem>>::grow_exact
+           6,378           606  <bun_js_parser::p::P<false, false>>::parse_prefix
+           6,369           460  <bun_js_parser::defines::Define>::dots_for
+           6,120           840  <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+           6,000           800  <bun_js_parser::p::P<true, false>>::parse_call_args_inner
+           5,760           320  <bun_js_parser::p::P<true, true>>::s::<bun_ast::s::Enum>
+           5,760           640  <bun_ast::e::EString>::init_re_encode_utf8
+           5,440           640  <bun_ast::Source>::text_for_range
+           5,426           657  <bun_js_parser::p::P<false, false>>::find_symbol_with_record_usage::<true>
+           5,220           580  <bun_js_parser::lexer::Lexer>::range
+           5,220           700  <bun_js_parser::p::P<true, false>>::maybe_rewrite_property_access
+           4,800           360  <bun_js_parser::p::P<false, false>>::record_export
+           4,640           240  <bun_js_parser::p::P<false, false>>::parse_expr_common
+           4,486           268  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::Local>
+           4,230           705  <bun_js_parser::p::P<false, false>>::visit_decl
+           4,180           520  <bun_js_parser::p::P<true, false>>::parse_paren_expr
+           4,122           497  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::loader::Loader>>::insert
+           3,948           282  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::ClauseItem>>::grow_to
+           3,840           240  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::NamedExport, bun_collections::array_hash_map::StringContext, bun_alloc:
+           3,820           120  <bun_js_parser::p::P<true, true>>::new_symbol
+           3,800           400  <bun_js_parser::p::P<true, false>>::e_class
+           3,676           300  <bun_js_parser::p::P<false, false>>::append_part
+           3,520           320  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::EnumValue>>::grow_exact
+           3,513           412  <bun_js_parser::p::P<false, false>>::to_ast
+           3,360           160  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::Function>
+           3,360           480  <bun_ast::scope::Scope>::can_merge_symbol_kinds::<true>
+           3,240           120  <alloc::raw_vec::RawVec<bun_ast::nodes::NamedExport, bun_alloc::ast_alloc::AstAlloc>>::grow_one
+           3,240           280  <bun_js_parser::p::P<true, false>>::s_expr
+           3,069           412  <bun_js_parser::p::P<false, false>>::handle_identifier
+           3,049           386  <bun_js_parser::p::P<false, false>>::parse_call_args_inner
+           2,900           200  <bun_js_parser::p::P<false, false>>::store_name_in_ref
+           2,700           100  <alloc::raw_vec::RawVec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc>>::grow_one
+           2,560           280  <bun_js_parser::p::P<true, false>>::s_function
+           2,560           200  <bun_js_parser::p::P<true, false>>::transpose_require
+           2,507             0  <bun_js_parser::p::P<false, false>>::pattern_can_be_removed_if_unused_without_dce_check
+           2,502           271  <bun_js_parser::p::P<false, false>>::parse_and_declare_decls
+           2,411           321  <bun_js_parser::defines::Define as bun_bundler::defines::DefineExt>::init
+           2,402           283  <bun_js_parser::p::P<false, false>>::record_import_property_use
+           2,340           120  <alloc::vec::Vec<bun_ast::g::Decl, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::g::Decl>>::init_one
+           2,240           160  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::EnumValue>>::grow_to
+           2,200           200  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+           2,180           120  <bun_js_parser::p::P<true, true>>::create_default_name
+           2,160           120  <bun_js_parser::p::P<true, true>>::s::<bun_ast::s::Namespace>
+           2,040           120  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::ExportDefault>
+           1,999           224  <bun_js_parser::p::P<false, false>>::parse_stmt
+           1,940           130  <bun_js_parser::p::P<false, false>>::declare_symbol
+           1,800           243  <bun_js_parser::p::P<false, false>>::s_local
+           1,797           173  <bun_js_parser::p::P<false, false>>::parse_stmts_up_to
+           1,783           170  <bun_js_parser::scan::scan_side_effects::SideEffects>::simplify_unused_expr::<true, false>
+           1,680            80  <bun_js_parser::p::P<true, true>>::s::<bun_ast::s::Function>
+           1,585           214  <bun_js_parser::p::P<false, false>>::maybe_rewrite_property_access
+           1,560           140  <bun_js_parser::p::P<true, false>>::t_open_brace
+           1,480            80  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::expr::Expr>>::init_one
+           1,460           141  <bun_js_parser::p::P<false, false>>::hoist_symbols
+           1,441           174  <bun_js_parser::p::P<false, false>>::visit_binding
+           1,441           174  <bun_js_parser::p::P<false, false>>::parse_property
+           1,440            80  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::Call>
+           1,200           240  <bun_js_parser::p::P<true, true>>::pop_and_discard_scope
+           1,188            99  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, alloc::vec::Vec<u32>>>::get_index::<bun_ast::Ref>
+           1,142           129  <bun_js_parser::p::P<false, false>>::t_for
+           1,120             0  <bun_js_parser::p::P<true, false>>::t_enum
+           1,118            86  <bun_collections::array_hash_map::ArrayHashMap<bun_ast::Ref, alloc::boxed::Box<[u8]>>>::get
+           1,117           157  <bun_js_parser::p::P<false, false>>::parse_binding
+           1,092            78  <bun_js_parser::p::P<false, false>>::require_initializers
+           1,043           142  <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>
+           1,040           160  <bun_js_parser::lexer::Lexer>::raw_template_contents
+           1,021           128  <bun_js_parser::defines::Define>::insert
+           1,000            20  <bun_ast::Log>::add_error_text
+           1,000           120  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::ArrayBinding>>::grow_exact
+           1,000           160  <bun_js_parser::p::P<true, false>>::e_template
+             960           120  <bun_alloc::baby_vec::BabyVec<bun_ast::b::Property>>::grow_exact
+             959           135  <bun_js_parser::parse::parse_entry::Parser>::_parse::<false>
+             883            29  <bun_js_parser::p::P<false, false>>::visit_and_append_stmt
+             881           132  <bun_js_parser::p::P<false, false>>::is_dot_define_match
+             860            86  <bun_js_parser::p::P<false, false>>::log_expr_errors
+             842            89  <bun_js_parser::p::P<false, false>>::parse_expr_or_let_stmt
+             830            79  <bun_js_parser::p::P<false, false>>::process_import_statement
+             806            62  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Array>
+             720            40  <bun_js_parser::p::P<false, false>>::new_expr::<bun_ast::e::Dot>
+             682            52  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Dot>
+             633            51  <bun_js_parser::p::P<false, false>>::parse_template_parts
+             630            30  <bun_js_parser::p::P<false, false>>::declare_binding
+             620            60  <bun_js_parser::p::P<true, false>>::e_new
+             620            60  <bun_js_parser::p::P<true, true>>::default_name_for_expr
+             567            49  <bun_js_parser::p::P<false, false>>::s_expr
+             560            40  <bun_alloc::baby_vec::BabyVec<bun_ast::b::Property>>::grow_to
+             560            40  <bun_alloc::baby_vec::BabyVec<bun_ast::nodes::ArrayBinding>>::grow_to
+             520            80  <bun_js_parser::lexer::Lexer>::maybe_expand_equals
+             511            64  <bun_js_parser::lexer::Lexer>::scan_single_line_comment
+             505            25  <bun_js_parser::p::P<false, false>>::declare_common_js_symbol
+             497            82  <bun_js_parser::p::P<false, false>>::e_object
+             483             9  <bun_js_parser::p::P<false, false>>::init
+             480            20  <bun_ast::expr::Expr>::join_all_with_comma
+             474            38  <bun_js_parser::p::P<false, false>>::visit_single_stmt
+             460            40  <bun_collections::zig_hash_map::HashMap<bun_ast::Ref, bun_ast::ts::Data>>::get::<bun_ast::Ref>
+             457            70  <bun_js_parser::p::P<false, false>>::prepare_for_visit_pass
+             443            49  <bun_js_parser::defines::Define>::hash_user_inputs::<core::iter::adapters::map::Map<core::iter::adapters::zip::Zip<core::slice::iter::Iter<a
+             441            28  <bun_collections::array_hash_map::StringHashMap<bun_js_parser::defines::DefineData>>::put
+             435            34  <bun_ast::e::Template>::fold
+             416            32  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Call>
+             416            56  <bun_js_parser::lexer::Lexer>::scan_comment_text
+             398            39  <bun_js_parser::defines::DefineData as bun_bundler::defines::DefineDataExt>::parse
+             364            28  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::Local>
+             344            34  <bun_js_parser::p::P<false, false>>::e_arrow
+             341            45  <bun_js_parser::scan::scan_side_effects::SideEffects>::to_boolean::<true, false>
+             323            32  <bun_js_parser::p::P<false, false>>::parse_arrow_body
+             312            24  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Binary>
+             300            35  <bun_js_parser::p::P<false, false>>::visit_for_loop_init
+             286            32  <bun_js_parser::p::P<false, true>>::parse_import_clause
+             270            24  <bun_js_parser::p::P<false, false>>::t_if
+             268            16  <bun_js_parser::p::P<false, false>>::s_for_of
+             252            24  <bun_js_parser::p::P<false, false>>::t_import
+             235            79  core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+             224            18  <hashbrown::raw::RawTable<(bun_collections::array_hash_map::StringHashMapKey, alloc::vec::Vec<bun_js_parser::defines::DotDefine>), bun_alloc
+             223            15  <bun_js_parser::defines::DefineData as bun_bundler::defines::DefineDataExt>::from_input
+             219            21  <bun_js_parser::p::P<false, false>>::t_open_brace
+             201            21  <bun_js_parser::p::P<false, false>>::s_try
+             196            16  <hashbrown::raw::RawTable<(bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData), bun_alloc::DefaultAlloc>>
+             182            14  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::SExpr>
+             181            40  bun_js_parser::lexer::range_of_identifier
+             181            23  <bun_js_parser::p::P<false, false>>::stmts_to_single_stmt
+             169            22  <bun_js_parser::p::P<false, false>>::s_if
+             168            12  <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::loader::Loader>>::get
+             162             2  <bun_ast::target::Target as bun_bundler::options_impl::TargetExt>::out_extensions
+             162            12  <bun_js_parser::p::P<false, false>>::parse_paren_expr
+             161            27  <bun_js_parser::p::P<false, false>>::visit_args
+             160            40  <bun_js_printer::__gated_printer::Printer<&mut bun_js_printer::Writer<bun_js_printer::BufferWriter>, false, false, false, false>>::maybe_pri
+             157            18  <bun_js_parser::p::P<false, false>>::t_try
+             156            12  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::Block>
+             139            21  <hashbrown::raw::RawTableInner>::drop_inner_table::<(bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData),
+             132             8  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::ForOf>
+             122            24  <bun_js_parser::p::P<false, false>>::e_array
+             120             3  bun_ast::source_from_file
+             111            12  <bun_js_parser::scan::scan_side_effects::SideEffects>::simplify_boolean::<true, false>
+             110            10  <bun_alloc::baby_vec::BabyVec<bun_js_parser::parser::DeferredImportNamespace>>::grow_exact
+             110             8  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::If>
+             107             8  <bun_js_parser::p::P<false, false>>::s_for
+             104             9  <bun_collections::array_hash_map::StringArrayHashMap<bun_js_parser::defines::DefineData>>::get_or_put_value
+             104             8  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::ForOf>
+              88            17  core::ptr::drop_glue::<bun_collections::array_hash_map::StringArrayHashMap<bun_js_parser::defines::DefineData>>
+              88            12  <bun_ast::expr::Data>::eql::<bun_js_parser::p::P<true, false>, bun_ast::expr::StrictEql>
+              88            12  <bun_js_parser::p::P<false, false>>::forbid_initializers
+              88             8  bun_js_parser::visit::visit_binary::try_optimize_typeof_undefined::<true, false>
+              78             6  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Unary>
+              78            10  <bun_js_parser::p::P<false, false>>::e_template
+              76             9  <bun_alloc::baby_vec::BabyVec<bun_ast::e::TemplatePart>>::grow_exact
+              70             5  <bun_alloc::baby_vec::BabyVec<bun_js_parser::parser::DeferredImportNamespace>>::grow_to
+              68             8  <bun_js_parser::p::P<false, false>>::s_return
+              60             4  core::ptr::drop_glue::<bun_ast::e::JSXElement>
+              56             7  <bun_js_parser::p::P<false, false>>::parse_import_expr
+              54             7  <alloc::raw_vec::RawVecInner<bun_ast::e::TapeAlloc>>::finish_grow
+              52             5  <bun_js_parser::p::P<false, false>>::e_new
+              52             4  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::ArrayJSON>
+              52             4  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Arrow>
+              52             4  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::Template>
+              52             4  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::Return>
+              40             2  <bun_js_parser::parser::Runtime::Features>::init_bundler_feature_flags
+              38             2  <hashbrown::raw::RawTableInner>::drop_inner_table::<(bun_collections::array_hash_map::StringHashMapKey, alloc::vec::Vec<bun_js_parser::defin
+              38             3  <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<bun_ast::e::TapeAlloc>
+              35             2  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::Try>
+              33             2  <bun_js_parser::p::P<false, false>>::s::<bun_ast::s::For>
+              33             6  <bun_js_parser::scan::scan_side_effects::SideEffects>::to_null_or_undefined::<false, true>
+              32             3  <bun_js_parser::p::P<false, false>>::s_continue
+              28             2  <bun_alloc::baby_vec::BabyVec<bun_ast::e::TemplatePart>>::grow_to
+              27             1  <alloc::raw_vec::RawVec<bun_ast::e::PropertyJSON>>::grow_one
+              27             2  <std::sys::thread_local::native::lazy::Storage<core::cell::RefCell<bun_collections::pool::DataStruct<bun_js_parser::parser::StringVoidMap>>,
+              26             0  <hashbrown::raw::RawTable<(bun_collections::array_hash_map::StringHashMapKey, bun_js_parser::defines::DefineData), bun_alloc::DefaultAlloc>>
+              26             2  <bun_ast::expr::expr_store::Store>::allocate::<bun_ast::e::New>
+              26             2  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::For>
+              26             2  <bun_ast::stmt::stmt_store::Store>::allocate::<bun_ast::s::Try>
+              26             2  core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_alloc::baby_vec::BabyVec<bun_ast::nodes::Part>>>
+              26             3  <bun_js_parser::parse::parse_entry::Parser>::has_bun_pragma
+              22             1  <bun_js_parser::p::P<false, false>>::parse_label_name
+              21             1  <std::sync::once_lock::OnceLock<bun_js_parser::defines_table::SyncDefineData>>::initialize::<<std::sync::once_lock::OnceLock<bun_js_parser::
+              21             2  <bun_ast::expr::Expr>::extract_string_values
+              20             1  <bun_ast::known_global::KnownGlobal>::minify_global_constructor
+              17             2  core::ptr::drop_glue::<bun_ast::Source>
+              17             4  <bun_ast::loader::__ComptimeStringMap_LOADER_NAMES>::__key_index
+              11             1  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_ast::expr::expr_store::Block>>>
+              11             1  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_ast::stmt::stmt_store::Block>>>
+              11             3  <bun_ast::expr::Data>::to_finite_number
+              11             2  <bun_ast::expr::Expr>::extract_numeric_values_in_safe_range
+              10             1  <bun_ast::expr::expr_store::Block>::new_boxed
+              10             1  <bun_ast::stmt::stmt_store::Block>::new_boxed
+              10             1  <std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<bun_js_parser::defines_table::SyncDefineData>>::initialize<<std::
+               3             1  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_ast::e::JsonTape>>>

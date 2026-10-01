@@ -1,0 +1,20 @@
+{
+ "files": 1390,
+ "skippedTsc": 0,
+ "skippedBun": 2,
+ "outputSame": 1392,
+ "outputDiff": 0,
+ "parens": 6084,
+ "parenMiss": 0,
+ "parenExtra": 1,
+ "parenOpenOff": 0,
+ "ann": 2528,
+ "annMiss": 0,
+ "annExtra": 0,
+ "ret": 179,
+ "retMiss": 0,
+ "retExtra": 0,
+ "blocks": 1390,
+ "multiBlock": 0
+}
+paren extra ..  2269  test/js/bun/http/serve-native-stream-client-abort-fixture.ts

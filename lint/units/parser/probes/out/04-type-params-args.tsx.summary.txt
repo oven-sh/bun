@@ -1,0 +1,1380 @@
+group 04-type-params-args  dialect tsx  config plain  inputs 11073
+counts A1=154 A1c=54 A1s=100 A2=1120 AA=4170 AAg=776 B=702 RR=4151
+
+calls of Bun that differ from transformSync without tsconfig: 119 inputs
+  "f<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "a.b<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "a?.b<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "new F<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "new a.b<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "f<A = B>`x`;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "f<A = B>`x${y}`;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B>\ng();"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B>[0];"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "f<A = 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B> + 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B> - 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B> g;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B> 1;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B> \"s\";"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B>\n(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = f<A = B>\n`x`;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "this<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "(f)<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "1<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "\"s\"<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "[]<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "({})<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "(function () {})<A = B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "function h() { new.target<A = B>(x) }"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "async function h() { await f<A = B>(x) }"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "function* h() { yield f<A = B>(x) }"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "@f<A,>(x) class C {}"  base="Unexpected >"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<>(x) class C {}"  base="Unexpected >"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<,>(x) class C {}"  base="Unexpected ,"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<A,,B>(x) class C {}"  base="Unexpected ,"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<,A>(x) class C {}"  base="Unexpected ,"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<A B>(x) class C {}"  base="Expected \">\" but found \"B\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A | >(x) class C {}"  base="Unexpected >"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<A & >(x) class C {}"  base="Unexpected >"  ts.plain.scanImports=ok ts.deco.transformSync=ok ts.deco.scan=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.transformSync=ok tsx.deco.scan=ok tsx.deco.scanImports=ok
+  "@f<asserts a>(x) class C {}"  base="Expected \">\" but found \"a\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<?A>(x) class C {}"  base="Unexpected ?"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A?>(x) class C {}"  base="Expected \">\" but found \"?\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<*>(x) class C {}"  base="Unexpected *"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<if>(x) class C {}"  base="Unexpected if"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<in A>(x) class C {}"  base="Unexpected in"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<out A>(x) class C {}"  base="Expected \">\" but found \"A\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<const A>(x) class C {}"  base="Expected \">\" but found \"A\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A = B>(x) class C {}"  base="Expected \">\" but found \"=\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A extends B>(x) class C {}"  base="Expected \"?\" but found \">\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<...A>(x) class C {}"  base="Unexpected ..."  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<a: A>(x) class C {}"  base="Expected \">\" but found \":\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A(x) class C {}"  base="Expected \">\" but found \"(\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<(a = 1) => void>(x) class C {}"  base="Expected \")\" but found \"=\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<({ a = 1 }) => void>(x) class C {}"  base="Unexpected ="  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A, B> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A, B, C> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A,> class C {}"  base="Unexpected >"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<> class C {}"  base="Unexpected >"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<,> class C {}"  base="Unexpected ,"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A,,B> class C {}"  base="Unexpected ,"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<,A> class C {}"  base="Unexpected ,"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A B> class C {}"  base="Expected \">\" but found \"B\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A | B> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A | > class C {}"  base="Unexpected >"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<| A> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A & > class C {}"  base="Unexpected >"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A extends B ? C : D> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<() => void> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<(a: A) => B> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<new () => A> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<{ a: A }> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<[A, B]> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A[]> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A<B>> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A<B<C>>> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A<B<C<D>>>> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<typeof a> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<keyof A> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<\"a\"> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<1> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<-1> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<`a${B}`> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<any> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<void> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<null> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<this> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<unique symbol> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<readonly A[]> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<infer U> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<a is B> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<asserts a> class C {}"  base="Expected \">\" but found \"a\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<import(\"x\")> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A.B.C> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A!> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<?A> class C {}"  base="Unexpected ?"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A?> class C {}"  base="Expected \">\" but found \"?\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<*> class C {}"  base="Unexpected *"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<if> class C {}"  base="Unexpected if"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<const> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<in A> class C {}"  base="Unexpected in"  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<out A> class C {}"  base="Expected \">\" but found \"A\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<const A> class C {}"  base="Expected \">\" but found \"A\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A = B> class C {}"  base="Expected \">\" but found \"=\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A extends B> class C {}"  base="Expected \"?\" but found \">\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<...A> class C {}"  base="Unexpected ..."  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<a: A> class C {}"  base="Expected \">\" but found \":\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<\nA\n> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A,\nB> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A class C {}"  base="Expected \">\" but found \"class\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f< A > class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<(A)> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<(a = 1) => void> class C {}"  base="Expected \")\" but found \"=\""  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<({ a = 1 }) => void> class C {}"  base="Unexpected ="  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<(a: ) => void> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<A | () => void> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "@f<keyof () => void> class C {}"  base=ok  ts.plain.scanImports="Expected \"class\" but found \"<\"" ts.deco.transformSync="Expected \"class\" but found \"<\"" ts.deco.scan="Expected \"class\" but found \"<\"" ts.deco.scanImports="Expected \"class\" but found \"<\"" tsx.plain.scanImports="Expected \"class\" but found \"<\"" tsx.deco.transformSync="Expected \"class\" but found \"<\"" tsx.deco.scan="Expected \"class\" but found \"<\"" tsx.deco.scanImports="Expected \"class\" but found \"<\""
+  "a < b >>= c"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "a<b>>=c"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "a<b>>>=c"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "class C extends implements {}"  base="\"implements\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "class C extends implements implements I {}"  base="\"implements\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "class C extends yield {}"  base="\"yield\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family tparams  (5696 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:933-1083 skip_type_script_type_parameters (flags per owner: parse_fn.rs:68 and :457 ALLOW_CONST_MODIFIER; parse/mod.rs:731 and parse_prefix.rs:576,:639 class: IN_OUT | CONST; src/js_parser/parse/parse_skip_typescript.rs:1129 and :1151 alias and interface: IN_OUT | EMPTY; parse_property.rs:626 member: CONST; src/js_parser/parse/parse_skip_typescript.rs:370,:377,:886 types: CONST); the error at src/js_parser/parse/parse_skip_typescript.rs:1038-1047 goes to the log directly and survives a backtrack
+  ref: parser.go:3270 parseTypeParameters, 3277 parseTypeParameter, 3908 parseModifiersEx(permitConstAsModifier)
+  counts A1=48 A2=854 AA=2092 AAg=534 B=86 RR=2082
+  -- A1: 3 distinct
+    "<out>"
+        contexts (16 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod objMethod callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x16: The modifier "out" is not valid here @form+1
+    "<out = A>"
+        contexts (16 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod objMethod callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x16: The modifier "out" is not valid here @form+1
+    "<const out>"
+        contexts (16 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod objMethod callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x16: The modifier "out" is not valid here @form+7
+  -- A2: 39 distinct
+    "<>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x26: Expected identifier but found ">" @form+1
+        tsc x26: TS1098 @form+0 len 2 "Type parameter list cannot be empty."
+        tsc x1: TS1092 @form+1 len 0 "Type parameters cannot appear on a constructor declaration."
+    "<in T>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 4 "Type parameters cannot appear on a constructor declaration."
+    "<out T>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<in out T>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<const in T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+7
+        bun x2: The modifier "const" is not valid here @form+1
+        tsc x20: TS1274 @form+7 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<in const T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        bun x2: The modifier "const" is not valid here @form+4
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+4 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<const out T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+7
+        bun x2: The modifier "const" is not valid here @form+1
+        tsc x20: TS1274 @form+7 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<out const T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        bun x2: The modifier "const" is not valid here @form+5
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+5 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<const in out T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+7
+        bun x2: The modifier "const" is not valid here @form+1
+        tsc x20: TS1274 @form+7 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<in out const T>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        bun x2: The modifier "const" is not valid here @form+8
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+8 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<out in T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        bun x8: The modifier "in" is not valid here @form+5
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x8: TS1029 @form+5 len 2 "'in' modifier must precede 'out' modifier."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<in in T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        bun x8: The modifier "in" is not valid here @form+4
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x8: TS1030 @form+4 len 2 "'in' modifier already seen."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<out out T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        bun x8: The modifier "out" is not valid here @form+5
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x8: TS1030 @form+5 len 3 "'out' modifier already seen."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<in T, out U>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x20: TS1274 @form+7 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<in out T, const U>"
+        contexts (22 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        bun x2: The modifier "const" is not valid here @form+11
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x2: TS1277 @form+11 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 17 "Type parameters cannot appear on a constructor declaration."
+    "<in out>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<out out>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<out out = A>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<out out, T>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "out" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<in out out>"
+        contexts (20 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<public T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+8
+        tsc x28: TS1273 @form+1 len 6 "'public' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<private T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+9
+        tsc x28: TS1273 @form+1 len 7 "'private' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<protected T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+11
+        tsc x28: TS1273 @form+1 len 9 "'protected' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<readonly T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+10
+        tsc x28: TS1273 @form+1 len 8 "'readonly' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<static T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+8
+        tsc x28: TS1273 @form+1 len 6 "'static' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<abstract T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+10
+        tsc x28: TS1273 @form+1 len 8 "'abstract' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<declare T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+9
+        tsc x28: TS1273 @form+1 len 7 "'declare' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<override T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+10
+        tsc x28: TS1273 @form+1 len 8 "'override' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<accessor T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+10
+        tsc x28: TS1273 @form+1 len 8 "'accessor' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<async T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "T" @form+7
+        tsc x28: TS1273 @form+1 len 5 "'async' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<public in T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "in" @form+8
+        tsc x28: TS1273 @form+1 len 6 "'public' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<in public T>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x20: The modifier "in" is not valid here @form+1
+        bun x8: Expected ">" but found "T" @form+11
+        tsc x20: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x8: TS1273 @form+4 len 6 "'public' modifier cannot appear on a type parameter"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A?>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Expected ">" but found "?" @form+12
+        tsc x28: TS17019 @form+11 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 12 "Type parameters cannot appear on a constructor declaration."
+    "<T extends !A>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        bun x28: Unexpected ! @form+11
+        tsc x28: TS17020 @form+11 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 12 "Type parameters cannot appear on a constructor declaration."
+    "<const T>"
+        contexts (2 of 32): iface alias
+        bun x2: The modifier "const" is not valid here @form+1
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "<const const T>"
+        contexts (2 of 32): iface alias
+        bun x2: The modifier "const" is not valid here @form+1
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "<const out>"
+        contexts (6 of 32): iface alias getter setter ctor objGetter
+        bun x2: The modifier "const" is not valid here @form+1
+        bun x4: The modifier "out" is not valid here @form+7
+        tsc x2: TS1277 @form+1 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<out>"
+        contexts (4 of 32): getter setter ctor objGetter
+        bun x4: The modifier "out" is not valid here @form+1
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 3 "Type parameters cannot appear on a constructor declaration."
+    "<out = A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        bun x4: The modifier "out" is not valid here @form+1
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+  -- B: 6 distinct
+    "<T extends a is B>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x28: TS1005 @form+13 len 2 "',' expected."
+    "<const\nT>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x26: TS1359 @form+1 len 5 "Identifier expected. 'const' is a reserved word that cannot be used here."
+    "<out extends A>"
+        contexts (8 of 32): classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias
+        tsc x8: TS1359 @form+5 len 7 "Identifier expected. 'extends' is a reserved word that cannot be used here."
+    "<out out extends A>"
+        contexts (8 of 32): classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias
+        tsc x8: TS1359 @form+9 len 7 "Identifier expected. 'extends' is a reserved word that cannot be used here."
+    "<in\nT>"
+        contexts (8 of 32): classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias
+        tsc x8: TS1359 @form+1 len 2 "Identifier expected. 'in' is a reserved word that cannot be used here."
+    "<out\nT>"
+        contexts (8 of 32): classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias
+        tsc x8: TS1005 @form+5 len 1 "',' expected."
+  -- AAg: 89 distinct
+    "<T extends infer U>"
+        contexts (28 of 32): fnDecl fnExpr namedFnExpr asyncFn generator declareFn classDecl classExpr namedClassExpr abstractClass declareClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x28: TS1338 @form+11 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 17 "Type parameters cannot appear on a constructor declaration."
+    "<yield>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<let>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 3 "Type parameters cannot appear on a constructor declaration."
+    "<static>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<public>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<implements>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 10 "Type parameters cannot appear on a constructor declaration."
+    "<interface>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<package>"
+        contexts (26 of 32): fnDecl fnExpr namedFnExpr asyncFn generator classDecl classExpr namedClassExpr abstractClass classExtends iface alias method staticMethod optionalMethod getter setter ctor objMethod objGetter callSig constructSig methodSig fnType ctorType abstractCtorType
+        tsc x15: TS1212 @form+1 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x11: TS1213 @form+1 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<T>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 1 "Type parameters cannot appear on a constructor declaration."
+    "<T, U>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 4 "Type parameters cannot appear on a constructor declaration."
+    "<T, U, V>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T = A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A = B>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 15 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A, U extends B = C>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 28 "Type parameters cannot appear on a constructor declaration."
+    "<T,>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 2 "Type parameters cannot appear on a constructor declaration."
+    "<T, U,>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<const T>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<const const T>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 13 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A extends B ? C : D>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 29 "Type parameters cannot appear on a constructor declaration."
+    "<T = A extends B ? C : D>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 23 "Type parameters cannot appear on a constructor declaration."
+    "<T extends keyof U>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 17 "Type parameters cannot appear on a constructor declaration."
+    "<T extends typeof a>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 18 "Type parameters cannot appear on a constructor declaration."
+    "<T extends () => void>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 20 "Type parameters cannot appear on a constructor declaration."
+    "<T extends new () => A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 21 "Type parameters cannot appear on a constructor declaration."
+    "<T extends { a: A }>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 18 "Type parameters cannot appear on a constructor declaration."
+    "<T extends [A, B]>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 16 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A[]>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 13 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A | B>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 15 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A & B = A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 19 "Type parameters cannot appear on a constructor declaration."
+    "<T extends \"a\" | \"b\">"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 19 "Type parameters cannot appear on a constructor declaration."
+    "<T extends 1>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T extends -1>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 12 "Type parameters cannot appear on a constructor declaration."
+    "<T extends `a${string}`>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 22 "Type parameters cannot appear on a constructor declaration."
+    "<T = () => void>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<T = A<B>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<T = A<B<C>>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A<B>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A<B<C>>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 17 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A<B> = C<D>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 21 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A<B>, U = C<D>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 24 "Type parameters cannot appear on a constructor declaration."
+    "<T extends a.b>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 13 "Type parameters cannot appear on a constructor declaration."
+    "<T extends a.b.c<D>>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 18 "Type parameters cannot appear on a constructor declaration."
+    "<T extends (A)>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 13 "Type parameters cannot appear on a constructor declaration."
+    "<T extends this>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<T extends void>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<T extends null>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 14 "Type parameters cannot appear on a constructor declaration."
+    "<T extends undefined>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 19 "Type parameters cannot appear on a constructor declaration."
+    "<T extends never = never>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 23 "Type parameters cannot appear on a constructor declaration."
+    "<as>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 2 "Type parameters cannot appear on a constructor declaration."
+    "<type>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 4 "Type parameters cannot appear on a constructor declaration."
+    "<of>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 2 "Type parameters cannot appear on a constructor declaration."
+    "<async>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<await>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<infer>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<keyof>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<readonly>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<unique>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<abstract>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<asserts>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<is>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 2 "Type parameters cannot appear on a constructor declaration."
+    "<any>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 3 "Type parameters cannot appear on a constructor declaration."
+    "<string>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<number>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<undefined>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<symbol>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<object>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<never>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<unknown>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<declare>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 7 "Type parameters cannot appear on a constructor declaration."
+    "<module>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<namespace>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<global>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 6 "Type parameters cannot appear on a constructor declaration."
+    "<get>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 3 "Type parameters cannot appear on a constructor declaration."
+    "<set>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 3 "Type parameters cannot appear on a constructor declaration."
+    "<satisfies>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<accessor>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<override>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 8 "Type parameters cannot appear on a constructor declaration."
+    "<arguments>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<eval>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 4 "Type parameters cannot appear on a constructor declaration."
+    "<intrinsic>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 9 "Type parameters cannot appear on a constructor declaration."
+    "<\nT\n>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+2 len 1 "Type parameters cannot appear on a constructor declaration."
+    "<T\n,\nU>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "<T\nextends A>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T extends\nA>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 11 "Type parameters cannot appear on a constructor declaration."
+    "<T =\nA>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 5 "Type parameters cannot appear on a constructor declaration."
+    "< T >"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+2 len 1 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A, >"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 12 "Type parameters cannot appear on a constructor declaration."
+    "<T extends A,\n>"
+        contexts (4 of 32): getter setter ctor objGetter
+        tsc x3: TS1094 @form-1 len 1 "An accessor cannot have type parameters."
+        tsc x1: TS1092 @form+1 len 12 "Type parameters cannot appear on a constructor declaration."
+
+==== family tparamsArrow  (1246 inputs)
+  bun: src/js_parser/parse/parse_prefix.rs:892-990 pfx_t_less_than (931-945 tsx: typescript.rs:44 is_ts_arrow_fn_jsx; 960-986 ts: try_skip_type_script_type_parameters_then_open_paren_with_backtracking, then "<T>x"), parse/mod.rs:1704 async arrow
+  ref: parser.go:4244 isParenthesizedArrowFunctionExpression, 4261 nextIsParenthesizedArrowFunctionExpression, 4390 parseParenthesizedArrowFunctionExpression, 5185 parseTypeAssertion
+  counts A1=5 A2=10 AA=222 AAg=5 B=5 RR=999
+  -- A1: 1 distinct
+    "<out = A>"
+        contexts (5 of 7): arrow arrowParam arrowRet asyncArrow arrowStmt
+        bun x5: The modifier "out" is not valid here @form+1
+  -- A2: 2 distinct
+    "<T extends A?>"
+        contexts (5 of 7): arrow arrowParam arrowRet asyncArrow arrowStmt
+        bun x4: Expected ">" but found "?" @form+12
+        bun x1: Expected ";" but found "extends" @form+3
+        tsc x5: TS17019 @form+11 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "<T extends !A>"
+        contexts (5 of 7): arrow arrowParam arrowRet asyncArrow arrowStmt
+        bun x4: Unexpected ! @form+11
+        bun x1: Expected ";" but found "extends" @form+3
+        tsc x5: TS17020 @form+11 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+  -- B: 1 distinct
+    "<T extends a is B>"
+        contexts (5 of 7): arrow arrowParam arrowRet asyncArrow arrowStmt
+        tsc x5: TS1005 @form+13 len 2 "',' expected."
+  -- AAg: 1 distinct
+    "<T extends infer U>"
+        contexts (5 of 7): arrow arrowParam arrowRet asyncArrow arrowStmt
+        tsc x5: TS1338 @form+11 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+
+==== family targsExpr  (3843 inputs)
+  bun: src/js_parser/parse/parse_suffix.rs:871-903 and :962-994 (try_skip_type_script_type_arguments_with_backtracking, src/js_parser/parse/parse_skip_typescript.rs:1331-1342, typescript.rs:10 can_follow_type_arguments_in_expression), parse_suffix.rs:187-194 (after "?."), parse_prefix.rs:692-697 (new)
+  ref: parser.go:5295 tryParseTypeArgumentsInExpression, 5323 canFollowTypeArgumentsInExpression, 5395 parseMemberExpressionRest, 5501 parseCallExpressionRest
+  counts A1=95 A2=237 AA=1669 AAg=234 B=593 RR=1015
+  -- A1: 3 distinct
+    "<(a = 1) => void>"
+        contexts (47 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x39: Expected ";" but found "=>" @form+9
+        bun x4: Expected ")" but found "=" @form+4
+        bun x2: Expected "]" but found "=>" @form+9
+        bun x1: Expected "}" but found "=>" @form+9
+        bun x1: Expected ")" but found "=>" @form+9
+    "<({ a = 1 }) => void>"
+        contexts (47 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x43: Unexpected "=" @form+6
+        bun x4: Unexpected = @form+6
+    "<A"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+  -- A2: 43 distinct
+    "<asserts a>"
+        contexts (48 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImport instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x39: Expected ";" but found "a" @form+9
+        bun x4: Expected ">" but found "a" @form+9
+        bun x2: Expected "]" but found "a" @form+9
+        bun x1: Expected "}" but found "a" @form+9
+        bun x1: Expected ")" but found "a" @form+9
+        bun x1: Unexpected < @form+0
+        tsc x47: TS1228 @form+1 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x2: TS1228 @form+15 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1326 @form-6 len 22 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<?A>"
+        contexts (48 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImport instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x47: Unexpected ? @form+1
+        bun x1: Unexpected < @form+0
+        tsc x47: TS17020 @form+1 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x2: TS17020 @form+8 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x1: TS1326 @form-6 len 15 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A?>"
+        contexts (48 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImport instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x43: Unexpected > @form+3
+        bun x4: Expected ">" but found "?" @form+2
+        bun x1: Unexpected < @form+0
+        tsc x47: TS17019 @form+1 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x2: TS17019 @form+8 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x1: TS1326 @form-6 len 15 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<*>"
+        contexts (48 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImport instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        bun x47: Unexpected * @form+1
+        bun x1: Unexpected < @form+0
+        tsc x47: TS8020 @form+1 len 1 "JSDoc types can only be used inside documentation comments."
+        tsc x2: TS8020 @form+7 len 1 "JSDoc types can only be used inside documentation comments."
+        tsc x1: TS1326 @form-6 len 14 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A,>"
+        contexts (4 of 61): optionalCall3 instClassExtends instImport instDecorator
+        bun x3: Unexpected > @form+3
+        bun x1: Unexpected < @form+0
+        tsc x3: TS1009 @form+2 len 1 "Trailing comma not allowed."
+        tsc x1: TS1326 @form-6 len 15 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<>"
+        contexts (4 of 61): optionalCall3 instClassExtends instImport instDecorator
+        bun x3: Unexpected > @form+1
+        bun x1: Unexpected < @form+0
+        tsc x3: TS1099 @form+0 len 2 "Type argument list cannot be empty."
+        tsc x1: TS1326 @form-6 len 13 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 14 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A, B>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A, B, C>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 20 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A | B>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 18 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<| A>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A extends B ? C : D>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 32 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<() => void>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 23 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<(a: A) => B>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 24 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<new () => A>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 24 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<{ a: A }>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 21 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<[A, B]>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 19 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A[]>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A<B>>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A<B<C>>>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 20 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A<B<C<D>>>>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 23 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<typeof a>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 21 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<keyof A>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 20 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<\"a\">"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<1>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 14 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<-1>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 15 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<`a${B}`>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 20 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<any>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<void>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<null>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<this>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<unique symbol>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 26 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<readonly A[]>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 25 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<infer U>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 20 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<import(\"x\")>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 24 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A.B.C>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 18 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A!>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 15 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<\nA\n>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<A,\nB>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 17 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "< A >"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<(A)>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 16 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<(a = 1) => void>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 28 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "<({ a = 1 }) => void>"
+        contexts (1 of 61): instImport
+        bun x1: Unexpected < @form+0
+        tsc x1: TS1326 @form-6 len 32 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+  -- B: 47 distinct
+    "<,>"
+        contexts (46 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x46: TS1110 @form+1 len 1 "Type expected."
+    "<A,,B>"
+        contexts (46 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x45: TS1110 @form+3 len 1 "Type expected."
+        tsc x1: TS1139 @form+3 len 1 "Type parameter declaration expected."
+    "<,A>"
+        contexts (46 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x46: TS1110 @form+1 len 1 "Type expected."
+    "<A | >"
+        contexts (46 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x46: TS1110 @form+5 len 1 "Type expected."
+    "<A & >"
+        contexts (46 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x46: TS1110 @form+5 len 1 "Type expected."
+    "<a is B>"
+        contexts (50 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator instDecoratorNoCall
+        tsc x26: TS1005 @form+3 len 2 "';' expected."
+        tsc x1: TS1003 @form+0 len 1 "Identifier expected."
+        tsc x19: TS1005 @form+3 len 2 "',' expected."
+        tsc x2: TS1005 @form+3 len 2 "'>' expected."
+        tsc x2: TS1146 @form+0 len 0 "Declaration expected."
+    "<const>"
+        contexts (50 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator instDecoratorNoCall
+        tsc x45: TS1109 @form+1 len 5 "Expression expected."
+        tsc x1: TS1003 @form+0 len 1 "Identifier expected."
+        tsc x2: TS1005 @form+1 len 5 "'>' expected."
+        tsc x2: TS1146 @form+0 len 0 "Declaration expected."
+    "<(a: ) => void>"
+        contexts (50 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator instDecoratorNoCall
+        tsc x49: TS1110 @form+5 len 1 "Type expected."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A | () => void>"
+        contexts (50 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator instDecoratorNoCall
+        tsc x49: TS1385 @form+4 len 11 "Function type notation must be parenthesized when used in a union type."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<keyof () => void>"
+        contexts (50 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instMember instOptional instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator instDecoratorNoCall
+        tsc x41: TS1005 @form+10 len 2 "';' expected."
+        tsc x1: TS1003 @form+0 len 1 "Identifier expected."
+        tsc x4: TS1005 @form+10 len 2 "',' expected."
+        tsc x2: TS1110 @form+8 len 1 "Type expected."
+        tsc x2: TS1146 @form+0 len 0 "Declaration expected."
+    "<A>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 3 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A, B>"
+        contexts (4 of 61): instMember instOptional instAsync instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1005 @form+9 len 1 "'=>' expected."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A, B, C>"
+        contexts (4 of 61): instMember instOptional instAsync instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 9 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1005 @form+12 len 1 "'=>' expected."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A,>"
+        contexts (2 of 61): instMember instOptional
+        tsc x2: TS1477 @form+0 len 4 "An instantiation expression cannot be followed by a property access."
+    "<>"
+        contexts (2 of 61): instMember instOptional
+        tsc x2: TS1477 @form+0 len 2 "An instantiation expression cannot be followed by a property access."
+    "<A | B>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 7 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<| A>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A extends B ? C : D>"
+        contexts (4 of 61): instMember instOptional instAsync instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 21 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1005 @form+13 len 1 "',' expected."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<() => void>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 12 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<(a: A) => B>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 13 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<new () => A>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 13 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<{ a: A }>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 10 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<[A, B]>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 8 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A[]>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A<B>>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A<B<C>>>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 9 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A<B<C<D>>>>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 12 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<typeof a>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 10 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<keyof A>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 9 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<\"a\">"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<1>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 3 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<-1>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 4 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<`a${B}`>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 9 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<any>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<void>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<null>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<this>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<unique symbol>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 15 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<readonly A[]>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 14 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<infer U>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 9 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<import(\"x\")>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 13 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A.B.C>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 7 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A!>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 4 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<\nA\n>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<A,\nB>"
+        contexts (4 of 61): instMember instOptional instAsync instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 6 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1005 @form+9 len 1 "'=>' expected."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "< A >"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+    "<(A)>"
+        contexts (3 of 61): instMember instOptional instDecoratorNoCall
+        tsc x2: TS1477 @form+0 len 5 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1146 @form+0 len 0 "Declaration expected."
+  -- AAg: 6 distinct
+    "<A,>"
+        contexts (43 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAwait instYield
+        tsc x43: TS1009 @form+2 len 1 "Trailing comma not allowed."
+        tsc x2: TS1009 @form+9 len 1 "Trailing comma not allowed."
+    "<>"
+        contexts (44 of 61): call callNoArgs memberCall optionalCall optionalCall2 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield
+        tsc x44: TS1099 @form+0 len 2 "Type argument list cannot be empty."
+        tsc x2: TS1099 @form+5 len 2 "Type argument list cannot be empty."
+    "<unique symbol>"
+        contexts (47 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        tsc x47: TS1335 @form+1 len 13 "'unique symbol' types are not allowed here."
+        tsc x2: TS1335 @form+19 len 13 "'unique symbol' types are not allowed here."
+    "<infer U>"
+        contexts (47 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        tsc x47: TS1338 @form+1 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+        tsc x2: TS1338 @form+13 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "<A!>"
+        contexts (47 of 61): call callNoArgs memberCall optionalCall optionalCall2 optionalCall3 newCall newNoArgs newMember tagged taggedSubst inst instStmt instNewline instAs instSatisfies instComma instObj instTernary instOr instEq instAssign instParenOnNextLine instTypeof instIn instInstanceof instReturn instArrowBody instSpread instTemplateNext instClassExtends instClassExtendsCall instExportDefault instArg instThis instImportMeta instParen instNumberLit instStringLit instArrayLit instObjLit instFnExpr instNewTarget instAsync instAwait instYield instDecorator
+        tsc x47: TS17019 @form+1 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x2: TS17019 @form+8 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "<null>"
+        contexts (6 of 61): instIndex instPlus instMinus instIdent instNumber instString
+        tsc x6: TS18050 @form+1 len 4 "The value 'null' cannot be used here."
+
+==== family targsType  (104 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:1183-1230 skip_type_script_type_arguments, lexer expect_greater_than splits ">>", ">=", ">>="
+  ref: parser.go:3056 parseTypeArgumentsOfTypeReference, 3063 parseTypeArguments, 3041 reScanGreaterThanToken
+  counts AA=80 RR=24
+
+==== family targsHeritage  (118 inputs)
+  bun: src/js_parser/parse/mod.rs:147-160 (class extends: expression at Level::New, then type arguments), 163-174 (implements: arbitrary types), src/js_parser/parse/parse_skip_typescript.rs:1156-1177 (interface)
+  ref: parser.go:1824 parseHeritageClauses, 1884 parseExpressionWithTypeArguments
+  counts A1=6 A2=16 AA=62 AAg=3 B=17 RR=14
+  -- A1: 6 distinct
+    "class C implements a() {}"
+        bun x1: Expected "{" but found "(" @20
+    "class C implements a.b() {}"
+        bun x1: Expected "{" but found "(" @22
+    "class C implements a?.b {}"
+        bun x1: Expected "{" but found "?." @20
+    "class C implements new A {}"
+        bun x1: Expected "(" but found "A" @23
+    "class C implements A.#b {}"
+        bun x1: Expected identifier but found "#b" @21
+    "class C extends super.a {}"
+        bun x1: Unexpected "super" @16
+  -- A2: 16 distinct
+    "class C extends B<> {}"
+        bun x1: Unexpected > @18
+        tsc x1: TS1099 @17 len 2 "Type argument list cannot be empty."
+    "class C extends B<A,> {}"
+        bun x1: Unexpected > @20
+        tsc x1: TS1009 @19 len 1 "Trailing comma not allowed."
+    "class C implements D<> {}"
+        bun x1: Unexpected > @21
+        tsc x1: TS1099 @20 len 2 "Type argument list cannot be empty."
+    "class C implements D<E,> {}"
+        bun x1: Unexpected > @23
+        tsc x1: TS1009 @22 len 1 "Trailing comma not allowed."
+    "class C implements {}"
+        bun x1: Expected "{" but found end of file @21
+        tsc x1: TS1097 @18 len 0 "'implements' list cannot be empty."
+    "class C implements D, {}"
+        bun x1: Expected "{" but found end of file @24
+        tsc x1: TS1009 @20 len 1 "Trailing comma not allowed."
+    "class C implements D implements E {}"
+        bun x1: Expected "{" but found "implements" @21
+        tsc x1: TS1175 @21 len 10 "'implements' clause already seen."
+    "class C implements D extends B {}"
+        bun x1: Expected "?" but found "{" @31
+        tsc x1: TS1173 @21 len 7 "'extends' clause must precede 'implements' clause."
+    "class C extends B extends D {}"
+        bun x1: Expected "{" but found "extends" @18
+        tsc x1: TS1172 @18 len 7 "'extends' clause already seen."
+    "class C extends B, D {}"
+        bun x1: Expected "{" but found "," @17
+        tsc x1: TS1174 @19 len 1 "Classes can only extend a single class."
+    "class C extends {}"
+        bun x1: Expected "{" but found end of file @18
+        tsc x1: TS1097 @15 len 0 "'extends' list cannot be empty."
+    "class C extends B<A> extends D {}"
+        bun x1: Expected "{" but found "extends" @21
+        tsc x1: TS1172 @21 len 7 "'extends' clause already seen."
+    "const c = class implements {};"
+        bun x1: Expected "{" but found ";" @29
+        tsc x1: TS1213 @16 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "class C extends implements {}"
+        bun x1: "implements" is a reserved word and cannot be used in strict mode @16
+        tsc x1: TS1097 @15 len 0 "'extends' list cannot be empty."
+        tsc x1: TS1097 @26 len 0 "'implements' list cannot be empty."
+    "class C extends implements implements I {}"
+        bun x1: "implements" is a reserved word and cannot be used in strict mode @16
+        tsc x1: TS1097 @15 len 0 "'extends' list cannot be empty."
+        tsc x1: TS1097 @26 len 0 "'implements' list cannot be empty."
+        tsc x1: TS1175 @27 len 10 "'implements' clause already seen."
+    "class C extends yield {}"
+        bun x1: "yield" is a reserved word and cannot be used in strict mode @16
+        tsc x1: TS1213 @16 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+  -- B: 17 distinct
+    "class C extends B<A>.D {}"
+        tsc x1: TS1477 @17 len 3 "An instantiation expression cannot be followed by a property access."
+    "class C implements string[] {}"
+        tsc x1: TS1011 @26 len 0 "An element access expression should take an argument."
+    "class C implements () => void {}"
+        tsc x1: TS1109 @20 len 1 "Expression expected."
+    "class C implements typeof x {}"
+        tsc x1: TS1109 @19 len 6 "Expression expected."
+    "class C implements A | B {}"
+        tsc x1: TS1005 @21 len 1 "',' expected."
+    "class C implements A & B {}"
+        tsc x1: TS1005 @21 len 1 "',' expected."
+    "class C implements keyof A {}"
+        tsc x1: TS1005 @25 len 1 "',' expected."
+    "class C implements void {}"
+        tsc x1: TS1109 @19 len 4 "Expression expected."
+    "class C implements A extends B ? D : E {}"
+        tsc x1: TS1005 @31 len 1 "',' expected."
+    "class C implements A<B>.D {}"
+        tsc x1: TS1477 @20 len 3 "An instantiation expression cannot be followed by a property access."
+    "class C implements unique symbol {}"
+        tsc x1: TS1005 @26 len 6 "',' expected."
+    "class C implements readonly A[] {}"
+        tsc x1: TS1005 @28 len 1 "',' expected."
+    "class C implements abstract new () => A {}"
+        tsc x1: TS1005 @28 len 3 "',' expected."
+    "class C implements a is B {}"
+        tsc x1: TS1005 @21 len 2 "',' expected."
+    "class C extends await b {}"
+        tsc x1: TS1005 @22 len 1 "',' expected."
+    "class C extends typeof b {}"
+        tsc x1: TS1109 @16 len 6 "Expression expected."
+    "class C extends void 0 {}"
+        tsc x1: TS1109 @16 len 4 "Expression expected."
+  -- AAg: 3 distinct
+    "class implements {}"
+        tsc x1: TS1213 @6 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "class implements implements I {}"
+        tsc x1: TS1211 @0 len 5 "A class declaration without the 'default' modifier must have a name."
+        tsc x1: TS1097 @16 len 0 "'implements' list cannot be empty."
+        tsc x1: TS1175 @17 len 10 "'implements' clause already seen."
+    "class C extends B implements implements {}"
+        tsc x1: TS1097 @28 len 0 "'implements' list cannot be empty."
+        tsc x1: TS1175 @29 len 10 "'implements' clause already seen."
+
+==== family targsJsx  (66 inputs)
+  bun: src/js_parser/parse/parse_jsx.rs:28 skip_type_script_type_arguments::<true, false>
+  ref: parser.go:4981 parseJsxOpeningOrSelfClosingElementOrOpeningFragment
+  counts A2=3 AA=45 B=1 RR=17
+  -- A2: 3 distinct
+    "const v = <C<> />;"
+        bun x1: Unexpected > @13
+        tsc x1: TS1099 @12 len 2 "Type argument list cannot be empty."
+    "const v = <C<A,> />;"
+        bun x1: Unexpected > @15
+        tsc x1: TS1009 @14 len 1 "Trailing comma not allowed."
+    "const f = <T,>(a: T)\n=> a;"
+        bun x1: Unexpected newline before "=>" @21
+        tsc x1: TS1200 @21 len 2 "Line terminator not permitted before arrow."
+  -- B: 1 distinct
+    "const f = <T extends=\"a\">(a: T) => a</T>;"
+        tsc x1: TS1382 @33 len 1 "Unexpected token. Did you mean `{'>'}` or `&gt;`?"

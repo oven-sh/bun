@@ -1,0 +1,159 @@
+file stmt1.ts bytes=762 statements=26
+s_directive @14
+s_local @35
+  b_identifier @39 a
+  e_number @43
+  b_identifier @46 b
+s_local @49
+  b_identifier @53 c
+  e_number @57
+s_local @60
+  b_identifier @66 d
+  e_number @70
+  b_object @73
+    e_string @75
+    b_identifier @75 e
+    e_string @78
+    b_identifier @81 g
+    e_number @85
+    e_missing @93
+    b_identifier @91 h
+  e_identifier @97 o
+  b_array @100
+    b_identifier @101 i
+    b_missing @104
+    b_identifier @106 j
+    e_number @110
+    b_identifier @116 k
+  e_identifier @121 arr
+s_if @126
+  e_identifier @130 a
+  s_expr @133
+    e_identifier @133 b
+  s_if @141
+    e_identifier @145 c
+    s_block @148
+      s_expr @150
+        e_identifier @150 d
+    s_empty @-1
+s_do_while @162
+  s_expr @165
+    e_call @165
+      e_identifier @165 x
+  e_identifier @177 y
+s_while @180
+  e_identifier @187 y
+  s_expr @190
+    e_call @190
+      e_identifier @190 x
+s_for @195
+  s_local @200
+    b_identifier @204 i
+    e_number @208
+  e_binary @211
+    e_number @215
+    e_identifier @211 i
+  e_unary @219
+    e_identifier @219 i
+  s_block @224
+s_for @227
+  s_block @236
+s_for_in @239
+  s_local @244
+    b_identifier @250 k
+  e_identifier @255 o
+  s_block @258
+s_for_of @261
+  s_expr @266
+    e_identifier @266 x
+  e_identifier @271 xs
+  s_block @275
+s_for_of @278
+  s_local @283
+    b_array @287
+      b_identifier @288 a1
+      b_identifier @292 b1
+  e_identifier @299 xs
+  s_empty @-1
+s_label @305
+  s_for @310
+    s_block @319
+      s_break @321
+      s_continue @332
+s_switch @348
+  e_identifier @356 a
+  e_number @366
+  s_expr @369
+    e_call @369
+      e_identifier @369 x
+  s_break @374
+  s_expr @390
+    e_call @390
+      e_identifier @390 y
+  e_number @400
+s_try @405
+  s_expr @411
+    e_call @411
+      e_identifier @411 a
+  b_identifier @425 e
+  s_expr @430
+    e_call @430
+      e_identifier @430 b
+  s_expr @447
+    e_call @447
+      e_identifier @447 c
+s_try @454
+  s_expr @460
+    e_call @460
+      e_identifier @460 a
+  s_expr @475
+    e_call @475
+      e_identifier @475 b
+s_throw @482
+  e_new @488
+    e_identifier @492 Error
+    e_string @498
+s_debugger @504
+s_function @514
+  b_identifier @526 a
+  b_identifier @529 b
+  e_number @533
+  b_identifier @539 c
+  s_return @544
+    e_identifier @551 a
+s_function @556
+  s_expr @579
+    e_await @579
+      e_identifier @585 a
+  s_for_of @588
+    s_local @599
+      b_identifier @605 x
+    e_identifier @610 y
+    s_block @613
+s_function @618
+  s_expr @636
+    e_yield @636
+  s_expr @643
+    e_yield @643
+      e_number @649
+  s_expr @652
+    e_yield @652
+      e_call @659
+        e_identifier @659 g
+s_class @666
+s_class @677
+  e_identifier @693 C
+  e_string @697
+  e_number @701
+  e_string @711
+  e_string @714
+  e_function @720
+s_block @728
+  s_expr @730
+    e_identifier @730 a
+s_with @735
+  e_identifier @741 o
+  s_block @744
+    s_expr @746
+      e_identifier @746 p
+s_export_clause @751

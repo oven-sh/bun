@@ -1,0 +1,212 @@
+checker-state v1
+OPTIONS [strict=false]
+FILE /lib.es5.d.ts
+FILE /empty.ts
+SINCE type=0 signature=0
+STATE
+MARK after inline part of NewChecker (line 1117): TypeCount=63 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK start of initializeChecker: TypeCount=63 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK after global merge and global augmentations (line 1349): TypeCount=63 SymbolCount=6 SignatureCount=4 globals=117 mergedSymbols=0 diagnostics=0
+MARK after special types (line 1376): TypeCount=84 SymbolCount=6 SignatureCount=4 globals=118 mergedSymbols=0 diagnostics=0
+MARK end of initializeChecker: TypeCount=84 SymbolCount=6 SignatureCount=4 globals=118 mergedSymbols=0 diagnostics=0
+COUNTS TypeCount=84 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=118
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=84 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=84
+RESOLUTIONSTACK 0 []
+TYPE 1 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 2 flags=0x1 objectFlags=0x40000 data=Intrinsic name="any"
+TYPE 3 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 4 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 5 flags=0x1 objectFlags=0x0 data=Intrinsic name="error"
+TYPE 6 flags=0x1 objectFlags=0x0 data=Intrinsic name="unresolved"
+TYPE 7 flags=0x1 objectFlags=0x10000 data=Intrinsic name="any"
+TYPE 8 flags=0x1 objectFlags=0x0 data=Intrinsic name="intrinsic"
+TYPE 9 flags=0x2 objectFlags=0x0 data=Intrinsic name="unknown"
+TYPE 10 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 11 flags=0x4 objectFlags=0x10000 data=Intrinsic name="undefined"
+TYPE 12 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 13 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 14 flags=0x8 objectFlags=0x0 data=Intrinsic name="null"
+TYPE 15 flags=0x8 objectFlags=0x10000 data=Intrinsic name="null"
+TYPE 16 flags=0x20 objectFlags=0x0 data=Intrinsic name="string"
+TYPE 17 flags=0x40 objectFlags=0x0 data=Intrinsic name="number"
+TYPE 18 flags=0x80 objectFlags=0x0 data=Intrinsic name="bigint"
+TYPE 19 flags=0x2000 objectFlags=0x0 data=Literal value=false fresh=T20 regular=T19
+TYPE 20 flags=0x2000 objectFlags=0x0 data=Literal value=false fresh=T20 regular=T19
+TYPE 21 flags=0x2000 objectFlags=0x0 data=Literal value=true fresh=T22 regular=T21
+TYPE 22 flags=0x2000 objectFlags=0x0 data=Literal value=true fresh=T22 regular=T21
+TYPE 23 flags=0x8000100 objectFlags=0x8000 data=Union types=[T19 T21]
+TYPE 24 flags=0x200 objectFlags=0x0 data=Intrinsic name="symbol"
+TYPE 25 flags=0x10 objectFlags=0x0 data=Intrinsic name="void"
+TYPE 26 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 27 flags=0x40000 objectFlags=0x40000 data=Intrinsic name="never"
+TYPE 28 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 29 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 30 flags=0x20000 objectFlags=0x0 data=Intrinsic name="object"
+TYPE 31 flags=0x8000000 objectFlags=0x8000 data=Union types=[T16 T17]
+TYPE 32 flags=0x8000000 objectFlags=0x8000 data=Union types=[T16 T17 T24]
+TYPE 33 flags=0x8000000 objectFlags=0x8000 data=Union types=[T17 T18]
+TYPE 34 flags=0x400000 objectFlags=0x0 data=TemplateLiteral texts=["" ""] types=[T17]
+TYPE 35 flags=0x8000000 objectFlags=0x8000 data=Union types=[T16 T17 T18 T19 T21]
+TYPE 36 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 37 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 38 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 39 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 40 flags=0x100000 objectFlags=0x200010 data=Object symbol=Y1 members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 41 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 42 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil inst=[]
+TYPE 43 flags=0x100000 objectFlags=0x240010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 44 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 45 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 46 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 47 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 48 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T47
+TYPE 49 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 50 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 51 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T50
+TYPE 52 flags=0x400 objectFlags=0x0 data=Literal value=s"" fresh=nil regular=T52
+TYPE 53 flags=0x800 objectFlags=0x0 data=Literal value=n0 fresh=nil regular=T53
+TYPE 54 flags=0x1000 objectFlags=0x0 data=Literal value=b0 fresh=nil regular=T54
+TYPE 55 flags=0x400 objectFlags=0x0 data=Literal value=s"bigint" fresh=nil regular=T55
+TYPE 56 flags=0x400 objectFlags=0x0 data=Literal value=s"boolean" fresh=nil regular=T56
+TYPE 57 flags=0x400 objectFlags=0x0 data=Literal value=s"function" fresh=nil regular=T57
+TYPE 58 flags=0x400 objectFlags=0x0 data=Literal value=s"number" fresh=nil regular=T58
+TYPE 59 flags=0x400 objectFlags=0x0 data=Literal value=s"object" fresh=nil regular=T59
+TYPE 60 flags=0x400 objectFlags=0x0 data=Literal value=s"string" fresh=nil regular=T60
+TYPE 61 flags=0x400 objectFlags=0x0 data=Literal value=s"symbol" fresh=nil regular=T61
+TYPE 62 flags=0x400 objectFlags=0x0 data=Literal value=s"undefined" fresh=nil regular=T62
+TYPE 63 flags=0x8000000 objectFlags=0x8000 data=Union types=[T55 T56 T57 T58 T59 T60 T61 T62]
+TYPE 64 flags=0x100000 objectFlags=0x2 data=Interface symbol="IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 targs=nil tparams=nil outer=0 this=nil
+TYPE 65 flags=0x100000 objectFlags=0x10 data=Object symbol=Y2
+TYPE 66 flags=0x100000 objectFlags=0x6 data=Interface symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T66 inst=[T66 T76 T77] targs=[T67] tparams=[T67 T68] outer=0 this=T68
+TYPE 67 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 constraint=nil
+TYPE 68 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 constraint=T66 isThisType
+TYPE 69 flags=0x100000 objectFlags=0x2 data=Interface symbol="Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 targs=nil tparams=nil outer=0 this=nil
+TYPE 70 flags=0x100000 objectFlags=0x2 data=Interface symbol="Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 targs=nil tparams=nil outer=0 this=nil
+TYPE 71 flags=0x100000 objectFlags=0x2 data=Interface symbol="String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 targs=nil tparams=nil outer=0 this=nil
+TYPE 72 flags=0x100000 objectFlags=0x2 data=Interface symbol="Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 targs=nil tparams=nil outer=0 this=nil
+TYPE 73 flags=0x100000 objectFlags=0x2 data=Interface symbol="Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 targs=nil tparams=nil outer=0 this=nil
+TYPE 74 flags=0x100000 objectFlags=0x6 data=Interface symbol="RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 target=T74 inst=[T74] targs=[] tparams=[T75] outer=0 this=T75
+TYPE 75 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 constraint=T74 isThisType
+TYPE 76 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T66 targs=[T1]
+TYPE 77 flags=0x100000 objectFlags=0x40004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T66 targs=[T2]
+TYPE 78 flags=0x100000 objectFlags=0x6 data=Interface symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target=T78 inst=[T78 T81] targs=[T79] tparams=[T79 T80] outer=0 this=T80
+TYPE 79 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 constraint=nil
+TYPE 80 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 constraint=T78 isThisType
+TYPE 81 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target=T78 targs=[T1]
+TYPE 82 flags=0x100000 objectFlags=0x6 data=Interface symbol="ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 target=T82 inst=[T82] targs=[T83] tparams=[T83 T84] outer=0 this=T84
+TYPE 83 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 constraint=nil
+TYPE 84 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 constraint=T82 isThisType
+SIGNATURE 1 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T1
+SIGNATURE 2 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T5
+SIGNATURE 3 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T1
+SIGNATURE 4 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T27
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T66
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T67
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T73
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T70
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T64
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T72
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T69
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T78
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T79
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T74
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T71
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T82
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T83
+FIELD varianceTypeParameter nil
+FIELD nanType nil
+FIELD undefinedSymbol Y3
+FIELD argumentsSymbol Y4
+FIELD requireSymbol Y5
+FIELD unknownSymbol Y6
+FIELD globalThisSymbol Y2
+FIELD anyType T1
+FIELD autoType T2
+FIELD wildcardType T3
+FIELD blockedStringType T4
+FIELD errorType T5
+FIELD unresolvedType T6
+FIELD nonInferrableAnyType T7
+FIELD intrinsicMarkerType T8
+FIELD unknownType T9
+FIELD undefinedType T10
+FIELD undefinedWideningType T11
+FIELD missingType T12
+FIELD undefinedOrMissingType T10
+FIELD optionalType T13
+FIELD nullType T14
+FIELD nullWideningType T15
+FIELD stringType T16
+FIELD numberType T17
+FIELD bigintType T18
+FIELD regularFalseType T19
+FIELD falseType T20
+FIELD regularTrueType T21
+FIELD trueType T22
+FIELD booleanType T23
+FIELD esSymbolType T24
+FIELD voidType T25
+FIELD neverType T26
+FIELD silentNeverType T27
+FIELD implicitNeverType T28
+FIELD unreachableNeverType T29
+FIELD nonPrimitiveType T30
+FIELD stringOrNumberType T31
+FIELD stringNumberSymbolType T32
+FIELD numberOrBigIntType T33
+FIELD templateConstraintType T35
+FIELD numericStringType T34
+FIELD uniqueLiteralType T36
+FIELD emptyObjectType T37
+FIELD emptyJsxObjectType T38
+FIELD emptyFreshJsxObjectType T39
+FIELD emptyTypeLiteralType T40
+FIELD unknownEmptyObjectType T41
+FIELD unknownUnionType T9
+FIELD emptyGenericType T42
+FIELD anyFunctionType T43
+FIELD noConstraintType T44
+FIELD circularConstraintType T45
+FIELD resolvingDefaultType T46
+FIELD markerSuperType T47
+FIELD markerSubType T48
+FIELD markerOtherType T49
+FIELD markerSuperTypeForCheck T50
+FIELD markerSubTypeForCheck T51
+FIELD anySignature S1
+FIELD unknownSignature S2
+FIELD resolvingSignature S3
+FIELD silentNeverSignature S4
+FIELD globalObjectType T69
+FIELD globalFunctionType T70
+FIELD globalCallableFunctionType T70
+FIELD globalNewableFunctionType T70
+FIELD globalArrayType T66
+FIELD globalReadonlyArrayType T78
+FIELD globalStringType T71
+FIELD globalNumberType T72
+FIELD globalBooleanType T73
+FIELD globalRegExpType T74
+FIELD globalThisType T82
+FIELD anyArrayType T76
+FIELD autoArrayType T77
+FIELD anyReadonlyArrayType T81
+FIELD deferredGlobalImportMetaExpressionType nil
+FIELD emptyStringType T52
+FIELD zeroType T53
+FIELD zeroBigIntType T54
+FIELD typeofType T63
+GLOBALS count=118 transient=2
+SYMBOL Y1 name="\xFEtype" flags=0x2000800 checkFlags=0x0 declarations=[]
+SYMBOL Y2 name="globalThis" flags=0x2000600 checkFlags=0x8 declarations=[] exports=118 type=T65
+SYMBOL Y3 name="undefined" flags=0x2000004 checkFlags=0x0 declarations=[] type=T11
+SYMBOL Y4 name="arguments" flags=0x2000004 checkFlags=0x0 declarations=[] type=T64
+SYMBOL Y5 name="require" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y6 name="unknown" flags=0x2000004 checkFlags=0x0 declarations=[] type=T5
+SYMBOLS named=6 unnamed=0

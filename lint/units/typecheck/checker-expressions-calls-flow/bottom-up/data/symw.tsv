@@ -1,0 +1,14 @@
+E-LITERAL	checker.go:13343	c.checkObjectLiteral	prop.Flags |= ast.SymbolFlagsOptional
+E-LITERAL	checker.go:13349	c.checkObjectLiteral	prop.Flags |= impliedProp.Flags & ast.SymbolFlagsOptional
+E-LITERAL	checker.go:13354	c.checkObjectLiteral	prop.Declarations = member.Declarations
+E-LITERAL	checker.go:13355	c.checkObjectLiteral	prop.Parent = member.Parent
+E-LITERAL	checker.go:13356	c.checkObjectLiteral	prop.ValueDeclaration = member.ValueDeclaration
+E-LITERAL	checker.go:13361	c.checkObjectLiteral	allPropertiesTable[prop.Name] = prop
+E-LITERAL	checker.go:13420	c.checkObjectLiteral	propertiesTable[member.Name] = member
+E-LITERAL	checker.go:13552	c.getSpreadType	members[rightProp.Name] = c.getSpreadSymbol(rightProp, readonly)
+E-LITERAL	checker.go:13582	c.getSpreadType	result.Declarations = declarations
+E-LITERAL	checker.go:13584	c.getSpreadType	members[leftProp.Name] = result
+E-LITERAL	checker.go:13587	c.getSpreadType	members[leftProp.Name] = c.getSpreadSymbol(leftProp, readonly)
+E-LITERAL	checker.go:13669	c.tryMergeUnionOfObjectTypeAndEmptyObject	result.Declarations = prop.Declarations
+E-LITERAL	checker.go:13672	c.tryMergeUnionOfObjectTypeAndEmptyObject	members[prop.Name] = result
+E-LITERAL	checker.go:13699	c.getSpreadSymbol	result.Declarations = prop.Declarations

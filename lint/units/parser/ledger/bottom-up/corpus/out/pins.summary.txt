@@ -1,0 +1,11 @@
+Pins are calls of the existing tests with a TypeScript loader, recorded with the base build.
+pins (call sites x distinct input): 967; files of itBundled cases: 173
+the test expects an error: 266
+   tsc parses the input without a diagnostic (a set A fix flips the expectation): 101   -> pins.flip.tsv
+      by class of rule R (A1 split): {"A1v":13,"A2":77,"A3":10,"A1j":1}; tsc's emit parses as js for 82
+   tsc rejects as well: 165
+the test expects the input to be accepted: 701
+   the parser of tsc rejects it (a parse without lint must keep accepting it): 11   -> pins.keep.tsv
+   tsc accepts as well: 690
+files of itBundled cases that the bun side accepts and tsc rejects: 0; that the bun side rejects and tsc parses: 3
+recorded outcome and the stage 1 verdict of the same loader disagree (options of the test's transpiler): 5   -> pins.odd.tsv

@@ -1,0 +1,26 @@
+"({a, a} = {a})" no-self-assign
+    1:12-1:13 no-self-assign "'a' is assigned to itself."
+    1:12-1:13 no-self-assign "'a' is assigned to itself."
+"x === NaN === NaN" use-isnan
+    1:1-1:18 use-isnan "Use the isNaN function to compare with NaN."
+    1:1-1:10 use-isnan "Use the isNaN function to compare with NaN."
+"(x === NaN) === NaN" use-isnan
+    1:1-1:20 use-isnan "Use the isNaN function to compare with NaN."
+    1:2-1:11 use-isnan "Use the isNaN function to compare with NaN."
+"[a, a] = [a, a]" no-self-assign
+    1:11-1:12 no-self-assign "'a' is assigned to itself."
+    1:14-1:15 no-self-assign "'a' is assigned to itself."
+"({a: 1, a: 2, a: 3})" no-dupe-keys
+    1:9-1:10 no-dupe-keys "Duplicate key 'a'."
+    1:15-1:16 no-dupe-keys "Duplicate key 'a'."
+"debugger; var {} = [,];" no-debugger,no-empty-pattern,no-sparse-arrays
+    1:1-1:10 no-debugger "Unexpected 'debugger' statement."
+    1:15-1:17 no-empty-pattern "Unexpected empty object pattern."
+    1:21-1:22 no-sparse-arrays "Unexpected comma in middle of array."
+"NaN === -0" no-compare-neg-zero,use-isnan
+    1:1-1:11 no-compare-neg-zero "Do not use the '===' operator to compare against -0."
+    1:1-1:11 use-isnan "Use the isNaN function to compare with NaN."
+"!typeof a == 'strnig'" no-unsafe-negation,valid-typeof
+"a = a; ({b:1,b:2})" no-dupe-keys,no-self-assign
+    1:5-1:6 no-self-assign "'a' is assigned to itself."
+    1:14-1:15 no-dupe-keys "Duplicate key 'b'."

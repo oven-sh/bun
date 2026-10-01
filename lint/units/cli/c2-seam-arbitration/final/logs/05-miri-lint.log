@@ -1,0 +1,20 @@
+   Compiling bun_ast v0.0.0 (/tmp/c2td/ws/ast)
+   Compiling bun_lint v0.0.0 (/tmp/c2td/ws/lint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.32s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/586edcc91c9c8c6b/out/bun_lint-586edcc91c9c8c6b)
+
+running 10 tests
+test tests::a_chain_is_indented_and_related_information_is_a_note ... ok
+test tests::a_column_counts_utf16_code_units ... ok
+test tests::a_line_break_inside_a_text_is_one_space ... ok
+test tests::bun_and_tsc_differ_at_the_end_of_the_file_and_after_a_lone_cr ... ok
+test tests::duplicates_give_their_related_information_to_the_first ... ok
+test tests::every_line_terminator_of_ecmascript_starts_a_line ... ok
+test tests::paths_are_printed_as_tsc_prints_them ... ok
+test tests::the_frame_format ... ok
+test tests::the_order_of_the_reference ... ok
+test tests::the_plain_format_is_sorted_and_has_no_duplicate ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.63s
+
+miri-lint-exit=0

@@ -1,0 +1,7 @@
+src/shell_parser/lib.rs:1:30: warning: `feature(generic_const_exprs)` is not supported with the next-generation trait solver
+warning: `bun_shell_parser` (lib) generated 1 warning
+    Checking bun_jsc v0.0.0 (/tmp/c2arb/shadow/src/jsc)
+src/jsc/VirtualMachine.rs:3611:20: error[E0004]: non-exhaustive patterns: `bun_ast::Metadata::Code(_)` not covered: pattern `bun_ast::Metadata::Code(_)` not covered
+src/jsc/lib.rs:1378:11: error[E0004]: non-exhaustive patterns: `bun_ast::Metadata::Code(_)` not covered: pattern `bun_ast::Metadata::Code(_)` not covered
+error: could not compile `bun_jsc` (lib) due to 2 previous errors
+exit=101

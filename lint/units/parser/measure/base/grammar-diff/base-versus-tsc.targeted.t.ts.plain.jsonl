@@ -1,0 +1,170 @@
+{"cls":"A","src":"type as = 1;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Unexpected =",1,9]],"tsc":[]}
+{"cls":"A","src":"type satisfies = 1;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Unexpected =",1,16]],"tsc":[]}
+{"cls":"A","src":"interface as {}","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found end of file",1,15]],"tsc":[]}
+{"cls":"A","src":"interface satisfies {}","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found end of file",1,22]],"tsc":[]}
+{"cls":"A","src":"declare\nconst x: 1;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["The constant \"x\" must be initialized",2,7]],"tsc":[]}
+{"cls":"A","src":"type A<out in T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"in\" is not valid here",1,12]],"tsc":[]}
+{"cls":"A","src":"type A<in in T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"in\" is not valid here",1,11]],"tsc":[]}
+{"cls":"A","src":"type A<const T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"const\" is not valid here",1,8]],"tsc":[]}
+{"cls":"A","src":"type A<const in T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"const\" is not valid here",1,8]],"tsc":[]}
+{"cls":"A","src":"type A<public T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Expected \">\" but found \"T\"",1,15],["Unexpected >",1,16],["Unexpected =",1,18]],"tsc":[]}
+{"cls":"A","src":"type A<readonly T> = T;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":[["Expected \">\" but found \"T\"",1,17],["Unexpected >",1,18],["Unexpected =",1,20]],"tsc":[]}
+{"cls":"B","src":"export type as = 1;","prod":"01-contextual-keywords","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"'{' expected."]]}
+{"cls":"A","src":"const v = <out>x;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"out\" is not valid here",1,12]],"tsc":[]}
+{"cls":"A","src":"const v = <in>x;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"in\" is not valid here",1,12],["Unexpected in",1,12]],"tsc":[]}
+{"cls":"A","src":"const v = <out T>(a: T) => a;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"out\" is not valid here",1,12]],"tsc":[]}
+{"cls":"B","src":"f<A | >(x);","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1110,"Type expected."]]}
+{"cls":"B","src":"f<,>(x);","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1110,"Type expected."]]}
+{"cls":"B","src":"f<A>.b;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"B","src":"f<A>.b();","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"B","src":"f<A>?.b;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"B","src":"a.b<C>.d;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"B","src":"new f<A>.b();","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"A","src":"super.a!;","prod":"02-expressions","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"super\"",1,1]],"tsc":[]}
+{"cls":"A","src":"(this: A) => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Invalid binding pattern",1,2]],"tsc":[]}
+{"cls":"B","src":"(a): => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"';' expected."],[1128,"Declaration or statement expected."]]}
+{"cls":"B","src":"(a: A): => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1110,"Type expected."]]}
+{"cls":"B","src":"(a!: A) => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"')' expected."],[1434,"Unexpected keyword or identifier."],[1128,"Declaration or statement expected."],[1128,"Declaration or statement expected."]]}
+{"cls":"B","src":"(a!) => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"';' expected."]]}
+{"cls":"A","src":"(public a: A) => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,9],["Expected \";\" but found \":\"",1,10],["Expected \";\" but found \")\"",1,13],["Unexpected =>",1,15]],"tsc":[]}
+{"cls":"A","src":"(readonly a: A) => a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,11],["Expected \";\" but found \":\"",1,12],["Expected \";\" but found \")\"",1,15],["Unexpected =>",1,17]],"tsc":[]}
+{"cls":"A","src":"(a): A\n=> a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Unexpected newline before \"=>\"",2,1]],"tsc":[]}
+{"cls":"A","src":"async (a: A)\n=> a;","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Unexpected newline before \"=>\"",2,1]],"tsc":[]}
+{"cls":"A","src":"function f<in T>(a: T): T {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"in\" is not valid here",1,12]],"tsc":[]}
+{"cls":"A","src":"function f<>(a) {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \">\"",1,12],["Expected \">\" but found \"(\"",1,13]],"tsc":[]}
+{"cls":"A","src":"function f(public a: A) {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,19],["Expected \";\" but found \")\"",1,23]],"tsc":[]}
+{"cls":"A","src":"function f(private a) {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,20],["Expected \";\" but found \")\"",1,21]],"tsc":[]}
+{"cls":"A","src":"function f(readonly a: A) {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,21],["Expected \";\" but found \")\"",1,25]],"tsc":[]}
+{"cls":"A","src":"function f(override a: A) {}","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,21],["Expected \";\" but found \")\"",1,25]],"tsc":[]}
+{"cls":"A","src":"({ m(a: A): B; });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \";\"",1,14],["Expected \"}\" but found \")\"",1,17],["Expected \")\" but found \";\"",1,18]],"tsc":[]}
+{"cls":"A","src":"({ m(a: A); });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \";\"",1,11],["Expected \"}\" but found \")\"",1,14],["Expected \")\" but found \";\"",1,15]],"tsc":[]}
+{"cls":"A","src":"({ a?: 1 });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"?\"",1,5],["Expected \")\" but found \"}\"",1,10],["Unexpected \":\"",1,6]],"tsc":[]}
+{"cls":"A","src":"({ a!: 1 });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"!\"",1,5],["Expected \")\" but found \"}\"",1,10],["Unexpected \":\"",1,6]],"tsc":[]}
+{"cls":"A","src":"({ m?() {} });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"?\"",1,5],["Expected \")\" but found \"{\"",1,9],["Unexpected }",1,10]],"tsc":[]}
+{"cls":"A","src":"({ m!() {} });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"!\"",1,5],["Expected \")\" but found \"{\"",1,9],["Unexpected }",1,10]],"tsc":[]}
+{"cls":"A","src":"({ readonly a: 1 });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"a\"",1,13],["Expected \")\" but found \"}\"",1,18],["Unexpected \":\"",1,14]],"tsc":[]}
+{"cls":"A","src":"({ public a: 1 });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"a\"",1,11],["Expected \")\" but found \"}\"",1,16],["Unexpected \":\"",1,12]],"tsc":[]}
+{"cls":"A","src":"({ public m() {} });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"m\"",1,11],["Expected \")\" but found \"{\"",1,15],["Unexpected }",1,16]],"tsc":[]}
+{"cls":"A","src":"({ declare a: 1 });","prod":"03-arrows-functions","ctx":null,"t":null,"mut":null,"bun":[["Expected \"}\" but found \"a\"",1,12],["Expected \")\" but found \"}\"",1,17],["Unexpected \":\"",1,13]],"tsc":[]}
+{"cls":"A","src":"class C { accessor static a: A }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"a\"",1,27],["Expected identifier but found \":\"",1,28]],"tsc":[]}
+{"cls":"A","src":"class C { accessor readonly a: A }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"a\"",1,29],["Expected identifier but found \":\"",1,30]],"tsc":[]}
+{"cls":"A","src":"class C { accessor m() {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["auto-accessor properties cannot have a method body",1,20]],"tsc":[]}
+{"cls":"A","src":"class C { accessor get a() {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"a\"",1,24],["Expected identifier but found \"(\"",1,25],["Expected \";\" but found \"{\"",1,28],["Unexpected }",1,31]],"tsc":[]}
+{"cls":"A","src":"abstract class C { abstract abstract a: A }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"a\"",1,38],["Expected identifier but found \":\"",1,39]],"tsc":[]}
+{"cls":"A","src":"abstract declare class C {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"declare\"",1,10]],"tsc":[]}
+{"cls":"A","src":"abstract abstract class C {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"abstract\"",1,10]],"tsc":[]}
+{"cls":"A","src":"abstract interface I {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"interface\"",1,10],["Expected \";\" but found \"{\"",1,22],["Unexpected }",1,23]],"tsc":[]}
+{"cls":"A","src":"abstract enum E {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"enum\"",1,10],["Expected \";\" but found \"{\"",1,17],["Unexpected }",1,18]],"tsc":[]}
+{"cls":"A","src":"abstract function f() {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"function\"",1,10],["Expected \";\" but found \"{\"",1,23],["Unexpected }",1,24]],"tsc":[]}
+{"cls":"A","src":"abstract const a = 1;","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"const\"",1,10]],"tsc":[]}
+{"cls":"B","src":"class C { m!(): void {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1441,"Cannot start a function call in a type annotation."],[1068,"Unexpected token. A constructor, method, accessor, or property was expected."],[1068,"Unexpected token. A constructor, method, accessor, or property was expected."],[1068,"Unexpected token. A constructor, method, accessor, or property was expected."],[1128,"Declaration or statement expected."]]}
+{"cls":"B","src":"class C { get a?(): A { return 1 } }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"'(' expected."],[1068,"Unexpected token. A constructor, method, accessor, or property was expected."],[1005,"'=>' expected."],[1128,"Declaration or statement expected."]]}
+{"cls":"A","src":"class C { constructor(static a: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,30],["Expected \";\" but found \")\"",1,34],["Expected identifier but found \"{\"",1,36]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(declare a: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,31],["Expected \";\" but found \")\"",1,35],["Expected identifier but found \"{\"",1,37]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(abstract a: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,32],["Expected \";\" but found \")\"",1,36],["Expected identifier but found \"{\"",1,38]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(accessor a: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,32],["Expected \";\" but found \")\"",1,36],["Expected identifier but found \"{\"",1,38]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(public ...a: A[]) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"...\"",1,30],["Expected \";\" but found \"a\"",1,33],["Expected identifier but found \":\"",1,34],["Expected \";\" but found \"[\"",1,37],["Expected identifier but found \"]\"",1,38],["Expected \";\" but found \"{\"",1,41],["Unexpected }",1,44]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(public { a }: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"{\"",1,30],["Expected \")\" but found \"}\"",1,34],["Expected \";\" but found \")\"",1,38],["Expected identifier but found \"{\"",1,40]],"tsc":[]}
+{"cls":"A","src":"class C { constructor(public [a]: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"[\"",1,30],["Expected \")\" but found \"]\"",1,32],["Expected \";\" but found \")\"",1,36],["Expected identifier but found \"{\"",1,38]],"tsc":[]}
+{"cls":"A","src":"class C { m(public a: A) {} }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"a\"",1,20],["Expected \";\" but found \")\"",1,24],["Expected identifier but found \"{\"",1,26]],"tsc":[]}
+{"cls":"A","src":"class C { [k: string] }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \":\" but found \"}\"",1,23],["Unexpected end of file",1,23]],"tsc":[]}
+{"cls":"A","src":"class C { [k: string, l: number]: A }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"]\" but found \",\"",1,21],["Expected \":\" but found \"l\"",1,23],["Unexpected :",1,24],["Expected \";\" but found \"]\"",1,32],["Expected identifier but found \":\"",1,33]],"tsc":[]}
+{"cls":"A","src":"class C<> {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \">\"",1,9],["Expected \">\" but found \"{\"",1,11]],"tsc":[]}
+{"cls":"A","src":"class C extends B<> {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Unexpected >",1,19]],"tsc":[]}
+{"cls":"B","src":"class C extends B<A>.D {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1477,"An instantiation expression cannot be followed by a property access."]]}
+{"cls":"A","src":"class C implements A, {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found end of file",1,24]],"tsc":[]}
+{"cls":"A","src":"class C implements {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found end of file",1,21]],"tsc":[]}
+{"cls":"A","src":"class C implements A extends B {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"?\" but found \"{\"",1,32],["Unexpected }",1,33],["Unexpected end of file",1,33]],"tsc":[]}
+{"cls":"A","src":"class C implements A implements B {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \"implements\"",1,22],["Expected \";\" but found \"{\"",1,35]],"tsc":[]}
+{"cls":"A","src":"class C extends A extends B {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \"extends\"",1,19],["Expected \";\" but found \"{\"",1,29]],"tsc":[]}
+{"cls":"A","src":"class C extends A, B {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \",\"",1,18],["Expected \";\" but found \"{\"",1,22]],"tsc":[]}
+{"cls":"B","src":"class C implements A[] {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1011,"An element access expression should take an argument."]]}
+{"cls":"B","src":"class C implements typeof a {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1109,"Expression expected."],[1005,"';' expected."]]}
+{"cls":"B","src":"class C implements A | B {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"',' expected."],[1005,"';' expected."]]}
+{"cls":"B","src":"class C implements () => void {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1109,"Expression expected."],[1005,"',' expected."],[1109,"Expression expected."]]}
+{"cls":"A","src":"class C extends implements {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["\"implements\" is a reserved word and cannot be used in strict mode",1,17]],"tsc":[]}
+{"cls":"A","src":"class extends A {}","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"extends\"",1,7]],"tsc":[]}
+{"cls":"A","src":"let x = class implements {};","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \";\"",1,28],["Expected \"}\" but found end of file",1,28]],"tsc":[]}
+{"cls":"A","src":"declare class { }","prod":"04-classes","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"{\"",1,15]],"tsc":[]}
+{"cls":"B","src":"enum E { A;B }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1357,"An enum member name must be followed by a ',', '=', or '}'."]]}
+{"cls":"A","src":"enum E { [a] = 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"[\"",1,10]],"tsc":[]}
+{"cls":"A","src":"enum E { ['a'] = 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"[\"",1,10]],"tsc":[]}
+{"cls":"A","src":"enum E { 1 = 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"1\"",1,10]],"tsc":[]}
+{"cls":"A","src":"enum E { 1n = 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"1n\"",1,10]],"tsc":[]}
+{"cls":"A","src":"enum E { #a = 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"#a\"",1,10]],"tsc":[]}
+{"cls":"A","src":"namespace N { export default 1 }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected default",1,22]],"tsc":[]}
+{"cls":"A","src":"namespace N { export {} }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected {",1,22]],"tsc":[]}
+{"cls":"A","src":"namespace N { export { a } }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected {",1,22]],"tsc":[]}
+{"cls":"A","src":"namespace N { export * from 'a' }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected *",1,22]],"tsc":[]}
+{"cls":"A","src":"namespace N { import a from 'a' }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"=\" but found \"from\"",1,24],["Expected identifier but found \"'a'\"",1,29]],"tsc":[]}
+{"cls":"A","src":"module 'm' {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"'m'\"",1,8]],"tsc":[]}
+{"cls":"A","src":"module \"m\" { export const a: A }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"\"m\"\"",1,8],["Unexpected export",1,14]],"tsc":[]}
+{"cls":"A","src":"module 'm'","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"'m'\"",1,8]],"tsc":[]}
+{"cls":"A","src":"module 'm';","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"'m'\"",1,8]],"tsc":[]}
+{"cls":"B","src":"declare namespace N;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"'{' expected."]]}
+{"cls":"A","src":"declare global;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \";\"",1,15],["Unexpected end of file",1,15]],"tsc":[]}
+{"cls":"A","src":"global {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"{\"",1,8],["Unexpected }",1,9]],"tsc":[]}
+{"cls":"A","src":"global { interface Window {} }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"{\"",1,8],["Unexpected }",1,30]],"tsc":[]}
+{"cls":"A","src":"declare using a: A;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Cannot use \"declare\" with a \"using\" declaration",1,9]],"tsc":[]}
+{"cls":"A","src":"declare await using a: A;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Cannot use \"declare\" with an \"await using\" declaration",1,9]],"tsc":[]}
+{"cls":"A","src":"declare import a from 'a';","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"import\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare export default a;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"export\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare export {};","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"export\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare {};","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"{\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare 1;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"1\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare a;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"a\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare a: A;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"a\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare if (a) {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"if\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare return;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"return\"",1,9]],"tsc":[]}
+{"cls":"A","src":"declare { a }","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Unexpected \"{\"",1,9]],"tsc":[]}
+{"cls":"B","src":"export declare;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1128,"Declaration or statement expected."]]}
+{"cls":"A","src":"export module 'm' {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"'m'\"",1,15]],"tsc":[]}
+{"cls":"A","src":"interface I extends A, {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found end of file",1,25]],"tsc":[]}
+{"cls":"A","src":"interface I<const T> {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["The modifier \"const\" is not valid here",1,13]],"tsc":[]}
+{"cls":"A","src":"interface I extends {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found end of file",1,22]],"tsc":[]}
+{"cls":"B","src":"interface I extends A[] {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1011,"An element access expression should take an argument."]]}
+{"cls":"B","src":"interface I extends typeof a {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1109,"Expression expected."],[1005,"';' expected."]]}
+{"cls":"B","src":"interface I extends A | B {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"',' expected."],[1005,"';' expected."]]}
+{"cls":"A","src":"interface I extends a() {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \"(\"",1,22],["Unexpected )",1,23]],"tsc":[]}
+{"cls":"A","src":"interface I extends a.b() {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"{\" but found \"(\"",1,24],["Unexpected )",1,25]],"tsc":[]}
+{"cls":"A","src":"interface I extends A extends B {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \"?\" but found \"{\"",1,33],["Unexpected }",1,34],["Unexpected end of file",1,34]],"tsc":[]}
+{"cls":"A","src":"let a!;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \":\" but found \";\"",1,7],["Unexpected end of file",1,7]],"tsc":[]}
+{"cls":"A","src":"let a! = 1;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \":\" but found \"=\"",1,8]],"tsc":[]}
+{"cls":"A","src":"const a: A;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["The constant \"a\" must be initialized",1,7]],"tsc":[]}
+{"cls":"A","src":"const a!: A;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["The constant \"a\" must be initialized",1,7]],"tsc":[]}
+{"cls":"B","src":"let { a }!: A = b;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"',' expected."],[1109,"Expression expected."]]}
+{"cls":"B","src":"let [a]!: A = b;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"',' expected."],[1109,"Expression expected."]]}
+{"cls":"B","src":"for (let a!: A of b) {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1005,"',' expected."],[1109,"Expression expected."],[1434,"Unexpected keyword or identifier."],[1434,"Unexpected keyword or identifier."],[1434,"Unexpected keyword or identifier."],[1128,"Declaration or statement expected."]]}
+{"cls":"A","src":"try {} catch (e: any = 1) {}","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \")\" but found \"=\"",1,22],["Expected \"{\" but found \"1\"",1,24],["Unexpected )",1,25]],"tsc":[]}
+{"cls":"A","src":"using { a }: A = b;","prod":"05-declarations","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"{\"",1,7],["Unexpected }",1,11]],"tsc":[]}
+{"cls":"A","src":"import type A, { B } from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected \"from\" but found \",\"",1,14]],"tsc":[]}
+{"cls":"A","src":"import type A, * as B from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected \"from\" but found \",\"",1,14]],"tsc":[]}
+{"cls":"A","src":"import defer a from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected \"from\" but found \"a\"",1,14]],"tsc":[]}
+{"cls":"A","src":"import defer { a } from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected \"from\" but found \"{\"",1,14]],"tsc":[]}
+{"cls":"A","src":"import A = require(a);","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected string but found \"a\"",1,20]],"tsc":[]}
+{"cls":"A","src":"export import A from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected \"=\" but found \"from\"",1,17],["Expected identifier but found \"'a'\"",1,22]],"tsc":[]}
+{"cls":"A","src":"export import { A } from 'a';","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"{\"",1,15]],"tsc":[]}
+{"cls":"A","src":"export { type if };","prod":"06-imports-exports","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"if\"",1,15]],"tsc":[]}
+{"cls":"A","src":"@d?.e class C {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator",1,3]],"tsc":[]}
+{"cls":"A","src":"@d`e` class C {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"`e`\"",1,3],["Expected \";\" but found \"class\"",1,7],["Expected \";\" but found \"{\"",1,15],["Unexpected }",1,16]],"tsc":[]}
+{"cls":"A","src":"@new d class C {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected identifier but found \"new\"",1,2]],"tsc":[]}
+{"cls":"A","src":"@d interface I {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"interface\"",1,4]],"tsc":[]}
+{"cls":"A","src":"@d type T = 1;","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"type\"",1,4]],"tsc":[]}
+{"cls":"A","src":"@d enum E {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"enum\"",1,4]],"tsc":[]}
+{"cls":"A","src":"@d namespace N {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"namespace\"",1,4]],"tsc":[]}
+{"cls":"A","src":"@d function f() {}","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"function\"",1,4]],"tsc":[]}
+{"cls":"A","src":"@d let a;","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \"class\" but found \"let\"",1,4]],"tsc":[]}
+{"cls":"A","src":"class C { @d constructor(a: A) {} }","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["TypeScript does not allow decorators on class constructors",1,11]],"tsc":[]}
+{"cls":"A","src":"class C { @d a: asserts b }","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"b\"",1,25]],"tsc":[]}
+{"cls":"B","src":"class C { @d a: b is A }","prod":"07-decorator-metadata","ctx":null,"t":null,"mut":null,"bun":null,"tsc":[[1442,"Expected '=' for property initializer."],[1128,"Declaration or statement expected."]]}
+{"cls":"A","src":"if (a) namespace N {}","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"N\"",1,18]],"tsc":[]}
+{"cls":"A","src":"label: namespace N {}","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"N\"",1,18]],"tsc":[]}
+{"cls":"A","src":"{ namespace N {} }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"N\"",1,13]],"tsc":[]}
+{"cls":"A","src":"{ export type A = 1; }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Unexpected export",1,3]],"tsc":[]}
+{"cls":"A","src":"{ import type { A } from 'a'; }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Unexpected type",1,10]],"tsc":[]}
+{"cls":"A","src":"function f() { namespace N {} }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"N\"",1,26]],"tsc":[]}
+{"cls":"A","src":"function f() { export type A = 1; }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Unexpected export",1,16]],"tsc":[]}
+{"cls":"A","src":"function f() { declare module 'm' {} }","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["Expected \";\" but found \"'m'\"",1,31],["Unexpected \"module\"",1,24]],"tsc":[]}
+{"cls":"A","src":"enum E {} class E {}","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["\"E\" has already been declared",1,17]],"tsc":[]}
+{"cls":"A","src":"enum E {} let E;","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["\"E\" has already been declared",1,15]],"tsc":[]}
+{"cls":"A","src":"namespace N { export const a = 1 } let N;","prod":"08-tsx-misc","ctx":null,"t":null,"mut":null,"bun":[["\"N\" has already been declared",1,40]],"tsc":[]}

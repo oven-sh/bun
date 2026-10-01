@@ -1,0 +1,2 @@
+compiler/a b.errors.txt.diff
+compiler/a#b.errors.txt.diff

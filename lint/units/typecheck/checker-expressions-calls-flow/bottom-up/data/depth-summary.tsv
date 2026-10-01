@@ -1,0 +1,6 @@
+maxNodeDepth	files=12445	p50=6	p99=15	p99.9=25	max=4957	over100=5	over500=2
+maxExprDepth	files=12445	p50=3	p99=11	p99.9=20	max=4954	over100=4	over500=2
+maxNestedBinary	files=12445	p50=0	p99=2	p99.9=9	max=4953	over100=2	over500=2
+maxAccessChain	files=12445	p50=0	p99=4	p99.9=7	max=10	over100=0	over500=0
+maxParen	files=12445	p50=0	p99=1	p99.9=3	max=69	over100=0	over500=0
+maxStatementsInList	files=12445	p50=3	p99=67	p99.9=178	max=10001	over100=61	over500=3

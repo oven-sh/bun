@@ -1,0 +1,38 @@
+file q8.ts bytes=189 statements=6
+s_local @0
+  b_identifier @4 x
+  e_function @8
+  b_identifier @24 y
+  e_class @28
+  b_identifier @38 z
+  e_arrow @42
+s_local @58
+  b_identifier @62 o
+  e_object @66
+    e_string @68
+    e_function @69
+    e_string @82
+    e_function @83
+    e_string @94
+    e_function @95
+      s_return @100
+        e_number @107
+s_expr @114
+  e_call @115
+    e_function @115
+s_expr @134
+  e_call @135
+    e_arrow @135
+s_expr @148
+  e_unary @148
+    e_call @149
+      e_function @149
+s_expr @167
+  e_binary @167
+    e_if @171
+      e_identifier @171 b
+      e_identifier @176 c
+      e_binary @182
+        e_identifier @185 e
+        e_identifier @182 d
+    e_identifier @167 a

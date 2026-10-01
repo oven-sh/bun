@@ -1,0 +1,303 @@
+diff -ruN /tmp/pes/base/p.rs ./p.rs
+--- /tmp/pes/base/p.rs	2026-09-30 01:01:40.903085956 +0000
++++ ./p.rs	2026-09-30 01:30:47.097192521 +0000
+@@ -220,6 +220,9 @@
+     pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
+     pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
+     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
++    pub(crate) lint: bool,
++    pub(crate) lint_types: Vec<[u32; 4]>,
++    pub(crate) lint_wrappers: Vec<(Expr, u32, u32)>,
+ }
+ 
+ #[derive(Clone, Copy)]
+diff -ruN /tmp/pes/base/parse/mod.rs ./parse/mod.rs
+--- /tmp/pes/base/parse/mod.rs	2026-09-30 01:01:40.903512682 +0000
++++ ./parse/mod.rs	2026-09-30 01:30:47.098660164 +0000
+@@ -421,6 +421,40 @@
+         level: Level,
+         opts: ParenExprOpts,
+     ) -> Result<Expr, Error> {
++        self.parse_paren_expr_impl::<false>(loc, level, opts)
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn parse_paren_expr_for_lint(
++        &mut self,
++        loc: bun_ast::Loc,
++        level: Level,
++        opts: ParenExprOpts,
++    ) -> Result<Expr, Error> {
++        self.parse_paren_expr_impl::<true>(loc, level, opts)
++    }
++
++    #[inline(always)]
++    pub(crate) fn parse_paren_expr_either(
++        &mut self,
++        loc: bun_ast::Loc,
++        level: Level,
++        opts: ParenExprOpts,
++    ) -> Result<Expr, Error> {
++        if Self::IS_TYPESCRIPT_ENABLED && self.starts_for_parse_only.is_some() {
++            return self.parse_paren_expr_for_lint(loc, level, opts);
++        }
++        self.parse_paren_expr(loc, level, opts)
++    }
++
++    #[inline(always)]
++    fn parse_paren_expr_impl<const LINT: bool>(
++        &mut self,
++        loc: bun_ast::Loc,
++        level: Level,
++        opts: ParenExprOpts,
++    ) -> Result<Expr, Error> {
+         let p = self;
+         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
+         let mut errors = DeferredErrors::default();
+@@ -471,7 +505,11 @@
+             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+                 type_colon_range = p.lexer.range();
+                 p.lexer.next()?;
+-                p.skip_type_script_type(Level::Lowest)?;
++                if LINT {
++                    p.lint_arrow_parameter_type(&item)?;
++                } else {
++                    p.skip_type_script_type(Level::Lowest)?;
++                }
+             }
+ 
+             // There may be a "=" after the type (but not after an "as" cast)
+@@ -578,8 +616,14 @@
+                     if is_arrow_fn {
+                         // We know this will succeed because we've already done it once above
+                         p.lexer.next()?;
+-                        p.skip_typescript_return_type()?;
++                        if LINT {
++                            p.lint_arrow_return_type_known(loc)?;
++                        } else {
++                            p.skip_typescript_return_type()?;
++                        }
+                     }
++                } else if LINT {
++                    is_arrow_fn = p.lint_try_arrow_return_type(loc);
+                 } else {
+                     // Otherwise, do the less expensive check
+                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
+@@ -650,6 +694,9 @@
+ 
+             let mut value = Expr::join_all_with_comma(items);
+             p.mark_expr_as_parenthesized(&mut value);
++            if LINT {
++                p.lint_parenthesized(loc, &value);
++            }
+             return Ok(value);
+         }
+ 
+@@ -1682,7 +1729,7 @@
+                 // "async () => {}"
+                 T::TOpenParen => {
+                     p.lexer.next()?;
+-                    return p.parse_paren_expr(
++                    return p.parse_paren_expr_either(
+                         async_range.loc,
+                         level,
+                         ParenExprOpts {
+@@ -1706,7 +1753,7 @@
+                             SkipTypeParameterResult::DidNotSkipAnything => {}
+                             result => {
+                                 p.lexer.next()?;
+-                                return p.parse_paren_expr(
++                                return p.parse_paren_expr_either(
+                                     async_range.loc,
+                                     level,
+                                     ParenExprOpts {
+diff -ruN /tmp/pes/base/parse/parse_prefix.rs ./parse/parse_prefix.rs
+--- /tmp/pes/base/parse/parse_prefix.rs	2026-09-30 01:01:40.903968204 +0000
++++ ./parse/parse_prefix.rs	2026-09-30 01:30:47.098903686 +0000
+@@ -61,7 +61,7 @@
+             return Ok(value);
+         }
+ 
+-        p.parse_paren_expr(
++        p.parse_paren_expr_either(
+             loc,
+             level,
+             ParenExprOpts {
+@@ -933,7 +933,7 @@
+                 let _ =
+                     p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+                 p.lexer.expect(T::TOpenParen)?;
+-                return p.parse_paren_expr(
++                return p.parse_paren_expr_either(
+                     loc,
+                     level,
+                     ParenExprOpts {
+@@ -966,7 +966,7 @@
+                 SkipTypeParameterResult::DidNotSkipAnything => {}
+                 result => {
+                     p.lexer.expect(T::TOpenParen)?;
+-                    return p.parse_paren_expr(
++                    return p.parse_paren_expr_either(
+                         loc,
+                         level,
+                         ParenExprOpts {
+diff -ruN /tmp/pes/base/parse/parse_skip_typescript.rs ./parse/parse_skip_typescript.rs
+--- /tmp/pes/base/parse/parse_skip_typescript.rs	2026-09-30 01:01:40.904113419 +0000
++++ ./parse/parse_skip_typescript.rs	2026-09-30 01:30:47.098192516 +0000
+@@ -1477,3 +1477,155 @@
+         skipped
+     }
+ }
++
++impl crate::p::StartsForParseOnly {
++    #[inline]
++    pub(crate) fn lint_mark(&self) -> [u32; 2] {
++        [self.lint_types.len() as u32, self.lint_wrappers.len() as u32]
++    }
++    #[inline]
++    pub(crate) fn lint_rewind(&mut self, mark: [u32; 2]) {
++        self.lint_types.truncate(mark[0] as usize);
++        self.lint_wrappers.truncate(mark[1] as usize);
++    }
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_rewind_to(&mut self, start: usize) {
++        while self.lint_types.last().is_some_and(|r| r[2] as usize >= start) {
++            self.lint_types.pop();
++        }
++        while self.lint_wrappers.last().is_some_and(|r| r.1 as usize >= start) {
++            self.lint_wrappers.pop();
++        }
++    }
++}
++impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_arrow_parameter_type(&mut self, item: &bun_ast::Expr) -> Result<(), Error> {
++        let key = match &item.data {
++            bun_ast::ExprData::ESpread(spread) => spread.value.loc,
++            _ => item.loc,
++        };
++        let start = self.lexer.start as u32;
++        self.skip_type_script_type_with_opts::<Discard>(
++            Level::Lowest,
++            SkipTypeOptionsBitset::empty(),
++            &mut (),
++        )?;
++        let end = self.lexer.start as u32;
++        if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++            side.lint_types.push([0, key.start as u32, start, end]);
++        }
++        Ok(())
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_arrow_return_type_known(&mut self, arrow: bun_ast::Loc) -> Result<(), Error> {
++        let start = self.lexer.start as u32;
++        self.skip_typescript_return_type()?;
++        let end = self.lexer.start as u32;
++        if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++            side.lint_types.push([1, arrow.start as u32, start, end]);
++        }
++        Ok(())
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_try_arrow_return_type(&mut self, arrow: bun_ast::Loc) -> bool {
++        let old_lexer = self.lexer.snapshot();
++        let old_log_disabled = self.lexer.is_log_disabled;
++        self.lexer.is_log_disabled = true;
++        let mark = self.starts_for_parse_only.as_deref().map(|side| side.lint_mark());
++        let result: Result<(u32, u32), Error> = (|| {
++            self.lexer.expect(T::TColon)?;
++            let start = self.lexer.start as u32;
++            self.skip_typescript_return_type()?;
++            if self.lexer.token != T::TEqualsGreaterThan {
++                return Err(crate::Error::Backtrack);
++            }
++            Ok((start, self.lexer.start as u32))
++        })();
++        self.lexer.is_log_disabled = old_log_disabled;
++        match result {
++            Ok((start, end)) => {
++                if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++                    side.lint_types.push([1, arrow.start as u32, start, end]);
++                }
++                true
++            }
++            Err(_) => {
++                self.lexer.restore(&old_lexer);
++                self.lexer.is_log_disabled = old_log_disabled;
++                if let (Some(side), Some(mark)) = (self.starts_for_parse_only.as_deref_mut(), mark) {
++                    side.lint_rewind(mark);
++                }
++                false
++            }
++        }
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_arrow_return_type(
++        &mut self,
++        arrow: bun_ast::Loc,
++        after_question: bool,
++        arrow_data: &FnOrArrowDataParse,
++    ) -> Result<bool, Error> {
++        if !after_question {
++            return Ok(self.lint_try_arrow_return_type(arrow));
++        }
++        if !self.is_type_script_arrow_return_type_after_question_and_before_colon(arrow_data)? {
++            return Ok(false);
++        }
++        self.lexer.next()?;
++        self.lint_arrow_return_type_known(arrow)?;
++        Ok(true)
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_parenthesized(&mut self, open: bun_ast::Loc, value: &bun_ast::Expr) {
++        let close = self.lexer.start as u32;
++        if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++            if side.lint {
++                side.lint_wrappers.push((*value, open.start as u32, close));
++            }
++        }
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_after_paren_expr(
++        &mut self,
++        open: bun_ast::Loc,
++        owner: bun_ast::Loc,
++        value: &bun_ast::Expr,
++    ) -> Result<(), Error> {
++        if value.loc.start != owner.start {
++            self.lint_parenthesized(open, value);
++            return Ok(());
++        }
++        if !TYPESCRIPT || !matches!(value.data, bun_ast::ExprData::EArrow(_)) {
++            return Ok(());
++        }
++        let old_lexer = self.lexer.snapshot();
++        if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++            side.lint_types.push([2, owner.start as u32, open.start as u32, old_lexer.start as u32]);
++        }
++        self.lexer.restore(&old_lexer);
++        Ok(())
++    }
++
++    #[cold]
++    #[inline(never)]
++    pub(crate) fn lint_rewind_after_backtrack(&mut self) {
++        let start = self.lexer.start;
++        if let Some(side) = self.starts_for_parse_only.as_deref_mut() {
++            side.lint_rewind_to(start);
++        }
++    }
++}

@@ -1,0 +1,113 @@
+--- path "/// <reference path=\"./a.d.ts\" />\nlet x;"
+pragma reference comment=0..33 SingleLine nl=true args=[["path","./a.d.ts",21,29]]
+path "./a.d.ts" 21..29 preserve=false
+--- types "/// <reference types=\"node\" />\n"
+pragma reference comment=0..30 SingleLine nl=true args=[["types","node",22,26]]
+types "node" 22..26 mode=None preserve=false
+--- lib "/// <reference lib=\"es2015\" />\n"
+pragma reference comment=0..30 SingleLine nl=true args=[["lib","es2015",20,26]]
+lib "es2015" 20..26 preserve=false
+--- types-mode-import "/// <reference types=\"pkg\" resolution-mode=\"import\" />\n"
+pragma reference comment=0..54 SingleLine nl=true args=[["types","pkg",22,25],["resolution-mode","import",44,50]]
+types "pkg" 22..25 mode=ESNext preserve=false
+--- types-mode-require-preserve "/// <reference types='pkg' resolution-mode='require' preserve='true' />\n"
+pragma reference comment=0..71 SingleLine nl=true args=[["types","pkg",22,25],["resolution-mode","require",44,51],["preserve","true",63,67]]
+types "pkg" 22..25 mode=CommonJS preserve=true
+--- types-mode-bad "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"
+pragma reference comment=0..51 SingleLine nl=true args=[["types","pkg",22,25],["resolution-mode","esm",44,47]]
+types "pkg" 22..25 mode=None preserve=false
+diag TS1453 44..47
+--- no-default-lib "/// <reference no-default-lib=\"true\"/>\n/// <reference lib=\"dom\" />\n"
+pragma reference comment=0..38 SingleLine nl=true args=[["no-default-lib","true",31,35]]
+pragma reference comment=39..66 SingleLine nl=true args=[["lib","dom",59,62]]
+lib "dom" 59..62 preserve=false
+--- no-default-lib-false "/// <reference no-default-lib=\"false\"/>\n"
+pragma reference comment=0..39 SingleLine nl=true args=[["no-default-lib","false",31,36]]
+diag TS1084 0..39
+--- precedence-types-over-lib-over-path "/// <reference path=\"p\" lib=\"l\" types=\"t\" />\n/// <reference path=\"p\" lib=\"l\" />\n"
+pragma reference comment=0..44 SingleLine nl=true args=[["path","p",21,22],["lib","l",29,30],["types","t",39,40]]
+pragma reference comment=45..79 SingleLine nl=true args=[["path","p",66,67],["lib","l",74,75]]
+types "t" 39..40 mode=None preserve=false
+lib "l" 74..75 preserve=false
+--- invalid-reference "/// <reference foo=\"bar\" />\n/// <reference />\n/// <reference path=a />\n"
+pragma reference comment=0..27 SingleLine nl=true args=[["foo","bar",20,23]]
+pragma reference comment=28..45 SingleLine nl=true args=[]
+pragma reference comment=46..70 SingleLine nl=true args=[]
+diag TS1084 0..27
+diag TS1084 28..45
+diag TS1084 46..70
+--- case-and-spacing "///<REFERENCE   PATH = \"a.ts\"   />\n///\t<reference path='b.ts'/>\n"
+pragma reference comment=0..34 SingleLine nl=true args=[["path","a.ts",24,28]]
+pragma reference comment=35..63 SingleLine nl=true args=[["path","b.ts",56,60]]
+path "a.ts" 24..28 preserve=false
+path "b.ts" 56..60 preserve=false
+--- unterminated-tag "/// <reference path=\"a.ts\"\n/// <reference path=\"b.ts\" >\n"
+pragma reference comment=0..26 SingleLine nl=true args=[["path","a.ts",21,25]]
+pragma reference comment=27..55 SingleLine nl=true args=[["path","b.ts",48,52]]
+path "a.ts" 21..25 preserve=false
+path "b.ts" 48..52 preserve=false
+--- duplicate-arg-last-wins "/// <reference path=\"a.ts\" path=\"b.ts\" />\n"
+pragma reference comment=0..41 SingleLine nl=true args=[["path","b.ts",33,37]]
+path "b.ts" 33..37 preserve=false
+--- amd-not-read "/// <amd-module name=\"m\" />\n/// <amd-dependency path=\"d\" name=\"n\" />\n/// <reference path=\"a.ts\" />\n"
+pragma reference comment=69..98 SingleLine nl=true args=[["path","a.ts",90,94]]
+path "a.ts" 90..94 preserve=false
+--- two-slashes-not-reference "// <reference path=\"a.ts\" />\n//// <reference path=\"b.ts\" />\n"
+--- ts-nocheck "// @ts-nocheck\nlet x: number = 'a';"
+pragma ts-nocheck comment=0..14 SingleLine nl=true args=[]
+checkJs enabled=false range=0..14
+--- ts-check "// @ts-check\n"
+pragma ts-check comment=0..12 SingleLine nl=true args=[]
+checkJs enabled=true range=0..12
+--- ts-check-triple-slash "/// @ts-nocheck\n"
+pragma ts-nocheck comment=0..15 SingleLine nl=true args=[]
+checkJs enabled=false range=0..15
+--- last-check-wins "// @ts-nocheck\n// @ts-check\n"
+pragma ts-nocheck comment=0..14 SingleLine nl=true args=[]
+pragma ts-check comment=15..27 SingleLine nl=true args=[]
+checkJs enabled=true range=15..27
+--- last-nocheck-wins "// @ts-check\n//\t @TS-NoCheck trailing words\n"
+pragma ts-check comment=0..12 SingleLine nl=true args=[]
+pragma ts-nocheck comment=13..43 SingleLine nl=true args=[]
+checkJs enabled=false range=13..43
+--- ts-check-prefix-name "// @ts-checked\n// @ts-nocheck-please\n// @ts-ignore\n// @ts-expect-error\n"
+--- not-leading "let x;\n// @ts-nocheck\n/// <reference path=\"a.ts\" />\n"
+--- after-hashbang "#!/usr/bin/env bun\n// @ts-nocheck\n/// <reference types=\"bun\" />\nlet x;"
+pragma ts-nocheck comment=19..33 SingleLine nl=true args=[]
+pragma reference comment=34..63 SingleLine nl=true args=[["types","bun",56,59]]
+checkJs enabled=false range=19..33
+types "bun" 56..59 mode=None preserve=false
+--- block-comment-nocheck-not-read "/* @ts-nocheck */\n/** @ts-check */\n"
+--- block-jsx "/** @jsx h */\n/* @jsxFrag Fragment */\n/* @jsxImportSource preact\n * @jsxRuntime automatic */\n"
+pragma jsx comment=0..13 MultiLine nl=true args=[["factory","h",9,10]]
+pragma jsxfrag comment=14..37 MultiLine nl=true args=[["factory","Fragment",26,34]]
+pragma jsximportsource comment=38..92 MultiLine nl=true args=[["factory","preact",58,64]]
+pragma jsxruntime comment=38..92 MultiLine nl=true args=[["factory","automatic",80,89]]
+--- block-jsx-first-at-only "/* a@b.c @jsx h */\n/* @jsx */\n/* @JSX  H  extra */\n"
+pragma jsx comment=30..50 MultiLine nl=true args=[["factory","H",39,40]]
+--- line-jsx-not-read "// @jsx h\n"
+--- leading-stops-at-token "// @ts-check\n/* c */ let x; // @ts-nocheck\n"
+pragma ts-check comment=0..12 SingleLine nl=true args=[]
+checkJs enabled=true range=0..12
+--- same-line-after-block "/* a */ // @ts-nocheck\n"
+pragma ts-nocheck comment=8..22 SingleLine nl=true args=[]
+checkJs enabled=false range=8..22
+--- bom-and-blank-lines "﻿\n\n  // @ts-nocheck\n"
+pragma ts-nocheck comment=7..21 SingleLine nl=true args=[]
+checkJs enabled=false range=7..21
+--- cr-lf-ls "// @ts-check\r\n/// <reference path=\"a.ts\" /> /// <reference path=\"b.ts\" />\r"
+pragma ts-check comment=0..12 SingleLine nl=true args=[]
+pragma reference comment=14..43 SingleLine nl=true args=[["path","a.ts",35,39]]
+pragma reference comment=46..75 SingleLine nl=true args=[["path","b.ts",67,71]]
+checkJs enabled=true range=0..12
+path "a.ts" 35..39 preserve=false
+path "b.ts" 67..71 preserve=false
+--- non-ascii-before-value "/// <reference path=\"é.ts\" />\n"
+pragma reference comment=0..30 SingleLine nl=true args=[["path","é.ts",21,26]]
+path "é.ts" 21..26 preserve=false
+--- empty ""
+--- comment-at-eof "/// <reference path=\"a.ts\" />"
+pragma reference comment=0..29 SingleLine nl=false args=[["path","a.ts",21,25]]
+path "a.ts" 21..25 preserve=false
+--- unterminated-block "/* @jsx h"
+pragma jsx comment=0..9 MultiLine nl=false args=[["factory","h",8,9]]

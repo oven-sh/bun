@@ -1,0 +1,15 @@
+rich.ts(11,51): error TS2322: Type 'string' is not assignable to type 'number'.
+  related TS6500: The expected type comes from property 'p' which is declared here on type 'Pick2<{ p: number; q: string; }, "p">'
+rich.ts(13,7): error TS2322: Type 'string' is not assignable to type 'number'.
+rich.ts(14,31): error TS2322: Type 'number' is not assignable to type 'string'.
+rich.ts(15,7): error TS2322: Type '"z"' is not assignable to type 'keyof Base'.
+rich.ts(17,7): error TS2322: Type '"id-x"' is not assignable to type '`id-${number}`'.
+rich.ts(18,7): error TS2322: Type '"ab"' is not assignable to type '"AB"'.
+rich.ts(20,7): error TS2322: Type 'E.C' is not assignable to type 'E.A'.
+rich.ts(22,7): error TS2322: Type 'number' is not assignable to type 'string'.
+rich.ts(24,7): error TS2322: Type '{ q: number; r: string; }' is not assignable to type '{ q: string; }'.
+  chain TS2326: Types of property 'q' are incompatible.
+rich.ts(26,7): error TS2322: Type 'number' is not assignable to type 'string'.
+rich.ts(28,7): error TS2322: Type 'boolean' is not assignable to type 'U'.
+RESOLUTIONDEPTH 0 []
+COUNTS TypeCount=274 SymbolCount=212 SignatureCount=23 TotalInstantiationCount=105

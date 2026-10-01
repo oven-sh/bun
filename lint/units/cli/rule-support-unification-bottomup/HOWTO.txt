@@ -1,0 +1,41 @@
+PROBE OF THE UNIFIED RULE SUPPORT (C3): the proposed text of src/lint, run on Bun's real parser and lexer.
+
+probe/src/lint/           the proposed modules (mod.rs stands for lib.rs; Diagnostic and Severity stand for the types of C2).
+                          Only the `stress_*` functions, the `stress` field and the `#[allow(clippy::disallowed_*)]` beside them are probe only.
+probe/src/{main,harness,shims}.rs   the harness: not part of the change. shims.rs defines the native symbols that Bun's C++ gives
+                          (StackCheck, simdutf, WTF__parseDouble, WTF__dtoa as ECMAScript Number::toString in Rust).
+probe/build.py            compiles probe/src/main.rs with rustc against the rlibs of the DEBUG BUILD of the worktree
+                          (build/debug/rust-target, flags of the unit bun_lint): no crate is rebuilt, a build takes seconds.
+                          CLIPPY=1 runs clippy-driver with the same lint flags and the clippy.toml of the worktree.
+probe/native.sh           compiles highway_strings.cpp once (the lexer calls it); mimalloc and hwy objects come from build/debug/obj.
+oracle/diff.cjs           ESLint at the pin against the probe for one rule and lists of cases; --out writes vectors.
+oracle/corpus.cjs         the eleven rules of ESLint against the probe over a list of real files.
+oracle/extract.cjs        the cases of ESLint's own test of a rule (default options); --all: the code of every case.
+cases/upstream-<rule>.json   ESLint's own cases (default options). cases/extra-<rule>.json   cases written for this research.
+vectors/vectors-<rule>.json  every case of every list, for the eleven rules:
+                          { code, sourceType, jsx?, eslint: [{line, column, endLine, endColumn, message}] | null (its parser rejects),
+                            expect: [{line, column, start, length, message}] | null (Bun rejects), differs?: kind, eslintTest?: true }
+                          expect is what the probe PRINTED (unsorted, not deduplicated). start and length are bytes; columns UTF-16.
+DIFFERENCES.txt           every case whose answer is not ESLint's, by kind: moved, missing, extra, bun-rejects, eslint-rejects.
+logs/                     run-all.log, make-vectors.log, corpus-*.log (real files), stress.log, times-big.log.
+
+REBUILD AND RERUN
+  1. The worktree needs its debug build (bun bd --version). The oracle needs ESLint with its npm dependencies:
+       sh ../rules-expression-equality-bottomup/prototype/setup.sh     makes eslint-pin from /workspace/ref/eslint
+     and pass --eslint <dir of eslint-pin> to diff.cjs and corpus.cjs (default /tmp/cmp-probe/eslint-pin).
+  2. /workspace/tools/lk sh probe/native.sh                            once per machine (49 s)
+  3. /workspace/tools/lk python3 probe/build.py                        -> /tmp/rsu/out/lintprobe
+     CLIPPY=1 /workspace/tools/lk python3 probe/build.py /workspace/wt/cli /tmp/rsu/clippy-out
+     rustfmt --edition 2024 --check probe/src/main.rs                  (the rustfmt of the pinned toolchain; the rustfmt.toml of the
+                                                                        repository only carries an ignore list and panics on outside paths)
+  4. sh run-all.sh [--show]          every list; sh make-vectors.sh    rewrites vectors/ and DIFFERENCES.txt
+  5. node oracle/corpus.cjs <list>   real files; PROBE_STRESS=1 lintprobe @<list>   every scanner service on every node it can serve
+     PROBE_TIMES=1 lintprobe <file>  parse time and walk time; PROBE_PARSE_ONLY=1 skips the walk.
+  lintprobe prints `path<TAB>OK|PARSE` then `path<TAB>start<TAB>len<TAB>line:column<TAB>code<TAB>text` per report.
+
+RESULTS OF THE LAST RUN (debug build with ASAN of e3566be889, ESLint 4618052e with espree 11.2.0, acorn 8.18.0, eslint-scope 9.1.2)
+  vectors: 2059 cases: 2002 with the answer of ESLint, 20 moved, 18 missing, 0 extra, 7 that only the parser of ESLint rejects,
+  1 that only Bun rejects, 11 that both reject; see DIFFERENCES.txt.
+  real files: 9813 files of node_modules (2 KiB to 300 KiB) and 12 large ones: every report identical (358 reports).
+  stress: 1,719,619 binaries, 2,377,930 members, 217,944 indexes, 58,122 case tests: no scan failed; the `case` keyword was found
+  by the text before the test for all 58,122.

@@ -1,0 +1,139 @@
+KindModuleDeclaration	0	symbol=M	symbolIn=M	type=typeof M	typeFq=typeof M	typeIn=typeof M
+KindClassDeclaration	13	symbol=C	symbolIn=M.C	type=typeof C	typeFq=typeof M.C	typeIn=typeof C	declared=C<T>	declaredFq=M.C<T>	declaredIn=C<T>
+KindTypeParameter	33	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindPropertyDeclaration	37	symbol=p	symbolIn=C.p	type=T	typeFq=T	typeIn=T
+KindPropertyDeclaration	43	symbol=s	symbolIn=C.s	type=number	typeFq=number	typeIn=number
+KindPropertyDeclaration	61	symbol=#priv	symbolIn=C.#priv	type=number	typeFq=number	typeIn=number
+KindPropertyDeclaration	72	symbol="quoted-name"	symbolIn=C["quoted-name"]	type=string	typeFq=string	typeIn=string
+KindPropertyDeclaration	95	symbol=42	symbolIn=C[42]	type=boolean	typeFq=boolean	typeIn=boolean
+KindMethodDeclaration	108	symbol=m	symbolIn=C.m	type=(x: T) => this	typeFq=(x: T) => this	typeIn=(x: T) => this	signature=(x: T): this	signatureArrow=(x: T) => this
+KindParameter	111	symbol=x	symbolIn=x	type=T	typeFq=T	typeIn=T
+KindModuleDeclaration	141	symbol=N	symbolIn=N
+KindInterfaceDeclaration	166	symbol=I	symbolIn=I	declared=I	declaredFq=M.N.I	declaredIn=I
+KindPropertySignature	187	symbol=a	symbolIn=I.a	type=string	typeFq=string	typeIn=string
+KindPropertySignature	198	symbol=b	symbolIn=I.b	type=number | undefined	typeFq=number | undefined	typeIn=number | undefined
+KindPropertySignature	210	symbol=c	symbolIn=I.c	type=C<string>	typeFq=M.C<string>	typeIn=C<string>
+KindTypeAliasDeclaration	235	symbol=A	symbolIn=A	declared=A	declaredFq=M.N.A	declaredIn=A
+KindEnumDeclaration	268	symbol=E	symbolIn=M.E	type=typeof E	typeFq=typeof M.E	typeIn=typeof E	declared=E	declaredFq=M.E	declaredIn=E
+KindEnumMember	288	symbol=A	symbolIn=E.A	type=E.A	typeFq=M.E.A	typeIn=E.A
+KindEnumMember	291	symbol=B	symbolIn=E.B	type=E.B	typeFq=M.E.B	typeIn=E.B
+KindEnumMember	298	symbol="c-d"	symbolIn=E["c-d"]	type=(typeof E)["c-d"]	typeFq=(typeof M.E)["c-d"]	typeIn=(typeof E)["c-d"]
+KindEnumDeclaration	310	symbol=CE	symbolIn=M.CE	type=typeof CE	typeFq=typeof M.CE	typeIn=typeof CE	declared=CE	declaredFq=M.CE	declaredIn=CE
+KindEnumMember	337	symbol=X	symbolIn=CE.X	type=CE.X	typeFq=M.CE.X	typeIn=CE.X
+KindEnumMember	346	symbol=Y	symbolIn=CE.Y	type=CE.Y	typeFq=M.CE.Y	typeIn=CE.Y
+KindFunctionDeclaration	356	symbol=f	symbolIn=M.f	type=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]) => T	typeFq=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]) => T	typeIn=<T extends string = "a">(x: T, y?: number, ...rest: boolean[]) => T	signature=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]): T	signatureArrow=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]) => T
+KindTypeParameter	379	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindParameter	403	symbol=x	symbolIn=x	type=T	typeFq=T	typeIn=T
+KindParameter	408	symbol=y	symbolIn=y	type=number | undefined	typeFq=number | undefined	typeIn=number | undefined
+KindParameter	420	symbol=rest	symbolIn=rest	type=boolean[]	typeFq=boolean[]	typeIn=boolean[]
+KindImportEqualsDeclaration	457	symbol=Alias	symbolIn=Alias
+KindClassDeclaration	488	symbol=Hidden	symbolIn=Hidden	type=typeof Hidden	typeFq=typeof Hidden	typeIn=typeof Hidden	declared=Hidden	declaredFq=Hidden	declaredIn=Hidden
+KindPropertyDeclaration	507	symbol=h	symbolIn=Hidden.h	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	535	symbol=hidden	symbolIn=M.hidden	type=Hidden	typeFq=Hidden	typeIn=Hidden
+KindModuleDeclaration	553	symbol=M	symbolIn=M	type=typeof M	typeFq=typeof M	typeIn=typeof M
+KindVariableDeclaration	578	symbol=merged	symbolIn=M.merged	type=C<E>	typeFq=M.C<M.E>	typeIn=C<E>
+KindInterfaceDeclaration	594	symbol=Point	symbolIn=Point	declared=Point	declaredFq=Point	declaredIn=Point
+KindPropertySignature	612	symbol=x	symbolIn=Point.x	type=number	typeFq=number	typeIn=number
+KindPropertySignature	623	symbol=y	symbolIn=Point.y	type=number	typeFq=number	typeIn=number
+KindTypeAliasDeclaration	636	symbol=Pair	symbolIn=Pair	declared=Pair<A, B>	declaredFq=Pair<A, B>	declaredIn=Pair<A, B>
+KindTypeParameter	647	symbol=A	symbolIn=A	declared=A	declaredFq=A	declaredIn=A
+KindTypeParameter	649	symbol=B	symbolIn=B	declared=B	declaredFq=B	declaredIn=B
+KindTypeAliasDeclaration	682	symbol=Fn	symbolIn=Fn	declared=Fn	declaredFq=Fn	declaredIn=Fn
+KindParameter	694	symbol=this	symbolIn=this	type=Point	typeFq=Point	typeIn=Point
+KindParameter	706	symbol=a	symbolIn=a	type=number	typeFq=number	typeIn=number
+KindPropertySignature	729	symbol=b	symbolIn=b	type=string	typeFq=string	typeIn=string
+KindPropertySignature	740	symbol=c	symbolIn=c	type=boolean	typeFq=boolean	typeIn=boolean
+KindTypeAliasDeclaration	789	symbol=Ctor	symbolIn=Ctor	declared=Ctor	declaredFq=Ctor	declaredIn=Ctor
+KindTypeParameter	816	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindParameter	819	symbol=args	symbolIn=args	type=T[]	typeFq=T[]	typeIn=T[]
+KindTypeAliasDeclaration	842	symbol=Mapped	symbolIn=Mapped	declared=Mapped<T>	declaredFq=Mapped<T>	declaredIn=Mapped<T>
+KindTypeParameter	855	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindTypeParameter	872	symbol=K	symbolIn=K	declared=K	declaredFq=K	declaredIn=K
+KindTypeAliasDeclaration	895	symbol=MappedAs	symbolIn=MappedAs	declared=MappedAs<T>	declaredFq=MappedAs<T>	declaredIn=MappedAs<T>
+KindTypeParameter	910	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindTypeParameter	918	symbol=K	symbolIn=K	declared=K	declaredFq=K	declaredIn=K
+KindTypeAliasDeclaration	968	symbol=Cond	symbolIn=Cond	declared=Cond<T>	declaredFq=Cond<T>	declaredIn=Cond<T>
+KindTypeParameter	979	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindTypeParameter	1000	symbol=U	symbolIn=U	declared=U	declaredFq=U	declaredIn=U
+KindTypeAliasDeclaration	1058	symbol=Tpl	symbolIn=Tpl	declared=`a${T}b${number}`	declaredFq=`a${T}b${number}`	declaredIn=`a${T}b${number}`
+KindTypeParameter	1068	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindTypeAliasDeclaration	1106	symbol=Acc	symbolIn=Acc	declared=number	declaredFq=number	declaredIn=number
+KindTypeAliasDeclaration	1148	symbol=KO	symbolIn=KO	declared=keyof Point	declaredFq=keyof Point	declaredIn=keyof Point
+KindTypeAliasDeclaration	1171	symbol=TO	symbolIn=TO	declared=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]) => T	declaredFq=<T extends string = "a">(x: T, y?: number | undefined, ...rest: boolean[]) => T	declaredIn=<T extends string = "a">(x: T, y?: number, ...rest: boolean[]) => T
+KindVariableDeclaration	1207	symbol=sym	symbolIn=sym	type=unique symbol	typeFq=typeof sym	typeIn=unique symbol
+KindFunctionDeclaration	1227	symbol=isPoint	symbolIn=isPoint	type=(x: unknown) => x is Point	typeFq=(x: unknown) => x is Point	typeIn=(x: unknown) => x is Point	signature=(x: unknown): x is Point	signatureArrow=(x: unknown) => x is Point	predicate=x is Point
+KindParameter	1253	symbol=x	symbolIn=x	type=unknown	typeFq=unknown	typeIn=unknown
+KindFunctionDeclaration	1277	symbol=assertPoint	symbolIn=assertPoint	type=(x: unknown) => asserts x is Point	typeFq=(x: unknown) => asserts x is Point	typeIn=(x: unknown) => asserts x is Point	signature=(x: unknown): asserts x is Point	signatureArrow=(x: unknown) => asserts x is Point	predicate=asserts x is Point
+KindParameter	1307	symbol=x	symbolIn=x	type=unknown	typeFq=unknown	typeIn=unknown
+KindFunctionDeclaration	1339	symbol=assertIt	symbolIn=assertIt	type=(x: unknown) => asserts x	typeFq=(x: unknown) => asserts x	typeIn=(x: unknown) => asserts x	signature=(x: unknown): asserts x	signatureArrow=(x: unknown) => asserts x	predicate=asserts x
+KindParameter	1366	symbol=x	symbolIn=x	type=unknown	typeFq=unknown	typeIn=unknown
+KindFunctionDeclaration	1389	symbol=overloaded	symbolIn=overloaded	type={ (x: string): string; (x: number): number; }	typeFq={ (x: string): string; (x: number): number; }	typeIn={ (x: string): string; (x: number): number; }	signature=(x: string): string	signatureArrow=(x: string) => string
+KindParameter	1418	symbol=x	symbolIn=x	type=string	typeFq=string	typeIn=string
+KindFunctionDeclaration	1437	symbol=overloaded	symbolIn=overloaded	type={ (x: string): string; (x: number): number; }	typeFq={ (x: string): string; (x: number): number; }	typeIn={ (x: string): string; (x: number): number; }	signature=(x: number): number	signatureArrow=(x: number) => number
+KindParameter	1466	symbol=x	symbolIn=x	type=number	typeFq=number	typeIn=number
+KindFunctionDeclaration	1485	symbol=generic	symbolIn=generic	type=<T extends Point, U extends keyof T = keyof T>(t: T, u: U) => T[U]	typeFq=<T extends Point, U extends keyof T = keyof T>(t: T, u: U) => T[U]	typeIn=<T extends Point, U extends keyof T = keyof T>(t: T, u: U) => T[U]	signature=<T extends Point, U extends keyof T = keyof T>(t: T, u: U): T[U]	signatureArrow=<T extends Point, U extends keyof T = keyof T>(t: T, u: U) => T[U]
+KindTypeParameter	1511	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindTypeParameter	1527	symbol=U	symbolIn=U	declared=U	declaredFq=U	declaredIn=U
+KindParameter	1557	symbol=t	symbolIn=t	type=T	typeFq=T	typeIn=T
+KindParameter	1562	symbol=u	symbolIn=u	type=U	typeFq=U	typeIn=U
+KindVariableDeclaration	1579	symbol=obj	symbolIn=obj	type={ a: number; "b-c": string; 3: boolean; [sym]: null; m(x: number): number; g: number; nested: { deep: readonly [1, "two"]; }; }	typeFq={ a: number; "b-c": string; 3: boolean; [sym]: null; m(x: number): number; g: number; nested: { deep: readonly [1, "two"]; }; }	typeIn={ a: number; "b-c": string; 3: boolean; [sym]: null; m(x: number): number; g: number; nested: { deep: readonly [1, "two"]; }; }
+KindPropertyAssignment	1587	symbol=a	symbolIn=obj.a	type=number	typeFq=number	typeIn=number
+KindPropertyAssignment	1593	symbol="b-c"	symbolIn=obj["b-c"]	type=string	typeFq=string	typeIn=string
+KindPropertyAssignment	1605	symbol=3	symbolIn=obj[3]	type=boolean	typeFq=boolean	typeIn=boolean
+KindPropertyAssignment	1614	symbol=[sym]	symbolIn=obj[sym]	type=null	typeFq=null	typeIn=null
+KindMethodDeclaration	1627	symbol=m	symbolIn=obj.m	type=(x: number) => number	typeFq=(x: number) => number	typeIn=(x: number) => number	signature=(x: number): number	signatureArrow=(x: number) => number
+KindParameter	1630	symbol=x	symbolIn=x	type=number	typeFq=number	typeIn=number
+KindGetAccessor	1655	symbol=g	symbolIn=obj.g	type=number	typeFq=number	typeIn=number	signature=(): number	signatureArrow=() => number
+KindSetAccessor	1678	symbol=g	symbolIn=obj.g	type=number	typeFq=number	typeIn=number	signature=(v: number): void	signatureArrow=(v: number) => void
+KindParameter	1685	symbol=v	symbolIn=v	type=number	typeFq=number	typeIn=number
+KindPropertyAssignment	1699	symbol=nested	symbolIn=obj.nested	type={ deep: readonly [1, "two"]; }	typeFq={ deep: readonly [1, "two"]; }	typeIn={ deep: readonly [1, "two"]; }
+KindPropertyAssignment	1709	symbol=deep	symbolIn=deep	type=readonly [1, "two"]	typeFq=readonly [1, "two"]	typeIn=readonly [1, "two"]
+KindVariableDeclaration	1744	symbol=arrow	symbolIn=arrow	type=<T>(x: T, y?: number) => { x: T; y: number; }	typeFq=<T>(x: T, y?: number) => { x: T; y: number; }	typeIn=<T>(x: T, y?: number) => { x: T; y: number; }
+KindArrowFunction	1752	symbol=arrow	symbolIn=arrow	type=<T>(x: T, y?: number) => { x: T; y: number; }	typeFq=<T>(x: T, y?: number) => { x: T; y: number; }	typeIn=<T>(x: T, y?: number) => { x: T; y: number; }	signature=<T>(x: T, y?: number): { x: T; y: number; }	signatureArrow=<T>(x: T, y?: number) => { x: T; y: number; }
+KindTypeParameter	1754	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindParameter	1758	symbol=x	symbolIn=x	type=T	typeFq=T	typeIn=T
+KindParameter	1763	symbol=y	symbolIn=y	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	1789	symbol=fe	symbolIn=fe	type=(this: void, a?: string | undefined) => asserts a	typeFq=(this: void, a?: string | undefined) => asserts a	typeIn=(this: void, a?: string) => asserts a
+KindFunctionExpression	1794	symbol=named	symbolIn=named	type=(this: void, a?: string | undefined) => asserts a	typeFq=(this: void, a?: string | undefined) => asserts a	typeIn=(this: void, a?: string) => asserts a	signature=(this: void, a?: string | undefined): asserts a	signatureArrow=(this: void, a?: string | undefined) => asserts a	predicate=asserts a
+KindParameter	1810	symbol=this	symbolIn=this	type=void	typeFq=void	typeIn=void
+KindParameter	1821	symbol=a	symbolIn=a	type=string | undefined	typeFq=string | undefined	typeIn=string | undefined
+KindVariableDeclaration	1852	symbol=ce	symbolIn=ce	type=typeof Named	typeFq=typeof Named	typeIn=typeof Named
+KindClassExpression	1857	symbol=Named	symbolIn=Named	type=typeof Named	typeFq=typeof Named	typeIn=typeof Named	declared=Named<T>	declaredFq=Named<T>	declaredIn=Named<T>
+KindTypeParameter	1870	symbol=T	symbolIn=T	declared=T	declaredFq=T	declaredIn=T
+KindPropertyDeclaration	1874	symbol=v	symbolIn=Named.v	type=T	typeFq=T	typeIn=T
+KindVariableDeclaration	1887	symbol=anonClass	symbolIn=anonClass	type=typeof anonClass	typeFq=typeof anonClass	typeIn=typeof anonClass
+KindClassExpression	1899	symbol=anonClass	symbolIn=anonClass	type=typeof anonClass	typeFq=typeof anonClass	typeIn=typeof anonClass	declared=anonClass	declaredFq=anonClass	declaredIn=anonClass
+KindPropertyDeclaration	1907	symbol=z	symbolIn=anonClass.z	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	1928	symbol=tuple	symbolIn=tuple	type=[a: string, b?: number | undefined, ...rest: boolean[]]	typeFq=[a: string, b?: number | undefined, ...rest: boolean[]]	typeIn=[a: string, b?: number | undefined, ...rest: boolean[]]
+KindVariableDeclaration	1984	symbol=ro	symbolIn=ro	type=readonly string[]	typeFq=readonly string[]	typeIn=readonly string[]
+KindVariableDeclaration	2011	symbol=union	symbolIn=union	type=string | number | 1n | boolean | null | undefined	typeFq=string | number | 1n | boolean | null | undefined	typeIn=string | number | 1n | boolean | null | undefined
+KindVariableDeclaration	2089	symbol=inter	symbolIn=inter	type=Point & { z: number; } & (() => void)	typeFq=Point & { z: number; } & (() => void)	typeIn=Point & { z: number; } & (() => void)
+KindPropertySignature	2106	symbol=z	symbolIn=z	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	2138	symbol=fnu	symbolIn=fnu	type=(() => void) | (new () => Point) | undefined	typeFq=(() => void) | (new () => Point) | undefined	typeIn=(() => void) | (new () => Point) | undefined
+KindVariableDeclaration	2193	symbol=idx	symbolIn=idx	type={ (): void; new (x: number): Point; [key: string]: number; readonly [n: number]: 1; }	typeFq={ (): void; new (x: number): Point; [key: string]: number; readonly [n: number]: 1; }	typeIn={ (): void; new (x: number): Point; [key: string]: number; readonly [n: number]: 1; }
+KindParameter	2202	symbol=key	symbolIn=key	type=string	typeFq=string	typeIn=string
+KindParameter	2234	symbol=n	symbolIn=n	type=number	typeFq=number	typeIn=number
+KindCallSignature	2248	symbol=__call	symbolIn=idx.__call	signature=(): void	signatureArrow=() => void
+KindConstructSignature	2258	symbol=__new	symbolIn=idx.__new	signature=new (x: number): Point	signatureArrow=new (x: number) => Point
+KindParameter	2264	symbol=x	symbolIn=x	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	2289	symbol=big	symbolIn=big	type={ aaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbb: string; cccccccccccccccccccc: string; dddddddddddddddddddd: string; eeeeeeeeeeeeeeeeeeee: string; ffffffffffffffffffff: string; gggggggggggggggggggg: string; hhhhhhhhhhhhhhhhhhhh: string; iiiiiiiiiiiiiiiiiiii: string; jjjjjjjjjjjjjjjjjjjj: string; kkkkkkkkkkkkkkkkkkkk: string; llllllllllllllllllll: string; }	typeFq={ aaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbb: string; cccccccccccccccccccc: string; dddddddddddddddddddd: string; eeeeeeeeeeeeeeeeeeee: string; ffffffffffffffffffff: string; gggggggggggggggggggg: string; hhhhhhhhhhhhhhhhhhhh: string; iiiiiiiiiiiiiiiiiiii: string; jjjjjjjjjjjjjjjjjjjj: string; kkkkkkkkkkkkkkkkkkkk: string; llllllllllllllllllll: string; }	typeIn={ aaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbb: string; cccccccccccccccccccc: string; dddddddddddddddddddd: string; eeeeeeeeeeeeeeeeeeee: string; ffffffffffffffffffff: string; gggggggggggggggggggg: string; hhhhhhhhhhhhhhhhhhhh: string; iiiiiiiiiiiiiiiiiiii: string; jjjjjjjjjjjjjjjjjjjj: string; kkkkkkkkkkkkkkkkkkkk: string; llllllllllllllllllll: string; }
+KindPropertySignature	2296	symbol=aaaaaaaaaaaaaaaaaaaa	symbolIn=big.aaaaaaaaaaaaaaaaaaaa	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2326	symbol=bbbbbbbbbbbbbbbbbbbb	symbolIn=big.bbbbbbbbbbbbbbbbbbbb	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2356	symbol=cccccccccccccccccccc	symbolIn=big.cccccccccccccccccccc	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2386	symbol=dddddddddddddddddddd	symbolIn=big.dddddddddddddddddddd	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2416	symbol=eeeeeeeeeeeeeeeeeeee	symbolIn=big.eeeeeeeeeeeeeeeeeeee	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2446	symbol=ffffffffffffffffffff	symbolIn=big.ffffffffffffffffffff	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2476	symbol=gggggggggggggggggggg	symbolIn=big.gggggggggggggggggggg	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2506	symbol=hhhhhhhhhhhhhhhhhhhh	symbolIn=big.hhhhhhhhhhhhhhhhhhhh	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2536	symbol=iiiiiiiiiiiiiiiiiiii	symbolIn=big.iiiiiiiiiiiiiiiiiiii	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2566	symbol=jjjjjjjjjjjjjjjjjjjj	symbolIn=big.jjjjjjjjjjjjjjjjjjjj	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2596	symbol=kkkkkkkkkkkkkkkkkkkk	symbolIn=big.kkkkkkkkkkkkkkkkkkkk	type=string	typeFq=string	typeIn=string
+KindPropertySignature	2626	symbol=llllllllllllllllllll	symbolIn=big.llllllllllllllllllll	type=string	typeFq=string	typeIn=string
+KindVariableDeclaration	2663	symbol=esc	symbolIn=esc	type="quote\"d" | "tab\there" | "unié😀" | `tpl${number}`	typeFq="quote\"d" | "tab\there" | "unié😀" | `tpl${number}`	typeIn="quote\"d" | "tab\there" | "unié😀" | `tpl${number}`
+KindFunctionDeclaration	2733	symbol=local	symbolIn=local	type=() => Inner	typeFq=() => Inner	typeIn=() => Inner	signature=(): Inner	signatureArrow=() => Inner
+KindClassDeclaration	2752	symbol=Inner	symbolIn=Inner	type=typeof Inner	typeFq=typeof Inner	typeIn=typeof Inner	declared=Inner	declaredFq=Inner	declaredIn=Inner
+KindPropertyDeclaration	2766	symbol=i	symbolIn=Inner.i	type=number	typeFq=number	typeIn=number
+KindVariableDeclaration	2783	symbol=li	symbolIn=li	type=Inner	typeFq=Inner	typeIn=Inner
+KindVariableDeclaration	2798	symbol=lf	symbolIn=lf	type=(q: Inner) => Inner	typeFq=(q: Inner) => Inner	typeIn=(q: Inner) => Inner
+KindArrowFunction	2803	symbol=lf	symbolIn=lf	type=(q: Inner) => Inner	typeFq=(q: Inner) => Inner	typeIn=(q: Inner) => Inner	signature=(q: Inner): Inner	signatureArrow=(q: Inner) => Inner
+KindParameter	2805	symbol=q	symbolIn=q	type=Inner	typeFq=Inner	typeIn=Inner

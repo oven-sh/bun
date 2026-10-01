@@ -1,0 +1,87 @@
+listonly	functions 1021	lines 14671	checker 0 / 0	binder 68 / 1336
+nocheck	functions 1202	lines 17793	checker 118 / 1957	binder 73 / 1706
+skiplib	functions 1635	lines 26531	checker 350 / 7921	binder 73 / 1706
+skiplib1	functions 1626	lines 26366	checker 350 / 7921	binder 73 / 1706
+noemit	functions 2611	lines 43325	checker 1072 / 22459	binder 74 / 1717
+default	functions 2833	lines 46242	checker 1073 / 22482	binder 74 / 1717
+
+P parse+bind (listFilesOnly): 1021 functions, 14671 lines
+    parser	274	4651
+    ast	335	2352
+    compiler	68	1922
+    scanner	58	1438
+    binder	68	1336
+    tsoptions	35	737
+    tspath	28	530
+    core	46	341
+    execute	8	255
+    jsnum	10	200
+    execute/tsc	10	182
+    collections	18	142
+    module	7	142
+    vfs/internal	8	84
+    stringutil	6	65
+    semver	3	63
+    vfs/cachedvfs	5	41
+    bundled	9	38
+    vfs/osvfs	6	28
+    transformers	1	25
+    outputpaths	1	23
+    packagejson	4	21
+    fswatch	3	19
+    osutil	4	12
+    pseudochecker	2	7
+    debug	1	6
+    api/encoder	1	5
+    locale	1	5
+    diagnostics	1	1
+I checker init (noCheck): 182 functions, 3125 lines
+    checker	118	1957
+    compiler	23	459
+    binder	5	370
+    ast	27	150
+    evaluator	1	99
+    core	7	70
+    stringutil	1	20
+C check min.ts (skipDefaultLibCheck): 433 functions, 8738 lines
+    checker	232	5964
+    printer	43	1051
+    ast	98	994
+    scanner	7	188
+    tspath	8	124
+    compiler	8	103
+    core	9	94
+    diagnostics	10	91
+    diagnosticwriter	9	80
+    stringutil	4	23
+    collections	3	12
+    spanmap	1	11
+    pseudochecker	1	3
+L check default libs (noEmit): 977 functions, 16798 lines
+    checker	722	14538
+    printer	62	978
+    ast	136	736
+    parser	27	318
+    scanner	10	92
+    core	8	67
+    collections	8	39
+    evaluator	1	13
+    binder	1	11
+    jsnum	2	6
+E emit (default): 236 functions, 3416 lines
+    printer	79	1159
+    transformers/tstransforms	12	576
+    ast	64	520
+    compiler	28	440
+    transformers/estransforms	14	327
+    transformers/moduletransforms	6	104
+    outputpaths	9	80
+    transformers/inliners	2	62
+    core	6	35
+    transformers	6	34
+    vfs/osvfs	3	28
+    checker	1	23
+    scanner	2	11
+    collections	2	8
+    bundled	1	6
+    vfs/cachedvfs	1	3

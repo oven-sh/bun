@@ -1,0 +1,12 @@
+package zzprobe
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+// TestProbe runs the probe with the arguments of PROBE_ARGS so that the test binary can write a cover profile.
+func TestProbe(t *testing.T) {
+	Run(strings.Fields(os.Getenv("PROBE_ARGS")))
+}

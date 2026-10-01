@@ -1,0 +1,114 @@
+A1  "declare class C { m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @31
+     tsc emit: "\"use strict\";\n"
+A1  "declare class C { constructor(...a: any[], ); }"
+     bun: Expected ")" but found "," @41
+     tsc emit: "\"use strict\";\n"
+A1  "declare class C { static m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @38
+     tsc emit: "\"use strict\";\n"
+A2  "declare class C { get x(...a: any[], ): number }"
+     bun: Expected ")" but found "," @35
+     tsc check: TS1054@22+1 A 'get' accessor cannot have parameters.
+     tsc emit: "\"use strict\";\n"
+A2  "declare class C { set x(...a: any[], ) }"
+     bun: Expected ")" but found "," @35
+     tsc check: TS1053@24+3 A 'set' accessor cannot have rest parameter.
+     tsc emit: "\"use strict\";\n"
+A1  "declare class C { m(a: number, ...b: any[], ): void }"
+     bun: Expected ")" but found "," @42
+     tsc emit: "\"use strict\";\n"
+A1  "declare abstract class C { abstract m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @49
+     tsc emit: "\"use strict\";\n"
+A1  "declare namespace N { class C { m(...a: any[], ): void } }"
+     bun: Expected ")" but found "," @45
+     tsc emit: "\"use strict\";\n"
+AA  "declare namespace N { function f(...a: any[], ): void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare namespace N { namespace M { function f(...a: any[], ): void } }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A1  "declare module \"m\" { class C { m(...a: any[], ): void } }"
+     bun: Expected ")" but found "," @44
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { function f(...a: any[], ): void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A1  "declare module \"m\" { export default function f(...a: any[], ): void }"
+     bun: Expected ")" but found "," @58
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { export function f(...a: any[], ): void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A1  "declare module \"m\" { export class C { m(...a: any[], ): void } }"
+     bun: Expected ")" but found "," @51
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { const f: (...a: any[], ) => void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(...a: any[], ): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare function f(...[a, b]: any[], ): void;"
+     bun: ok ""
+     tsc check: TS2339@23+1 Property '0' does not exist on type '{}'. ; TS2339@26+1 Property '1' does not exist on type '{}'.
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(...{ a }: any, ): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "export declare function f(...a: any[], ): void;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+A1  "export declare class C { m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @38
+     tsc emit: "export {};\n"
+AA  "declare const f: (...a: any[], ) => void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let f: { (...a: any[], ): void };"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let f: { m(...a: any[], ): void };"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let f: new (...a: any[], ) => void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+RR  "declare class C { m(...a: any[],, ): void }"
+     bun: Expected ")" but found "," @31 | Expected ")" but found "," @32 | Expected ";" but found ")" @34 | Expected identifier but found ":" @35
+     tsc parse: TS1138@32+1 Parameter declaration expected.
+A2  "declare class C { m(...a: any[], b): void }"
+     bun: Expected ")" but found "," @31 | Expected ")" but found "b" @33 | Expected ";" but found ")" @34 | Expected identifier but found ":" @35
+     tsc check: TS1014@20+3 A rest parameter must be last in a parameter list.
+     tsc emit: "\"use strict\";\n"
+A2  "declare function f(...a: any[], b: any): void;"
+     bun: Expected ")" but found "b" @32 | Expected ";" but found ")" @38 | Unexpected : @39
+     tsc check: TS1014@19+3 A rest parameter must be last in a parameter list.
+     tsc emit: "\"use strict\";\n"
+A2  "declare function f(...a: any[], ...b: any[]): void;"
+     bun: Expected ")" but found "..." @32 | Expected ";" but found "b" @35 | Unexpected : @36
+     tsc check: TS1014@19+3 A rest parameter must be last in a parameter list.
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { m: (...a: any[], ) => void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { m(f: (...a: any[], ) => void): void }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(g: (...a: any[], ) => void): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "declare function f(g = function (...a: any[], ) {}): void;"
+     bun: Expected ")" but found "," @44
+     tsc check: TS2371@19+31 A parameter initializer is only allowed in a function or constructor implementation.
+     tsc emit: "\"use strict\";\n"
+A2  "declare function f(g = (...a: any[], ) => 1): void;"
+     bun: Unexpected "," after rest pattern @35
+     tsc check: TS2371@19+24 A parameter initializer is only allowed in a function or constructor implementation.
+     tsc emit: "\"use strict\";\n"
+A2  "declare class C { m(g = (...a: any[], ) => 1): void }"
+     bun: Unexpected "," after rest pattern @36
+     tsc check: TS2371@20+24 A parameter initializer is only allowed in a function or constructor implementation.
+     tsc emit: "\"use strict\";\n"

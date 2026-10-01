@@ -1,0 +1,57 @@
+[
+ {
+  "code": "class A { constructor() {} constructor() {} }",
+  "origin": "dupe-probe-extra",
+  "error": "1:28 Parsing error: Duplicate constructor in the same class"
+ },
+ {
+  "code": "class A { constructor() {} 'constructor'() {} }",
+  "origin": "dupe-probe-extra",
+  "error": "1:28 Parsing error: Duplicate constructor in the same class"
+ },
+ {
+  "code": "class A { 'constructor'() {} 'constructor'() {} }",
+  "origin": "dupe-probe-extra",
+  "error": "1:30 Parsing error: Duplicate constructor in the same class"
+ },
+ {
+  "code": "class A { constructor; }",
+  "origin": "dupe-probe-extra",
+  "error": "1:11 Parsing error: Classes can't have a field named 'constructor'"
+ },
+ {
+  "code": "class A { static constructor; }",
+  "origin": "dupe-probe-extra",
+  "error": "1:18 Parsing error: Classes can't have a field named 'constructor'"
+ },
+ {
+  "code": "class A { static prototype() {} }",
+  "origin": "dupe-probe-extra",
+  "error": "1:18 Parsing error: Classes may not have a static property named prototype"
+ },
+ {
+  "code": "class A { #foo; #foo; }",
+  "origin": "dupe-probe-extra",
+  "error": "1:17 Parsing error: Identifier '#foo' has already been declared"
+ },
+ {
+  "code": "class A { accessor foo; accessor foo; }",
+  "origin": "dupe-probe-extra",
+  "error": "1:20 Parsing error: Unexpected token foo"
+ },
+ {
+  "code": "class A { static accessor foo; static accessor foo; }",
+  "origin": "dupe-probe-extra",
+  "error": "1:27 Parsing error: Unexpected token foo"
+ },
+ {
+  "code": "class A { accessor foo; foo() {} }",
+  "origin": "dupe-probe-extra",
+  "error": "1:20 Parsing error: Unexpected token foo"
+ },
+ {
+  "code": "class A { accessor a; a; static accessor b; static b; }",
+  "origin": "rdm-show",
+  "error": "1:20 Parsing error: Unexpected token a"
+ }
+]

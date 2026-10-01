@@ -1,0 +1,2333 @@
+[
+	{
+		"code": "typeof foo === 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'object'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'function'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'undefined'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'boolean'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'number'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'bigint'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'string' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'object' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'function' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'undefined' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'boolean' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'number' === typeof foo",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === typeof bar",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === baz",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo !== someType",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof bar != someType",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "someType === typeof bar",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "someType == typeof bar",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo == 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof(foo) === 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof(foo) !== 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof(foo) == 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof(foo) != 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "var oddUse = typeof foo + 'thing'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "function f(undefined) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === `str${somethingElse}`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo === 'strnig'",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "'strnig' === typeof foo",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar === 'umdefined') {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 11,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo !== 'strnig'",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "'strnig' !== typeof foo",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar !== 'umdefined') {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 11,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo != 'strnig'",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "'strnig' != typeof foo",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar != 'umdefined') {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 11,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof foo == 'strnig'",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "'strnig' == typeof foo",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar == 'umdefined') {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 11,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar === `umdefined`) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 11,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (typeof bar !== undefined) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "typeof a === \"string\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"symbol\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"undefined\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"object\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"boolean\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"number\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"function\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"bigint\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === 'string'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === `string`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a == \"string\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a != \"string\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a !== \"string\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "\"string\" === typeof a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a == \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a != \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a !== \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "\"strnig\" === typeof a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === 'strnig'",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === `strnig`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"String\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"STRING\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \" string\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 2,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"null\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 6,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"array\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 7,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"nunber\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"fucntion\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 10,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"str\\u0069ng\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"\\x73tring\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === `str\\u0069ng`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"strin\\\ng\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === `${b}`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === `strnig${b}`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === tag`strnig`",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === 5",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === 5n",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 2,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === null",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 4,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === true",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 4,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === false",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 5,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === /re/",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "undefined === typeof a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a == undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a != undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a !== undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === void 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === typeof b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"strnig\" + \"\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === (\"strnig\")",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "(typeof a) === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof (a) === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof(a) === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a.b.c === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a() === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof typeof a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "!typeof a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a + \"\" === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a < \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a > \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a <= \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a >= \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a + \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a in \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a instanceof \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a && \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a ?? \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = typeof a === \"strnig\" ? 1 : 2",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "switch (typeof a) { case \"strnig\": }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "f(typeof a, \"strnig\")",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"strnig\" === b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "b === typeof a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === \"strnig\" || typeof b === \"nubmer\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Invalid typeof comparison value."
+			},
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 47,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 39,
+				"start": 38,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === (b, \"strnig\")",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === Infinity",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === -1",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === [ ]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "if (typeof a ===\n    \"strnig\") {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 5,
+				"endLine": 2,
+				"endColumn": 13,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 5,
+				"start": 21,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "é = typeof a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 18,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "\"😀\" + (typeof a === \"strnig\")",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 23,
+				"length": 8,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === \"😀\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 6,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof a === <a/>",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === undefined$",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "typeof a === (undefined)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "function f(undefined) {} typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "var undefined; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let undefined$ = 1; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 43,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"start": 33,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "typeof x === undefined; var undefined;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "{ let undefined = 1; } typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "{ let undefined = 1; typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f() { var undefined; } typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 46,
+				"endLine": 1,
+				"endColumn": 55,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "function f() { typeof x === undefined; var undefined; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(undefined) => typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "try {} catch (undefined) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "try {} catch (undefined) {} typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 42,
+				"endLine": 1,
+				"endColumn": 51,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "undefined = 1; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"start": 28,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "class undefined {} typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function undefined() {} typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(function undefined() { typeof x === undefined })",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(function undefined() {}); typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 50,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "(class undefined { m() { typeof x === undefined } })",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import undefined from \"a\"; typeof x === undefined",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import { a as undefined } from \"a\"; typeof x === undefined",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import * as undefined from \"a\"; typeof x === undefined",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "undefined: for (;;) { typeof x === undefined; break undefined; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "var o = { undefined: 1 }; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 40,
+				"endLine": 1,
+				"endColumn": 49,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 40,
+				"start": 39,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "a.undefined = 1; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 31,
+				"start": 30,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "var { undefined } = o; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "var { a: undefined } = o; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "var [undefined] = o; typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f({ undefined }) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f(...undefined) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (var undefined in o) {} typeof x === undefined",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (let undefined of o) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "with (o) { typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "function f() { eval(\"\"); return typeof x === undefined }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 46,
+				"endLine": 1,
+				"endColumn": 55,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 46,
+				"start": 45,
+				"length": 9,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "function f(undefined) { with (o) { typeof x === undefined } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f(a = typeof x === undefined) { var undefined; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [],
+		"differs": "missing"
+	},
+	{
+		"code": "typeof a === \"x\" === \"y\"",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Invalid typeof comparison value."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 3,
+				"message": "Invalid typeof comparison value."
+			}
+		]
+	},
+	{
+		"code": "void a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "delete a === \"strnig\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let NaN = 1; x === NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === NaN; function g(NaN) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function g(NaN) { x === NaN }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function g(Number) { x === Number.NaN }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function g(Number) {} x === Number.NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let Number = 1; x === Number.NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "import NaN from \"x\"; y == NaN",
+		"sourceType": "module",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "NaN = 1; x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "try {} catch (NaN) { x == NaN }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "NaN: for(;;){ x == NaN; break NaN; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "var o = { NaN: 1 }; x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function g(NaN) { switch (NaN) { case NaN: } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function g(NaN) {} switch (NaN) { case NaN: }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class NaN {} x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(function NaN() { x == NaN })",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(function NaN() {}); x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(class NaN { m() { return x == NaN } })",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(class NaN {}); x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a // (  in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a // c ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a /*   */) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(\"\\\n)\") in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!f(\"\\\r\n(\")) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!f(`\n)`) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!a ) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a\\u{62} in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(!\\u{61}) in b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "!a.#b in c",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "x === -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(x) === -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(x === -0)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "if ((!a) in b) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "if (!a in b) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x == NaN",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "switch (NaN) { case NaN: break; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	}
+]

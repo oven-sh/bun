@@ -1,0 +1,15 @@
+== load: 583.16 681.11 729.54; CARGO_INCREMENTAL=0; lines: 19933 generated, 24095 in the crate
+     Removed 358 files, 198.5MiB total
+== cargo check (lib)
+wall 16.384 s; user 8.056 s; sys 1.540 s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.09s
+== cargo test --no-run (debug: codegen of lib test binary and link)
+wall 25.247 s; user 15.684 s; sys 2.304 s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.02s
+== cargo clippy --all-targets --no-deps
+wall 22.156 s; user 8.374 s; sys 1.335 s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.78s
+== cargo build (lib, debug codegen to rlib)
+wall 21.128 s; user 18.605 s; sys 3.063 s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.02s
+== load: 551.37 640.27 710.51

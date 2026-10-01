@@ -1,0 +1,48 @@
+//! Link probe: which workspace crates can a cargo test binary of the type checker use.
+use bun_collections::{ArrayHashMap, HashMap};
+
+pub fn probe_map(keys: &[u32]) -> usize {
+    let mut map: HashMap<u32, u32> = HashMap::new();
+    for &k in keys {
+        map.insert(k, k + 1);
+    }
+    let mut ordered: ArrayHashMap<u32, u32> = ArrayHashMap::new();
+    for &k in keys {
+        ordered.insert(k, k + 2);
+    }
+    map.len() + ordered.len()
+}
+
+pub fn probe_hash(bytes: &[u8]) -> u64 {
+    bun_wyhash::hash(bytes)
+}
+
+pub fn probe_search(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    bun_core::strings::index_of(haystack, needle)
+}
+
+pub fn probe_stack() -> bool {
+    bun_core::StackCheck::init().is_safe_to_recurse()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn maps_link() {
+        assert_eq!(super::probe_map(&[1, 2, 3]), 6);
+        assert_ne!(super::probe_hash(b"abc"), 0);
+    }
+}
+
+pub fn probe_arena(values: &[u32]) -> usize {
+    let arena = bun_alloc::Arena::new();
+    arena.alloc_slice_copy(values).len()
+}
+
+#[cfg(test)]
+mod arena_tests {
+    #[test]
+    fn arena_links() {
+        assert_eq!(super::probe_arena(&[1, 2, 3]), 3);
+    }
+}

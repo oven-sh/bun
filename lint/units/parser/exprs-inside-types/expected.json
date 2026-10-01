@@ -1,0 +1,8445 @@
+[
+ {
+  "id": "A1",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A2",
+  "site": "A",
+  "text": "const k = \"a\"; type T = { [k]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "const k = \"a\";"
+  },
+  "base": {
+   "accepts": true,
+   "out": "const k = \"a\";"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A3",
+  "site": "A",
+  "text": "type T = { [\"a\"]: number; [1]: string; [-1]: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A4",
+  "site": "A",
+  "text": "type T = { [`a`]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A5",
+  "site": "A",
+  "text": "declare const a: { b: { readonly c: unique symbol } }; type T = { [a.b.c]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A6",
+  "site": "A",
+  "text": "declare const a: string, b: string; type T = { [a + b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@47"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"+\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A7",
+  "site": "A",
+  "text": "declare function f(): string; type T = { [f()]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@41"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"(\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A8",
+  "site": "A",
+  "text": "declare const a: any, b: any, c: any; type T = { [a ? b : c]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@49"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"?\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A9",
+  "site": "A",
+  "text": "declare const a: any, b: any; type T = { [a, b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1096@42"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \",\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A10",
+  "site": "A",
+  "text": "type T = { [+1]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A11",
+  "site": "A",
+  "text": "declare const a: unique symbol; type T = { [(a)]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@43"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A12",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a as any]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"as\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A13",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a!]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A14",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a[\"b\"]]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A15",
+  "site": "A",
+  "text": "declare const a: any; type T = { [typeof a]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A16",
+  "site": "A",
+  "text": "declare const A: any, B: any; type T = { [A | B]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@41"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A17",
+  "site": "A",
+  "text": "declare const A: any; type B = 1; type T = { [A<B>]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@45"
+   ],
+   "semantic": [
+    "TS2635@48"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A18",
+  "site": "A",
+  "text": "type T = { [A extends B ? C : D]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@14",
+    "TS1005@26",
+    "TS1005@31",
+    "TS1131@32"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@30"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A19",
+  "site": "A",
+  "text": "type T = { [keyof A]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@18",
+    "TS1128@19",
+    "TS1128@20",
+    "TS1128@29"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@18",
+    "TS2693@22"
+   ],
+   "emit": "A; number; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A20",
+  "site": "A",
+  "text": "type T = { [a[]]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1011@14"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A21",
+  "site": "A",
+  "text": "type T = { [(x) => x]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A22",
+  "site": "A",
+  "text": "type T = { [class {}]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected class"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A23",
+  "site": "A",
+  "text": "type T = { [function () { return 1 }]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected function"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A24",
+  "site": "A",
+  "text": "type T = { [import(\"./x\")]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11",
+    "TS2307@19"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A25",
+  "site": "A",
+  "text": "declare const x: any; type T = { [await x]: number }; export {};",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": "export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"x\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A26",
+  "site": "A",
+  "text": "function* g() { type T = { [yield]: number }; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1212@28"
+   ],
+   "semantic": [
+    "TS2304@28"
+   ],
+   "emit": "function* g() { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "function* g() {}"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A28",
+  "site": "A",
+  "text": "interface I { [Symbol.iterator](): Iterator<number> }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A29",
+  "site": "A",
+  "text": "interface I { readonly [Symbol.toStringTag]: string }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A30",
+  "site": "A",
+  "text": "declare const k: unique symbol; interface I { [k]?: number }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A31",
+  "site": "A",
+  "text": "declare const k: unique symbol; interface I { get [k](): number; set [k](v: number) }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A32",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a.b!.c]: number; [a?.b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"?.\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A33",
+  "site": "A",
+  "text": "declare const x: any; type T = { [<any>x]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \"x\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A34",
+  "site": "A",
+  "text": "declare const b: string; type T = { [`a${b}`]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@36"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A35",
+  "site": "A",
+  "text": "type T = { [1n]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A36",
+  "site": "A",
+  "text": "type T = { [new Foo]: number; [this.x]: number; [import.meta.x]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11",
+    "TS1170@30",
+    "TS1170@48"
+   ],
+   "semantic": [
+    "TS2304@16",
+    "TS2532@31",
+    "TS2339@61"
+   ],
+   "emit": "export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \"Foo\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A37",
+  "site": "A",
+  "text": "declare let a: any, b: any; type T = { [a = b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@39"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A38",
+  "site": "A",
+  "text": "type T = { [/re/]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected /"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A39",
+  "site": "A",
+  "text": "type T = { [<div/>]: number };",
+  "tsx": true,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"/\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A41",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a satisfies string]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@33"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"satisfies\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A43",
+  "site": "A",
+  "text": "type T = { [async () => { await 1 }]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"(\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A44",
+  "site": "A",
+  "text": "declare const k: unique symbol; type T = { [k]<U>(): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A45",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator] };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A46",
+  "site": "A",
+  "text": "type T = { [a.b.c.d](x: number): void, [e]: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@40"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A47",
+  "site": "A",
+  "text": "type T = { [a\n.b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A48",
+  "site": "A",
+  "text": "type T = { [/*! legal */ a.b]: number };\nlet z = 1;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@25"
+   ],
+   "emit": "let z = 1;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "/*! legal */ let z = 1;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A49",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; type T = { [foo]: string }; export let t: T;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@20"
+   ],
+   "emit": "import { foo } from \"./x\"; export let t;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "import { foo } from \"./x\"; export let t;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A50",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; type T = { [foo.bar]: string }; export let t: T;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@20"
+   ],
+   "emit": "import { foo } from \"./x\"; export let t;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "import { foo } from \"./x\"; export let t;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A51",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; interface I { [foo](): void } export let t: I;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@20"
+   ],
+   "emit": "import { foo } from \"./x\"; export let t;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "import { foo } from \"./x\"; export let t;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A52",
+  "site": "A",
+  "text": "type T = { [string]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2693@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A53",
+  "site": "A",
+  "text": "type T = { [a.b<c>]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A54",
+  "site": "A",
+  "text": "type T = { [[a, b]]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11",
+    "TS2304@13",
+    "TS2304@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A55",
+  "site": "A",
+  "text": "type T = { [{ a: 1 }]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A56",
+  "site": "A",
+  "text": "type T = { [null]: number; [true]: number; [this]: number; [void 0]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11",
+    "TS1170@27",
+    "TS1170@43",
+    "TS1170@59"
+   ],
+   "semantic": [
+    "TS2464@11",
+    "TS2464@27",
+    "TS2464@43",
+    "TS2464@59"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"0\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "A57",
+  "site": "A",
+  "text": "type T = { [a & b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A58",
+  "site": "A",
+  "text": "type T = { [unique symbol]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@19",
+    "TS1128@25",
+    "TS1128@26",
+    "TS1128@35"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2552@19",
+    "TS2693@28"
+   ],
+   "emit": "symbol; number; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A59",
+  "site": "A",
+  "text": "type T = { [() => void]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@22"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A60",
+  "site": "A",
+  "text": "type T = { [x is string]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@14",
+    "TS1434@17",
+    "TS1128@23",
+    "TS1128@24",
+    "TS1128@33"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@14",
+    "TS2693@17",
+    "TS2693@26"
+   ],
+   "emit": "is; string; number; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A61",
+  "site": "A",
+  "text": "type T = { [a.b.c[d]]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@18"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A62",
+  "site": "A",
+  "text": "type T = { [-1n]: number; [- 1]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2464@11"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A63",
+  "site": "A",
+  "text": "type T = { [a!.b]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11"
+   ],
+   "semantic": [
+    "TS2304@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A64",
+  "site": "A",
+  "text": "type T = { [readonly string[]]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@27"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2369@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A65",
+  "site": "A",
+  "text": "type T = { [typeof a.b]: number; [typeof import('x')]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1170@11",
+    "TS1170@33"
+   ],
+   "semantic": [
+    "TS2304@19",
+    "TS2307@48"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A66",
+  "site": "A",
+  "text": "type T = { [a.b]: number\n [c.d]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@12",
+    "TS2304@27"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "A67",
+  "site": "A",
+  "text": "type T = { readonly [a.b]?: number; -readonly [c]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@36",
+    "TS1005@49",
+    "TS1128@58"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@21",
+    "TS2304@37",
+    "TS2304@47",
+    "TS2693@51"
+   ],
+   "emit": "-readonly[c]; number; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "A68",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator]!: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@28",
+    "TS1005@29",
+    "TS1128@38"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2693@31"
+   ],
+   "emit": "number; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "B1",
+  "site": "B",
+  "text": "let g: (a = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B2",
+  "site": "B",
+  "text": "let g: (a: number = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \":\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B3",
+  "site": "B",
+  "text": "let g: (a?: number = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1015@8"
+   ],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"?\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B4",
+  "site": "B",
+  "text": "let g: new (a = 1) => Foo;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@12",
+    "TS2304@22"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B5",
+  "site": "B",
+  "text": "type T = { (a = 1): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B6",
+  "site": "B",
+  "text": "type T = { new (a = 1): Foo };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@16",
+    "TS2304@24"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B7",
+  "site": "B",
+  "text": "type T = { m(a = 1): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@13"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B8",
+  "site": "B",
+  "text": "interface I { m(a = 1): void }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B9",
+  "site": "B",
+  "text": "type T = { [a: string = \"x\"]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1020@12"
+   ],
+   "semantic": [
+    "TS2371@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B10",
+  "site": "B",
+  "text": "let g: (a = (b: number) => b) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B11",
+  "site": "B",
+  "text": "let g: (a = function f() { var x; }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B12",
+  "site": "B",
+  "text": "let g: (a = class C { m() {} }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B13",
+  "site": "B",
+  "text": "let g: (a = import(\"./x\")) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B14",
+  "site": "B",
+  "text": "let g: (a = require(\"./x\")) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B15",
+  "site": "B",
+  "text": "declare const p: Promise<number>; let g: (a = await p) => void; export {};",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@42"
+   ],
+   "emit": "let g; export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B16",
+  "site": "B",
+  "text": "let g: (a = <div/>) => void;",
+  "tsx": true,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B17",
+  "site": "B",
+  "text": "let g: (a = import.meta.url) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g; export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B18",
+  "site": "B",
+  "text": "let g: (a = b, c = a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8",
+    "TS2371@15"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B19",
+  "site": "B",
+  "text": "let g: (...a = []) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1048@11"
+   ],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ..."
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B20",
+  "site": "B",
+  "text": "let g: (this = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@13",
+    "TS1003@15"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "B21",
+  "site": "B",
+  "text": "let g: (a = 1 in x) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B22",
+  "site": "B",
+  "text": "for (let g: (a = 1 in x) => void = null!; ;) {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@19"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2371@13"
+   ],
+   "emit": "for (let g = null;;) { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "B23",
+  "site": "B",
+  "text": "function* f() { let g: (a = yield 1) => void; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@24"
+   ],
+   "emit": "function* f() { let g; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B24",
+  "site": "B",
+  "text": "async function f() { let g: (a = await 1) => void; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@29"
+   ],
+   "emit": "async function f() { let g; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B25",
+  "site": "B",
+  "text": "let g: (a = b as T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B26",
+  "site": "B",
+  "text": "let g: (a = <T>(x: T) => x) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B27",
+  "site": "B",
+  "text": "let g: (a = () => { return 1 }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B28",
+  "site": "B",
+  "text": "let g: (a = { b: 1, c() {} }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B29",
+  "site": "B",
+  "text": "let g: (a = `x${1}`) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B30",
+  "site": "B",
+  "text": "let g: (a = 1, ) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B31",
+  "site": "B",
+  "text": "function f(): (a = 1) => void { return null! }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@15"
+   ],
+   "emit": "function f() { return null; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B32",
+  "site": "B",
+  "text": "declare const dec: any; class C { @dec p: (a = 1) => void }",
+  "tsx": false,
+  "decorator_metadata": true,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@43"
+   ],
+   "emit": "var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) { var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d; if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc); else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r; return c > 3 && r && Object.defineProperty(target, key, r), r; }; var __metadata = (this && this.__metadata) || function (k, v) { if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v); }; class C { p; } __decorate([ dec, __metadata(\"design:type\", Function) ], C.prototype, \"p\", void 0);"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B33",
+  "site": "B",
+  "text": "let x = <(a = 1) => void>y;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10",
+    "TS2304@25"
+   ],
+   "emit": "let x = y;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B34",
+  "site": "B",
+  "text": "let x = y as (a = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@8",
+    "TS2371@14"
+   ],
+   "emit": "let x = y;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B35",
+  "site": "B",
+  "text": "f<(a = 1) => void>(x);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@0",
+    "TS2371@3",
+    "TS2304@19"
+   ],
+   "emit": "f(x);"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \";\" but found \"=>\""
+  },
+  "without_lint": "reject (speculation)",
+  "lint": "parses"
+ },
+ {
+  "id": "B36",
+  "site": "B",
+  "text": "let x = (a): (b = 1) => void => a;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@14"
+   ],
+   "emit": "let x = (a) => a;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \";\" but found \":\""
+  },
+  "without_lint": "reject (speculation)",
+  "lint": "parses"
+ },
+ {
+  "id": "B37",
+  "site": "B",
+  "text": "let x = c ? (a): (b = 1) => void => a : d;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@8",
+    "TS2371@18",
+    "TS2304@40"
+   ],
+   "emit": "let x = c ? (a) => a : d;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected =>"
+  },
+  "without_lint": "reject (speculation)",
+  "lint": "parses"
+ },
+ {
+  "id": "B38",
+  "site": "B",
+  "text": "type T<U = (a = 1) => void> = U;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B39",
+  "site": "B",
+  "text": "function f<T extends (a = 1) => void>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@22"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B40",
+  "site": "B",
+  "text": "let g: (a = 1);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@14"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "B41",
+  "site": "B",
+  "text": "let g: (a = 1) => (b = 2) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8",
+    "TS2371@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B42",
+  "site": "B",
+  "text": "let g: (a = x > y) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B43",
+  "site": "B",
+  "text": "let g: (a = x, y) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B44",
+  "site": "B",
+  "text": "let g: (a = x => y) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B45",
+  "site": "B",
+  "text": "let g: (a = async () => { await 1 }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B46",
+  "site": "B",
+  "text": "let g: (a = function* () { yield 1 }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B47",
+  "site": "B",
+  "text": "let g: (a = new.target) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B48",
+  "site": "B",
+  "text": "class K extends B { p: (a = super.x) => void; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@16",
+    "TS2371@24"
+   ],
+   "emit": "class K extends B { p; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B49",
+  "site": "B",
+  "text": "class K { p: (a = this.#x) => void; #x = 1; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@14"
+   ],
+   "emit": "class K { p; #x = 1; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B50",
+  "site": "B",
+  "text": "let g: (a = arguments) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B51",
+  "site": "B",
+  "text": "enum E { A = 1 } let g: (a = E.A) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@25"
+   ],
+   "emit": "var E; (function (E) { E[E[\"A\"] = 1] = \"A\"; })(E || (E = {})); let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B52",
+  "site": "B",
+  "text": "import { foo } from \"./x\"; let g: (a = foo) => void; export { g };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@20",
+    "TS2371@35"
+   ],
+   "emit": "import { foo } from \"./x\"; let g; export { g };"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B53",
+  "site": "B",
+  "text": "let g: (a = /*! legal */ 1) => void;\nlet z = 1;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g; let z = 1;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B54",
+  "site": "B",
+  "text": "let g: (a = () => { /*! legal */ return 1 }) => void;\nlet z = 1;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g; let z = 1;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B55",
+  "site": "B",
+  "text": "let g: (a = 1) => void = null!, h = 2;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g = null, h = 2;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B56",
+  "site": "B",
+  "text": "let g: (a: number = 1, b?: string, ...c: any[]) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \":\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "B57",
+  "site": "B",
+  "text": "abstract class K { abstract m(a = 1): void; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@30"
+   ],
+   "emit": "class K { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class K { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "B58",
+  "site": "B",
+  "text": "function f(a = 1): void; function f() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@11"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "function f() {}"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "B59",
+  "site": "B",
+  "text": "declare function f(a = 1): void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@19"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "B60",
+  "site": "B",
+  "text": "let g: (a = (0, function () { 'use strict'; with (x) {} })) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1101@44"
+   ],
+   "semantic": [
+    "TS2371@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C1",
+  "site": "C",
+  "text": "let g: ({ a, b }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@18"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C2",
+  "site": "C",
+  "text": "let g: ([a, b]: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@16"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C3",
+  "site": "C",
+  "text": "let g: ({ a = 1 }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10",
+    "TS2304@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C4",
+  "site": "C",
+  "text": "let g: ([a = 1]: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@9",
+    "TS2304@17"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C5",
+  "site": "C",
+  "text": "let g: ({ a: { b = 1 } }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@15",
+    "TS2304@26"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C6",
+  "site": "C",
+  "text": "let g: ({ [k]: a }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2842@15",
+    "TS2304@20"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \":\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C7",
+  "site": "C",
+  "text": "let g: ({ a, ...rest }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@24"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C8",
+  "site": "C",
+  "text": "let g: ([, a, ...b]: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@21"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C9",
+  "site": "C",
+  "text": "let g: ({ a = (x) => x }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10",
+    "TS2304@26"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C10",
+  "site": "C",
+  "text": "let g: ({ \"a\": b, 1: c }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2842@15",
+    "TS2842@21",
+    "TS2304@26"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C11",
+  "site": "C",
+  "text": "let g: ({ a } = {}) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8",
+    "TS2339@10"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C12",
+  "site": "C",
+  "text": "let g: ({ a }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C13",
+  "site": "C",
+  "text": "let g: ({ a });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C14",
+  "site": "C",
+  "text": "let g: ({ a = 1 });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@10",
+    "TS1128@16",
+    "TS1128@17"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g, a = 1; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "C15",
+  "site": "C",
+  "text": "let g: ([a]);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@9"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C16",
+  "site": "C",
+  "text": "let g: ({ a: 1 }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@16",
+    "TS1005@19",
+    "TS1005@21",
+    "TS1109@28"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g, T; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \":\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "C17",
+  "site": "C",
+  "text": "let g: ({ if: x }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2842@14",
+    "TS2304@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C18",
+  "site": "C",
+  "text": "let g: ({ a: string });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C19",
+  "site": "C",
+  "text": "let g: ([a, b]) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C20",
+  "site": "C",
+  "text": "let g: ([a, b?]);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@9",
+    "TS2304@12"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C21",
+  "site": "C",
+  "text": "let g: ({ a }?: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@16"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C22",
+  "site": "C",
+  "text": "let g: ([a]: T, { b }: U) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@13",
+    "TS2304@23"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C23",
+  "site": "C",
+  "text": "let g: (...[a, b]: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C24",
+  "site": "C",
+  "text": "let g: ({ a = 1 }) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C25",
+  "site": "C",
+  "text": "let g: ({ a = 1 }, b);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@21"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "C26",
+  "site": "C",
+  "text": "let g: ({ [a + b]: c = d }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2842@19",
+    "TS2304@28"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"+\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C27",
+  "site": "C",
+  "text": "let g: ([[[[a]]]]: any) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C28",
+  "site": "C",
+  "text": "let g: ({ a: [b, { c = () => { var v } }] }: any) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C29",
+  "site": "C",
+  "text": "type T = { m({ a = 1 }: any): void; new ([b = 2]: any): T; ({ c = 3 }): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@15",
+    "TS2371@42",
+    "TS2371@62"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"}\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C30",
+  "site": "C",
+  "text": "let g: ({ a, }: T, ) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@16"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "C31",
+  "site": "C",
+  "text": "let g: ({ a = 1, b: { c } = {} }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@10",
+    "TS2371@20",
+    "TS2304@34"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "C32",
+  "site": "C",
+  "text": "let g: ({ ...{ a } }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@10",
+    "TS1131@13",
+    "TS1128@19",
+    "TS1128@20",
+    "TS1434@22",
+    "TS1128@23",
+    "TS1128@25",
+    "TS1109@32"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@22"
+   ],
+   "emit": "let g, { a }; T; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ..."
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "C33",
+  "site": "C",
+  "text": "let g: ({ #a: b }: T) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2842@14",
+    "TS2304@19"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected #a"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "C34",
+  "site": "C",
+  "text": "let g: ([a = 1, [b] = []] = []) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2371@8",
+    "TS2371@9",
+    "TS2371@16"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "D1",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@36",
+    "TS1434@37",
+    "TS1128@38",
+    "TS1128@40",
+    "TS1109@47"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@37"
+   ],
+   "emit": "let g; a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D2",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec() a: number) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@38",
+    "TS1434@42",
+    "TS1128@48",
+    "TS1128@50",
+    "TS1109@57"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2693@42"
+   ],
+   "emit": "let g; a: number; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D3",
+  "site": "D",
+  "text": "declare const dec: any; type T = { m(@dec a): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1206@37"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "D4",
+  "site": "D",
+  "text": "declare const foo: any; let g: (@(foo.bar()) a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@44",
+    "TS1434@45",
+    "TS1128@46",
+    "TS1128@48",
+    "TS1109@55"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@45"
+   ],
+   "emit": "let g; a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D5",
+  "site": "D",
+  "text": "let g: (public a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2369@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D6",
+  "site": "D",
+  "text": "let g: (readonly a: string[]) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2369@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \":\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D7",
+  "site": "D",
+  "text": "declare const dec: any; type T = { [@dec a: string]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@40",
+    "TS1005@41",
+    "TS1005@50",
+    "TS1131@51"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D8",
+  "site": "D",
+  "text": "type T = { [public a: string]: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1018@19"
+   ],
+   "semantic": [
+    "TS2369@12"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"]\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D9",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@36",
+    "TS1128@38",
+    "TS1109@45"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "let g; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D10",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec @dec2() public readonly a?: number = 1) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@60",
+    "TS1109@63",
+    "TS1005@75",
+    "TS1128@77",
+    "TS1109@84"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@61",
+    "TS2693@65"
+   ],
+   "emit": "let g; a ? : number = 1; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D11",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec this: any) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@36",
+    "TS1005@41",
+    "TS1434@43",
+    "TS1128@46",
+    "TS1128@48",
+    "TS1109@55"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2693@43"
+   ],
+   "emit": "let g; this; any; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D12",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec ...a: any[]) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@36",
+    "TS1128@37",
+    "TS1011@47",
+    "TS1005@48",
+    "TS1128@50",
+    "TS1109@57"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2693@43"
+   ],
+   "emit": "let g; a: any[]; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D13",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec { a }: any) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@36",
+    "TS1128@42",
+    "TS1434@44",
+    "TS1128@47",
+    "TS1128@49",
+    "TS1109@56"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@39",
+    "TS2693@44"
+   ],
+   "emit": "let g; { a; } any; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D14",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec.a.b<T>() a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@45",
+    "TS1434@46",
+    "TS1128@47",
+    "TS1128@49",
+    "TS1109@56"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@46"
+   ],
+   "emit": "let g; a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D15",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@((x) => x) a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@43",
+    "TS1434@44",
+    "TS1128@45",
+    "TS1128@47",
+    "TS1109@54"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@44"
+   ],
+   "emit": "let g; a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D16",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec(class { m() { var v } }) a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@32",
+    "TS1146@61",
+    "TS1434@62",
+    "TS1128@63",
+    "TS1128@65",
+    "TS1109@72"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@62"
+   ],
+   "emit": "let g; a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D17",
+  "site": "D",
+  "text": "declare const dec: any; async function f() { let g: (@(await dec) a) => void; }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@53",
+    "TS1146@65",
+    "TS1434@66",
+    "TS1128@67",
+    "TS1128@69",
+    "TS1109@76"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@66"
+   ],
+   "emit": "async function f() { let g; a; void ; }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "D18",
+  "site": "D",
+  "text": "declare const dec: any; let g: new (@dec a) => Foo;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1206@36"
+   ],
+   "semantic": [
+    "TS2304@47"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "D19",
+  "site": "D",
+  "text": "declare const dec: any; class K { m(@dec a): void; m(a) {} }",
+  "tsx": false,
+  "decorator_metadata": true,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1206@36"
+   ],
+   "semantic": [],
+   "emit": "class K { m(a) { } }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class K { m(a) {} }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "D20",
+  "site": "D",
+  "text": "declare const dec: any; declare class K { m(@dec a): void; }",
+  "tsx": false,
+  "decorator_metadata": true,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1206@44"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "D21",
+  "site": "D",
+  "text": "let g: (public) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1212@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "D22",
+  "site": "D",
+  "text": "let g: (public, a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1212@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": true,
+   "out": "let g;"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "D23",
+  "site": "D",
+  "text": "let g: (override readonly a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2369@8"
+   ],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"readonly\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D24",
+  "site": "D",
+  "text": "let g: (export a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1090@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected export"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D25",
+  "site": "D",
+  "text": "let g: (async a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1090@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D26",
+  "site": "D",
+  "text": "let g: (static a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1090@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D27",
+  "site": "D",
+  "text": "let g: (abstract a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1242@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D28",
+  "site": "D",
+  "text": "let g: (declare a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1090@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D29",
+  "site": "D",
+  "text": "let g: (accessor a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1275@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D30",
+  "site": "D",
+  "text": "let g: (in a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1274@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected in"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D31",
+  "site": "D",
+  "text": "let g: (out a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1274@8"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "D32",
+  "site": "D",
+  "text": "let g: (const a) => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@14",
+    "TS1005@15",
+    "TS1005@17",
+    "TS1109@24"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@8"
+   ],
+   "emit": "let g, a; void ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"a\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E1",
+  "site": "E",
+  "text": "type T = { a: number = 1 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@23"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E2",
+  "site": "E",
+  "text": "interface I { a: number = 1 }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1246@26"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E3",
+  "site": "E",
+  "text": "type T = { a = 1 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@17"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11"
+   ],
+   "emit": "a = 1; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E4",
+  "site": "E",
+  "text": "type T = { a? = 1 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@16"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject (initializer of a property without a type)",
+  "lint": "parses"
+ },
+ {
+  "id": "E5",
+  "site": "E",
+  "text": "type T = { a = () => { var x } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@31"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11"
+   ],
+   "emit": "a = () => { var x; }; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E6",
+  "site": "E",
+  "text": "type T = { readonly a: string = \"x\"; b: number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@32"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E7",
+  "site": "E",
+  "text": "type T = { a = 1, b = 2 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@24"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@18"
+   ],
+   "emit": "a = 1, b = 2; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E8",
+  "site": "E",
+  "text": "type T = { a = 1 b = 2 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1005@17",
+    "TS1128@23"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@17"
+   ],
+   "emit": "a = 1; b = 2; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E9",
+  "site": "E",
+  "text": "type T = { a = 1\n b = 2 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@24"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@18"
+   ],
+   "emit": "a = 1; b = 2; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E10",
+  "site": "E",
+  "text": "type T = { \"a\" = 1; 2 = 3; [k] = 4 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@35"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2364@11",
+    "TS2364@20",
+    "TS2488@27",
+    "TS2304@28"
+   ],
+   "emit": "\"a\" = 1; 2 = 3; [k] = 4; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E11",
+  "site": "E",
+  "text": "type T = { a: number = b in c };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@23"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E12",
+  "site": "E",
+  "text": "type T = { a = class { static { var q; } } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@43"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11"
+   ],
+   "emit": "a = class { static { var q; } }; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E13",
+  "site": "E",
+  "text": "type T = { a = import(\"./x\") };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@29"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2307@22"
+   ],
+   "emit": "a = import(\"./x\"); ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E14",
+  "site": "E",
+  "text": "type T = { a = x, y };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@20"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@15",
+    "TS2304@18"
+   ],
+   "emit": "a = x, y; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E15",
+  "site": "E",
+  "text": "interface I { m(): void = 1 }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@24"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E16",
+  "site": "E",
+  "text": "type T = { a: number = 1 }[];",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@23"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E17",
+  "site": "E",
+  "text": "declare const dec: any; class C { @dec p: { a: number = 1 } }",
+  "tsx": false,
+  "decorator_metadata": true,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1247@56"
+   ],
+   "semantic": [],
+   "emit": "var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) { var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d; if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc); else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r; return c > 3 && r && Object.defineProperty(target, key, r), r; }; var __metadata = (this && this.__metadata) || function (k, v) { if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v); }; class C { p; } __decorate([ dec, __metadata(\"design:type\", Object) ], C.prototype, \"p\", void 0);"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "E18",
+  "site": "E",
+  "text": "type T = { a = yield };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@21"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@15"
+   ],
+   "emit": "a = yield; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "E19",
+  "site": "E",
+  "text": "type T = { a = await 1 }; export {};",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1128@23"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11"
+   ],
+   "emit": "a = await 1; ; export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F1",
+  "site": "F",
+  "text": "type T = { get x(): number; set x(v: number) };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F2",
+  "site": "F",
+  "text": "interface I { get x(): number }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F3",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F4",
+  "site": "F",
+  "text": "type T = { set x(v) { this.y = v } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@20"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F5",
+  "site": "F",
+  "text": "type T = { get x(): number { return 1 }; y: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@39"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F6",
+  "site": "F",
+  "text": "type T = { get: number; set: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F7",
+  "site": "F",
+  "text": "type T = { get(): number; set(v: number): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F8",
+  "site": "F",
+  "text": "type T = { get x<U>(): U };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1094@15"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F9",
+  "site": "F",
+  "text": "declare const k: unique symbol; type T = { get [k](): number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F10",
+  "site": "F",
+  "text": "type T = { get x() { return await 1 } }; export {};",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1308@28"
+   ],
+   "semantic": [],
+   "emit": "export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject (early error of Bun's expression or statement parser)",
+  "lint": "parses"
+ },
+ {
+  "id": "F11",
+  "site": "F",
+  "text": "type T = { get x() { var a; function g() {} class K {} return 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F12",
+  "site": "F",
+  "text": "type T = { get x() { return import(\"./y\") } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [
+    "TS2307@35"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F13",
+  "site": "F",
+  "text": "type T = { m() { return 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@15",
+    "TS1128@28"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "{ return 1; } ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F14",
+  "site": "F",
+  "text": "type T = { get x() };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F15",
+  "site": "F",
+  "text": "type T = { get x(): number, set x(v: number), };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F16",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } y: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F17",
+  "site": "F",
+  "text": "type T = { get x() { return 1 }\n y: string };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F18",
+  "site": "F",
+  "text": "type T = { get x() { yield 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1163@21"
+   ],
+   "semantic": [
+    "TS2378@15"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject (early error of Bun's expression or statement parser)",
+  "lint": "parses"
+ },
+ {
+  "id": "F19",
+  "site": "F",
+  "text": "type T = { get x() { return super.x } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [
+    "TS2660@28"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F20",
+  "site": "F",
+  "text": "type T = { get x() { return new.target } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [
+    "TS17013@28"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F21",
+  "site": "F",
+  "text": "type T = { get x() { return arguments } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F22",
+  "site": "F",
+  "text": "type T = { get x() { 'use strict'; with (a) {} } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1101@35"
+   ],
+   "semantic": [
+    "TS2378@15",
+    "TS2410@35",
+    "TS2304@41"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F23",
+  "site": "F",
+  "text": "type T = { get x() { import a from 'b'; } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1232@21"
+   ],
+   "semantic": [
+    "TS2378@15"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject (early error of Bun's expression or statement parser)",
+  "lint": "parses"
+ },
+ {
+  "id": "F24",
+  "site": "F",
+  "text": "type T = { get x() { export const a = 1; } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1184@21"
+   ],
+   "semantic": [
+    "TS2378@15"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject (early error of Bun's expression or statement parser)",
+  "lint": "parses"
+ },
+ {
+  "id": "F25",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } }; const after = 1;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": "const after = 1;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F26",
+  "site": "F",
+  "text": "type T = { get\n x(): number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F27",
+  "site": "F",
+  "text": "type T = { get ?: number; set?(): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "F28",
+  "site": "F",
+  "text": "type T = { get x(a = 1) { return a } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@24"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"=\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F29",
+  "site": "F",
+  "text": "interface I { get x() { return 1 } set x(v) {} }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@22",
+    "TS1183@44"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F30",
+  "site": "F",
+  "text": "type T = { get x() { type U = 1; interface V {} enum W { A } namespace N { export const q = 1 } return 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19",
+    "TS1235@61"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject (early error of Bun's expression or statement parser)",
+  "lint": "parses"
+ },
+ {
+  "id": "F31",
+  "site": "F",
+  "text": "type T = { get x() { /*! legal */ return 1 } };\nlet z = 1;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": "let z = 1;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F32",
+  "site": "F",
+  "text": "declare const dec: any; class C { @dec p: { get x() { return 1 } } }",
+  "tsx": false,
+  "decorator_metadata": true,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@52"
+   ],
+   "semantic": [],
+   "emit": "var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) { var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d; if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc); else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r; return c > 3 && r && Object.defineProperty(target, key, r), r; }; var __metadata = (this && this.__metadata) || function (k, v) { if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v); }; class C { p; } __decorate([ dec, __metadata(\"design:type\", Object) ], C.prototype, \"p\", void 0);"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F33",
+  "site": "F",
+  "text": "type T = { get x() { label: for (;;) { break label } } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [
+    "TS2378@15"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F34",
+  "site": "F",
+  "text": "type T = { get x() { return <div/> } };",
+  "tsx": true,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F35",
+  "site": "F",
+  "text": "type T = { get x() { using a = b; } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1183@19"
+   ],
+   "semantic": [
+    "TS2378@15",
+    "TS2304@31"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "F36",
+  "site": "F",
+  "text": "type T = { get 'x'(): number; set 1(v) ; get #p(): number };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected #p"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "F37",
+  "site": "F",
+  "text": "type T = { get x() => 1 };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@19"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected =>"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F38",
+  "site": "F",
+  "text": "type T = { async get x() { await 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11",
+    "TS1434@17",
+    "TS1005@25",
+    "TS1128@37"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@11",
+    "TS2304@17",
+    "TS2304@21"
+   ],
+   "emit": "async; get; x(); { await 1; } ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F39",
+  "site": "F",
+  "text": "type T = { static get x() { return 1 } };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@11"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "F40",
+  "site": "F",
+  "text": "type T = { get x() { return 1 };; };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@31",
+    "TS1131@32"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected {"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G1",
+  "site": "G",
+  "text": "function f<T extends +1>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G2",
+  "site": "G",
+  "text": "type T<U extends -1> = U;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "G3",
+  "site": "G",
+  "text": "function f<T extends (a + b)>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@24",
+    "TS1005@27",
+    "TS1109@28",
+    "TS1109@30",
+    "TS1005@32"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@22",
+    "TS2304@26"
+   ],
+   "emit": "+b; > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"+\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G4",
+  "site": "G",
+  "text": "function f<T extends !x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS17020@21",
+    "TS2304@22"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected !"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G5",
+  "site": "G",
+  "text": "function f<T extends ++x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ++"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G6",
+  "site": "G",
+  "text": "function f<T extends /re/>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected /"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G7",
+  "site": "G",
+  "text": "function f<T extends class {}>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected class"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G8",
+  "site": "G",
+  "text": "function f<T extends function () { var x }>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@33",
+    "TS1109@42",
+    "TS1109@44",
+    "TS1005@46"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS7014@21"
+   ],
+   "emit": "function f() { var x; } > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected function"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G9",
+  "site": "G",
+  "text": "async function f<T extends await x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@33"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2552@27"
+   ],
+   "emit": "async function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"x\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G10",
+  "site": "G",
+  "text": "function f<T extends delete x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21",
+    "TS1102@28"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected delete"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G11",
+  "site": "G",
+  "text": "function f<T extends ~x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ~"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G12",
+  "site": "G",
+  "text": "class K<T extends +1> {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@18"
+   ],
+   "semantic": [],
+   "emit": "class K { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G13",
+  "site": "G",
+  "text": "interface I<T extends +1> {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@22"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G14",
+  "site": "G",
+  "text": "type A<T extends +1> = T;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@17"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G15",
+  "site": "G",
+  "text": "let g: <T extends +1>() => void;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@18"
+   ],
+   "semantic": [],
+   "emit": "let g;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G16",
+  "site": "G",
+  "text": "type M = { m<T extends +1>(): void };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@23"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G17",
+  "site": "G",
+  "text": "const h = <T extends +1>(x: T) => x;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "const h = (x) => x;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "reject (speculation)",
+  "lint": "parses"
+ },
+ {
+  "id": "G18",
+  "site": "G",
+  "text": "const h = <T extends +1,>(x: T) => x;",
+  "tsx": true,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "const h = (x) => x;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "reject (speculation)",
+  "lint": "parses"
+ },
+ {
+  "id": "G19",
+  "site": "G",
+  "text": "function f<T extends x++>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@22",
+    "TS1109@24",
+    "TS1109@26",
+    "TS1005@28"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@21"
+   ],
+   "emit": "++ > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"++\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G20",
+  "site": "G",
+  "text": "function f<T extends \"a\" + \"b\">() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@25",
+    "TS1109@32",
+    "TS1005@34"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "+\"b\" > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"+\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G21",
+  "site": "G",
+  "text": "function f<T extends void 0>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@26",
+    "TS1109@29",
+    "TS1005@31"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "0 > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"0\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G22",
+  "site": "G",
+  "text": "function f<T extends new Foo()>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@25",
+    "TS1005@28",
+    "TS1144@30",
+    "TS1109@32",
+    "TS1005@34"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@25"
+   ],
+   "emit": "> (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \"Foo\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G23",
+  "site": "G",
+  "text": "declare const dec: any; function f<T extends @dec class {}>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@45"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected @"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G24",
+  "site": "G",
+  "text": "function f<T extends --x, U>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected --"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G25",
+  "site": "G",
+  "text": "function f<T extends +1 = 2>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G26",
+  "site": "G",
+  "text": "function f<T extends ~x > y>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@26",
+    "TS1109@29",
+    "TS1005@31"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@26"
+   ],
+   "emit": "y > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ~"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G27",
+  "site": "G",
+  "text": "function f<T extends +x>>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@24",
+    "TS1109@26",
+    "TS1005@28"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "> (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G28",
+  "site": "G",
+  "text": "function f<T extends + +1>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G29",
+  "site": "G",
+  "text": "function f<T extends #p in x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@24"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected #p"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G30",
+  "site": "G",
+  "text": "function f<T extends <U>x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@24"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@24"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \"x\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G31",
+  "site": "G",
+  "text": "function f<T extends async function () { await 1 }>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@27",
+    "TS1003@36",
+    "TS1109@50",
+    "TS1109@52",
+    "TS1005@54"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@21"
+   ],
+   "emit": "function () { await 1; } > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \">\" but found \"function\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G32",
+  "site": "G",
+  "text": "function f<T extends super.x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected super"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G33",
+  "site": "G",
+  "text": "type A = B extends infer U extends +1 ? U : never;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@35"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@9",
+    "TS2304@40",
+    "TS2693@44"
+   ],
+   "emit": "+1 ? U : never;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"?\" but found \"+\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G34",
+  "site": "G",
+  "text": "type M = { [K in +1]: K };",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@17",
+    "TS1005@18",
+    "TS1005@19",
+    "TS1128@20",
+    "TS1128@24"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@22"
+   ],
+   "emit": "1; K; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G35",
+  "site": "G",
+  "text": "class K { m<T extends +1>() {} }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@22"
+   ],
+   "semantic": [],
+   "emit": "class K { m() { } }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G36",
+  "site": "G",
+  "text": "function f<T extends ...x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1110@21"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ..."
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G37",
+  "site": "G",
+  "text": "function f<T extends yield>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1212@21"
+   ],
+   "semantic": [
+    "TS2304@21"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "function f() {}"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "G38",
+  "site": "G",
+  "text": "function f<T extends +(a, () => { var q })>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G39",
+  "site": "G",
+  "text": "f<T extends +1>(x);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@4"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@0",
+    "TS2304@2",
+    "TS2304@16"
+   ],
+   "emit": "f < T; +1 > (x);"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \";\" but found \"extends\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G40",
+  "site": "G",
+  "text": "function f<T extends `a${b}`>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@25"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "function f() {}"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "G41",
+  "site": "G",
+  "text": "function f<T extends { a = 1 }>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1131@23",
+    "TS1005@29"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ="
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G42",
+  "site": "G",
+  "text": "function f<T extends function>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2552@21"
+   ],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected function"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "G43",
+  "site": "G",
+  "text": "function f<T extends import.meta>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@27",
+    "TS1005@32"
+   ],
+   "grammar": [
+    "TS1141@27"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \".\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G44",
+  "site": "G",
+  "text": "function f<T extends - x>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1110@21"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected number but found \"x\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "G45",
+  "site": "G",
+  "text": "function f<T extends typeof +1>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1003@28",
+    "TS1109@32",
+    "TS1005@34"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "+1 > (); { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected identifier but found \"+\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "G46",
+  "site": "G",
+  "text": "function f<in T extends +1>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1274@11",
+    "TS1110@24"
+   ],
+   "semantic": [],
+   "emit": "function f() { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "The modifier \"in\" is not valid here"
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "H1",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H2",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { \"resolution-mode\": \"import\" } }).Foo;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H3",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: foo() } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected ("
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "H4",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: a + b } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected +"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "H5",
+  "site": "H",
+  "text": "type T = import(\"./x\", { assert: { type: \"json\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16",
+    "TS2880@33"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H6",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\", } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H7",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" }, });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H8",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: (x) => x } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H9",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: {} });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1464@31"
+   ],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H10",
+  "site": "H",
+  "text": "type T = typeof import(\"./x\", { with: { type: \"json\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@23"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H11",
+  "site": "H",
+  "text": "type T = import(\"./x\", { foo: { type: \"json\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@25",
+    "TS1128@47",
+    "TS1128@48"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": "foo: { type: \"json\"; } ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H12",
+  "site": "H",
+  "text": "type T = import(foo);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1141@16"
+   ],
+   "semantic": [
+    "TS2304@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected string but found \"foo\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "H13",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { 1: \"a\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1478@33",
+    "TS1005@34",
+    "TS1128@40",
+    "TS1128@42",
+    "TS1128@43"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": "1; \"a\"; ;"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H14",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } }, );",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@49",
+    "TS1128@51"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ";"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H15",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: `json` } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H16",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\"; } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@45"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H17",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"a\", mode: \"b\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1464@31"
+   ],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H18",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { if: \"a\" } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H19",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: import(\"./y\") } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H20",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@38"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H21",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: function () { var v } } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected function"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "H22",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } }).A.B<C>;",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "H23",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@30"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "H24",
+  "site": "H",
+  "text": "type T = import(\"./x\", );",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@23"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \")\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "H25",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: y as string } });",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected as"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "H26",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } } as any);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@50",
+    "TS1434@53",
+    "TS1128@56"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2307@16",
+    "TS2304@50",
+    "TS2693@53"
+   ],
+   "emit": "as; any; ;"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"as\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "H27",
+  "site": "H",
+  "text": "type T = import(`./x`);",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1141@16"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected string but found \"`./x`\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "H28",
+  "site": "H",
+  "text": "type T = import(\"./x\" | \"./y\");",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [
+    "TS1141@16"
+   ],
+   "semantic": [],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \")\" but found \"|\""
+  },
+  "without_lint": "reject (not an expression site (modifiers, private names, import type argument, JSDoc forms))",
+  "lint": "parses"
+ },
+ {
+  "id": "I1",
+  "site": "I",
+  "text": "interface I extends A.B<C>, D {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@20",
+    "TS2304@24",
+    "TS2304@28"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I2",
+  "site": "I",
+  "text": "interface I extends foo() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \"(\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I3",
+  "site": "I",
+  "text": "interface I extends A[0] {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I4",
+  "site": "I",
+  "text": "interface I extends (A) {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I5",
+  "site": "I",
+  "text": "interface I extends A?.B {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@20",
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \"?.\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I6",
+  "site": "I",
+  "text": "interface I extends typeof x {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@20",
+    "TS1005@29"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@27"
+   ],
+   "emit": "typeof x; { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I7",
+  "site": "I",
+  "text": "interface I extends { a: 1 } {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I8",
+  "site": "I",
+  "text": "interface I extends class {} {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected class"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I9",
+  "site": "I",
+  "text": "interface I extends new Foo {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \"Foo\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I10",
+  "site": "I",
+  "text": "interface I extends import(\"x\") {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I11",
+  "site": "I",
+  "text": "interface I extends A<B>.C {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1477@21"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I12",
+  "site": "I",
+  "text": "interface I extends string {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2840@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I13",
+  "site": "I",
+  "text": "interface I extends A | B {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@22",
+    "TS1005@26"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@20",
+    "TS2304@24"
+   ],
+   "emit": "| B; { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I14",
+  "site": "I",
+  "text": "interface I extends Array<number>[] {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@33"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2499@33"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I15",
+  "site": "I",
+  "text": "class C implements A.B<C>, D {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@19",
+    "TS2304@27"
+   ],
+   "emit": "class C { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I16",
+  "site": "I",
+  "text": "class C implements foo() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2500@19"
+   ],
+   "emit": "class C { }"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \"(\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I17",
+  "site": "I",
+  "text": "class C implements A | B {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@21",
+    "TS1005@25"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@19",
+    "TS2304@23"
+   ],
+   "emit": "class C { } | B; { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I18",
+  "site": "I",
+  "text": "interface I extends A<B>() {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \"(\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I19",
+  "site": "I",
+  "text": "interface I extends a.b!.c {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I20",
+  "site": "I",
+  "text": "interface I extends tag`x` {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \"`x`\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I21",
+  "site": "I",
+  "text": "interface I extends (() => void) {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@31"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I22",
+  "site": "I",
+  "text": "interface I extends A.B.C, D<E<F>>, G {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@20",
+    "TS2304@27",
+    "TS2304@29",
+    "TS2304@31",
+    "TS2304@36"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I23",
+  "site": "I",
+  "text": "interface I extends this {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I24",
+  "site": "I",
+  "text": "interface I extends A<B>, C<D>> {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@30"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@20",
+    "TS2304@22",
+    "TS2304@26",
+    "TS2304@28"
+   ],
+   "emit": "> {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"{\" but found \">\""
+  },
+  "without_lint": "reject",
+  "lint": "rejects"
+ },
+ {
+  "id": "I25",
+  "site": "I",
+  "text": "interface I extends function () { var q } {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected function"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I26",
+  "site": "I",
+  "text": "interface I extends a.#b {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected identifier but found \"#b\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I27",
+  "site": "I",
+  "text": "interface I extends super.x {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": false,
+   "error": "Unexpected super"
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I28",
+  "site": "I",
+  "text": "interface I extends import.meta {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": "export {};"
+  },
+  "base": {
+   "accepts": false,
+   "error": "Expected \"(\" but found \".\""
+  },
+  "without_lint": "accept",
+  "lint": "parses"
+ },
+ {
+  "id": "I29",
+  "site": "I",
+  "text": "interface I extends void {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@20"
+   ],
+   "grammar": [],
+   "semantic": [],
+   "emit": "void {};"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I30",
+  "site": "I",
+  "text": "interface I extends null {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I31",
+  "site": "I",
+  "text": "interface I extends \"a\" {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I32",
+  "site": "I",
+  "text": "interface I extends A<B> {} class C extends K implements A<B>, M.N {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2304@20",
+    "TS2304@22",
+    "TS2304@44",
+    "TS2304@57",
+    "TS2304@59",
+    "TS2503@63"
+   ],
+   "emit": "class C extends K { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C extends K { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I33",
+  "site": "I",
+  "text": "interface I extends A.B<C>\n{ }",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@20",
+    "TS2304@24"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I34",
+  "site": "I",
+  "text": "interface I extends keyof A {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@26"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@20",
+    "TS2304@26"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I35",
+  "site": "I",
+  "text": "interface I extends [A] {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2499@20"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I36",
+  "site": "I",
+  "text": "interface I extends A & B {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1005@22",
+    "TS1005@26"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@20",
+    "TS2304@24"
+   ],
+   "emit": "& B; { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I37",
+  "site": "I",
+  "text": "class C implements {} {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2500@19"
+   ],
+   "emit": "class C { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I38",
+  "site": "I",
+  "text": "class C implements (A) {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2500@19"
+   ],
+   "emit": "class C { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ },
+ {
+  "id": "I39",
+  "site": "I",
+  "text": "class C implements typeof x {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": false,
+   "parse": [
+    "TS1109@19",
+    "TS1005@28"
+   ],
+   "grammar": [],
+   "semantic": [
+    "TS2304@26"
+   ],
+   "emit": "class C { } typeof x; { }"
+  },
+  "base": {
+   "accepts": true,
+   "out": "class C { }"
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "rejects"
+ },
+ {
+  "id": "I40",
+  "site": "I",
+  "text": "interface I extends A.default.if<B> {}",
+  "tsx": false,
+  "decorator_metadata": false,
+  "tsc": {
+   "parses": true,
+   "parse": [],
+   "grammar": [],
+   "semantic": [
+    "TS2503@20",
+    "TS2304@33"
+   ],
+   "emit": ""
+  },
+  "base": {
+   "accepts": true,
+   "out": ""
+  },
+  "without_lint": "accept, output unchanged",
+  "lint": "parses"
+ }
+]

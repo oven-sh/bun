@@ -1,0 +1,76 @@
+# enum member names
+enum E { a }
+enum E { a, }
+enum E { a = 1 }
+enum E { "a" }
+enum E { "a" = 1 }
+enum E { 'a-b' = 1 }
+enum E { 1 }
+enum E { 1 = 1 }
+enum E { 1n }
+enum E { 1.5 }
+enum E { [a] }
+enum E { ["a"] }
+enum E { ["a"] = 1 }
+enum E { [`a`] = 1 }
+enum E { [`a${1}`] = 1 }
+enum E { [1] = 1 }
+enum E { [a] = 1 }
+enum E { ['a' + 'b'] = 1 }
+enum E { #a }
+enum E { #a = 1 }
+enum E { `a` }
+enum E { `a` = 1 }
+enum E { if }
+enum E { if = 1 }
+enum E { class, function, var }
+enum E { await }
+enum E { yield }
+enum E { a; b }
+enum E { a b }
+enum E { a\nb }
+enum E { a,, b }
+enum E { , }
+enum E { a = 1, b = a }
+enum E { a? }
+enum E { a! }
+enum E { a: 1 }
+enum E { a() {} }
+enum E { get a }
+enum E { public a }
+enum E { readonly a = 1 }
+enum E { static }
+enum E {}
+enum E
+enum {}
+enum "E" {}
+enum await {}
+enum yield {}
+enum of {}
+enum type {}
+enum as {}
+enum async {}
+enum let {}
+enum static {}
+enum E<T> {}
+enum E extends F {}
+const enum E { a }
+const\nenum E { a }
+declare enum E { a }
+declare const enum E { a }
+export enum E { a }
+export const enum E { a }
+export declare enum E { a }
+export default enum E { a }
+enum E { a = 1 << 2, b = a | 1, c = "x".length }
+enum E { a = `x` }
+enum E { a = `x${1}` }
+enum E { "a b" = 1, c = E["a b"] }
+declare enum E { a = 1 + 1 }
+declare enum E { [a] }
+declare enum E { 1 }
+if (x) enum E {}
+function f() { enum E { a } }
+{ enum E { a } }
+if (x) const enum E {}
+label: enum E {}

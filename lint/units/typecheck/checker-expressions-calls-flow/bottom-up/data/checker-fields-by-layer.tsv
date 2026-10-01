@@ -1,0 +1,135 @@
+antecedentTypes	F-NARROW:1
+anyArrayType	E-FACTS:1, F-NARROW:1
+anyFunctionType	E-CORE:1, E-FUNC:1
+anySignature	E-CALL:3, E-CTX:1
+anyType	E-CORE:2, E-LITERAL:2, E-OPER:1, E-ACCESS:4, E-FACTS:1, T-RETINFER:1, E-CALL:2, E-CTX:3
+apparentArgumentCount	E-CALL:1
+argumentsSymbol	E-ACCESS:1
+arrayLiteralLinks	E-CALL:1
+assertionLinks	E-CORE:2
+assignableRelation	E-CALL:3
+assignmentReducedTypes	F-NARROW:1
+asyncIterationTypesResolver	T-RETINFER:1
+autoArrayType	E-ACCESS:1, E-FACTS:1, F-NARROW:6
+autoType	E-ACCESS:4, E-FACTS:1, F-NARROW:4
+bigintType	E-OPER:2, F-NARROW:1
+blockedStringType	E-CORE:1
+booleanType	E-OPER:5, F-NARROW:1
+cachedSignatures	E-CALL:1
+cachedTypes	E-LITERAL:1, F-NARROW:1
+compilerOptions	E-CORE:1, E-OPER:3, E-ACCESS:3, E-CALL:1, F-NARROW:1, F-UNREACH:2
+containsMissingType	E-OPER:1, F-NARROW:2
+contextFreeTypes	E-CORE:1, E-FUNC:1
+contextualBindingPatterns	E-ACCESS:1
+contextualInfos	E-CTX:4
+couldContainTypeVariables	E-FUNC:1, E-CALL:1
+currentNode	E-CORE:1
+discriminatedContextualTypes	E-CTX:1
+emitStandardClassFields	E-FUNC:1
+emptyFreshJsxObjectType	E-CALL:1
+emptyGenericType	T-RETINFER:3
+emptyObjectType	E-LITERAL:3, E-FACTS:2, T-RETINFER:1, E-CALL:1, F-NARROW:1
+emptyStringType	E-FACTS:1
+errorType	E-CORE:6, E-LITERAL:2, E-OPER:4, E-ACCESS:5, T-RETINFER:3, F-NARROW:7
+esSymbolType	E-LITERAL:1, F-NARROW:1
+evaluate	E-LITERAL:1, E-OPER:1
+exactOptionalPropertyTypes	E-LITERAL:1, E-OPER:2
+exportTypeLinks	E-CALL:1
+factory	E-CALL:1, F-NARROW:2
+falseType	E-CORE:1, E-OPER:1, E-FACTS:2
+flowAnalysisDisabled	F-NARROW:2
+flowInvocationCount	E-CORE:1, F-NARROW:1
+flowLoopCache	F-NARROW:1
+flowLoopStack	E-CORE:1, E-CALL:2, F-NARROW:1
+flowNodePostSuper	F-REACH:1
+flowNodeReachable	F-REACH:1
+flowTypeCache	E-CORE:2, F-NARROW:1
+freeFlowState	F-NARROW:2
+getGlobalESSymbolConstructorSymbolOrNil	E-CALL:1, F-NARROW:1
+getGlobalImportAttributesType	E-CTX:1
+getGlobalImportCallOptionsType	E-CTX:1
+getGlobalImportCallOptionsTypeChecked	E-CALL:1
+getGlobalImportMetaType	E-CORE:1
+getGlobalNaNSymbolOrNil	E-OPER:1
+getGlobalNonNullableTypeAliasOrNil	E-FACTS:1
+getGlobalPromiseConstructorSymbol	T-RETINFER:1
+getGlobalPromiseConstructorSymbolOrNil	E-CALL:1
+getGlobalPromiseLikeType	T-RETINFER:1
+getGlobalPromiseTypeChecked	T-RETINFER:1
+getGlobalRecordSymbol	F-NARROW:1
+getGlobalTemplateStringsArrayType	E-CALL:1
+globalFunctionType	E-FACTS:1, E-CALL:2, F-NARROW:4
+globalObjectType	F-NARROW:3
+globalRegExpType	E-LITERAL:1
+globalThisSymbol	E-ACCESS:3
+implicitNeverType	E-LITERAL:1
+inferenceContextInfos	E-CORE:1, E-CTX:3
+inlineLevel	F-NARROW:1
+instantiationCount	E-CORE:1
+instantiationExpressionTypes	E-CORE:1
+isInferencePartiallyBlocked	E-CALL:1
+languageVersion	E-CORE:1, E-OPER:3, E-ACCESS:2, E-FUNC:2
+lastFlowNode	F-REACH:2
+lastFlowNodeReachable	F-REACH:2
+legacyDecorators	E-ACCESS:1, E-FUNC:2, E-CALL:1
+mappedSymbolLinks	E-LITERAL:2, F-NARROW:1
+markNodeAssignments	F-NARROW:2
+markedAssignmentSymbolLinks	F-NARROW:5
+missingType	E-ACCESS:1, F-NARROW:1
+moduleKind	E-CORE:1
+narrowedTypes	F-NARROW:1
+neverType	E-ACCESS:1, E-FACTS:1, T-RETINFER:1, F-NARROW:8
+noImplicitAny	E-CORE:1, E-ACCESS:2, E-FUNC:1, E-CALL:2, F-NARROW:2
+noImplicitThis	E-ACCESS:2
+nodeLinks	E-LITERAL:1, E-ACCESS:4, E-FUNC:1, F-NARROW:2
+nonExistentProperties	E-ACCESS:1
+nonInferrableAnyType	E-ACCESS:1
+nonPrimitiveType	E-OPER:1, F-NARROW:3
+nullType	E-FACTS:1, F-NARROW:1
+nullWideningType	E-CORE:1, E-ACCESS:2
+numberOrBigIntType	E-OPER:3
+numberType	E-CORE:1, E-LITERAL:2, E-OPER:3, E-ACCESS:3, F-NARROW:1
+patternForType	E-LITERAL:1, E-CTX:1
+program	E-CORE:2
+regularFalseType	E-FACTS:2, E-CTX:1
+regularTrueType	E-CTX:1
+reportedUnreachableNodes	F-UNREACH:1
+resolutionStart	E-CALL:1
+resolveName	E-CORE:1, E-CALL:2
+resolvingExplicitTypeOfSymbol	F-NARROW:1
+resolvingSignature	E-OPER:1, E-CALL:3, E-CTX:1
+sharedFlows	F-NARROW:2
+signatureLinks	E-CALL:2, E-CTX:2, F-NARROW:1
+silentNeverSignature	E-CALL:2
+silentNeverType	E-CORE:1, E-OPER:5, E-ACCESS:2, E-CALL:3, E-CTX:1, F-NARROW:1
+spreadLinks	E-LITERAL:1
+strictNullChecks	E-CORE:1, E-LITERAL:2, E-OPER:4, E-ACCESS:3, E-FACTS:2, T-RETINFER:1, F-NARROW:8
+strictPropertyInitialization	E-ACCESS:1
+strictSubtypeRelation	F-NARROW:1
+stringNumberSymbolType	E-LITERAL:1, E-OPER:1
+stringType	E-LITERAL:2, E-OPER:1, E-CALL:1, E-CTX:1, F-NARROW:3
+subtypeRelation	E-CALL:1
+switchStatementLinks	F-NARROW:3
+symbolNodeLinks	E-OPER:2, E-ACCESS:2
+symbolReferenceLinks	E-ACCESS:1
+syncIterationTypesResolver	T-RETINFER:1
+templateConstraintType	E-LITERAL:1
+tracer	E-CORE:1, F-NARROW:1
+trueType	E-CORE:1, E-OPER:1, E-CTX:1
+typeNodeLinks	E-CORE:1, F-NARROW:1
+typeResolutions	E-CALL:1
+typeofType	E-CORE:1
+undefinedOrMissingType	E-LITERAL:1
+undefinedSymbol	E-OPER:2
+undefinedType	E-CORE:1, E-LITERAL:3, E-OPER:1, E-ACCESS:3, E-FACTS:1, T-RETINFER:2, E-CTX:3, F-NARROW:6
+undefinedWideningType	E-CORE:2, E-LITERAL:1, E-OPER:1, T-RETINFER:1, E-CTX:1
+unknownEmptyObjectType	E-OPER:1
+unknownSignature	E-CALL:2, F-NARROW:1
+unknownSymbol	E-ACCESS:1, F-NARROW:1
+unknownType	E-LITERAL:4, E-FACTS:2, E-FUNC:1, T-RETINFER:5, E-CALL:1, E-CTX:4, F-NARROW:5
+unknownUnionType	E-FACTS:2, F-NARROW:1
+unreachableNeverType	F-NARROW:4
+valueSymbolLinks	E-LITERAL:4, E-ACCESS:2, E-FUNC:2, E-CTX:2
+voidType	T-RETINFER:1, E-CALL:4
+zeroBigIntType	E-FACTS:1
+zeroType	E-FACTS:1

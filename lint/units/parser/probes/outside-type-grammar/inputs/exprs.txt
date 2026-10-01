@@ -1,0 +1,93 @@
+f<>();
+f<>(x);
+new F<>();
+new F<>;
+f<>`x`;
+f<>;
+var v = f<>;
+a?.b<>();
+a?.<>();
+let x: A<>;
+let x: A.B<>;
+type T = A<>;
+function f<>() {}
+var g = <>() => 1;
+var g = <>(x) => x;
+class C<> {}
+interface I<> {}
+type T<> = 1;
+class C { m<>() {} }
+var o = { m<>() {} };
+let x: <>() => void;
+let x: new <>() => void;
+let x: typeof a<>;
+let x: import("m")<>;
+let x: import("m").A<>;
+class C extends B<> {}
+class C implements I<> {}
+interface I extends J<> {}
+@dec<>() class C {}
+a as Foo <= b;
+a as Foo < b;
+a as Foo<b> <= c;
+a as Foo <<= b;
+a as Foo << b;
+a as Foo >= b;
+a as Foo > b;
+a as Foo >> b;
+a as Foo >>= b;
+a as Foo >>> b;
+a as Foo == b;
+a as Foo = b;
+a as Foo += b;
+a as Foo && b;
+a as Foo || b;
+a as Foo ?? b;
+a as Foo ? b : c;
+a as Foo + b;
+a as Foo - b;
+a as Foo * b;
+a as Foo ** b;
+a as Foo / b;
+a as Foo % b;
+a as Foo in b;
+a as Foo instanceof b;
+a as Foo as Bar;
+a as Foo satisfies Bar;
+a as Foo!;
+a as Foo.b;
+a as Foo[0];
+a as Foo[];
+a as Foo(b);
+a as Foo`x`;
+a as Foo?.b;
+a as Foo++;
+a as Foo--;
+a as Foo | b;
+a as Foo & b;
+a as Foo ^ b;
+a as Foo, b;
+a as typeof b <= c;
+a as typeof b < c;
+a as import("x").Y <= c;
+a as keyof B <= c;
+a as B[] <= c;
+a as (B) <= c;
+a as { b: 1 } <= c;
+a as "s" <= c;
+a as 1 <= c;
+a as any <= c;
+a as const <= c;
+a as B.C <= d;
+a satisfies Foo <= b;
+a satisfies Foo << b;
+a satisfies Foo <<= b;
+let x: Foo <= 1;
+let x: Foo<=1;
+let x: A<B<=C>>;
+type T = A <= B;
+var x = a as Foo <= b ? c : d;
+var x = (a as Foo) <= b;
+if (a as number <= b) {}
+for (var i = 0; i as number <= n; i++) {}
+while (a as A <= b as B) {}

@@ -1,0 +1,420 @@
+ does not exist on type 
+ is not assignable to type 
+ of type 
+!
+!==
+"
+"bluebirdStaticThis".Promise
+"foo2".Bar
+"internalAliasInterfaceInsideLocalModuleWithoutExportAccessError".c
+"internalAliasUninitializedModuleInsideLocalModuleWithoutExportAccessError".c
+"mod".export=
+#/foo.js
+#internal/foo.ts
+%
+%=
+&
+&&
+&=
+(
+(): I3
+(): Iterable<(x: string) => number>
+(): any
+(): boolean
+(): void
+(...args: any): any
+(Anonymous class)
+(a: any): any
+(animal: sub-T) => void
+(animal: super-T) => void
+(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): boolean
+(k: I3): void
+(new a.b.c.d.e.f()).g
+(p1: any, p2: any): boolean
+(x: any): any
+(x: number): void
+(x: string): string
+(x: sub-T) => sub-T
+(x: sub-T) => void
+(x: super-T) => super-T
+(x: super-T) => void
+)
+**
+**=
+*=
++
++=
+,
+-
+--
+--target
+-=
+.
+...
+../../foo.cts
+../../pkg2/node_modules/@raymondfeng/pkg1/dist
+../compiler/io.ts
+../compiler/typescript.ts
+../foo.mts
+../index.js
+../node_modules/some-dep/dist/inner
+../selfReferencingFile2.ts
+../services/typescriptServices.ts
+./
+./1
+./App.css
+./MC
+./SubModule
+./a.js
+./a.ts
+./b
+./b.js
+./b.ts
+./base
+./c.tsx
+./component.html
+./context
+./dep
+./dir.js
+./dir/native.node
+./does-not-exist-either
+./does-not-exist-either.js
+./ex
+./extention
+./f2
+./file.cjs
+./file.cts
+./file.d.cts
+./file.d.json.ts
+./file.d.mts
+./file.d.ts
+./file.js
+./file.jsx
+./file.mjs
+./file.mts
+./file.ts
+./file.tsx
+./file1
+./first
+./fo
+./fo2
+./foo
+./foo.d.css.ts
+./foo.d.mts
+./foo.d.ts
+./foo.js
+./foo.jsx
+./foo.mjs
+./foo.ts
+./foo.ts/foo.js
+./foo.ts/index.ts
+./foo.tsx
+./foo/
+./foo2
+./greeter
+./hi
+./hook
+./index
+./index.js
+./index.mjs
+./jsx
+./missingModule
+./mod
+./module.mjs
+./node_modules/foo
+./node_modules/inner/other.js
+./node_modules/inner/private
+./nonexistent
+./redirect/index
+./src
+./subfolder/index.mjs
+./subfolder2/another
+./subfolder2/another/
+./subfolder2/another/index
+./subfolder2/another/index.js
+./subfolder2/another/index.mjs
+./subfolder2/index.mjs
+./test
+./test/foo
+./thisfiledoesnotexist.ts
+./timer
+./tsx
+./x0
+./z
+./z.js
+.foo.ts
+.mjs
+.mts
+.ts
+.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs
+.tsx
+/
+/=
+/a.js
+/foo
+/foo.js
+/foo.jsx
+/jsx.jsx
+/node_modules/@foo/bar/index.js
+/node_modules/@scope/bar/sub.js
+/node_modules/@scope/foo/sub.js
+/node_modules/@types/bar/index.d.ts
+/node_modules/@types/react/index.d.ts
+/node_modules/bar/index.js
+/node_modules/bar/index.mjs
+/node_modules/bar/sub.js
+/node_modules/conditions/index.node.js
+/node_modules/conditions/index.web.js
+/node_modules/dual/index.cjs
+/node_modules/dual/index.js
+/node_modules/exports-and-types-versions/dist/foo.js
+/node_modules/exports-and-types-versions/types/foo.d.ts
+/node_modules/foo/index.d.ts
+/node_modules/foo/index.js
+/node_modules/foo/index.mjs
+/node_modules/foo/sub.js
+/node_modules/js/index.js
+/package.json
+/packages/a/node_modules/react/index.js
+/packages/a/node_modules/redux/index.js
+/project/c.tsx
+/project/e.txt
+/src/b.js
+/tests/node_modules/@types/react/index.d.ts
+/tsx.tsx
+0-1
+0-2
+0-6
+1-2
+1-3
+2-3
+2-4
+2-7
+:
+;
+<
+</
+<<
+<<=
+<=
+<Tnumber>(a: Tnumber): Tnumber
+<Tstring>(a: Tstring): Tstring
+=
+=>
+>
+>=
+>>
+>>=
+>>>
+>>>=
+?
+??
+@emotion/react
+@emotion/react/jsx-runtime
+@foo/bar
+@mangled/nodemodulescache
+@mangled/typescache
+@scope/bar/sub
+@scope/foo
+@scope/foo/sub
+@scope/package
+@scoped/attypescache
+@this/package
+@types/bar
+@types/foo-bar
+ASC, DESC
+C2M1, IM1, C1M1
+C<number, string>.foo
+C<number, string>.x
+Contravariant2<sub-T>
+Contravariant2<super-T>
+Controller<sub-T>
+Controller<super-T>
+Covariant1<sub-T>
+Covariant1<super-T>
+Element.createElement=
+Foo1<sub-T>
+Foo1<super-T>
+Foo2<sub-T>
+Foo2<super-T>
+FooFn2<sub-T>
+FooFn2<super-T>
+IM1, C1M1
+Invariant1<sub-T>
+Invariant1<super-T>
+Invariant2<sub-T>
+Invariant2<super-T>
+List<T>.Foo
+[+s]
+[1 << 6]
+[Symbol()]
+[Symbol.asyncIterator]().next(...)
+[Symbol.iterator]().next(...)
+[x = 0]
+\8
+\x00
+\x01
+\x03
+\x04
+\x05
+\x0f
+\x27
+\x2d
+\x53
+\x7f
+]
+^
+^=
+a()
+a(...)
+a, b
+a.b.c.d.e.f().g
+a2(...)
+a3(...)
+a4(...)
+a5(...)
+a:b
+apply, call, bind, prototype
+await using
+b, c, d
+bar()
+bar/sub
+c, d
+codePointAt, includes, endsWith, normalize
+concat(...)
+declare const
+dir/native.d.node.ts
+does-not-exist
+double-asterisk/a/*/b/*/c/*
+es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext
+export type
+export...type
+export=
+exports-and-types-versions
+exports-and-types-versions/foo
+exports-and-types-versions/nope
+exports-and-types-versions/versioned-nah
+f()
+f(...)
+f, g, h, i, j
+fn()
+foo', 'bar
+foo()
+foo-bar
+foo.(Anonymous class)
+foo/node_modules/nested
+foo/other
+foo/sub
+get()
+has, size
+hello, world
+https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/foo
+https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/scope__foo
+i-have-a-dir-and-main/dist/dir
+i1P1, i1P2
+id1 id2
+import
+import type
+import...type
+inner/cjs/exclude/index
+inner/js/exclude/index
+inner/mjs
+inner/mjs/exclude/index
+inner/mjs/index
+inner/mjs/index.mjs
+inner/other
+inner/other.js
+interface ICompiledExpression
+interface MyInterface
+isArray, from, of, [Symbol.species]
+length, pop, push, concat
+m()
+m1', 'm2', 'm3', 'm4
+map(...).size
+match(...)
+method(...)
+mixB.(Anonymous class) & A
+mixC.(Anonymous class) & mixB.(Anonymous class) & A
+mixC.(Anonymous class) & mixB2.(Anonymous class) & A
+mixin.(Anonymous class) & BaseClass
+module-not-existed
+my-React-Lib
+my-fake-sym
+my-undeclared-custom-element
+name, dispose
+new
+new (): I3
+new (): any
+new (): f
+new (): number
+new (): { name: string; }
+new (...args: any): any
+new (...args: any[]): any
+new (a: number): number
+new (x: number): void
+new <T extends Derived>(a: T): T
+new <Tnumber>(param: Tnumber): any
+new <Tstring>(param: Tstring): any
+new A()
+new a()
+new a(...)
+new a2(...)
+new a3(...)
+new a4(...)
+new a5(...)
+new.target
+next(...)
+node:foo.ts
+node:path
+node_modules/foo/other.js
+node_modules/untyped/index.js
+non-existent-module
+ns:invalid
+other, bar
+out/b.js
+out/c.js
+p, p3, p6
+p1 is A
+p1 is B
+p1 is C
+p1(...)
+p2 is A
+package/cjs
+package/mjs
+pkg/foo.ts
+pop()
+pop, push, concat, join
+preact/jsx-dev-runtime
+preact/jsx-runtime
+prop', 'readonlyProp', 'm', 'mismatch
+raw, length, concat, join
+react/jsx-dev-runtime
+react/jsx-runtime
+readonly
+render, setState, forceUpdate, props
+self1, self2, self3, d, bar
+slice(...)
+source, recurse, wrapped
+styled-components/node_modules/hoist-non-react-statics
+sub-T
+super-T
+toDateString, toTimeString, toLocaleDateString, toLocaleTimeString
+toSeq()
+toString()
+too*many*asterisks
+typeof
+typeof (Anonymous class)
+unknown-module
+use()
+valueOf()
+vs/foo
+x, y
+z, y
+{
+{ 'stage-0
+{ b = a(), ...x }
+|
+|=
+||
+}
+~

@@ -1,0 +1,100 @@
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10433:20
+      |
+10433 | const _: [(); 0] = [(); core::mem::size_of::<ParserSnapshot<'static>>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 416
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10433 - const _: [(); 0] = [(); core::mem::size_of::<ParserSnapshot<'static>>()];
+10433 + const _: [(); 416] = [(); core::mem::size_of::<ParserSnapshot<'static>>()];
+      |
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10434:20
+      |
+10434 | const _: [(); 0] = [(); core::mem::size_of::<js_lexer::Lexer<'static>>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 336
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10434 - const _: [(); 0] = [(); core::mem::size_of::<js_lexer::Lexer<'static>>()];
+10434 + const _: [(); 336] = [(); core::mem::size_of::<js_lexer::Lexer<'static>>()];
+      |
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10435:20
+      |
+10435 | const _: [(); 0] = [(); core::mem::size_of::<js_lexer::LexerSnapshot<'static>>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 240
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10435 | const _: [(); 240] = [(); core::mem::size_of::<js_lexer::LexerSnapshot<'static>>()];
+      |               ++
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10436:20
+      |
+10436 | const _: [(); 0] = [(); core::mem::size_of::<js_ast::ts::Metadata>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 24
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10436 - const _: [(); 0] = [(); core::mem::size_of::<js_ast::ts::Metadata>()];
+10436 + const _: [(); 24] = [(); core::mem::size_of::<js_ast::ts::Metadata>()];
+      |
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10437:20
+      |
+10437 | const _: [(); 0] = [(); core::mem::size_of::<js_ast::Expr>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10437 - const _: [(); 0] = [(); core::mem::size_of::<js_ast::Expr>()];
+10437 + const _: [(); 16] = [(); core::mem::size_of::<js_ast::Expr>()];
+      |
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10438:20
+      |
+10438 | const _: [(); 0] = [(); core::mem::size_of::<js_ast::Stmt>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 16
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10438 - const _: [(); 0] = [(); core::mem::size_of::<js_ast::Stmt>()];
+10438 + const _: [(); 16] = [(); core::mem::size_of::<js_ast::Stmt>()];
+      |
+
+error[E0308]: mismatched types
+     --> src/js_parser/p.rs:10439:20
+      |
+10439 | const _: [(); 0] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+      |          -------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected an array with a size of 0, found one with a size of 384
+      |          |
+      |          expected because of the type of the constant
+      |
+help: consider specifying the actual array length
+      |
+10439 - const _: [(); 0] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+10439 + const _: [(); 384] = [(); core::mem::size_of::<ParserOptions<'static>>()];
+      |
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `bun_js_parser` (lib) due to 7 previous errors

@@ -1,0 +1,29 @@
+== JavaScript units, nothing masked
+units 1276 same 1236 differ 40 (of them without parse errors 34) failed 0; units with parse errors 36; units with JSDoc 570, of them same 532; same but reparsedClones count differs 0
+    17 CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>   e.g. c00045u0_file.js:11 c03090u0_0.js:46 c03097u0_0.js:57
+     6 CLEAN shape go<.Comment:> ts<.Comment:>   e.g. c03216u1_foo.js:24 c03289u0_0.js:65 c03311u0_a.js:96
+     4 err   pos KindJSTypeAliasDeclaration   e.g. c03342u0_bug26693.js:3 c03395u0_mod1.js:3 c03395u2_mod3.js:3
+     2 CLEAN kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>   e.g. c03089u0_0.js:57 c03182u0_index.js:8
+     2 CLEAN shape go<.Tags:> ts<.Tags:>   e.g. c03261u1_a.js:59 c09618u0_jsFileAlternativeUseOfOverloadTag.js:109
+     2 err   flags KindCommaToken xor=0x10000   e.g. c03432u1_file.jsx:26 c09672u0_a.jsx:35
+     1 CLEAN kind go<KindTypeReference> ts<KindJSDocNamepathType>   e.g. c03166u0_index.js:18
+     1 CLEAN pos KindJSDocTypeExpression   e.g. c03290u0_a.js:29
+     1 CLEAN label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken>   e.g. c03296u0_a.js:54
+     1 CLEAN kind go<KindJSDocNonNullableType> ts<KindArrayType>   e.g. c03298u0_prefixPostfix.js:13
+     1 CLEAN pos KindJSDocText   e.g. c03339u1_linkTagEmit1.js:85
+     1 CLEAN shape go<.Statements:> ts<.Statements:>   e.g. c03365u0_templateInsideCallback.js:2
+     1 CLEAN pos KindJSTypeAliasDeclaration   e.g. c03386u0_typedefDuplicateTypeDeclaration.js:3
+== JavaScript units, ranges and text of comment lists masked
+units 1276 same 1243 differ 33 (of them without parse errors 27) failed 0; units with parse errors 36; units with JSDoc 570, of them same 539; same but reparsedClones count differs 0
+    17 CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>   e.g. c00045u0_file.js:11 c03090u0_0.js:46 c03097u0_0.js:57
+     4 err   pos KindJSTypeAliasDeclaration   e.g. c03342u0_bug26693.js:3 c03395u0_mod1.js:3 c03395u2_mod3.js:3
+     2 CLEAN kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>   e.g. c03089u0_0.js:57 c03182u0_index.js:8
+     2 CLEAN shape go<.Tags:> ts<.Tags:>   e.g. c03261u1_a.js:59 c09618u0_jsFileAlternativeUseOfOverloadTag.js:109
+     2 err   flags KindCommaToken xor=0x10000   e.g. c03432u1_file.jsx:26 c09672u0_a.jsx:35
+     1 CLEAN kind go<KindTypeReference> ts<KindJSDocNamepathType>   e.g. c03166u0_index.js:18
+     1 CLEAN pos KindJSDocTypeExpression   e.g. c03290u0_a.js:29
+     1 CLEAN label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken>   e.g. c03296u0_a.js:54
+     1 CLEAN kind go<KindJSDocNonNullableType> ts<KindArrayType>   e.g. c03298u0_prefixPostfix.js:13
+     1 CLEAN shape go<.Statements:> ts<.Statements:>   e.g. c03365u0_templateInsideCallback.js:2
+     1 CLEAN pos KindJSTypeAliasDeclaration   e.g. c03386u0_typedefDuplicateTypeDeclaration.js:3
+== JavaScript units, without the reparser pass and without the JSDoc rules of this pass: see ../../ts-dump-and-test-importer/top-down/data/summary.txt (764 of 1276)

@@ -1,0 +1,304 @@
+# decorated members whose metadata depends on declarations of the same file
+class C { @d a: C }
+class C { @d a: D } class D {}
+class D {} class C { @d a: D }
+class C { @d a: D | null } class D {}
+class C { @d a: D | undefined } class D {}
+class C { @d a?: D } class D {}
+class C { @d a: D | E } class D {} class E {}
+class C { @d a: D & E } class D {} class E {}
+class C { @d a: D[] } class D {}
+class C { @d a: D<E> } class D<T> {} class E {}
+class C { @d a: typeof D } class D {}
+class C { @d a: N.A } namespace N { export class A {} }
+class C { @d a: N.M.A } namespace N { export namespace M { export class A {} } }
+class C { @d a: N.A } declare namespace N { class A {} }
+class C { @d a: N.T } namespace N { export type T = 1 }
+class C { @d a: I } interface I {}
+class C { @d a: T } type T = string;
+class C { @d a: T } type T = D; class D {}
+class C { @d a: T<D> } type T<U> = U; class D {}
+class C { @d a: D } declare class D {}
+class C { @d a: D } declare const D: any;
+class C { @d a: D } declare function D(): void;
+class C { @d a: D } const D = class {};
+class C { @d a: D } let D;
+class C { @d a: D } function D() {}
+class C { @d a: E } enum E { A }
+class C { @d a: E } enum E { A = 'a' }
+class C { @d a: E } enum E { A = 1, B = 'b' }
+class C { @d a: E } const enum E { A }
+class C { @d a: E } declare enum E { A }
+class C { @d a: E.A } enum E { A }
+class C { @d a: E.A } enum E { A = 'a' }
+class C { @d a: E | null } enum E { A }
+class C { @d a: Unknown }
+class C { @d a: Unknown.B }
+class C { @d a: Unknown.B.C }
+class C { @d a: Unknown | null }
+class C { @d a: Unknown<A> }
+class C { @d a: globalThis.Array<A> }
+class C { @d a: typeof globalThis }
+class C<T> { @d a: T }
+class C<T extends A> { @d a: T }
+class C<T extends string> { @d a: T }
+class C<T> { @d a: T[] }
+class C<T> { @d a: T | null }
+class C<T> { @d m(a: T): T {} }
+class C { @d m<T>(a: T): T {} }
+class C { @d m<T extends A>(a: T): T {} }
+class C { @d m<T>(a: T[]): Promise<T> {} }
+class C<A> { @d a: A } class A {}
+class C { @d m<D>(a: D): D {} } class D {}
+import { A } from 'a'; class C { @d a: A }
+import { A } from 'a'; class C { @d a: A | null }
+import { A } from 'a'; class C { @d a: A.B }
+import { A } from 'a'; class C { @d a: A<B> }
+import { A } from 'a'; class C { @d a: A[] }
+import { A } from 'a'; class C { @d a: typeof A }
+import { A } from 'a'; class C { @d m(a: A): A {} }
+import { A } from 'a'; @d class C { constructor(a: A) {} }
+import { A, B } from 'a'; class C { @d a: A | B }
+import { A, B } from 'a'; class C { @d m(a: A, b: B) {} }
+import A from 'a'; class C { @d a: A }
+import * as N from 'a'; class C { @d a: N.A }
+import * as N from 'a'; class C { @d a: N.A.B }
+import * as N from 'a'; class C { @d a: N }
+import type { A } from 'a'; class C { @d a: A }
+import type { A } from 'a'; class C { @d a: A.B }
+import type { A } from 'a'; class C { @d m(a: A): A {} }
+import type A from 'a'; class C { @d a: A }
+import type * as N from 'a'; class C { @d a: N.A }
+import { type A } from 'a'; class C { @d a: A }
+import { type A, B } from 'a'; class C { @d a: A; @d b: B }
+import A = require('a'); class C { @d a: A }
+import A = require('a'); class C { @d a: A.B }
+import A = N.B; class C { @d a: A }
+import type A = require('a'); class C { @d a: A }
+class C { @d m(@p a: A, @p b: B): C {} }
+class C { @d m(@p a: string, b: number): boolean {} }
+class C { m(@p a: string, b: number): boolean {} }
+class C { m(@p a: A) {} }
+class C { @d static m(a: string): void {} }
+class C { @d static a: string }
+class C { @d get a(): string { return 1 } }
+class C { @d set a(v: string) {} }
+class C { @d get a(): string { return 1 } set a(v: string) {} }
+class C { get a(): string { return 1 } @d set a(v: string) {} }
+class C { @d get a() { return 1 } set a(v: string) {} }
+class C { @d get a() { return 1 } }
+class C { @d set a(v) {} }
+class C { @d accessor a: string }
+class C { @d declare a: string }
+class C { @d readonly a: string }
+class C { @d a?: string }
+class C { @d a!: string }
+class C { @d a = 1 }
+class C { @d a }
+class C { @d a: string = 'a' }
+class C { @d private a: string }
+class C { @d public static readonly a: string }
+class C { @d async m(): Promise<string> {} }
+class C { @d async m() {} }
+class C { @d *m(): Generator<string> {} }
+class C { @d async *m(): AsyncGenerator<string> {} }
+class C { @d m() {} }
+class C { @d m(a, b) {} }
+class C { @d m(a = 1, b = 'a', c = true) {} }
+class C { @d m(a?: string, ...b: number[]) {} }
+class C { @d m(...a) {} }
+class C { @d m({ a }: A, [b]: B) {} }
+class C { @d m({ a }, [b]) {} }
+class C { @d m(this: A, b: string) {} }
+class C { @d m(): void {} }
+class C { @d m(): never {} }
+class C { @d m(): this {} }
+class C { @d m(): this is A {} }
+class C { @d m(a: A): a is B {} }
+class C { @d m(a: A): asserts a {} }
+class C { @d m(a: A): asserts a is B {} }
+class C { @d 'a': string }
+class C { @d 1: string }
+class C { @d [a]: string }
+class C { @d #a: string }
+class C { @d 'm'(a: string): void {} }
+class C { @d [m](a: string): void {} }
+class C { @d m(a: string): void; @d m(a: any): any {} }
+class C { @d m(a: string): void; m(a: any): any {} }
+class C { m(a: string): void; @d m(a: any): any {} }
+abstract class C { @d abstract a: string }
+abstract class C { @d abstract m(a: string): void }
+@d class C {}
+@d class C { constructor() {} }
+@d class C { constructor(a, b) {} }
+@d class C { constructor(a: string, b: number, c: boolean, d: bigint, e: symbol, f: object, g: any, h: unknown, i: never, j: void, k: null, l: undefined) {} }
+@d class C { constructor(public a: string, private b: number, readonly c: boolean) {} }
+@d class C { constructor(a?: string, b: number = 1, ...c: boolean[]) {} }
+@d class C { constructor(@p a: A) {} }
+@d class C { constructor(a: A); constructor(a: any) {} }
+@d class C extends B { }
+@d class C extends B { constructor(a: A) { super(); } }
+@d class C { constructor(a: C) {} }
+@d class C<T> { constructor(a: T) {} }
+@d class C { a: string; m(b: number): boolean {} }
+@d class C { @d a: string; @d m(b: number): boolean {} }
+@d export class C { constructor(a: A) {} }
+export @d class C { constructor(a: A) {} }
+@d export default class C { constructor(a: A) {} }
+export default @d class C { constructor(a: A) {} }
+@d export default class { constructor(a: A) {} }
+@d abstract class C { constructor(a: A) {} }
+@d declare class C { constructor(a: A) }
+@d @e class C { @f @g a: A }
+@d() class C { @e() a: A }
+@d.e class C { @f.g.h a: A }
+@d<A>() class C {}
+@(d) class C {}
+@d! class C {}
+@d?.e class C {}
+@d[e] class C {}
+@d`e` class C {}
+@new d class C {}
+@d⏎class C {}
+@d⏎export class C {}
+@d interface I {}
+@d type T = 1;
+@d enum E {}
+@d namespace N {}
+@d function f() {}
+@d let a;
+@d declare class C {}
+let x = @d class { @e a: A };
+let x = @d class C { constructor(a: A) {} };
+(@d class { constructor(a: A) {} });
+class C { @d }
+class C { @d; }
+class C { @d @e }
+class C { @d a: A @e b: B }
+class C { @d a: A; @e b: B }
+class C { @d⏎a: A }
+class C { @d static { } }
+class C { @d constructor(a: A) {} }
+class C { @d [k: string]: A }
+class C { @d declare [k: string]: A }
+class C { @d a: A<B<C>> }
+class C { @d a: A<B<C>>= d }
+class C { @d a: A<B>= c }
+class C { @d a: (A) }
+class C { @d a: ((A)) }
+class C { @d a: (A | B) }
+class C { @d a: (string) }
+class C { @d a: (string | null) }
+class C { @d a: (string)[] }
+class C { @d a: string | (number | boolean) }
+class C { @d a: string | string }
+class C { @d a: string | 'a' }
+class C { @d a: 'a' | 'b' }
+class C { @d a: 'a' | 1 }
+class C { @d a: 1 | 2 }
+class C { @d a: 1 | 2n }
+class C { @d a: 1n | 2n }
+class C { @d a: true | false }
+class C { @d a: true | 1 }
+class C { @d a: `a` | `b` }
+class C { @d a: `a${string}` | 'b' }
+class C { @d a: string | null }
+class C { @d a: string | undefined }
+class C { @d a: string | null | undefined }
+class C { @d a: string | void }
+class C { @d a: string | never }
+class C { @d a: string | any }
+class C { @d a: string | unknown }
+class C { @d a: string | number }
+class C { @d a: string | A }
+class C { @d a: null | undefined }
+class C { @d a: null | null }
+class C { @d a: never | never }
+class C { @d a: string & 'a' }
+class C { @d a: string & number }
+class C { @d a: string & {} }
+class C { @d a: string & any }
+class C { @d a: string & never }
+class C { @d a: string & unknown }
+class C { @d a: A & B }
+class C { @d a: A & A }
+class C { @d a: A | A }
+class C { @d a: A | A | null }
+class C { @d a: A[] | B[] }
+class C { @d a: A[] | null }
+class C { @d a: [A] | [B] }
+class C { @d a: (() => void) | (() => void) }
+class C { @d a: (() => void) | null }
+class C { @d a: { a: A } | { b: B } }
+class C { @d a: { a: A } | null }
+class C { @d a: string | number extends A ? B : C }
+class C { @d a: A extends B ? string : string }
+class C { @d a: A extends B ? string : number }
+class C { @d a: A extends B ? string : null }
+class C { @d a: A extends B ? C : D }
+class C { @d a: A extends B ? C : C }
+class C { @d a: A extends B ? string : 'a' }
+class C { @d a: A extends B ? A extends C ? string : string : string }
+class C { @d a: string | A extends B ? C : D }
+class C { @d a: A | B extends C ? string : string }
+class C { @d a: keyof A extends B ? string : string }
+class C { @d a: readonly string[] extends B ? number : number }
+class C { @d a: A & B extends C ? D : E }
+class C { @d a: (A extends B ? string : string) | string }
+class C { @d a: (A extends B ? string : string)[] }
+class C { @d a: keyof A }
+class C { @d a: keyof A | B }
+class C { @d a: keyof A | string }
+class C { @d a: keyof A & string }
+class C { @d a: keyof typeof a }
+class C { @d a: readonly A[] }
+class C { @d a: readonly [A] }
+class C { @d a: readonly A[] | null }
+class C { @d a: readonly A[] | A }
+class C { @d a: unique symbol }
+class C { @d a: unique symbol | null }
+class C { @d a: A[B] }
+class C { @d a: A['b'] }
+class C { @d a: A[B] | null }
+class C { @d a: A[] }
+class C { @d a: A[][] }
+class C { @d a: typeof b }
+class C { @d a: typeof b.c }
+class C { @d a: typeof b | null }
+class C { @d a: typeof b[] }
+class C { @d a: typeof b[number] }
+class C { @d a: this }
+class C { @d a: this | null }
+class C { @d a: this[] }
+class C { @d a: import('a') }
+class C { @d a: import('a').B }
+class C { @d a: typeof import('a') }
+class C { @d a: import('a').B | null }
+class C { @d a: () => void }
+class C { @d a: new () => A }
+class C { @d a: abstract new () => A }
+class C { @d a: () => A extends B ? C : D }
+class C { @d a: <T>(b: T) => T }
+class C { @d a: {} }
+class C { @d a: { b: B } }
+class C { @d a: { [K in T]: V } }
+class C { @d a: [] }
+class C { @d a: [A, B] }
+class C { @d a: [a: A, b?: B, ...c: C[]] }
+class C { @d a: Function }
+class C { @d a: Object }
+class C { @d a: String }
+class C { @d a: Number }
+class C { @d a: Boolean }
+class C { @d a: Symbol }
+class C { @d a: BigInt }
+class C { @d a: Array<A> }
+class C { @d a: Promise<A> }
+class C { @d a: Map<A, B> }
+class C { @d a: Date }
+class C { @d a: RegExp }
+class C { @d a: Error }
+class C { @d a: intrinsic }
+class C { @d a: infer U }
+class C { @d a: asserts b }
+class C { @d a: b is A }

@@ -1,0 +1,90 @@
+== symsizes base0
+bun_js_parser text         863  1,400,578
+P<false, false>            281    412,043
+P<true, false>             319    475,751
+P<false, true>              91    133,680
+P<true, true>              131    191,248
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,583
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+== symsizes v2m2
+bun_js_parser text         874  1,408,167
+P<false, false>            281    412,043
+P<true, false>             330    483,246
+P<false, true>              91    133,680
+P<true, true>              131    191,248
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,693
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+== symsizes v1t
+bun_js_parser text         874  1,403,354
+P<false, false>            281    412,043
+P<true, false>             326    477,245
+P<false, true>              91    133,680
+P<true, true>              138    192,729
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,681
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+== symsizes v5t
+bun_js_parser text         882  1,403,807
+P<false, false>            281    412,043
+P<true, false>             331    477,786
+P<false, true>              91    133,680
+P<true, true>              140    192,505
+type grammar                27     28,977
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,606
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+== symsizes topw
+bun_js_parser text         866  1,401,380
+P<false, false>            281    412,043
+P<true, false>             322    476,459
+P<false, true>              91    133,680
+P<true, true>              131    191,248
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,606
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372
+== symsizes p1abc2
+bun_js_parser text         863  1,400,732
+P<false, false>            281    412,043
+P<true, false>             319    475,850
+P<false, true>              91    133,680
+P<true, true>              131    191,303
+type grammar                21     27,155
+with_opts discard            1      3,446
+with_opts metadata           1      7,017
+parse_suffix TS              1     17,763
+parse_prefix TS              1     15,598
+parse_property TS            1     10,091
+parse_fn_stmt TS             1      1,636
+parse_stmt TS                1      3,455
+Lexer::next                  1     15,372

@@ -1,0 +1,3024 @@
+{
+ "bun": "1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9",
+ "typescript": "6.0.2",
+ "rows": [
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: if;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: class;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: function;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected function"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: in;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected in"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: extends;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected extends"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: super;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected super"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: delete;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected delete"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: if.x;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2503
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: class<T>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: | if;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: A | if;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: A & class;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: keyof if;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: (if);",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: (class);",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: `${if}`;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "tsx",
+   "src": "let x: if;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = [...const: A[]];",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected \"const\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = [...in: A[]];",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected in"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = [...class: A[]];",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = [...if: A[]];",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: typeof import(\"x\")<C>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = typeof import(\"x\")<C>;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: import(\"x\")<T>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = import(\"x\")<T>;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: import(\"x\", { with: { a: \"b\" } })<T>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected +"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = import(\"x\", { with: { a: \"b\" + \"c\" } });",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected +"
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "let x: import(\"x\").A.<T>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = import(\"x\").A.<T>;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2307
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"<\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "type X = (a) => asserts a\nis B;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"B\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "const f = (a): (a) => asserts a\nis B => 0;",
+   "expected": "const f = (a) => 0;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304,
+     2322
+    ]
+   },
+   "tscJs": "const f = (a) => 0;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => 0;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \":\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "const f = (a): asserts a\nis B => 0;",
+   "expected": "const f = (a) => 0;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304,
+     2322
+    ]
+   },
+   "tscJs": "const f = (a) => 0;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => 0;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \":\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "const f = (a): asserts this\nis B => 0;",
+   "expected": "const f = (a) => 0;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304,
+     2322
+    ]
+   },
+   "tscJs": "const f = (a) => 0;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => 0;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \":\""
+   }
+  },
+  {
+   "group": "type forms",
+   "which": "ts",
+   "src": "function f(): asserts this\nis B { throw 0 }",
+   "expected": "function f() {\n  throw 0;\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "function f() { throw 0; }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "function f() {\n  throw 0;\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"B\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "type as = 1",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "declare type as = 1",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "type satisfies = 1",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "interface as {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found end of file"
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "export interface as {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "export {};\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "export {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found end of file"
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "interface satisfies {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found end of file"
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "type X = { a(b = 1): A };",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371,
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "let x: { a(b = 1): A };",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371,
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "interface I { (a = 1): A }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371,
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "type X = { a(public b: B): A };",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2369,
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"b\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "interface I extends a() {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2499
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \"{\" but found \"(\""
+   }
+  },
+  {
+   "group": "object types",
+   "which": "ts",
+   "src": "interface I extends a.b() {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2499
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \"{\" but found \"(\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let g: (a = 1) => void;",
+   "expected": "let g;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371
+    ]
+   },
+   "tscJs": "let g;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let g;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let x: ({ a = 1 }) => void;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let x: (public a: A) => void;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2369,
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"a\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "let g: (a = 1) => void;",
+   "expected": "let g;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2371
+    ]
+   },
+   "tscJs": "let g;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let g;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let x: ([a, , b]) => void;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7031
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ,"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "type X = ([a, , b]) => void;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7031
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ,"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let x: new ([a, , b]) => A;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7031,
+     2304
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ,"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "type X = { ([a, , b]): void };",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7031
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Backtrack"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "type X = { new ([a, , b]): A };",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7031,
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Backtrack"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "let x: A<(a = 1) => void>;",
+   "expected": "let x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     2371
+    ]
+   },
+   "tscJs": "let x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "type X = A<([a, , b]) => void>;",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7031
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ,"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "class C extends B<(a = 1) => void> {}",
+   "expected": "class C extends B {\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     2371
+    ]
+   },
+   "tscJs": "class C extends B {\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C extends B {\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"=\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "function f(public a: A) {}",
+   "expected": "function f(a) {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2369,
+     2304
+    ]
+   },
+   "tscJs": "function f(a) { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "function f(a) {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"a\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "declare class C { m(...a,): void; }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7019
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \",\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "declare class C { constructor(...a,); }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7019
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \",\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "declare class C { m(...a: A[],): void; }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \",\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "declare class C { constructor(...a: A[],); }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \",\""
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "function f<out>() {}",
+   "expected": "function f() {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "function f() { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = function <out>() {};",
+   "expected": "const f = function() {};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "const f = function () { };\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = function() {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "function f<out = A>() {}",
+   "expected": "function f() {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "function f() { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = function <out = A>() {};",
+   "expected": "const f = function() {};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const f = function () { };\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = function() {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "function f<const out>() {}",
+   "expected": "function f() {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "function f() { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = function <const out>() {};",
+   "expected": "const f = function() {};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "const f = function () { };\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = function() {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = <out>(a): T => a;",
+   "expected": "const f = (a) => a;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304
+    ]
+   },
+   "tscJs": "const f = (a) => a;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => a;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = <out>(a: T) => a;",
+   "expected": "const f = (a) => a;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const f = (a) => a;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => a;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = <out = A>(a): T => a;",
+   "expected": "const f = (a) => a;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "const f = (a) => a;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => a;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = <out = A>(a: T) => a;",
+   "expected": "const f = (a) => a;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const f = (a) => a;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => a;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "ts",
+   "src": "const f = <const out>(a): T => a;",
+   "expected": "const f = (a) => a;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006,
+     2304
+    ]
+   },
+   "tscJs": "const f = (a) => a;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = (a) => a;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "const f = function g<out>() {};",
+   "expected": "const f = function g() {};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "const f = function g() { };\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = function g() {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "async function f<out>() {}",
+   "expected": "async function f() {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "async function f() { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "async function f() {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "const f = function g<out = A>() {};",
+   "expected": "const f = function g() {};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const f = function g() { };\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = function g() {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "async function f<const out>() {}",
+   "expected": "async function f() {}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "async function f() { }\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "async function f() {}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "const f = <out = A>() => 0;",
+   "expected": "const f = () => 0;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const f = () => 0;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = () => 0;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "signatures, type parameters and type arguments",
+   "which": "tsx",
+   "src": "const f = async <out = A>() => 0;",
+   "expected": "const f = async () => 0;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2318,
+     2304
+    ]
+   },
+   "tscJs": "const f = async () => 0;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const f = async () => 0;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <out>x;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "<out>x;",
+   "expected": "x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <out>(x);",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = (x);\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <in>x;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"in\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <in>(x);",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = (x);\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"in\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <if>x;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <class>x;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected class"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <enum>x;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected enum"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <out>(x) => x;",
+   "expected": "const v = (x) => x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006
+    ]
+   },
+   "tscJs": "const v = (x) => x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = (x) => x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <out, T>(x) => x;",
+   "expected": "const v = (x) => x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     7006
+    ]
+   },
+   "tscJs": "const v = (x) => x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = (x) => x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = <out = A>(x) => x;",
+   "expected": "const v = (x) => x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "const v = (x) => x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = (x) => x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "f(<out, T>(x) => x);",
+   "expected": "f((x) => x);\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "f((x) => x);\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "f((x) => x);\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "f(<out = A>(x) => x);",
+   "expected": "f((x) => x);\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "f((x) => x);\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "f((x) => x);\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "The modifier \"out\" is not valid here"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = x as if;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = x as var;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected var"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = x satisfies if;",
+   "expected": "const v = x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = (): if => x;",
+   "expected": "const v = () => x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = () => x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = () => x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \"=>\" but found \":\""
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "x as if;",
+   "expected": "x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected if"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "x as var;",
+   "expected": "x;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected var"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = x as T <= y;",
+   "expected": "const v = x <= y;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x <= y;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x <= y;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x as T <= y;",
+   "expected": "x <= y;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x <= y;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x <= y;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "const v = x satisfies T <= y;",
+   "expected": "const v = x <= y;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = x <= y;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = x <= y;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "f(x as T <= y);",
+   "expected": "f(x <= y);\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "f(x <= y);\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "f(x <= y);\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "const v = [x as T <= y];",
+   "expected": "const v = [x <= y];\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const v = [x <= y];\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const v = [x <= y];\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? 1 + async(b) : c;",
+   "expected": "x = a ? 1 + async(b) : c;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x = a ? 1 + async(b) : c;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? 1 + async(b) : c;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected :"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? -<T>(b) : c;",
+   "expected": "x = a ? -b : c;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "x = a ? -(b) : c;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? -b : c;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected :"
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? <T>(b) : c => d;",
+   "expected": "x = a ? b : (c) => d;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "x = a ? (b) : c => d;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? b : (c) => d;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \":\" but found \";\""
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? y => (b) : c => d;",
+   "expected": "x = a ? (y) => b : (c) => d;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "x = a ? y => (b) : c => d;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? (y) => b : (c) => d;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \":\" but found \";\""
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? (y) => (b) : c => d;",
+   "expected": "x = a ? (y) => b : (c) => d;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "x = a ? (y) => (b) : c => d;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? (y) => b : (c) => d;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \":\" but found \";\""
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "ts",
+   "src": "x = a ? <T>(y: T) => (b) : c => d;",
+   "expected": "x = a ? (y) => b : (c) => d;\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "x = a ? (y) => (b) : c => d;\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? (y) => b : (c) => d;\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \":\" but found \";\""
+   }
+  },
+  {
+   "group": "expressions",
+   "which": "tsx",
+   "src": "x = a ? y => ({ y }) : z => ({ z });",
+   "expected": "x = a ? (y) => ({ y }) : (z) => ({ z });\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304,
+     7006
+    ]
+   },
+   "tscJs": "x = a ? y => ({ y }) : z => ({ z });\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \":\" but found \";\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "class C { [k: string]: T, }",
+   "expected": "class C {\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "class C {\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C {\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \",\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "abstract class C extends B { [k: string]: T, }",
+   "expected": "class C extends B {\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "class C extends B {\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C extends B {\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \",\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "const c = class { [k: string]: T, };",
+   "expected": "const c = class {\n};\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "const c = class {\n};\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "const c = class {\n};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \",\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "declare class C { [k: string]: T, }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \",\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "class C { m(public a: A) {} }",
+   "expected": "class C {\n  m(a) {}\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2369,
+     2304
+    ]
+   },
+   "tscJs": "class C {\n    m(a) { }\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C {\n  m(a) {}\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \")\" but found \"a\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "ts",
+   "src": "class C implements a() {}",
+   "expected": "class C {\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2500
+    ]
+   },
+   "tscJs": "class C {\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C {\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \"{\" but found \"(\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "class C { accessor x: T; }",
+   "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "class C {\n    accessor x;\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"x\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "class C { static accessor x = 1; }",
+   "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "class C {\n    static accessor x = 1;\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"x\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "class C { accessor #x: T; }",
+   "expected": "class C {\n  #x;\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "class C {\n    accessor #x;\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C {\n  #x;\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"#x\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "class C { static accessor #x = 1; }",
+   "expected": "class C {\n  static #x = 1;\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "class C {\n    static accessor #x = 1;\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C {\n  static #x = 1;\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"#x\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "abstract class C extends B { abstract accessor x: T; }",
+   "expected": "class C extends B {\n}\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "class C extends B {\n}\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "class C extends B {\n}\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"x\""
+   }
+  },
+  {
+   "group": "class members",
+   "which": "deco",
+   "src": "declare class C { accessor x: T; }",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2304
+    ]
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"x\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "import A from \"x\"\nwith { type: \"json\" };",
+   "expected": "import A from \"x\";\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2318,
+     2307
+    ]
+   },
+   "tscJs": "export {};\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "export {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \"(\" but found \"{\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace N { import(\"x\"); }",
+   "expected": "var N;\n((N) => {\n  import(\"x\");\n})(N ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2318,
+     2711,
+     2307
+    ]
+   },
+   "tscJs": "var N;\n(function (N) {\n    import(\"x\");\n})(N || (N = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var N;\n(function(N) {\n  import(\"x\");\n})(N || (N = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"(\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace N { import.meta; }",
+   "expected": "var N;\n((N) => {})(N ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": [
+     2318
+    ]
+   },
+   "tscJs": "var N;\n(function (N) {\n    import.meta;\n})(N || (N = {}));\nexport {};\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var N;\n(function(N) {})(N || (N = {}));\n\nexport {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \".\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "abstract declare class C {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"declare\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "export abstract declare class C {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "export {};\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "export {};\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected \";\" but found \"declare\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "enum E { [\"x\"] }",
+   "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 0] = \"x\";\n})(E ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var E;\n(function (E) {\n    E[E[\"x\"] = 0] = \"x\";\n})(E || (E = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var E;\n(function(E) {\n  E[E[\"x\"] = 0] = \"x\";\n})(E || (E = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"[\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "enum E { [\"x\"] = 1 }",
+   "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n})(E ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var E;\n(function(E) {\n  E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"[\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "enum E { ['x'] = 1, B = E.x }",
+   "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n  E[E[\"B\"] = 1] = \"B\";\n})(E ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var E;\n(function (E) {\n    E[E['x'] = 1] = 'x';\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var E;\n(function(E) {\n  E[E[\"x\"] = 1] = \"x\";\n  E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"[\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "enum E { [`x`] = 1 }",
+   "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n})(E ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var E;\n(function (E) {\n    E[E[`x`] = 1] = `x`;\n})(E || (E = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var E;\n(function(E) {\n  E[E[`x`] = 1] = `x`;\n})(E || (E = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Expected identifier but found \"[\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace as {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": true,
+    "out": "namespace;\n"
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "declare namespace as {}",
+   "expected": "",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "",
+   "viaTsc": {
+    "ok": true,
+    "out": ""
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected \"namespace\""
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace as { export const x = 1; }",
+   "expected": "var as;\n((as) => {\n  as.x = 1;\n})(as ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var as;\n(function (as) {\n    as.x = 1;\n})(as || (as = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var as;\n(function(as) {\n  as.x = 1;\n})(as || (as = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace as.b { export const x = 1; }",
+   "expected": "var as;\n((as) => {\n  let b;\n  ((b) => {\n    b.x = 1;\n  })(b = as.b ||= {});\n})(as ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var as;\n(function (as) {\n    var b;\n    (function (b) {\n        b.x = 1;\n    })(b = as.b || (as.b = {}));\n})(as || (as = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var as;\n(function(as) {\n  var b;\n  (function(b) {\n    b.x = 1;\n  })(b = as.b || (as.b = {}));\n})(as || (as = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ."
+   }
+  },
+  {
+   "group": "module syntax",
+   "which": "ts",
+   "src": "namespace satisfies { export const x = 1; }",
+   "expected": "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+   "tsc": {
+    "parse": [],
+    "grammar": [],
+    "other": []
+   },
+   "tscJs": "var satisfies;\n(function (satisfies) {\n    satisfies.x = 1;\n})(satisfies || (satisfies = {}));\n",
+   "viaTsc": {
+    "ok": true,
+    "out": "var satisfies;\n(function(satisfies) {\n  satisfies.x = 1;\n})(satisfies || (satisfies = {}));\n"
+   },
+   "own": {
+    "ok": false,
+    "message": "Unexpected ="
+   }
+  }
+ ]
+}

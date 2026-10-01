@@ -1,0 +1,2118 @@
+ES3For-ofTypeCheck1(target=es5).ts	unsupported target ES5
+ES3For-ofTypeCheck2(target=es5).ts	unsupported target ES5
+ES3For-ofTypeCheck4(target=es5).ts	unsupported target ES5
+ES3For-ofTypeCheck6(target=es5).ts	unsupported target ES5
+ES5For-of1(target=es5).ts	unsupported target ES5
+ES5For-of10(target=es5).ts	unsupported target ES5
+ES5For-of11(target=es5).ts	unsupported target ES5
+ES5For-of12(target=es5).ts	unsupported target ES5
+ES5For-of13(target=es5).ts	unsupported target ES5
+ES5For-of14(target=es5).ts	unsupported target ES5
+ES5For-of15(target=es5).ts	unsupported target ES5
+ES5For-of16(target=es5).ts	unsupported target ES5
+ES5For-of17(target=es5).ts	unsupported target ES5
+ES5For-of18(target=es5).ts	unsupported target ES5
+ES5For-of19(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+ES5For-of19(alwaysstrict=false,target=es5).ts	unsupported target ES5
+ES5For-of19(alwaysstrict=true,target=es5).ts	unsupported target ES5
+ES5For-of2(target=es5).ts	unsupported target ES5
+ES5For-of20(target=es5).ts	unsupported target ES5
+ES5For-of21(target=es5).ts	unsupported target ES5
+ES5For-of22(target=es5).ts	unsupported target ES5
+ES5For-of23(target=es5).ts	unsupported target ES5
+ES5For-of24(target=es5).ts	unsupported target ES5
+ES5For-of25(target=es5).ts	unsupported target ES5
+ES5For-of26(target=es5).ts	unsupported target ES5
+ES5For-of27(target=es5).ts	unsupported target ES5
+ES5For-of28(target=es5).ts	unsupported target ES5
+ES5For-of29(target=es5).ts	unsupported target ES5
+ES5For-of3(target=es5).ts	unsupported target ES5
+ES5For-of30(target=es5).ts	unsupported target ES5
+ES5For-of31(target=es5).ts	unsupported target ES5
+ES5For-of33(target=es5).ts	unsupported target ES5
+ES5For-of34(target=es5).ts	unsupported target ES5
+ES5For-of35(target=es5).ts	unsupported target ES5
+ES5For-of36(target=es5).ts	unsupported target ES5
+ES5For-of37(target=es5).ts	unsupported target ES5
+ES5For-of4(target=es5).ts	unsupported target ES5
+ES5For-of5(target=es5).ts	unsupported target ES5
+ES5For-of6(target=es5).ts	unsupported target ES5
+ES5For-of7(target=es5).ts	unsupported target ES5
+ES5For-of8(target=es5).ts	unsupported target ES5
+ES5For-of9(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck1(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck10(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck11(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck12(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck13(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck14(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck2(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck3(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck4(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck5(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck6(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck7(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck8(target=es5).ts	unsupported target ES5
+ES5For-ofTypeCheck9(target=es5).ts	unsupported target ES5
+ES5SymbolProperty1(target=es5).ts	unsupported target ES5
+ES5SymbolProperty2(target=es5).ts	unsupported target ES5
+ES5SymbolProperty3(target=es5).ts	unsupported target ES5
+ES5SymbolProperty4(target=es5).ts	unsupported target ES5
+ES5SymbolProperty5(target=es5).ts	unsupported target ES5
+ES5SymbolProperty6(target=es5).ts	unsupported target ES5
+ES5SymbolProperty7(target=es5).ts	unsupported target ES5
+ES5SymbolType1(target=es5).ts	unsupported target ES5
+ES5for-of32(target=es5).ts	unsupported target ES5
+FunctionDeclaration2_es6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+NonInitializedExportInInternalModule(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+SystemModuleForStatementNoInitializer.ts	unsupported module kind System
+abstractPropertyBasics(target=es5).ts	unsupported target ES5
+abstractPropertyNegative(target=es5).ts	unsupported target ES5
+accessibilityModifiers(target=es5).ts	unsupported target ES5
+accessorAccidentalCallDiagnostic(target=es5).ts	unsupported target ES5
+accessorInAmbientContextES5(target=es5).ts	unsupported target ES5
+accessorParameterAccessibilityModifier(target=es5).ts	unsupported target ES5
+accessorWithES5(target=es5).ts	unsupported target ES5
+accessorWithInitializer(target=es5).ts	unsupported target ES5
+accessorWithLineTerminator(target=es5).ts	unsupported target ES5
+accessorWithMismatchedAccessibilityModifiers(target=es5).ts	unsupported target ES5
+accessorWithRestParam(target=es5).ts	unsupported target ES5
+accessorWithoutBody1(target=es5).ts	unsupported target ES5
+accessorWithoutBody2(target=es5).ts	unsupported target ES5
+accessorsInAmbientContext(target=es5).ts	unsupported target ES5
+accessorsOverrideProperty7(target=es5).ts	unsupported target ES5
+aliasUsageInAccessorsOfClass(target=es5).ts	unsupported target ES5
+aliasesInSystemModule1.ts	unsupported module kind System
+aliasesInSystemModule2.ts	unsupported module kind System
+allowImportingTsExtensions(moduleresolution=classic).ts	unsupported module resolution kind 1
+allowImportingTypesDtsExtension(allowimportingtsextensions=false,moduleresolution=classic).ts	unsupported module resolution kind 1
+allowImportingTypesDtsExtension(allowimportingtsextensions=true,moduleresolution=classic).ts	unsupported module resolution kind 1
+allowSyntheticDefaultImports2.ts	unsupported module kind System
+allowSyntheticDefaultImports3.ts	unsupported module kind System
+allowSyntheticDefaultImports5.ts	unsupported module kind System
+allowSyntheticDefaultImports6.ts	unsupported module kind System
+allowSyntheticDefaultImports7.ts	unsupported module kind System
+allowSyntheticDefaultImports8.ts	unsupported module kind System
+alwaysStrictModule2.ts	unsupported outFile /.src/out.js
+alwaysStrictModule6(target=es5).ts	unsupported target ES5
+ambientAccessors(target=es5).ts	unsupported target ES5
+ambientExternalModuleMerging.ts	unsupported module kind AMD
+ambientExternalModuleWithInternalImportDeclaration.ts	unsupported module kind AMD
+ambientExternalModuleWithoutInternalImportDeclaration.ts	unsupported module kind AMD
+ambientGetters(target=es5).ts	unsupported target ES5
+ambientInsideNonAmbientExternalModule.ts	unsupported module kind AMD
+ambientWithStatements(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+amdDeclarationEmitNoExtraDeclare.ts	unsupported module kind AMD
+amdDependencyComment2.ts	unsupported module kind AMD
+amdDependencyCommentName2.ts	unsupported module kind AMD
+amdDependencyCommentName3.ts	unsupported module kind AMD
+amdDependencyCommentName4.ts	unsupported module kind AMD
+amdImportAsPrimaryExpression.ts	unsupported module kind AMD
+amdImportNotAsPrimaryExpression.ts	unsupported module kind AMD
+amdModuleBundleNoDuplicateDeclarationEmitComments.ts	unsupported module kind AMD
+amdModuleConstEnumUsage.ts	unsupported module kind AMD
+amdModuleName1.ts	unsupported module kind AMD
+amdModuleName2.ts	unsupported module kind AMD
+anonymousDefaultExportsAmd.ts	unsupported module kind AMD
+anonymousDefaultExportsSystem.ts	unsupported module kind System
+anonymousDefaultExportsUmd.ts	unsupported module kind UMD
+arbitraryModuleNamespaceIdentifiers_module(module=amd).ts	unsupported module kind AMD
+arbitraryModuleNamespaceIdentifiers_module(module=system).ts	unsupported module kind System
+arbitraryModuleNamespaceIdentifiers_module(module=umd).ts	unsupported module kind UMD
+argumentsBindsToFunctionScopeArgumentList(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+argumentsObjectIterator01_ES5(target=es5).ts	unsupported target ES5
+argumentsObjectIterator02_ES5(target=es5).ts	unsupported target ES5
+argumentsObjectIterator03_ES5(target=es5).ts	unsupported target ES5
+argumentsReferenceInObjectLiteral_Js(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+argumentsSpreadRestIterables(target=es5).tsx	unsupported target ES5
+arrayIterationLibES5TargetDifferent(nolib=false,target=es5).ts	unsupported target ES5
+arrayIterationLibES5TargetDifferent(nolib=true,target=es5).ts	unsupported target ES5
+arrayLiteralSpreadES5iterable(target=es5).ts	unsupported target ES5
+arraySpreadImportHelpers(target=es5).ts	unsupported target ES5
+arrayToLocaleStringES5(target=es5).ts	unsupported target ES5
+arrowFunctionContexts(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+arrowFunctionWithParameterNameAsync_es2017(target=es5).ts	unsupported target ES5
+arrowFunctionWithParameterNameAsync_es5(target=es5).ts	unsupported target ES5
+arrowFunctionWithParameterNameAsync_es6(target=es5).ts	unsupported target ES5
+asiPublicPrivateProtected(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+assignSharedArrayBufferToArrayBuffer(target=es5).ts	unsupported target ES5
+asyncAliasReturnType_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction10_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction11_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction1_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction2_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction3_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction4_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction5_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction6_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction7_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction8_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunction9_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunctionCapturesArguments_es5(target=es5).ts	unsupported target ES5
+asyncArrowFunctionCapturesThis_es5(target=es5).ts	unsupported target ES5
+asyncArrowInClassES5(target=es5).ts	unsupported target ES5
+asyncAwaitIsolatedModules_es5(target=es5).ts	unsupported target ES5
+asyncAwaitNestedClasses_es5(target=es5).ts	unsupported target ES5
+asyncAwaitWithCapturedBlockScopeVar(target=es5).ts	unsupported target ES5
+asyncAwait_es5(target=es5).ts	unsupported target ES5
+asyncClass_es5(target=es5).ts	unsupported target ES5
+asyncConstructor_es5(target=es5).ts	unsupported target ES5
+asyncDeclare_es5(target=es5).ts	unsupported target ES5
+asyncEnum_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration10_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration11_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration12_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration13_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration14_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration15_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration16_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration1_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration2_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration3_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration4_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration5_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration6_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration7_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration8_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclaration9_es5(target=es5).ts	unsupported target ES5
+asyncFunctionDeclarationCapturesArguments_es5(target=es5).ts	unsupported target ES5
+asyncFunctionTempVariableScoping(target=es5).ts	unsupported target ES5
+asyncGetter_es5(target=es5).ts	unsupported target ES5
+asyncImportedPromise_es5(target=es5).ts	unsupported target ES5
+asyncInterface_es5(target=es5).ts	unsupported target ES5
+asyncMethodWithSuper_es5(target=es5).ts	unsupported target ES5
+asyncModule_es5(target=es5).ts	unsupported target ES5
+asyncMultiFile_es5(target=es5).ts	unsupported target ES5
+asyncQualifiedReturnType_es5(target=es5).ts	unsupported target ES5
+asyncSetter_es5(target=es5).ts	unsupported target ES5
+asyncUnParenthesizedArrowFunction_es5(target=es5).ts	unsupported target ES5
+asyncUseStrict_es5(target=es5).ts	unsupported target ES5
+augmentExportEquals1_1.ts	unsupported module kind AMD
+augmentExportEquals2_1.ts	unsupported module kind AMD
+augmentExportEquals3_1.ts	unsupported module kind AMD
+augmentExportEquals4_1.ts	unsupported module kind AMD
+augmentExportEquals6_1.ts	unsupported module kind AMD
+augmentedTypesExternalModule1.ts	unsupported module kind AMD
+autoAccessor1(target=es5).ts	unsupported target ES5
+autoAccessor3(target=es5).ts	unsupported target ES5
+autoAccessor4(target=es5).ts	unsupported target ES5
+autoAccessor5(target=es5).ts	unsupported target ES5
+awaitBinaryExpression1_es5(target=es5).ts	unsupported target ES5
+awaitBinaryExpression2_es5(target=es5).ts	unsupported target ES5
+awaitBinaryExpression3_es5(target=es5).ts	unsupported target ES5
+awaitBinaryExpression4_es5(target=es5).ts	unsupported target ES5
+awaitBinaryExpression5_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression1_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression2_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression3_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression4_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression5_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression6_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression7_es5(target=es5).ts	unsupported target ES5
+awaitCallExpression8_es5(target=es5).ts	unsupported target ES5
+awaitClassExpression_es5(target=es5).ts	unsupported target ES5
+awaitUnion_es5(target=es5).ts	unsupported target ES5
+awaitUsingDeclarations.1(target=es5).ts	unsupported target ES5
+awaitUsingDeclarations.2(target=es5).ts	unsupported target ES5
+awaitUsingDeclarations.3(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsInFor(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsInForAwaitOf(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsInForAwaitOf.3(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsInForOf.1(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsInForOf.5(target=es5).ts	unsupported target ES5
+awaitUsingDeclarationsTopLevelOfModule.1(module=system).ts	unsupported module kind System
+bangInModuleName.ts	unsupported module kind AMD
+bigintAmbientMinimal(target=es5).ts	unsupported target ES5
+bigintWithoutLib(target=es5).ts	unsupported target ES5
+binaryIntegerLiteral(target=es5).ts	unsupported target ES5
+blockScopedBindingsInDownlevelGenerator(target=es5).ts	unsupported target ES5
+blockScopedClassDeclarationAcrossFiles.ts	unsupported outFile /.src/foo.js
+blockScopedEnumVariablesUseBeforeDef(target=es5).ts	unsupported target ES5
+blockScopedEnumVariablesUseBeforeDef_isolatedModules(target=es5).ts	unsupported target ES5
+blockScopedEnumVariablesUseBeforeDef_preserve(target=es5).ts	unsupported target ES5
+blockScopedEnumVariablesUseBeforeDef_verbatimModuleSyntax(target=es5).ts	unsupported target ES5
+blockScopedFunctionDeclarationES5(target=es5).ts	unsupported target ES5
+blockScopedFunctionDeclarationInStrictClass(target=es5).ts	unsupported target ES5
+blockScopedFunctionDeclarationStrictES5(target=es5).ts	unsupported target ES5
+blockScopedNamespaceDifferentFile(target=es2015).ts	unsupported module kind AMD
+blockScopedNamespaceDifferentFile(target=es5).ts	unsupported module kind AMD
+blockScopedSameNameFunctionDeclarationES5(target=es5).ts	unsupported target ES5
+blockScopedSameNameFunctionDeclarationStrictES5(target=es5).ts	unsupported target ES5
+blockScopedVariablesUseBeforeDef(target=es5).ts	unsupported target ES5
+bundledDtsLateExportRenaming.ts	unsupported outFile /.src/dist/out.d.ts
+cacheResolutions.ts	unsupported module kind AMD
+cachedModuleResolution3.ts	unsupported module resolution kind 1
+cachedModuleResolution4.ts	unsupported module resolution kind 1
+cachedModuleResolution8.ts	unsupported module resolution kind 1
+cachedModuleResolution9.ts	unsupported module resolution kind 1
+callChainWithSuper(target=es5).ts	unsupported target ES5
+capturedLetConstInLoop14(target=es5).ts	unsupported target ES5
+capturedLetConstInLoop4.ts	unsupported module kind System
+capturedParametersInInitializers2(target=es5).ts	unsupported target ES5
+capturedShorthandPropertyAssignmentNoCheck(target=es5).ts	unsupported target ES5
+capturedVarInLoop(target=es5).ts	unsupported target ES5
+checkForObjectTooStrict(target=es5).ts	unsupported target ES5
+checkIndexConstraintOfJavascriptClassExpression.ts	unsupported outFile /.src/foo.js
+checkJsdocOnEndOfFile.ts	unsupported outFile /.src/output.js
+checkJsdocReturnTag1.ts	unsupported outFile /.src/dummy.js
+checkJsdocReturnTag2.ts	unsupported outFile /.src/dummy.js
+circularObjectLiteralAccessors(target=es5).ts	unsupported target ES5
+classAbstractAccessor(target=es5).ts	unsupported target ES5
+classExpressionWithStaticProperties2(target=es5).ts	unsupported target ES5
+classExpressionWithStaticProperties3(target=es5).ts	unsupported target ES5
+classExtendsAcrossFiles(target=es5).ts	unsupported target ES5
+classInConvertedLoopES5(target=es5).ts	unsupported target ES5
+classStaticBlock1(target=es5).ts	unsupported target ES5
+classStaticBlock10(target=es5).ts	unsupported target ES5
+classStaticBlock18(target=es5).ts	unsupported target ES5
+classStaticBlock2(target=es5).ts	unsupported target ES5
+classStaticBlock24(module=amd).ts	unsupported module kind AMD
+classStaticBlock24(module=system).ts	unsupported module kind System
+classStaticBlock24(module=umd).ts	unsupported module kind UMD
+classStaticBlock5(target=es5).ts	unsupported target ES5
+classStaticBlock6(target=es5).ts	unsupported target ES5
+classStaticBlock9(target=es5).ts	unsupported target ES5
+classStaticPropertyAccess(target=es5).ts	unsupported target ES5
+classStaticPropertyTypeGuard(target=es5).ts	unsupported target ES5
+classUsedBeforeInitializedVariables(target=es5).ts	unsupported target ES5
+classWithOnlyPublicMembersEquivalentToInterface(target=es5).ts	unsupported target ES5
+classWithOnlyPublicMembersEquivalentToInterface2(target=es5).ts	unsupported target ES5
+classWithStaticFieldInParameterBindingPattern(target=es5).ts	unsupported target ES5
+classWithStaticFieldInParameterBindingPattern.2(target=es5).ts	unsupported target ES5
+classWithStaticFieldInParameterInitializer(target=es5).ts	unsupported target ES5
+classWithStaticFieldInParameterInitializer.2(target=es5).ts	unsupported target ES5
+classdecl(target=es5).ts	unsupported target ES5
+collisionArgumentsArrowFunctions(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+collisionArgumentsArrowFunctions(alwaysstrict=false,target=es5).ts	unsupported target ES5
+collisionArgumentsArrowFunctions(alwaysstrict=true,target=es5).ts	unsupported target ES5
+collisionArgumentsClassConstructor(target=es5).ts	unsupported target ES5
+collisionArgumentsClassMethod(target=es5).ts	unsupported target ES5
+collisionArgumentsFunction(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+collisionArgumentsFunction(alwaysstrict=false,target=es5).ts	unsupported target ES5
+collisionArgumentsFunction(alwaysstrict=true,target=es5).ts	unsupported target ES5
+collisionArgumentsFunctionExpressions(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+collisionArgumentsFunctionExpressions(alwaysstrict=false,target=es5).ts	unsupported target ES5
+collisionArgumentsFunctionExpressions(alwaysstrict=true,target=es5).ts	unsupported target ES5
+collisionArgumentsInType(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+collisionArgumentsInterfaceMembers(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+collisionExportsRequireAndClass.ts	unsupported module kind AMD
+collisionExportsRequireAndEnum.ts	unsupported module kind AMD
+collisionExportsRequireAndFunction.ts	unsupported module kind AMD
+collisionExportsRequireAndInternalModuleAlias.ts	unsupported module kind AMD
+collisionExportsRequireAndModule.ts	unsupported module kind AMD
+collisionExportsRequireAndUninstantiatedModule.ts	unsupported module kind AMD
+collisionExportsRequireAndVar.ts	unsupported module kind AMD
+collisionSuperAndLocalFunctionInAccessors(target=es5).ts	unsupported target ES5
+collisionSuperAndLocalVarInAccessors(target=es5).ts	unsupported target ES5
+collisionSuperAndParameter(target=es5).ts	unsupported target ES5
+collisionThisExpressionAndLocalVarInAccessors(target=es5).ts	unsupported target ES5
+commentsBeforeVariableStatement1.ts	unsupported module kind AMD
+commentsClass(target=es5).ts	unsupported target ES5
+commentsClassMembers(target=es5).ts	unsupported target ES5
+commentsCommentParsing(target=es5).ts	unsupported target ES5
+commentsDottedModuleName(target=es2015).ts	unsupported module kind AMD
+commentsDottedModuleName(target=es5).ts	unsupported module kind AMD
+commentsEnums(target=es5).ts	unsupported target ES5
+commentsExternalModules(target=es2015).ts	unsupported module kind AMD
+commentsExternalModules(target=es5).ts	unsupported module kind AMD
+commentsExternalModules2(target=es2015).ts	unsupported module kind AMD
+commentsExternalModules2(target=es5).ts	unsupported module kind AMD
+commentsExternalModules3(target=es5).ts	unsupported target ES5
+commentsFormatting(target=es5).ts	unsupported target ES5
+commentsFunction(target=es5).ts	unsupported target ES5
+commentsInheritance(target=es5).ts	unsupported target ES5
+commentsInterface(target=es5).ts	unsupported target ES5
+commentsModules(target=es5).ts	unsupported target ES5
+commentsMultiModuleMultiFile(target=es2015).ts	unsupported module kind AMD
+commentsMultiModuleMultiFile(target=es5).ts	unsupported module kind AMD
+commentsMultiModuleSingleFile(target=es5).ts	unsupported target ES5
+commentsOnJSXExpressionsArePreserved(jsx=preserve,module=system,moduledetection=auto).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=preserve,module=system,moduledetection=force).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=preserve,module=system,moduledetection=legacy).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react,module=system,moduledetection=auto).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react,module=system,moduledetection=force).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react,module=system,moduledetection=legacy).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsx,module=system,moduledetection=auto).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsx,module=system,moduledetection=force).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsx,module=system,moduledetection=legacy).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsxdev,module=system,moduledetection=auto).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsxdev,module=system,moduledetection=force).tsx	unsupported module kind System
+commentsOnJSXExpressionsArePreserved(jsx=react-jsxdev,module=system,moduledetection=legacy).tsx	unsupported module kind System
+commentsOnObjectLiteral3(target=es5).ts	unsupported target ES5
+commentsOnObjectLiteral4(target=es5).ts	unsupported target ES5
+commentsOnObjectLiteral5(target=es5).ts	unsupported target ES5
+commentsOnRequireStatement(target=es5).ts	unsupported target ES5
+commentsOverloads(target=es5).ts	unsupported target ES5
+commentsVarDecl(target=es5).ts	unsupported target ES5
+commentsdoNotEmitComments(target=es5).ts	unsupported target ES5
+commentsemitComments(target=es5).ts	unsupported target ES5
+commonJsExportTypeDeclarationError(target=es5).ts	unsupported target ES5
+commonSourceDir5.ts	unsupported outFile /.src/concat.js
+commonSourceDir6.ts	unsupported module kind AMD
+commonjsSafeImport(target=es5).ts	unsupported target ES5
+compilerOptionsOutAndNoEmit.ts	unsupported outFile /.src/outDir
+compilerOptionsOutFileAndNoEmit.ts	unsupported outFile /.src/a.js
+complexClassRelationships(target=es5).ts	unsupported target ES5
+complicatedPrivacy(target=es5).ts	unsupported target ES5
+computedPropertyNames10_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames11_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames12_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames13_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames14_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames15_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames16_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames17_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames18_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames19_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames1_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames20_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames21_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames22_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames23_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames24_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames25_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames26_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames27_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames28_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames29_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames2_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames30_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames31_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames32_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames33_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames34_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames35_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames36_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames37_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames38_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames39_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames3_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames40_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames41_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames42_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames43_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames44_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames45_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames46_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames47_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames48_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames4_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames52(target=es2015).ts	unsupported outFile /.src/computedPropertyNames52-emit.js
+computedPropertyNames52(target=es5).ts	unsupported outFile /.src/computedPropertyNames52-emit.js
+computedPropertyNames5_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames6_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames7_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames8_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNames9_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType10_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType1_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType2_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType3_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType4_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType5_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType6_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType7_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType8_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesContextualType9_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit1_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit2_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit3_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit4_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit5_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesDeclarationEmit6_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesOnOverloads_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesSourceMap1_ES5(target=es5).ts	unsupported target ES5
+computedPropertyNamesSourceMap2_ES5(target=es5).ts	unsupported target ES5
+computerPropertiesInES5ShouldBeTransformed(target=es5).ts	unsupported target ES5
+constDeclarations-es5(target=es5).ts	unsupported target ES5
+constDeclarations-invalidContexts(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+constDeclarations-scopes(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+constDeclarations-useBeforeDefinition2.ts	unsupported outFile /.src/out.js
+constDeclarations-validContexts(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+constEnumExternalModule.ts	unsupported module kind AMD
+constEnumMergingWithValues1.ts	unsupported module kind AMD
+constEnumMergingWithValues2.ts	unsupported module kind AMD
+constEnumMergingWithValues3.ts	unsupported module kind AMD
+constEnumMergingWithValues4.ts	unsupported module kind AMD
+constEnumMergingWithValues5.ts	unsupported module kind AMD
+constructorWithSuperAndPrologue.es5(target=es5).ts	unsupported target ES5
+contextualExpressionTypecheckingDoesntBlowStack(target=es5).ts	unsupported target ES5
+continueInLoopsWithCapturedBlockScopedBindings1(target=es5).ts	unsupported target ES5
+controlFlowJavascript.ts	unsupported outFile /.src/out.js
+convertClassExpressionToFunctionFromObjectProperty1(target=es5).ts	unsupported target ES5
+convertClassExpressionToFunctionFromObjectProperty2(target=es5).ts	unsupported target ES5
+convertKeywordsYes(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+crashIntypeCheckObjectCreationExpression.ts	unsupported module kind AMD
+declFileAccessors(target=es5).ts	unsupported target ES5
+declFileCallSignatures(target=es5).ts	unsupported target ES5
+declFileClassExtendsNull(target=es5).ts	unsupported target ES5
+declFileConstructSignatures(target=es5).ts	unsupported target ES5
+declFileConstructors(target=es5).ts	unsupported target ES5
+declFileExportAssignmentOfGenericInterface.ts	unsupported module kind AMD
+declFileExportImportChain.ts	unsupported module kind AMD
+declFileExportImportChain2.ts	unsupported module kind AMD
+declFileFunctions(target=es5).ts	unsupported target ES5
+declFileIndexSignatures(target=es5).ts	unsupported target ES5
+declFileMethods(target=es5).ts	unsupported target ES5
+declFileObjectLiteralWithAccessors(target=es5).ts	unsupported target ES5
+declFileObjectLiteralWithOnlyGetter(target=es5).ts	unsupported target ES5
+declFileObjectLiteralWithOnlySetter(target=es5).ts	unsupported target ES5
+declFilePrivateStatic(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationArrayType(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationBuiltInType(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationParenType(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationStringLiteral(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationTupleType(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationTypeAlias(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationTypeLiteral(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationTypeQuery(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationTypeReference(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationUnionType(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorAccessors(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorParameterOfFunction(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorReturnTypeOfFunction(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorTypeAlias(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorTypeLiteral(target=es5).ts	unsupported target ES5
+declFileTypeAnnotationVisibilityErrorVariableDeclaration(target=es5).ts	unsupported target ES5
+declFileWithErrorsInInputDeclarationFileWithOut.ts	unsupported outFile /.src/out.js
+declarationEmitAmdModuleDefault.ts	unsupported module kind AMD
+declarationEmitAmdModuleNameDirective.ts	unsupported module kind UMD
+declarationEmitBundleWithAmbientReferences.ts	unsupported module kind AMD
+declarationEmitClassMemberNameConflict(target=es5).ts	unsupported target ES5
+declarationEmitClassMemberNameConflict2(target=es5).ts	unsupported target ES5
+declarationEmitClassPrivateConstructor(target=es5).ts	unsupported target ES5
+declarationEmitClassPrivateConstructor2(target=es5).ts	unsupported target ES5
+declarationEmitCommonSourceDirectoryDoesNotContainAllFiles.ts	unsupported outFile /a/dist/index.d.ts
+declarationEmitDefaultExportWithTempVarName.ts	unsupported module kind System
+declarationEmitDefaultExportWithTempVarNameWithBundling.ts	unsupported module kind System
+declarationEmitDetachedComment1(target=es5).ts	unsupported target ES5
+declarationEmitDetachedComment2(target=es5).ts	unsupported target ES5
+declarationEmitExportAssignment(target=es5).ts	unsupported target ES5
+declarationEmitExportDeclaration(target=es5).ts	unsupported target ES5
+declarationEmitModuleWithScopeMarker(target=es5).ts	unsupported target ES5
+declarationEmitMonorepoBaseUrl.ts	unsupported baseUrl /
+declarationEmitOutFileBundlePaths.ts	unsupported outFile /.src/js/index.js
+declarationEmitPathMappingMonorepo.ts	unsupported baseUrl /.src/packages/b
+declarationEmitPathMappingMonorepo2.ts	unsupported baseUrl /.src/packages
+declarationEmitPrefersPathKindBasedOnBundling(target=es2015).ts	unsupported baseUrl /.src
+declarationEmitPrefersPathKindBasedOnBundling(target=es5).ts	unsupported baseUrl /.src
+declarationEmitPrefersPathKindBasedOnBundling2(target=es2015).ts	unsupported module kind AMD
+declarationEmitPrefersPathKindBasedOnBundling2(target=es5).ts	unsupported module kind AMD
+declarationEmitProtectedMembers(target=es5).ts	unsupported target ES5
+declarationEmitSymlinkPaths(target=es5).ts	unsupported target ES5
+declarationEmitUnknownImport(target=es5).ts	unsupported target ES5
+declarationEmitUnknownImport2(target=es5).ts	unsupported target ES5
+declarationEmitUnnessesaryTypeReferenceNotAdded(target=es5).ts	unsupported target ES5
+declarationEmitWithDefaultAsComputedName(target=es5).ts	unsupported target ES5
+declarationEmitWithDefaultAsComputedName2(target=es5).ts	unsupported target ES5
+declarationFileOverwriteErrorWithOut.ts	unsupported outFile /out.js
+declarationFilesGeneratingTypeReferences.ts	unsupported outFile /.src/out.js
+declarationMapsOutFile.ts	unsupported module kind AMD
+declarationMapsOutFile2.ts	unsupported outFile /.src/bundle.js
+declarationMapsWithSourceMap.ts	unsupported outFile /.src/bundle.js
+declarationMerging2.ts	unsupported module kind AMD
+decoratedBlockScopedClass1(target=es5).ts	unsupported target ES5
+decoratedBlockScopedClass2(target=es5).ts	unsupported target ES5
+decoratedBlockScopedClass3(target=es5).ts	unsupported target ES5
+decoratedClassExportsSystem1.ts	unsupported module kind System
+decoratedClassExportsSystem2.ts	unsupported module kind System
+decoratedDefaultExportsGetExportedAmd.ts	unsupported module kind AMD
+decoratedDefaultExportsGetExportedSystem.ts	unsupported module kind System
+decoratedDefaultExportsGetExportedUmd.ts	unsupported module kind UMD
+decoratorChecksFunctionBodies(target=es5).ts	unsupported target ES5
+decoratorInstantiateModulesInFunctionBodies(target=es5).ts	unsupported target ES5
+decoratorMetadata(target=es5).ts	unsupported target ES5
+decoratorMetadata-jsdoc(target=es5).ts	unsupported target ES5
+decoratorMetadataForMethodWithNoReturnTypeAnnotation01(target=es5).ts	unsupported target ES5
+decoratorMetadataOnInferredType(target=es5).ts	unsupported target ES5
+decoratorMetadataRestParameterWithImportedType(target=es5).ts	unsupported target ES5
+decoratorMetadataWithConstructorType(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision2(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision3(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision4(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision5(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision6(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision7(target=es5).ts	unsupported target ES5
+decoratorMetadataWithImportDeclarationNameCollision8(target=es5).ts	unsupported target ES5
+decoratorMetadataWithTypeOnlyImport(target=es5).ts	unsupported target ES5
+decoratorOnClass1(target=es5).ts	unsupported target ES5
+decoratorOnClass2(target=es5).ts	unsupported target ES5
+decoratorOnClass3(target=es5).ts	unsupported target ES5
+decoratorOnClass4(target=es5).ts	unsupported target ES5
+decoratorOnClass5(target=es5).ts	unsupported target ES5
+decoratorOnClass8(target=es5).ts	unsupported target ES5
+decoratorOnClass9(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor1(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor2(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor3(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor4(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor5(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor6(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor7(target=es5).ts	unsupported target ES5
+decoratorOnClassAccessor8(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructor1(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructor2(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructor3(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructor4(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructorParameter1(target=es5).ts	unsupported target ES5
+decoratorOnClassConstructorParameter4(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod1(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod10(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod11(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod12(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod2(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod3(target=es5).ts	unsupported target ES5
+decoratorOnClassMethod8(target=es5).ts	unsupported target ES5
+decoratorOnClassMethodOverload1(target=es5).ts	unsupported target ES5
+decoratorOnClassMethodOverload2(target=es5).ts	unsupported target ES5
+decoratorOnClassMethodParameter1(target=es5).ts	unsupported target ES5
+decoratorOnClassMethodParameter2(target=es5).ts	unsupported target ES5
+decoratorOnClassMethodThisParameter(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty1(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty10(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty11(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty12(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty2(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty3(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty6(target=es5).ts	unsupported target ES5
+decoratorOnClassProperty7(target=es5).ts	unsupported target ES5
+decoratorWithNegativeLiteralTypeNoCrash(target=es5).ts	unsupported target ES5
+deduplicateImportsInSystem.ts	unsupported module kind System
+defaultExportInAwaitExpression01.ts	unsupported module kind UMD
+defaultExportWithOverloads01(target=es5).ts	unsupported target ES5
+defaultExportsCannotMerge01(target=es5).ts	unsupported target ES5
+defaultExportsCannotMerge02(target=es5).ts	unsupported target ES5
+defaultExportsCannotMerge03(target=es5).ts	unsupported target ES5
+defaultExportsCannotMerge04(target=es5).ts	unsupported target ES5
+defaultExportsGetExportedAmd.ts	unsupported module kind AMD
+defaultExportsGetExportedSystem.ts	unsupported module kind System
+defaultExportsGetExportedUmd.ts	unsupported module kind UMD
+defineProperty(target=es5).ts	unsupported target ES5
+deleteOperatorWithAnyOtherType(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+dependencyViaImportAlias.ts	unsupported module kind AMD
+deprecatedCompilerOptions2.ts	unsupported module kind AMD
+deprecatedCompilerOptions6.ts	unsupported module kind AMD
+derivedClassConstructorWithExplicitReturns01(target=es5).ts	unsupported target ES5
+derivedClassOverridesProtectedMembers(target=es5).ts	unsupported target ES5
+derivedClassOverridesProtectedMembers2(target=es5).ts	unsupported target ES5
+derivedClassOverridesProtectedMembers3(target=es5).ts	unsupported target ES5
+derivedClassSuperProperties(target=es5).ts	unsupported target ES5
+derivedClassSuperStatementPosition(target=es5).ts	unsupported target ES5
+derivedClassWithPrivateInstanceShadowingProtectedInstance(target=es5).ts	unsupported target ES5
+derivedClassWithPrivateStaticShadowingProtectedStatic(target=es5).ts	unsupported target ES5
+destructuringArrayBindingPatternAndAssignment4(target=es5).ts	unsupported target ES5
+destructuringEvaluationOrder(target=es5).ts	unsupported target ES5
+destructuringInVariableDeclarations3.ts	unsupported module kind AMD
+destructuringInVariableDeclarations4.ts	unsupported module kind AMD
+destructuringInVariableDeclarations5.ts	unsupported module kind UMD
+destructuringInVariableDeclarations6.ts	unsupported module kind UMD
+destructuringInVariableDeclarations7.ts	unsupported module kind System
+destructuringInVariableDeclarations8.ts	unsupported module kind System
+destructuringObjectAssignmentPatternWithNestedSpread(target=es5).ts	unsupported target ES5
+destructuringObjectBindingPatternAndAssignment6(target=es5).ts	unsupported target ES5
+destructuringObjectBindingPatternAndAssignment7(target=es5).ts	unsupported target ES5
+destructuringObjectBindingPatternAndAssignment8(target=es5).ts	unsupported target ES5
+destructuringParameterDeclaration3ES5iterable(target=es5).ts	unsupported target ES5
+destructuringParameterDeclaration7ES5(target=es5).ts	unsupported target ES5
+destructuringParameterDeclaration7ES5iterable(target=es5).ts	unsupported target ES5
+destructuringReassignsRightHandSide(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_1(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_2(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_3(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_4(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_5(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_6(target=es5).ts	unsupported target ES5
+destructuringTypeAssertionsES5_7(target=es5).ts	unsupported target ES5
+destructuringVariableDeclaration1ES5iterable(target=es5).ts	unsupported target ES5
+divergentAccessorsTypes3(target=es5).ts	unsupported target ES5
+divergentAccessorsTypes4(target=es5).ts	unsupported target ES5
+divergentAccessorsTypes5(target=es5).ts	unsupported target ES5
+doNotElaborateAssignabilityToTypeParameters(target=es5).ts	unsupported target ES5
+doYouNeedToChangeYourTargetLibraryES2023(target=es5).ts	unsupported target ES5
+dottedNamesInSystem.ts	unsupported module kind System
+downlevelIterationDeprecated(downleveliteration=false).ts	unsupported target ES5
+downlevelIterationDeprecated(downleveliteration=true).ts	unsupported target ES5
+downlevelLetConst12(target=es5).ts	unsupported target ES5
+downlevelLetConst13(target=es5).ts	unsupported target ES5
+downlevelLetConst14(target=es5).ts	unsupported target ES5
+downlevelLetConst15(target=es5).ts	unsupported target ES5
+downlevelLetConst16(target=es5).ts	unsupported target ES5
+downlevelLetConst17(target=es5).ts	unsupported target ES5
+downlevelLetConst18(target=es5).ts	unsupported target ES5
+downlevelLetConst19(target=es5).ts	unsupported target ES5
+duplicateIdentifierBindingElementInParameterDeclaration1(target=es5).ts	unsupported target ES5
+duplicateIdentifierBindingElementInParameterDeclaration2(target=es5).ts	unsupported target ES5
+duplicateIdentifierShouldNotShortCircuitBaseTypeBinding.ts	unsupported module kind AMD
+duplicateObjectLiteralProperty(target=es5).ts	unsupported target ES5
+dynamicImportWithNestedThis_es2015.ts	unsupported module kind UMD
+dynamicImportWithNestedThis_es5(target=es2015).ts	unsupported module kind UMD
+dynamicImportWithNestedThis_es5(target=es5).ts	unsupported module kind UMD
+dynamicRequire.ts	unsupported module kind AMD
+emitAccessExpressionOfCastedObjectLiteralExpressionInArrowFunctionES5(target=es5).ts	unsupported target ES5
+emitArrowFunction(target=es5).ts	unsupported target ES5
+emitArrowFunctionAsIs(target=es5).ts	unsupported target ES5
+emitArrowFunctionThisCapturing(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments01(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments02(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments03(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments03(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments03(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments03_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments04(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments04(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments04(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments04_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments05(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments05(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments05(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments05_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments06(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments06(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments06(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments06_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments07(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments07(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments07(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments07_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments08(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments08(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments08(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments08_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments09(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments10(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments11(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments11(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments11(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments11_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments12(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments13(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments13(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments13(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments13_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments14(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments14(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments14(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments14_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments15(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments15(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments15(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments15_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments16(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments16(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments16(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments16_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments17(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments17(alwaysstrict=false,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments17(alwaysstrict=true,target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments17_ES6(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+emitArrowFunctionWhenUsingArguments18(target=es5).ts	unsupported target ES5
+emitArrowFunctionWhenUsingArguments19(target=es5).ts	unsupported target ES5
+emitArrowFunctionsAsIs(target=es5).ts	unsupported target ES5
+emitBundleWithPrologueDirectives1(target=es2015).ts	unsupported module kind AMD
+emitBundleWithPrologueDirectives1(target=es5).ts	unsupported module kind AMD
+emitBundleWithShebang1(target=es2015).ts	unsupported module kind AMD
+emitBundleWithShebang1(target=es5).ts	unsupported module kind AMD
+emitBundleWithShebang2(target=es2015).ts	unsupported module kind AMD
+emitBundleWithShebang2(target=es5).ts	unsupported module kind AMD
+emitBundleWithShebangAndPrologueDirectives1(target=es2015).ts	unsupported module kind AMD
+emitBundleWithShebangAndPrologueDirectives1(target=es5).ts	unsupported module kind AMD
+emitBundleWithShebangAndPrologueDirectives2(target=es2015).ts	unsupported module kind AMD
+emitBundleWithShebangAndPrologueDirectives2(target=es5).ts	unsupported module kind AMD
+emitCompoundExponentiationAssignmentWithIndexingOnLHS1(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationAssignmentWithIndexingOnLHS2(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationAssignmentWithIndexingOnLHS3(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationAssignmentWithIndexingOnLHS4(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationAssignmentWithPropertyAccessingOnLHS1(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationOperator1(target=es5).ts	unsupported target ES5
+emitCompoundExponentiationOperator2(target=es5).ts	unsupported target ES5
+emitDecoratorMetadata_object(target=es5).ts	unsupported target ES5
+emitDecoratorMetadata_restArgs(target=es5).ts	unsupported target ES5
+emitDefaultParametersFunction(target=es5).ts	unsupported target ES5
+emitDefaultParametersFunctionExpression(target=es5).ts	unsupported target ES5
+emitDefaultParametersFunctionProperty(target=es5).ts	unsupported target ES5
+emitDefaultParametersMethod(target=es5).ts	unsupported target ES5
+emitExponentiationOperator1(target=es5).ts	unsupported target ES5
+emitExponentiationOperator2(target=es5).ts	unsupported target ES5
+emitExponentiationOperator3(target=es5).ts	unsupported target ES5
+emitExponentiationOperator4(target=es5).ts	unsupported target ES5
+emitExponentiationOperatorInTempalteString4(target=es5).ts	unsupported target ES5
+emitExponentiationOperatorInTemplateString1(target=es5).ts	unsupported target ES5
+emitExponentiationOperatorInTemplateString2(target=es5).ts	unsupported target ES5
+emitExponentiationOperatorInTemplateString3(target=es5).ts	unsupported target ES5
+emitHelpersWithLocalCollisions(module=amd).ts	unsupported module kind AMD
+emitHelpersWithLocalCollisions(module=system).ts	unsupported module kind System
+emitHelpersWithLocalCollisions(module=umd).ts	unsupported module kind UMD
+emitRestParametersFunction(target=es5).ts	unsupported target ES5
+emitRestParametersFunctionExpression(target=es5).ts	unsupported target ES5
+emitRestParametersFunctionProperty(target=es5).ts	unsupported target ES5
+emitRestParametersMethod(target=es5).ts	unsupported target ES5
+emitThisInObjectLiteralGetter(target=es5).ts	unsupported target ES5
+emitter.asyncGenerators.classMethods.es5(target=es5).ts	unsupported target ES5
+emitter.asyncGenerators.functionDeclarations.es5(target=es5).ts	unsupported target ES5
+emitter.asyncGenerators.functionExpressions.es5(target=es5).ts	unsupported target ES5
+emitter.asyncGenerators.objectLiteralMethods.es5(target=es5).ts	unsupported target ES5
+emitter.forAwait(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns01_ES5(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns01_ES5iterable(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns02_ES5(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns02_ES5iterable(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns03_ES5(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns03_ES5iterable(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns04_ES5(target=es5).ts	unsupported target ES5
+emptyAssignmentPatterns04_ES5iterable(target=es5).ts	unsupported target ES5
+emptyFile-declaration(target=es5).ts	unsupported target ES5
+emptyFile-souremap(target=es5).ts	unsupported target ES5
+emptyVariableDeclarationBindingPatterns01_ES5(target=es5).ts	unsupported target ES5
+emptyVariableDeclarationBindingPatterns01_ES5iterable(target=es5).ts	unsupported target ES5
+emptyVariableDeclarationBindingPatterns02_ES5(target=es5).ts	unsupported target ES5
+emptyVariableDeclarationBindingPatterns02_ES5iterable(target=es5).ts	unsupported target ES5
+errorOnFunctionReturnType(target=es5).ts	unsupported target ES5
+errorSuperPropertyAccess(target=es5).ts	unsupported target ES5
+errorsOnImportedSymbol(target=es5).ts	unsupported target ES5
+es5-amd(target=es2015).ts	unsupported module kind AMD
+es5-amd(target=es5).ts	unsupported module kind AMD
+es5-asyncFunction(target=es5).ts	unsupported target ES5
+es5-asyncFunctionArrayLiterals(target=es5).ts	unsupported target ES5
+es5-asyncFunctionBinaryExpressions(target=es5).ts	unsupported target ES5
+es5-asyncFunctionCallExpressions(target=es5).ts	unsupported target ES5
+es5-asyncFunctionConditionals(target=es5).ts	unsupported target ES5
+es5-asyncFunctionDoStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionElementAccess(target=es5).ts	unsupported target ES5
+es5-asyncFunctionForInStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionForOfStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionForStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionHoisting(target=es5).ts	unsupported target ES5
+es5-asyncFunctionIfStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionLongObjectLiteral(target=es5).ts	unsupported target ES5
+es5-asyncFunctionNestedLoops(target=es5).ts	unsupported target ES5
+es5-asyncFunctionNewExpressions(target=es5).ts	unsupported target ES5
+es5-asyncFunctionObjectLiterals(target=es5).ts	unsupported target ES5
+es5-asyncFunctionPropertyAccess(target=es5).ts	unsupported target ES5
+es5-asyncFunctionReturnStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionSwitchStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionTryStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionWhileStatements(target=es5).ts	unsupported target ES5
+es5-asyncFunctionWithStatements(alwaysstrict=false,target=es2015).ts	alwaysStrict=false is unsupported
+es5-asyncFunctionWithStatements(alwaysstrict=false,target=es5).ts	unsupported target ES5
+es5-asyncFunctionWithStatements(alwaysstrict=true,target=es5).ts	unsupported target ES5
+es5-commonjs(target=es5).ts	unsupported target ES5
+es5-commonjs2(target=es5).ts	unsupported target ES5
+es5-commonjs3(target=es5).ts	unsupported target ES5
+es5-commonjs4(target=es5).ts	unsupported target ES5
+es5-commonjs5(target=es5).ts	unsupported target ES5
+es5-commonjs6(target=es5).ts	unsupported target ES5
+es5-commonjs7(target=es5).ts	unsupported target ES5
+es5-commonjs8(target=es5).ts	unsupported target ES5
+es5-declaration-amd(target=es2015).ts	unsupported module kind AMD
+es5-declaration-amd(target=es5).ts	unsupported module kind AMD
+es5-importHelpersAsyncFunctions(target=es5).ts	unsupported target ES5
+es5-oldStyleOctalLiteralInEnums(target=es5).ts	unsupported target ES5
+es5-souremap-amd(target=es2015).ts	unsupported module kind AMD
+es5-souremap-amd(target=es5).ts	unsupported module kind AMD
+es5-system(target=es2015).ts	unsupported module kind System
+es5-system(target=es5).ts	unsupported module kind System
+es5-system2(target=es2015).ts	unsupported module kind System
+es5-system2(target=es5).ts	unsupported module kind System
+es5-umd(target=es2015).ts	unsupported module kind UMD
+es5-umd(target=es5).ts	unsupported module kind UMD
+es5-umd2(target=es2015).ts	unsupported module kind UMD
+es5-umd2(target=es5).ts	unsupported module kind UMD
+es5-umd3(target=es2015).ts	unsupported module kind UMD
+es5-umd3(target=es5).ts	unsupported module kind UMD
+es5-umd4(target=es2015).ts	unsupported module kind UMD
+es5-umd4(target=es5).ts	unsupported module kind UMD
+es5-yieldFunctionObjectLiterals(target=es5).ts	unsupported target ES5
+es5DateAPIs(target=es5).ts	unsupported target ES5
+es5ExportDefaultClassDeclaration(target=es5).ts	unsupported target ES5
+es5ExportDefaultClassDeclaration2(target=es5).ts	unsupported target ES5
+es5ExportDefaultClassDeclaration3(target=es5).ts	unsupported target ES5
+es5ExportDefaultClassDeclaration4(target=es5).ts	unsupported target ES5
+es5ExportDefaultExpression(target=es5).ts	unsupported target ES5
+es5ExportDefaultFunctionDeclaration(target=es5).ts	unsupported target ES5
+es5ExportDefaultFunctionDeclaration2(target=es5).ts	unsupported target ES5
+es5ExportDefaultFunctionDeclaration3(target=es5).ts	unsupported target ES5
+es5ExportDefaultFunctionDeclaration4(target=es5).ts	unsupported target ES5
+es5ExportDefaultIdentifier(target=es5).ts	unsupported target ES5
+es5ExportEquals(target=es5).ts	unsupported target ES5
+es5ExportEqualsDts(target=es5).ts	unsupported target ES5
+es5ModuleInternalNamedImports(target=es5).ts	unsupported target ES5
+es5ModuleWithModuleGenAmd(target=es2015).ts	unsupported module kind AMD
+es5ModuleWithModuleGenAmd(target=es5).ts	unsupported module kind AMD
+es5ModuleWithModuleGenCommonjs(target=es5).ts	unsupported target ES5
+es5ModuleWithoutModuleGenTarget(target=es5).ts	unsupported target ES5
+es5SetterparameterDestructuringNotElided(target=es5).ts	unsupported target ES5
+es5andes6module(target=es5).ts	unsupported target ES5
+es6-amd.ts	unsupported module kind AMD
+es6-declaration-amd.ts	unsupported module kind AMD
+es6-sourcemap-amd.ts	unsupported module kind AMD
+es6-umd.ts	unsupported module kind UMD
+es6-umd2.ts	unsupported module kind UMD
+es6ExportAllInEs5(target=es5).ts	unsupported target ES5
+es6ExportClauseInEs5(target=es5).ts	unsupported target ES5
+es6ExportClauseWithAssignmentInEs5(target=es5).ts	unsupported target ES5
+es6ExportClauseWithoutModuleSpecifierInEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingAmd(target=es2015).ts	unsupported module kind AMD
+es6ImportDefaultBindingAmd(target=es5).ts	unsupported module kind AMD
+es6ImportDefaultBindingDts(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamedImport1InEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamedImport1WithExport(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamedImportDts1(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamedImportInEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamedImportWithExport(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamespaceBinding1InEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingFollowedWithNamespaceBinding1WithExport(target=es2015).ts	unsupported module kind AMD
+es6ImportDefaultBindingFollowedWithNamespaceBinding1WithExport(target=es5).ts	unsupported module kind AMD
+es6ImportDefaultBindingFollowedWithNamespaceBindingDts1(target=es2015).ts	unsupported module kind AMD
+es6ImportDefaultBindingFollowedWithNamespaceBindingDts1(target=es5).ts	unsupported module kind AMD
+es6ImportDefaultBindingFollowedWithNamespaceBindingInEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingInEs5(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingMergeErrors(target=es5).ts	unsupported target ES5
+es6ImportDefaultBindingWithExport(target=es5).ts	unsupported target ES5
+es6ImportNameSpaceImportAmd.ts	unsupported module kind AMD
+es6ImportNameSpaceImportInEs5(target=es5).ts	unsupported target ES5
+es6ImportNameSpaceImportMergeErrors(target=es5).ts	unsupported target ES5
+es6ImportNameSpaceImportNoNamedExports(target=es5).ts	unsupported target ES5
+es6ImportNameSpaceImportWithExport.ts	unsupported module kind AMD
+es6ImportNamedImportAmd.ts	unsupported module kind AMD
+es6ImportNamedImportInEs5(target=es5).ts	unsupported target ES5
+es6ImportNamedImportNoNamedExports(target=es5).ts	unsupported target ES5
+es6ImportWithoutFromClauseAmd.ts	unsupported module kind AMD
+es6ImportWithoutFromClauseInEs5(target=es5).ts	unsupported target ES5
+es6ModuleWithModuleGenTargetAmd.ts	unsupported module kind AMD
+es6modulekindExportClassNameWithObject(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target10(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target11(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target12(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target2(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target3(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target4(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target5(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target6(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target7(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target8(target=es5).ts	unsupported target ES5
+es6modulekindWithES5Target9(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-accessors-nonStatic(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-accessors-nonStaticAbstract(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-accessors-static(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-classThisReference.es5(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-nonStatic(target=es5,usedefineforclassfields=false).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-nonStatic(target=es5,usedefineforclassfields=true).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-nonStaticAbstract(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-nonStaticAmbient(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-static(target=es5,usedefineforclassfields=false).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-static(target=es5,usedefineforclassfields=true).ts	unsupported target ES5
+esDecorators-classDeclaration-fields-staticAmbient(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-methods-nonStatic(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-methods-nonStaticAbstract(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-methods-static(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-missingEmitHelpers-classDecorator.1.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-classDecorator.2.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-classDecorator.3.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateAutoAccessor.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateField.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateGetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateMethod.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-nonStaticPrivateSetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticComputedAutoAccessor.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticComputedField.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticComputedGetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticComputedMethod.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticComputedSetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticPrivateAutoAccessor.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticPrivateField.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticPrivateGetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticPrivateMethod.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-missingEmitHelpers-staticPrivateSetter.ts	unsupported module resolution kind 1
+esDecorators-classDeclaration-multipleDecorators(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-parameterDecorators(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-parameterProperties(target=es5,usedefineforclassfields=false).ts	unsupported target ES5
+esDecorators-classDeclaration-parameterProperties(target=es5,usedefineforclassfields=true).ts	unsupported target ES5
+esDecorators-classDeclaration-setFunctionName(target=es5).ts	unsupported target ES5
+esDecorators-classDeclaration-simpleTransformation(target=es5).ts	unsupported target ES5
+esDecorators-classExpression-missingEmitHelpers-classDecorator.1.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.10.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.11.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.12.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.13.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.14.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.15.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.16.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.17.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.2.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.3.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.4.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.5.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.6.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.7.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.8.ts	unsupported module resolution kind 1
+esDecorators-classExpression-missingEmitHelpers-classDecorator.9.ts	unsupported module resolution kind 1
+esDecorators-emitDecoratorMetadata(target=es5).ts	unsupported target ES5
+esModuleInteropWithExportStar(target=es5).ts	unsupported target ES5
+esmModuleExports2(esmoduleinterop=false).ts	esModuleInterop=false is unsupported
+esnextmodulekindWithES5Target(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target10(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target11(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target12(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target2(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target3(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target4(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target5(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target6(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target7(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target8(target=es5).ts	unsupported target ES5
+esnextmodulekindWithES5Target9(target=es5).ts	unsupported target ES5
+exnextmodulekindExportClassNameWithObject(target=es5).ts	unsupported target ES5
+exponentiationOperatorInTemplateStringWithSyntaxError1(target=es5).ts	unsupported target ES5
+exponentiationOperatorInTemplateStringWithSyntaxError2(target=es5).ts	unsupported target ES5
+exponentiationOperatorInTemplateStringWithSyntaxError3(target=es5).ts	unsupported target ES5
+exponentiationOperatorSyntaxError1(target=es5).ts	unsupported target ES5
+exponentiationOperatorSyntaxError2(target=es5).ts	unsupported target ES5
+exponentiationOperatorWithTemplateStringInvalid(target=es5).ts	unsupported target ES5
+exportAmbientClassNameWithObject(target=es5).ts	unsupported target ES5
+exportAndImport-es5(target=es5).ts	unsupported target ES5
+exportAndImport-es5-amd(target=es2015).ts	unsupported module kind AMD
+exportAndImport-es5-amd(target=es5).ts	unsupported module kind AMD
+exportAsNamespace1(module=amd).ts	unsupported module kind AMD
+exportAsNamespace1(module=system).ts	unsupported module kind System
+exportAsNamespace1(module=umd).ts	unsupported module kind UMD
+exportAsNamespace2(module=amd).ts	unsupported module kind AMD
+exportAsNamespace2(module=system).ts	unsupported module kind System
+exportAsNamespace2(module=umd).ts	unsupported module kind UMD
+exportAsNamespace3(module=amd).ts	unsupported module kind AMD
+exportAsNamespace3(module=system).ts	unsupported module kind System
+exportAsNamespace3(module=umd).ts	unsupported module kind UMD
+exportAsNamespace4(module=amd).ts	unsupported module kind AMD
+exportAsNamespace4(module=system).ts	unsupported module kind System
+exportAsNamespace4(module=umd).ts	unsupported module kind UMD
+exportAssignedTypeAsTypeAnnotation.ts	unsupported module kind AMD
+exportAssignmentCircularModules.ts	unsupported module kind AMD
+exportAssignmentClass.ts	unsupported module kind AMD
+exportAssignmentError.ts	unsupported module kind AMD
+exportAssignmentFunction.ts	unsupported module kind AMD
+exportAssignmentInterface.ts	unsupported module kind AMD
+exportAssignmentInternalModule.ts	unsupported module kind AMD
+exportAssignmentMergedInterface.ts	unsupported module kind AMD
+exportAssignmentOfGenericType1.ts	unsupported module kind AMD
+exportAssignmentTopLevelClodule.ts	unsupported module kind AMD
+exportAssignmentTopLevelEnumdule.ts	unsupported module kind AMD
+exportAssignmentTopLevelFundule.ts	unsupported module kind AMD
+exportAssignmentTopLevelIdentifier.ts	unsupported module kind AMD
+exportAssignmentWithImportStatementPrivacyError.ts	unsupported module kind AMD
+exportAssignmentWithPrivacyError.ts	unsupported module kind AMD
+exportClassNameWithObjectAMD(target=es2015).ts	unsupported module kind AMD
+exportClassNameWithObjectAMD(target=es5).ts	unsupported module kind AMD
+exportClassNameWithObjectCommonJS(target=es5).ts	unsupported target ES5
+exportClassNameWithObjectSystem(target=es2015).ts	unsupported module kind System
+exportClassNameWithObjectSystem(target=es5).ts	unsupported module kind System
+exportClassNameWithObjectUMD(target=es2015).ts	unsupported module kind UMD
+exportClassNameWithObjectUMD(target=es5).ts	unsupported module kind UMD
+exportDeclarationForModuleOrEnumWithMemberOfSameName(module=system).ts	unsupported module kind System
+exportDeclarationInInternalModule(target=es5).ts	unsupported target ES5
+exportDefaultClassNameWithObject(target=es5).ts	unsupported target ES5
+exportDefaultInJsFile01(target=es5).ts	unsupported target ES5
+exportDefaultParenthesize(target=es5).ts	unsupported target ES5
+exportEmptyArrayBindingPattern(module=amd,target=es5).ts	unsupported module kind AMD
+exportEmptyArrayBindingPattern(module=amd,target=esnext).ts	unsupported module kind AMD
+exportEmptyArrayBindingPattern(module=commonjs,target=es5).ts	unsupported target ES5
+exportEmptyArrayBindingPattern(module=es2015,target=es5).ts	unsupported target ES5
+exportEmptyArrayBindingPattern(module=esnext,target=es5).ts	unsupported target ES5
+exportEmptyArrayBindingPattern(module=system,target=es5).ts	unsupported module kind System
+exportEmptyArrayBindingPattern(module=system,target=esnext).ts	unsupported module kind System
+exportEmptyObjectBindingPattern(module=amd,target=es5).ts	unsupported module kind AMD
+exportEmptyObjectBindingPattern(module=amd,target=esnext).ts	unsupported module kind AMD
+exportEmptyObjectBindingPattern(module=commonjs,target=es5).ts	unsupported target ES5
+exportEmptyObjectBindingPattern(module=es2015,target=es5).ts	unsupported target ES5
+exportEmptyObjectBindingPattern(module=esnext,target=es5).ts	unsupported target ES5
+exportEmptyObjectBindingPattern(module=system,target=es5).ts	unsupported module kind System
+exportEmptyObjectBindingPattern(module=system,target=esnext).ts	unsupported module kind System
+exportEqualCallable.ts	unsupported module kind AMD
+exportEqualNamespaces.ts	unsupported module kind AMD
+exportEqualsAmd.ts	unsupported module kind AMD
+exportEqualsUmd.ts	unsupported module kind UMD
+exportImport.ts	unsupported module kind AMD
+exportImportCanSubstituteConstEnumForValue(target=es2015).ts	unsupported module kind AMD
+exportImportCanSubstituteConstEnumForValue(target=es5).ts	unsupported module kind AMD
+exportImportMultipleFiles.ts	unsupported module kind AMD
+exportImportNonInstantiatedModule2.ts	unsupported module kind AMD
+exportNonInitializedVariablesAMD.ts	unsupported module kind AMD
+exportNonInitializedVariablesInIfThenStatementNoCrash1(module=system).ts	unsupported module kind System
+exportNonInitializedVariablesSystem.ts	unsupported module kind System
+exportNonInitializedVariablesUMD.ts	unsupported module kind UMD
+exportObjectRest(module=amd,target=es5).ts	unsupported module kind AMD
+exportObjectRest(module=amd,target=esnext).ts	unsupported module kind AMD
+exportObjectRest(module=commonjs,target=es5).ts	unsupported target ES5
+exportObjectRest(module=es2015,target=es5).ts	unsupported target ES5
+exportObjectRest(module=esnext,target=es5).ts	unsupported target ES5
+exportObjectRest(module=system,target=es5).ts	unsupported module kind System
+exportObjectRest(module=system,target=esnext).ts	unsupported module kind System
+exportStar(target=es5).ts	unsupported target ES5
+exportStar-amd(target=es2015).ts	unsupported module kind AMD
+exportStar-amd(target=es5).ts	unsupported module kind AMD
+exportStarForValues.ts	unsupported module kind AMD
+exportStarForValues10.ts	unsupported module kind System
+exportStarForValues2.ts	unsupported module kind AMD
+exportStarForValues3.ts	unsupported module kind AMD
+exportStarForValues4.ts	unsupported module kind AMD
+exportStarForValues5.ts	unsupported module kind AMD
+exportStarForValues6.ts	unsupported module kind System
+exportStarForValues7.ts	unsupported module kind AMD
+exportStarForValues8.ts	unsupported module kind AMD
+exportStarForValues9.ts	unsupported module kind AMD
+exportStarForValuesInSystem.ts	unsupported module kind System
+exportStarFromEmptyModule(target=es5).ts	unsupported target ES5
+exportedInterfaceInaccessibleInCallbackInModule.ts	unsupported module kind AMD
+exportedVariable1.ts	unsupported module kind AMD
+exportingContainingVisibleType.ts	unsupported module kind AMD
+exportsAndImports1-amd(target=es2015).ts	unsupported module kind AMD
+exportsAndImports1-amd(target=es5).ts	unsupported module kind AMD
+exportsAndImports2-amd(target=es2015).ts	unsupported module kind AMD
+exportsAndImports2-amd(target=es5).ts	unsupported module kind AMD
+exportsAndImports3-amd(target=es2015).ts	unsupported module kind AMD
+exportsAndImports3-amd(target=es5).ts	unsupported module kind AMD
+exportsAndImports4(target=es5).ts	unsupported target ES5
+exportsAndImports4-amd(target=es2015).ts	unsupported module kind AMD
+exportsAndImports4-amd(target=es5).ts	unsupported module kind AMD
+exportsAndImportsWithContextualKeywordNames01(target=es5).ts	unsupported target ES5
+exportsAndImportsWithContextualKeywordNames02(target=es5).ts	unsupported target ES5
+exportsAndImportsWithUnderscores1(target=es5).ts	unsupported target ES5
+exportsAndImportsWithUnderscores2(target=es5).ts	unsupported target ES5
+exportsAndImportsWithUnderscores3(target=es5).ts	unsupported target ES5
+exportsAndImportsWithUnderscores4(target=es5).ts	unsupported target ES5
+exportsInAmbientModules1.ts	unsupported module kind AMD
+exportsInAmbientModules2.ts	unsupported module kind AMD
+extensionLoadingPriority(moduleresolution=classic).ts	unsupported module resolution kind 1
+externalModuleAssignToVar.ts	unsupported module kind AMD
+externalModuleReferenceOfImportDeclarationWithExportModifier.ts	unsupported module kind AMD
+filesEmittingIntoSameOutputWithOutOption.ts	unsupported module kind AMD
+for-inStatementsDestructuring(target=es5).ts	unsupported target ES5
+for-of56(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+forAwaitPerIterationBindingDownlevel(target=es5).ts	unsupported target ES5
+forwardDeclaredCommonTypes01(target=es5).ts	unsupported target ES5
+functionImplementationErrors(target=es5).ts	unsupported target ES5
+functionLikeInParameterInitializer(target=es5).ts	unsupported target ES5
+functionsMissingReturnStatementsAndExpressions(target=es5).ts	unsupported target ES5
+generatorES6InAMDModule.ts	unsupported module kind AMD
+generatorTransformFinalLabel(target=es5).ts	unsupported target ES5
+generatorTypeCheck38(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+genericClassesInModule2.ts	unsupported module kind AMD
+genericInterfaceFunctionTypeParameter.ts	unsupported module kind AMD
+genericRecursiveImplicitConstructorErrors1.ts	unsupported module kind AMD
+genericSetterInClassTypeJsDoc.ts	unsupported outFile /.src/genericSetterInClassTypeJsDoc-out.js
+genericTypeWithMultipleBases2.ts	unsupported module kind AMD
+genericWithIndexerOfTypeParameterType2.ts	unsupported module kind AMD
+getSetAccessorContextualTyping(target=es5).ts	unsupported target ES5
+getSetEnumerable(target=es5).ts	unsupported target ES5
+getterControlFlowStrictNull(target=es5).ts	unsupported target ES5
+globalThisVarDeclaration.ts	unsupported outFile /.src/output.js
+implicitAnyFromCircularInference(target=es5).ts	unsupported target ES5
+impliedNodeFormatEmit1(module=amd).ts	unsupported module kind AMD
+impliedNodeFormatEmit1(module=system).ts	unsupported module kind System
+impliedNodeFormatEmit1(module=umd).ts	unsupported module kind UMD
+importCallExpressionAsyncES5AMD(target=es2015).ts	unsupported module kind AMD
+importCallExpressionAsyncES5AMD(target=es5).ts	unsupported module kind AMD
+importCallExpressionAsyncES5CJS(target=es5).ts	unsupported target ES5
+importCallExpressionAsyncES5System(target=es2015).ts	unsupported module kind System
+importCallExpressionAsyncES5System(target=es5).ts	unsupported module kind System
+importCallExpressionAsyncES5UMD(target=es2015).ts	unsupported module kind UMD
+importCallExpressionAsyncES5UMD(target=es5).ts	unsupported module kind UMD
+importCallExpressionAsyncES6AMD.ts	unsupported module kind AMD
+importCallExpressionAsyncES6System.ts	unsupported module kind System
+importCallExpressionAsyncES6UMD.ts	unsupported module kind UMD
+importCallExpressionES5AMD(target=es2015).ts	unsupported module kind AMD
+importCallExpressionES5AMD(target=es5).ts	unsupported module kind AMD
+importCallExpressionES5CJS(target=es5).ts	unsupported target ES5
+importCallExpressionES5System(target=es2015).ts	unsupported module kind System
+importCallExpressionES5System(target=es5).ts	unsupported module kind System
+importCallExpressionES5UMD(target=es2015).ts	unsupported module kind UMD
+importCallExpressionES5UMD(target=es5).ts	unsupported module kind UMD
+importCallExpressionES6AMD.ts	unsupported module kind AMD
+importCallExpressionES6System.ts	unsupported module kind System
+importCallExpressionES6UMD.ts	unsupported module kind UMD
+importCallExpressionInAMD1.ts	unsupported module kind AMD
+importCallExpressionInAMD2.ts	unsupported module kind AMD
+importCallExpressionInAMD3.ts	unsupported module kind AMD
+importCallExpressionInAMD4.ts	unsupported module kind AMD
+importCallExpressionInExportEqualsAMD.ts	unsupported module kind AMD
+importCallExpressionInExportEqualsUMD.ts	unsupported module kind UMD
+importCallExpressionInSystem1.ts	unsupported module kind System
+importCallExpressionInSystem2.ts	unsupported module kind System
+importCallExpressionInSystem3.ts	unsupported module kind System
+importCallExpressionInSystem4.ts	unsupported module kind System
+importCallExpressionInUMD1.ts	unsupported module kind UMD
+importCallExpressionInUMD2.ts	unsupported module kind UMD
+importCallExpressionInUMD3.ts	unsupported module kind UMD
+importCallExpressionInUMD4.ts	unsupported module kind UMD
+importCallExpressionInUMD5.ts	unsupported module kind UMD
+importCallExpressionNestedAMD.ts	unsupported module kind AMD
+importCallExpressionNestedAMD2(target=es2015).ts	unsupported module kind AMD
+importCallExpressionNestedAMD2(target=es5).ts	unsupported module kind AMD
+importCallExpressionNestedCJS2(target=es5).ts	unsupported target ES5
+importCallExpressionNestedES20152(target=es5).ts	unsupported target ES5
+importCallExpressionNestedES20202(target=es5).ts	unsupported target ES5
+importCallExpressionNestedSystem.ts	unsupported module kind System
+importCallExpressionNestedSystem2(target=es2015).ts	unsupported module kind System
+importCallExpressionNestedSystem2(target=es5).ts	unsupported module kind System
+importCallExpressionNestedUMD.ts	unsupported module kind UMD
+importCallExpressionNestedUMD2(target=es2015).ts	unsupported module kind UMD
+importCallExpressionNestedUMD2(target=es5).ts	unsupported module kind UMD
+importDeclWithExportModifier.ts	unsupported module kind AMD
+importHelpers(target=es5).ts	unsupported target ES5
+importHelpersAmd(target=es2015).ts	unsupported module kind AMD
+importHelpersAmd(target=es5).ts	unsupported module kind AMD
+importHelpersDeclarations(target=es5).ts	unsupported target ES5
+importHelpersInAmbientContext(target=es5).ts	unsupported target ES5
+importHelpersInIsolatedModules(target=es5).ts	unsupported target ES5
+importHelpersInTsx(target=es5).tsx	unsupported target ES5
+importHelpersNoEmitHelpersExportDefault(target=es5).ts	unsupported target ES5
+importHelpersNoHelpers(target=es2015).ts	unsupported module resolution kind 1
+importHelpersNoHelpers(target=es5).ts	unsupported module resolution kind 1
+importHelpersNoHelpersForAsyncGenerators(target=es2015).ts	unsupported module resolution kind 1
+importHelpersNoHelpersForAsyncGenerators(target=es5).ts	unsupported module resolution kind 1
+importHelpersNoHelpersForPrivateFields.ts	unsupported module resolution kind 1
+importHelpersNoModule(target=es2015).ts	unsupported module resolution kind 1
+importHelpersNoModule(target=es5).ts	unsupported module resolution kind 1
+importHelpersOutFile(target=es2015).ts	unsupported module kind AMD
+importHelpersOutFile(target=es5).ts	unsupported module kind AMD
+importHelpersSystem(target=es2015).ts	unsupported module kind System
+importHelpersSystem(target=es5).ts	unsupported module kind System
+importHelpersWithExportStarAs(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithExportStarAs(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithExportStarAs(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithExportStarAs(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithExportStarAs(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithExportStarAs(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithExportStarAs(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefault(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefault(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefault(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefault(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefault(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefault(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefault(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.1(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.2(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportOrExportDefaultNoTslib.3(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithImportStarAs(esmoduleinterop=false,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportStarAs(esmoduleinterop=false,module=commonjs).ts	esModuleInterop=false is unsupported
+importHelpersWithImportStarAs(esmoduleinterop=false,module=es2015).ts	esModuleInterop=false is unsupported
+importHelpersWithImportStarAs(esmoduleinterop=false,module=es2020).ts	esModuleInterop=false is unsupported
+importHelpersWithImportStarAs(esmoduleinterop=false,module=system).ts	unsupported module kind System
+importHelpersWithImportStarAs(esmoduleinterop=true,module=amd).ts	unsupported module kind AMD
+importHelpersWithImportStarAs(esmoduleinterop=true,module=system).ts	unsupported module kind System
+importHelpersWithLocalCollisions(module=amd).ts	unsupported module kind AMD
+importHelpersWithLocalCollisions(module=system).ts	unsupported module kind System
+importImportOnlyModule.ts	unsupported module kind AMD
+importMeta(module=commonjs,target=es5).ts	unsupported target ES5
+importMeta(module=es2020,target=es5).ts	unsupported target ES5
+importMeta(module=esnext,target=es5).ts	unsupported target ES5
+importMeta(module=system,target=es5).ts	unsupported module kind System
+importMeta(module=system,target=esnext).ts	unsupported module kind System
+importMetaNarrowing(module=system).ts	unsupported module kind System
+importNonExportedMember10.ts	esModuleInterop=false is unsupported
+importNonExportedMember4.ts	esModuleInterop=false is unsupported
+importNonExportedMember6.ts	esModuleInterop=false is unsupported
+importNonExportedMember8.ts	esModuleInterop=false is unsupported
+importShadowsGlobalName.ts	unsupported module kind AMD
+importTypeAmdBundleRewrite.ts	unsupported module kind AMD
+import_reference-exported-alias.ts	unsupported module kind AMD
+import_reference-to-type-alias.ts	unsupported module kind AMD
+import_unneeded-require-when-referenecing-aliased-type-throug-array.ts	unsupported module kind AMD
+import_var-referencing-an-imported-module-alias.ts	unsupported module kind AMD
+importedAliasesInTypePositions.ts	unsupported module kind AMD
+importedModuleClassNameClash.ts	unsupported module kind AMD
+importsInAmbientModules1.ts	unsupported module kind AMD
+importsInAmbientModules2.ts	unsupported module kind AMD
+importsInAmbientModules3.ts	unsupported module kind AMD
+incrementalOut.ts	unsupported outFile /.src/output.js
+inferringClassMembersFromAssignments.ts	unsupported outFile /.src/output.js
+inheritanceMemberAccessorOverridingMethod(target=es5).ts	unsupported target ES5
+initializePropertiesWithRenamedLet(target=es5).ts	unsupported target ES5
+inlineSourceMap(target=es5).ts	unsupported target ES5
+inlineSourceMap2(target=es2015).ts	unsupported outFile /.src/outfile.js
+inlineSourceMap2(target=es5).ts	unsupported outFile /.src/outfile.js
+inlineSources(target=es2015).ts	unsupported outFile /.src/out.js
+inlineSources(target=es5).ts	unsupported outFile /.src/out.js
+inlineSources2(target=es2015).ts	unsupported outFile /.src/out.js
+inlineSources2(target=es5).ts	unsupported outFile /.src/out.js
+instanceOfInExternalModules.ts	unsupported module kind AMD
+instanceofOperator(target=es5).ts	unsupported target ES5
+interfaceDeclaration5.ts	unsupported module kind AMD
+internalAliasEnumInsideTopLevelModuleWithExport.ts	unsupported module kind AMD
+internalAliasEnumInsideTopLevelModuleWithoutExport.ts	unsupported module kind AMD
+internalAliasFunctionInsideTopLevelModuleWithExport.ts	unsupported module kind AMD
+internalAliasInitializedModuleInsideLocalModuleWithExport.ts	unsupported module kind AMD
+internalAliasInitializedModuleInsideTopLevelModuleWithoutExport.ts	unsupported module kind AMD
+internalAliasInterfaceInsideLocalModuleWithExport.ts	unsupported module kind AMD
+internalAliasInterfaceInsideLocalModuleWithoutExport.ts	unsupported module kind AMD
+internalAliasInterfaceInsideTopLevelModuleWithoutExport.ts	unsupported module kind AMD
+internalAliasUninitializedModuleInsideTopLevelModuleWithExport.ts	unsupported module kind AMD
+internalAliasVarInsideLocalModuleWithExport.ts	unsupported module kind AMD
+internalAliasVarInsideLocalModuleWithoutExport.ts	unsupported module kind AMD
+internalAliasVarInsideTopLevelModuleWithExport.ts	unsupported module kind AMD
+intlNumberFormatES5UseGrouping(target=es5).ts	unsupported target ES5
+invalidNewTarget.es5(target=es5).ts	unsupported target ES5
+invalidSyntaxNamespaceImportWithAMD.ts	unsupported module kind AMD
+invalidSyntaxNamespaceImportWithSystem.ts	unsupported module kind System
+invalidTaggedTemplateEscapeSequences(target=es5).ts	unsupported target ES5
+isDeclarationVisibleNodeKinds(target=es5).ts	unsupported target ES5
+isolatedDeclarationOutFile.ts	unsupported module kind AMD
+isolatedModulesImportExportElision(target=es5).ts	unsupported target ES5
+isolatedModulesPlainFile-AMD(target=es2015).ts	unsupported module kind AMD
+isolatedModulesPlainFile-AMD(target=es5).ts	unsupported module kind AMD
+isolatedModulesPlainFile-CommonJS(target=es5).ts	unsupported target ES5
+isolatedModulesPlainFile-System(target=es2015).ts	unsupported module kind System
+isolatedModulesPlainFile-System(target=es5).ts	unsupported module kind System
+isolatedModulesPlainFile-UMD(target=es2015).ts	unsupported module kind UMD
+isolatedModulesPlainFile-UMD(target=es5).ts	unsupported module kind UMD
+iterableWithNeverAsUnionMember(target=es5).ts	unsupported target ES5
+jsDeclarationsClassExtendsVisibility(target=es5).ts	unsupported target ES5
+jsDeclarationsClassImplementsGenericsSerialization(target=es5).ts	unsupported target ES5
+jsDeclarationsClassLeadingOptional(target=es5).ts	unsupported target ES5
+jsDeclarationsClassLikeHeuristic(target=es5).ts	unsupported target ES5
+jsDeclarationsClassStatic(target=es5).ts	unsupported target ES5
+jsDeclarationsClassStaticMethodAugmentation(target=es5).ts	unsupported target ES5
+jsDeclarationsClasses(target=es5).ts	unsupported target ES5
+jsDeclarationsClassesErr(target=es5).ts	unsupported target ES5
+jsDeclarationsComputedNames(target=es5).ts	unsupported target ES5
+jsDeclarationsCrossfileMerge(target=es5).ts	unsupported target ES5
+jsDeclarationsDefault(target=es5).ts	unsupported target ES5
+jsDeclarationsDefaultsErr(target=es5).ts	unsupported target ES5
+jsDeclarationsDocCommentsOnConsts(target=es5).ts	unsupported target ES5
+jsDeclarationsEnumTag(target=es5).ts	unsupported target ES5
+jsDeclarationsEnums(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassExpression(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassExpressionAnonymous(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassExpressionAnonymousWithSub(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassExpressionShadowing(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassInstance1(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassInstance2(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedClassInstance3(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedConstructorFunction(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedConstructorFunctionWithSub(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignedVisibility(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignmentExpressionPlusSecondary(target=es5).ts	unsupported target ES5
+jsDeclarationsExportAssignmentWithKeywordName(target=es5).ts	unsupported target ES5
+jsDeclarationsExportForms(target=es5).ts	unsupported target ES5
+jsDeclarationsExportFormsErr(target=es5).ts	unsupported target ES5
+jsDeclarationsExportSpecifierNonlocal(target=es5).ts	unsupported target ES5
+jsDeclarationsExportSubAssignments(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionClassesCjsExportAssignment(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionJSDoc(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionKeywordProp(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionKeywordPropExhaustive(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionLikeClasses(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionLikeClasses2(target=es5).ts	unsupported target ES5
+jsDeclarationsFunctionPrototypeStatic(target=es5).ts	unsupported target ES5
+jsDeclarationsImportTypeBundled.ts	unsupported module kind AMD
+jsDeclarationsInterfaces(target=es5).ts	unsupported target ES5
+jsDeclarationsJson(target=es5).ts	unsupported target ES5
+jsDeclarationsMissingGenerics(target=es5).ts	unsupported target ES5
+jsDeclarationsMissingTypeParameters(target=es5).ts	unsupported target ES5
+jsDeclarationsModuleReferenceHasEmit(target=es5).ts	unsupported target ES5
+jsDeclarationsMultipleExportFromMerge(target=es5).ts	unsupported target ES5
+jsDeclarationsPackageJson(target=es5).ts	unsupported target ES5
+jsDeclarationsReactComponents(target=es5).ts	unsupported target ES5
+jsDeclarationsReexportAliases(target=es5).ts	unsupported target ES5
+jsDeclarationsReexportAliasesEsModuleInterop(target=es5).ts	unsupported target ES5
+jsDeclarationsReexportedCjsAlias(target=es5).ts	unsupported target ES5
+jsDeclarationsRestArgsWithThisTypeInJSDocFunction(target=es5).ts	unsupported target ES5
+jsDeclarationsTypeReferences(target=es5).ts	unsupported target ES5
+jsDeclarationsTypeReferences2(target=es5).ts	unsupported target ES5
+jsDeclarationsTypeReferences3(target=es5).ts	unsupported target ES5
+jsDeclarationsTypeReferences4(target=es5).ts	unsupported target ES5
+jsFileCompilationBindReachabilityErrors(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+jsFileCompilationClassMethodContainingArrowFunction.ts	unsupported outFile /.src/out.js
+jsFileCompilationDuplicateFunctionImplementation.ts	unsupported outFile /.src/out.js
+jsFileCompilationDuplicateFunctionImplementationFileOrderReversed.ts	unsupported outFile /.src/out.js
+jsFileCompilationDuplicateVariable.ts	unsupported outFile /.src/out.js
+jsFileCompilationDuplicateVariableErrorReported.ts	unsupported outFile /.src/out.js
+jsFileCompilationEmitDeclarations.ts	unsupported outFile /.src/out.js
+jsFileCompilationEmitTrippleSlashReference.ts	unsupported outFile /.src/out.js
+jsFileCompilationErrorOnDeclarationsWithJsFileReferenceWithOut.ts	unsupported outFile /.src/out.js
+jsFileCompilationLetBeingRenamed.ts	unsupported outFile /.src/out.js
+jsFileCompilationLetDeclarationOrder.ts	unsupported outFile /.src/out.js
+jsFileCompilationLetDeclarationOrder2.ts	unsupported outFile /.src/out.js
+jsFileCompilationNoErrorWithoutDeclarationsWithJsFileReferenceWithOut.ts	unsupported outFile /.src/out.js
+jsFileCompilationNonNullAssertion.ts	unsupported outFile /bin/a.js
+jsFileCompilationRestParamJsDocFunction.ts	unsupported module kind AMD
+jsFileCompilationRestParameter.ts	unsupported outFile /.src/b.js
+jsFileCompilationShortHandProperty.ts	unsupported outFile /.src/out.js
+jsFileCompilationTypeAssertions.ts	unsupported outFile /lib/a.js
+jsFileCompilationWithEnabledCompositeOption.ts	unsupported outFile /.src/out.js
+jsFileCompilationWithOut.ts	unsupported outFile /.src/out.js
+jsFileCompilationWithOutDeclarationFileNameSameAsInputJsFile.ts	unsupported outFile /b.js
+jsFileCompilationWithOutFileNameSameAsInputJsFile.ts	unsupported outFile /b.js
+jsObjectsMarkedAsOpenEnded.ts	unsupported outFile /.src/output.js
+jsdocAccessibilityTagsDeclarations.ts	unsupported outFile /.src/foo.js
+jsdocLiteral.ts	unsupported outFile /.src/out.js
+jsdocNeverUndefinedNull.ts	unsupported outFile /.src/out.js
+jsdocReadonlyDeclarations.ts	unsupported outFile /.src/foo.js
+jsdocReturnTag1.ts	unsupported outFile /.src/dummy.js
+jsxChildrenArrayWrongType(target=es5).tsx	unsupported target ES5
+jsxFactoryQualifiedNameWithEs5(target=es5).ts	unsupported target ES5
+keepImportsInDts1.ts	unsupported module kind AMD
+keepImportsInDts2.ts	unsupported module kind AMD
+keepImportsInDts3.ts	unsupported module kind AMD
+keepImportsInDts4.ts	unsupported module kind AMD
+labeledStatementDeclarationListInLoopNoCrash1(target=es5).ts	unsupported target ES5
+labeledStatementDeclarationListInLoopNoCrash2(target=es5).ts	unsupported target ES5
+labeledStatementDeclarationListInLoopNoCrash3(target=es5).ts	unsupported target ES5
+labeledStatementDeclarationListInLoopNoCrash4(target=es5).ts	unsupported target ES5
+labeledStatementExportDeclarationNoCrash1(module=system).ts	unsupported module kind System
+letConstInCaseClauses(target=es5).ts	unsupported target ES5
+letConstMatchingParameterNames(target=es5).ts	unsupported target ES5
+letDeclarations-es5(target=es5).ts	unsupported target ES5
+letDeclarations-es5-1(target=es5).ts	unsupported target ES5
+letDeclarations-useBeforeDefinition2.ts	unsupported outFile /.src/out.js
+letInConstDeclarations_ES5(target=es5).ts	unsupported target ES5
+letInLetConstDeclOfForOfAndForIn_ES5(target=es5).ts	unsupported target ES5
+letInLetDeclarations_ES5(target=es5).ts	unsupported target ES5
+letInVarDeclOfForIn_ES5(target=es5).ts	unsupported target ES5
+letInVarDeclOfForOf_ES5(target=es5).ts	unsupported target ES5
+libReferenceDeclarationEmitBundle.ts	unsupported module kind AMD
+libReferenceNoLibBundle.ts	unsupported module kind AMD
+literals(target=es5).ts	unsupported target ES5
+localTypes1(target=es5).ts	unsupported target ES5
+manyConstExports(target=es5).ts	unsupported target ES5
+memberAccessMustUseModuleInstances.ts	unsupported module kind AMD
+mergedDeclarations6.ts	unsupported module kind AMD
+metadataOfClassFromAlias(strict=false,target=es5).ts	unsupported target ES5
+metadataOfClassFromAlias(strict=true,target=es5).ts	unsupported target ES5
+metadataOfClassFromAlias2(target=es5).ts	unsupported target ES5
+metadataOfClassFromModule(target=es5).ts	unsupported target ES5
+metadataOfEventAlias(target=es5).ts	unsupported target ES5
+metadataReferencedWithinFilteredUnion(strictnullchecks=false,target=es5).ts	unsupported target ES5
+metadataReferencedWithinFilteredUnion(strictnullchecks=true,target=es5).ts	unsupported target ES5
+methodContainingLocalFunction(target=es5).ts	unsupported target ES5
+methodsReturningThis.ts	unsupported outFile /.src/output.js
+missingCloseParenStatements(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+missingDecoratorType(target=es5).ts	unsupported target ES5
+modifierParenCast(target=es5).ts	unsupported target ES5
+modularizeLibrary_ErrorFromUsingES6ArrayWithOnlyES6ArrayLib(target=es5).ts	unsupported target ES5
+modularizeLibrary_UsingES5LibAndES6ArrayLib(target=es5).ts	unsupported target ES5
+moduleAliasAsFunctionArgument.ts	unsupported module kind AMD
+moduleAugmentationCollidingNamesInAugmentation1.ts	unsupported module kind AMD
+moduleAugmentationGlobal8(target=es5).ts	unsupported target ES5
+moduleAugmentationGlobal8_1(target=es5).ts	unsupported target ES5
+moduleAugmentationsBundledOutput1(target=es2015).ts	unsupported module kind AMD
+moduleAugmentationsBundledOutput1(target=es5).ts	unsupported module kind AMD
+moduleAugmentationsImports1.ts	unsupported module kind AMD
+moduleAugmentationsImports2.ts	unsupported module kind AMD
+moduleAugmentationsImports3.ts	unsupported module kind AMD
+moduleAugmentationsImports4.ts	unsupported module kind AMD
+moduleImportedForTypeArgumentPosition.ts	unsupported module kind AMD
+moduleMergeConstructor.ts	unsupported module kind AMD
+moduleNodeImportRequireEmit(target=es5).ts	unsupported target ES5
+modulePrologueAMD.ts	unsupported module kind AMD
+modulePrologueSystem.ts	unsupported module kind System
+modulePrologueUmd.ts	unsupported module kind UMD
+moduleResolutionPackageIdWithRelativeAndAbsolutePath.ts	unsupported baseUrl /project
+moduleResolutionWithExtensions_withPaths.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_empty.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_notSpecified.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_oneBlank.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_oneNotFound.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_dirModuleWithIndex.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_externalModule.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_externalModulePath.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_externalModule_withPaths.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_externalTSModule.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_jsModule.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_one_jsonModule.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_threeLastIsBlank1.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_threeLastIsBlank2.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_threeLastIsBlank3.ts	unsupported module resolution kind 2
+moduleResolutionWithSuffixes_threeLastIsBlank4.ts	unsupported module resolution kind 2
+moduleResolution_classicPrefersTs.ts	unsupported module resolution kind 1
+moduledecl(target=es5).ts	unsupported target ES5
+multipleDeclarations.ts	unsupported outFile /.src/output.js
+multipleDefaultExports01(target=es5).ts	unsupported target ES5
+multipleDefaultExports02(target=es5).ts	unsupported target ES5
+multipleDefaultExports03(target=es5).ts	unsupported target ES5
+multipleDefaultExports04(target=es5).ts	unsupported target ES5
+multipleDefaultExports05(target=es5).ts	unsupported target ES5
+nestedLoopWithOnlyInnerLetCaptured(target=es5).ts	unsupported target ES5
+nestedLoops(target=es5).ts	unsupported target ES5
+nestedRedeclarationInES6AMD.ts	unsupported module kind AMD
+nestedSuperCallEmit(target=es5).ts	unsupported target ES5
+newLexicalEnvironmentForConvertedLoop(target=es5).ts	unsupported target ES5
+newTarget.es5(target=es5).ts	unsupported target ES5
+newWithSpreadES5(target=es5).ts	unsupported target ES5
+noBundledEmitFromNodeModules.ts	unsupported module kind System
+noEmitHelpers2(target=es5).ts	unsupported target ES5
+noImplicitAnyLoopCrash(target=es5).ts	unsupported target ES5
+noImplicitAnyMissingGetAccessor(target=es5).ts	unsupported target ES5
+noImplicitAnyMissingSetAccessor(target=es5).ts	unsupported target ES5
+node10AlternateResult_noResolution.ts	unsupported module resolution kind 2
+node10Alternateresult_noTypes.ts	unsupported module resolution kind 2
+node10IsNode_node.ts	unsupported module resolution kind 2
+nodeModulesAllowJsImportHelpersCollisions3(module=node16,target=es5).ts	unsupported target ES5
+nodeModulesAllowJsImportHelpersCollisions3(module=node18,target=es5).ts	unsupported target ES5
+nodeModulesAllowJsImportHelpersCollisions3(module=node20,target=es5).ts	unsupported target ES5
+nodeModulesAllowJsImportHelpersCollisions3(module=nodenext,target=es5).ts	unsupported target ES5
+nodeModulesImportHelpersCollisions3(module=node16,target=es5).ts	unsupported target ES5
+nodeModulesImportHelpersCollisions3(module=node18,target=es5).ts	unsupported target ES5
+nodeModulesImportHelpersCollisions3(module=node20,target=es5).ts	unsupported target ES5
+nodeModulesImportHelpersCollisions3(module=nodenext,target=es5).ts	unsupported target ES5
+nullishCoalescingOperatorInAsyncGenerator(target=es5).ts	unsupported target ES5
+nullishCoalescingOperatorInParameterBindingPattern(target=es5).ts	unsupported target ES5
+nullishCoalescingOperatorInParameterBindingPattern.2(target=es5).ts	unsupported target ES5
+nullishCoalescingOperatorInParameterInitializer(target=es5).ts	unsupported target ES5
+nullishCoalescingOperatorInParameterInitializer.2(target=es5).ts	unsupported target ES5
+numericUnderscoredSeparator(target=es5).ts	unsupported target ES5
+objectIndexer.ts	unsupported module kind AMD
+objectLiteralErrors(target=es5).ts	unsupported target ES5
+objectLiteralShorthandProperties(target=es5).ts	unsupported target ES5
+objectRestParameterES5(target=es5).ts	unsupported target ES5
+objectSpread(target=es5).ts	unsupported target ES5
+objectSpreadNegative(target=es5).ts	unsupported target ES5
+objectTypeWithStringNamedNumericProperty(target=es5).ts	unsupported target ES5
+octalIntegerLiteral(target=es5).ts	unsupported target ES5
+operationsAvailableOnPromisedType(target=es5).ts	unsupported target ES5
+optionalChainingInArrow(target=es5).ts	unsupported target ES5
+optionalChainingInLoop(target=es5).ts	unsupported target ES5
+optionalChainingInParameterBindingPattern(target=es5).ts	unsupported target ES5
+optionalChainingInParameterBindingPattern.2(target=es5).ts	unsupported target ES5
+optionalChainingInParameterInitializer(target=es5).ts	unsupported target ES5
+optionalChainingInParameterInitializer.2(target=es5).ts	unsupported target ES5
+optionalParamReferencingOtherParams2(target=es5).ts	unsupported target ES5
+optionsOutAndNoModuleGen.ts	unsupported outFile /.src/output.js
+out-flag(target=es5).ts	unsupported target ES5
+out-flag2(target=es2015).ts	unsupported outFile /.src/c.js
+out-flag2(target=es5).ts	unsupported outFile /.src/c.js
+out-flag3(target=es2015).ts	unsupported outFile /.src/d.js
+out-flag3(target=es5).ts	unsupported outFile /.src/d.js
+outFileIsDeprecated.ts	unsupported outFile /foo/dist.js
+outFilerootDirModuleNamesAmd.ts	unsupported module kind AMD
+outFilerootDirModuleNamesSystem.ts	unsupported module kind System
+outModuleConcatAmd(target=es2015).ts	unsupported module kind AMD
+outModuleConcatAmd(target=es5).ts	unsupported module kind AMD
+outModuleConcatCommonjs(target=es2015).ts	unsupported outFile /.src/all.js
+outModuleConcatCommonjs(target=es5).ts	unsupported outFile /.src/all.js
+outModuleConcatCommonjsDeclarationOnly(target=es2015).ts	unsupported outFile /.src/all.js
+outModuleConcatCommonjsDeclarationOnly(target=es5).ts	unsupported outFile /.src/all.js
+outModuleConcatES6.ts	unsupported outFile /.src/all.js
+outModuleConcatSystem(target=es2015).ts	unsupported module kind System
+outModuleConcatSystem(target=es5).ts	unsupported module kind System
+outModuleConcatUmd(target=es2015).ts	unsupported module kind UMD
+outModuleConcatUmd(target=es5).ts	unsupported module kind UMD
+outModuleConcatUnspecifiedModuleKind(target=es2015).ts	unsupported outFile /.src/out.js
+outModuleConcatUnspecifiedModuleKind(target=es5).ts	unsupported outFile /.src/out.js
+outModuleConcatUnspecifiedModuleKindDeclarationOnly(target=es2015).ts	unsupported outFile /.src/out.js
+outModuleConcatUnspecifiedModuleKindDeclarationOnly(target=es5).ts	unsupported outFile /.src/out.js
+outModuleTripleSlashRefs(target=es2015).ts	unsupported module kind AMD
+outModuleTripleSlashRefs(target=es5).ts	unsupported module kind AMD
+packageJsonExportsOptionsCompat.ts	unsupported module resolution kind 1
+packageJsonImportsExportsOptionCompat(moduleresolution=classic).ts	unsupported module resolution kind 1
+packageJsonImportsExportsOptionCompat(moduleresolution=node).ts	unsupported module resolution kind 2
+parameterInitializersBackwardReferencing(target=es5).ts	unsupported target ES5
+parameterInitializersForwardReferencing(target=es5).ts	unsupported target ES5
+parameterInitializersForwardReferencing.2(target=es5).ts	unsupported target ES5
+parameterInitializersForwardReferencing1(target=es5).ts	unsupported target ES5
+parser.asyncGenerators.classMethods.es2018(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+parser.asyncGenerators.functionDeclarations.es2018(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+parser.asyncGenerators.functionExpressions.es2018(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+parser.asyncGenerators.objectLiteralMethods.es2018(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+parser.numericSeparators.decimal(target=es5).ts	unsupported target ES5
+parserAccessors1(target=es5).ts	unsupported target ES5
+parserAccessors10(target=es5).ts	unsupported target ES5
+parserAccessors2(target=es5).ts	unsupported target ES5
+parserAccessors3(target=es5).ts	unsupported target ES5
+parserAccessors4(target=es5).ts	unsupported target ES5
+parserAccessors5(target=es5).ts	unsupported target ES5
+parserAccessors6(target=es5).ts	unsupported target ES5
+parserAccessors7(target=es5).ts	unsupported target ES5
+parserAccessors8(target=es5).ts	unsupported target ES5
+parserAccessors9(target=es5).ts	unsupported target ES5
+parserAstSpans1(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName1(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName10(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName11(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName2(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName3(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName4(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName5(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName6(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName7(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName8(target=es5).ts	unsupported target ES5
+parserES5ComputedPropertyName9(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement1.d(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement10(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement11(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement12(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement13(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement14(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement15(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement16(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement17(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement18(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement19(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement2(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement20(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement21(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement3(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement4(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement5(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement6(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement7(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement8(target=es5).ts	unsupported target ES5
+parserES5ForOfStatement9(target=es5).ts	unsupported target ES5
+parserES5SymbolIndexer1(target=es5).ts	unsupported target ES5
+parserES5SymbolIndexer2(target=es5).ts	unsupported target ES5
+parserES5SymbolIndexer3(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty1(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty2(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty3(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty4(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty5(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty6(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty7(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty8(target=es5).ts	unsupported target ES5
+parserES5SymbolProperty9(target=es5).ts	unsupported target ES5
+parserForInStatement8(target=es5).ts	unsupported target ES5
+parserGetAccessorWithTypeParameters1(target=es5).ts	unsupported target ES5
+parserMemberAccessor1(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration1(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration10(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration11(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration12(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration13(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration14(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration15(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration16(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration17(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration18(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration2(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration3(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration4(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration5(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration6(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration7(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration8(target=es5).ts	unsupported target ES5
+parserMemberAccessorDeclaration9(target=es5).ts	unsupported target ES5
+parserSetAccessorWithTypeAnnotation1(target=es5).ts	unsupported target ES5
+parserSetAccessorWithTypeParameters1(target=es5).ts	unsupported target ES5
+parserStatementIsNotAMemberVariableDeclaration1(alwaysstrict=false).ts	alwaysStrict=false is unsupported
+parserStrictMode12(target=es5).ts	unsupported target ES5
+pathMappingBasedModuleResolution1_amd.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution2_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution2_node.ts	unsupported baseUrl /.src/root/src
+pathMappingBasedModuleResolution3_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution3_node.ts	unsupported baseUrl c:/root
+pathMappingBasedModuleResolution4_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution4_node.ts	unsupported baseUrl c:/root
+pathMappingBasedModuleResolution5_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution5_node.ts	unsupported baseUrl c:/root
+pathMappingBasedModuleResolution6_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution7_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution7_node.ts	unsupported baseUrl c:/root
+pathMappingBasedModuleResolution8_classic.ts	unsupported module kind AMD
+pathMappingBasedModuleResolution8_node.ts	unsupported baseUrl c:/root
+pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	unsupported baseUrl /root
+pathMappingBasedModuleResolution_withExtension.ts	unsupported baseUrl /
+pathMappingBasedModuleResolution_withExtensionInName.ts	unsupported baseUrl /
+pathMappingBasedModuleResolution_withExtension_MapedToNodeModules.ts	unsupported baseUrl /
+pathMappingBasedModuleResolution_withExtension_failedLookup.ts	unsupported baseUrl /
+pathMappingInheritedBaseUrl.ts	unsupported baseUrl /other
+pathsValidation1.ts	unsupported baseUrl /.src
+pathsValidation2.ts	unsupported baseUrl /.src
+pathsValidation3.ts	unsupported baseUrl /.src
+pathsValidation4.ts	unsupported baseUrl /.src/src
+prefixUnaryOperatorsOnExportedVariables(target=es2015).ts	unsupported module kind System
+prefixUnaryOperatorsOnExportedVariables(target=es5).ts	unsupported module kind System
+privacyAccessorDeclFile(target=es5).ts	unsupported target ES5
+privacyCannotNameAccessorDeclFile(target=es5).ts	unsupported target ES5
+privacyCheckAnonymousFunctionParameter2.ts	unsupported module kind AMD
+privacyCheckCallbackOfInterfaceMethodWithTypeParameter.ts	unsupported module kind AMD
+privacyCheckExportAssignmentOnExportedGenericInterface2.ts	unsupported module kind AMD
+privacyCheckOnTypeParameterReferenceInConstructorParameter.ts	unsupported module kind AMD
+privacyGetter(target=es2015).ts	unsupported module kind AMD
+privacyGetter(target=es5).ts	unsupported module kind AMD
+privacyGloFunc.ts	unsupported module kind AMD
+privacyGloGetter(target=es5).ts	unsupported target ES5
+privacyLocalInternalReferenceImportWithoutExport.ts	unsupported module kind AMD
+privacyTopLevelInternalReferenceImportWithExport.ts	unsupported module kind AMD
+privacyTopLevelInternalReferenceImportWithoutExport.ts	unsupported module kind AMD
+privateClassPropertyAccessibleWithinNestedClass(target=es5).ts	unsupported target ES5
+privateFieldAssignabilityFromUnknown(target=es5).ts	unsupported target ES5
+privateInstanceMemberAccessibility(target=es5).ts	unsupported target ES5
+privateNameBadDeclaration(target=es5).ts	unsupported target ES5
+privateNameES5Ban(target=es5).ts	unsupported target ES5
+privateNameInObjectLiteral-3(target=es5).ts	unsupported target ES5
+privateNameJsBadDeclaration(target=es5).ts	unsupported target ES5
+privatePropertyUsingObjectType.ts	unsupported module kind AMD
+promiseDefinitionTest(target=es5).ts	unsupported target ES5
+properties(target=es5).ts	unsupported target ES5
+propertyOverridesAccessors4(target=es5).ts	unsupported target ES5
+protectedClassPropertyAccessibleWithinClass(target=es5).ts	unsupported target ES5
+protectedClassPropertyAccessibleWithinNestedClass(target=es5).ts	unsupported target ES5
+protectedClassPropertyAccessibleWithinNestedSubclass(target=es5).ts	unsupported target ES5
+protectedClassPropertyAccessibleWithinSubclass(target=es5).ts	unsupported target ES5
+protectedClassPropertyAccessibleWithinSubclass3(target=es5).ts	unsupported target ES5
+protectedInstanceMemberAccessibility(target=es5).ts	unsupported target ES5
+protectedStaticClassPropertyAccessibleWithinSubclass2(target=es5).ts	unsupported target ES5
+publicGetterProtectedSetterFromThisParameter(target=es5).ts	unsupported target ES5
+reExportDefaultExport(target=es5).ts	unsupported target ES5
+readonlyInDeclarationFile(target=es5).ts	unsupported target ES5
+readonlyInNonPropertyParameters(target=es5).ts	unsupported target ES5
+readonlyMembers(target=es5).ts	unsupported target ES5
+recursiveProperties(target=es5).ts	unsupported target ES5
+reexportMissingDefault5.ts	unsupported module kind System
+regExpWithOpenBracketInCharClass(target=es5).ts	unsupported target ES5
+regularExpressionScanning(target=es5).ts	unsupported target ES5
+regularExpressionUnicodePropertyValueExpressionSuggestions(target=es5).ts	unsupported target ES5
+relativeNamesInClassicResolution.ts	unsupported module kind AMD
+relativePathToDeclarationFile.ts	unsupported module resolution kind 1
+requireEmitSemicolon.ts	unsupported module kind AMD
+requireOfJsonFileWithAmd.ts	unsupported module kind AMD
+requireOfJsonFileWithModuleNodeResolutionEmitAmd.ts	unsupported module kind AMD
+requireOfJsonFileWithModuleNodeResolutionEmitAmdOutFile.ts	unsupported module kind AMD
+requireOfJsonFileWithModuleNodeResolutionEmitSystem.ts	unsupported module kind System
+requireOfJsonFileWithModuleNodeResolutionEmitUmd.ts	unsupported module kind UMD
+requireOfJsonFileWithoutResolveJsonModuleAndPathMapping.ts	unsupported baseUrl /
+requireOfJsonFile_PathMapping.ts	unsupported baseUrl /
+resolutionModeImportType1(moduleresolution=classic).ts	unsupported module resolution kind 1
+resolutionModeTripleSlash4.ts	unsupported module resolution kind 2
+resolutionModeTripleSlash5.ts	unsupported module resolution kind 2
+resolutionModeTypeOnlyImport1(moduleresolution=classic).ts	unsupported module resolution kind 1
+restElementWithNullInitializer(target=es5).ts	unsupported target ES5
+restElementWithNumberPropertyName(target=es5).ts	unsupported target ES5
+restParameterInDownlevelGenerator(target=es5).ts	unsupported target ES5
+restPropertyWithBindingPattern(target=es5).ts	unsupported target ES5
+returnStatementNoAsiAfterTransform(target=es5).ts	unsupported target ES5
+scannerNumericLiteral1(target=es5).ts	unsupported target ES5
+scannerNumericLiteral2(target=es5).ts	unsupported target ES5
+scannerNumericLiteral3(target=es5).ts	unsupported target ES5
+scannerNumericLiteral4(target=es5).ts	unsupported target ES5
+scannerNumericLiteral5(target=es5).ts	unsupported target ES5
+scannerNumericLiteral6(target=es5).ts	unsupported target ES5
+scannerNumericLiteral7(target=es5).ts	unsupported target ES5
+scannerNumericLiteral8(target=es5).ts	unsupported target ES5
+scannerNumericLiteral9(target=es5).ts	unsupported target ES5
+scopedPackagesClassic.ts	unsupported module resolution kind 1
+shadowedReservedCompilerDeclarationsWithNoEmit(target=es5).ts	unsupported target ES5
+shorthand-property-es5-es6(target=es5).ts	unsupported target ES5
+shorthand-property-es6-amd.ts	unsupported module kind AMD
+shorthandOfExportedEntity02_targetES5_CommonJS(target=es5).ts	unsupported target ES5
+shorthandPropertyAssignmentsInDestructuring(target=es5).ts	unsupported target ES5
+signaturesUseJSDocForOptionalParameters.ts	unsupported outFile /.src/out_1.js
+sourceMap-Comment1(target=es5).ts	unsupported target ES5
+sourceMap-Comments(target=es5).ts	unsupported target ES5
+sourceMap-Comments2(target=es5).ts	unsupported target ES5
+sourceMap-EmptyFile1(target=es5).ts	unsupported target ES5
+sourceMap-InterfacePrecedingVariableDeclaration1(target=es5).ts	unsupported target ES5
+sourceMap-LineBreaks(target=es5).ts	unsupported target ES5
+sourceMap-NewLine1(target=es5).ts	unsupported target ES5
+sourceMap-SemiColon1(target=es5).ts	unsupported target ES5
+sourceMap-SingleSpace1(target=es5).ts	unsupported target ES5
+sourceMap-StringLiteralWithNewLine(target=es5).ts	unsupported target ES5
+sourceMapValidationClass(target=es5).ts	unsupported target ES5
+sourceMapValidationDecorators(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForArrayBindingPattern(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForArrayBindingPattern2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForArrayBindingPatternDefaultValues(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForArrayBindingPatternDefaultValues2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfArrayBindingPattern(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfArrayBindingPattern2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfArrayBindingPatternDefaultValues(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfArrayBindingPatternDefaultValues2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfObjectBindingPattern(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfObjectBindingPattern2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringParametertArrayBindingPattern(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringParametertArrayBindingPattern2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringParametertArrayBindingPatternDefaultValues(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringParametertArrayBindingPatternDefaultValues2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPattern(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPattern2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPattern3(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPatternDefaultValues(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPatternDefaultValues2(target=es5).ts	unsupported target ES5
+sourceMapValidationDestructuringVariableStatementArrayBindingPatternDefaultValues3(target=es5).ts	unsupported target ES5
+sourceMapValidationExportAssignment.ts	unsupported module kind AMD
+sourceMapValidationVarInDownLevelGenerator(target=es5).ts	unsupported target ES5
+sourceMapWithCaseSensitiveFileNames.ts	unsupported outFile /.src/testfiles/fooResult.js
+sourceMapWithMultipleFilesWithCopyright.ts	unsupported outFile /.src/a.js
+sourceMapWithMultipleFilesWithFileEndingWithInterface.ts	unsupported outFile /.src/fooResult.js
+sourceMapWithNonCaseSensitiveFileNames.ts	unsupported outFile /.src/testfiles/fooResult.js
+staticPropertyNameConflicts(target=es5,usedefineforclassfields=false).ts	unsupported target ES5
+staticPropertyNameConflicts(target=es5,usedefineforclassfields=true).ts	unsupported target ES5
+strictNullEmptyDestructuring(target=es5).ts	unsupported target ES5
+superAccess(target=es5).ts	unsupported target ES5
+superInLambdas(target=es5).ts	unsupported target ES5
+superInObjectLiterals_ES5(target=es5).ts	unsupported target ES5
+superInStaticMembers1(target=es5).ts	unsupported target ES5
+superPropertyAccess(target=es5).ts	unsupported target ES5
+superPropertyAccess1(target=es5).ts	unsupported target ES5
+superPropertyAccess2(target=es5).ts	unsupported target ES5
+superPropertyAccessInComputedPropertiesOfNestedType_ES5(target=es5).ts	unsupported target ES5
+superPropertyAccessNoError(target=es5).ts	unsupported target ES5
+superPropertyAccess_ES5(target=es5).ts	unsupported target ES5
+superSymbolIndexedAccess5(target=es5).ts	unsupported target ES5
+superSymbolIndexedAccess6(target=es5).ts	unsupported target ES5
+super_inside-object-literal-getters-and-setters(target=es5).ts	unsupported target ES5
+syntheticDefaultExportsWithDynamicImports.ts	unsupported module kind System
+systemDefaultExportCommentValidity.ts	unsupported module kind System
+systemDefaultImportCallable.ts	unsupported module kind System
+systemExportAssignment(target=es2015).ts	unsupported module kind System
+systemExportAssignment(target=es5).ts	unsupported module kind System
+systemExportAssignment2(target=es2015).ts	unsupported module kind System
+systemExportAssignment2(target=es5).ts	unsupported module kind System
+systemExportAssignment3(target=es2015).ts	unsupported module kind System
+systemExportAssignment3(target=es5).ts	unsupported module kind System
+systemJsForInNoException.ts	unsupported module kind System
+systemModule1.ts	unsupported module kind System
+systemModule10.ts	unsupported module kind System
+systemModule10_ES5(target=es2015).ts	unsupported module kind System
+systemModule10_ES5(target=es5).ts	unsupported module kind System
+systemModule11.ts	unsupported module kind System
+systemModule12.ts	unsupported module kind System
+systemModule13.ts	unsupported module kind System
+systemModule14.ts	unsupported module kind System
+systemModule15.ts	unsupported module kind System
+systemModule16.ts	unsupported module kind System
+systemModule17.ts	unsupported module kind System
+systemModule18.ts	unsupported module kind System
+systemModule2.ts	unsupported module kind System
+systemModule3.ts	unsupported module kind System
+systemModule4.ts	unsupported module kind System
+systemModule5.ts	unsupported module kind System
+systemModule6.ts	unsupported module kind System
+systemModule7.ts	unsupported module kind System
+systemModule8.ts	unsupported module kind System
+systemModule9.ts	unsupported module kind System
+systemModuleAmbientDeclarations.ts	unsupported module kind System
+systemModuleConstEnums.ts	unsupported module kind System
+systemModuleConstEnumsSeparateCompilation.ts	unsupported module kind System
+systemModuleDeclarationMerging.ts	unsupported module kind System
+systemModuleExportDefault.ts	unsupported module kind System
+systemModuleNonTopLevelModuleMembers.ts	unsupported module kind System
+systemModuleTargetES6.ts	unsupported module kind System
+systemModuleTrailingComments.ts	unsupported module kind System
+systemModuleWithSuperClass.ts	unsupported module kind System
+systemNamespaceAliasEmit.ts	unsupported module kind System
+systemObjectShorthandRename.ts	unsupported module kind System
+taggedTemplateStringsWithCurriedFunction(target=es5).ts	unsupported target ES5
+taggedTemplateWithoutDeclaredHelper(target=es5).ts	unsupported target ES5
+taggedTemplatesInModuleAndGlobal(target=es5).ts	unsupported target ES5
+targetEs6DecoratorMetadataImportNotElided(target=es5).ts	unsupported target ES5
+templateStringsArrayTypeDefinedInES5Mode(target=es5).ts	unsupported target ES5
+templateStringsArrayTypeNotDefinedES5Mode(target=es5).ts	unsupported target ES5
+thisAndSuperInStaticMembers3(target=es5).ts	unsupported target ES5
+thisAndSuperInStaticMembers4(target=es5).ts	unsupported target ES5
+thisInInvalidContextsExternalModule(target=es5).ts	unsupported target ES5
+thisTypeInAccessors(target=es5).ts	unsupported target ES5
+thisTypeInAccessorsNegative(target=es5).ts	unsupported target ES5
+thisTypeInObjectLiterals2(target=es5).ts	unsupported target ES5
+topLevelAwait.1(module=system,target=es2015).ts	unsupported module kind System
+topLevelAwait.1(module=system,target=es2017).ts	unsupported module kind System
+topLevelExports.ts	unsupported module kind AMD
+topLevelThisAssignment.ts	unsupported outFile /.src/output.js
+topLevelVarHoistingSystem.ts	unsupported module kind System
+trailingCommasES5(target=es5).ts	unsupported target ES5
+trailingCommasInFunctionParametersAndArguments(target=es5).ts	unsupported target ES5
+transformArrowInBlockScopedLoopVarInitializer(target=es5).ts	unsupported target ES5
+transformNestedGeneratorsWithTry(target=es5).ts	unsupported target ES5
+transformParenthesizesConditionalSubexpression(target=es5).ts	unsupported target ES5
+trivialSubtypeReductionNoStructuralCheck(target=es5).ts	unsupported target ES5
+trivialSubtypeReductionNoStructuralCheck2(target=es5).ts	unsupported target ES5
+tsconfigMapOptionsAreCaseInsensitive.ts	unsupported module kind AMD
+tsxElementResolution17.tsx	unsupported module kind AMD
+tsxPreserveEmit1(target=es2015).tsx	unsupported module kind AMD
+tsxPreserveEmit1(target=es5).tsx	unsupported module kind AMD
+tsxPreserveEmit2(target=es2015).tsx	unsupported module kind AMD
+tsxPreserveEmit2(target=es5).tsx	unsupported module kind AMD
+tsxPreserveEmit3.tsx	unsupported module kind AMD
+tsxSfcReturnNull.tsx	unsupported module kind AMD
+tsxSfcReturnNullStrictNullChecks.tsx	unsupported module kind AMD
+tsxSpreadChildrenInvalidType(jsx=react,target=es5).tsx	unsupported target ES5
+tsxSpreadChildrenInvalidType(jsx=react-jsx,target=es5).tsx	unsupported target ES5
+tsxStatelessFunctionComponentOverload1.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentOverload2.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentOverload3.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponents3.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentsWithTypeArguments1.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentsWithTypeArguments2.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentsWithTypeArguments3.tsx	unsupported module kind AMD
+tsxStatelessFunctionComponentsWithTypeArguments5.tsx	unsupported module kind AMD
+twoAccessorsWithSameName(target=es5).ts	unsupported target ES5
+typeAliasDeclarationEmit(target=es5).ts	unsupported target ES5
+typeAliasDeclarationEmit2(target=es2015).ts	unsupported module kind AMD
+typeAliasDeclarationEmit2(target=es5).ts	unsupported module kind AMD
+typeFromPropertyAssignmentOutOfOrder(target=es5).ts	unsupported target ES5
+typeGuardOfFormThisMember(target=es5).ts	unsupported target ES5
+typeGuardOfFormThisMemberErrors(target=es5).ts	unsupported target ES5
+typeGuardsInClassAccessors(target=es5).ts	unsupported target ES5
+typeGuardsInProperties(target=es5).ts	unsupported target ES5
+typeGuardsObjectMethods(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers10(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers11(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers12(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers13(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers3(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers4(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers5(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers7(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers8(target=es5).ts	unsupported target ES5
+typeOfThisInStaticMembers9(target=es5).ts	unsupported target ES5
+typeParameterCompatibilityAccrossDeclarations.ts	unsupported module kind AMD
+typeReferenceDirectives11.ts	unsupported outFile /output.js
+typeReferenceDirectives12.ts	unsupported outFile /output.js
+typeResolution.ts	unsupported module kind AMD
+typeSatisfaction_js.ts	unsupported outFile /lib/a.js
+typedArrays-es5(target=es5).ts	unsupported target ES5
+typesVersions.emptyTypes.ts	unsupported baseUrl /
+typesVersions.justIndex.ts	unsupported baseUrl /
+typingsLookupAmd.ts	unsupported module kind AMD
+umdDependencyComment2.ts	unsupported module kind UMD
+umdDependencyCommentName1.ts	unsupported module kind UMD
+umdDependencyCommentName2.ts	unsupported module kind UMD
+umdNamedAmdMode.ts	unsupported module kind UMD
+unicodeEscapesInNames01(target=es5).ts	unsupported target ES5
+unicodeEscapesInNames02(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions01(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions02(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions03(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions04(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions05(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions06(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions07(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions08(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions09(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions10(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions11(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions12(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions13(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions14(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions15(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions16(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions17(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions18(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInRegularExpressions19(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings01(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings02(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings03(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings04(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings05(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings06(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings07(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings08(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings09(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings10(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings11(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings12(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings13(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings14(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings15(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings16(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings17(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings18(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings19(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings20(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings21(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings22(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings23(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings24(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInStrings25(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates01(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates02(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates03(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates04(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates05(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates06(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates07(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates08(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates09(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates10(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates11(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates12(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates13(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates14(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates15(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates16(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates17(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates18(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates19(target=es5).ts	unsupported target ES5
+unicodeExtendedEscapesInTemplates20(target=es5).ts	unsupported target ES5
+uniqueSymbolsDeclarationsInJs.ts	unsupported outFile /.src/uniqueSymbolsDeclarationsInJs-out.js
+uniqueSymbolsDeclarationsInJsErrors.ts	unsupported outFile /.src/uniqueSymbolsDeclarationsInJsErrors-out.js
+unusedGetterInClass(target=es5).ts	unsupported target ES5
+unusedParameterUsedInTypeOf(target=es5).ts	unsupported target ES5
+unusedPrivateMembers(target=es5).ts	unsupported target ES5
+unusedSetterInClass(target=es5).ts	unsupported target ES5
+useBeforeDeclaration.ts	unsupported outFile /.src/test.js
+useObjectValuesAndEntries1(target=es5).ts	unsupported target ES5
+useObjectValuesAndEntries2(target=es5).ts	unsupported target ES5
+usePromiseFinally(target=es5).ts	unsupported target ES5
+useSharedArrayBuffer1(target=es5).ts	unsupported target ES5
+useSharedArrayBuffer2(target=es5).ts	unsupported target ES5
+useSharedArrayBuffer5(target=es5).ts	unsupported target ES5
+useSharedArrayBuffer6(target=es5).ts	unsupported target ES5
+useStrictLikePrologueString01(target=es5).ts	unsupported target ES5
+usingDeclarations.1(target=es5).ts	unsupported target ES5
+usingDeclarations.11(target=es5).ts	unsupported target ES5
+usingDeclarations.2(target=es5).ts	unsupported target ES5
+usingDeclarations.3(target=es5).ts	unsupported target ES5
+usingDeclarationsInFor(target=es5).ts	unsupported target ES5
+usingDeclarationsInForAwaitOf(target=es5).ts	unsupported target ES5
+usingDeclarationsInForOf.1(target=es5).ts	unsupported target ES5
+usingDeclarationsTopLevelOfModule.1(module=amd).ts	unsupported module kind AMD
+usingDeclarationsTopLevelOfModule.1(module=system).ts	unsupported module kind System
+usingDeclarationsTopLevelOfModule.2(module=amd).ts	unsupported module kind AMD
+usingDeclarationsTopLevelOfModule.3(module=amd).ts	unsupported module kind AMD
+usingDeclarationsTopLevelOfModule.3(module=system).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.1(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.1(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.1(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.1(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.1(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.10(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.10(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.10(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.10(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.10(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.11(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.11(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.11(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.11(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.11(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.12(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.12(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.12(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.12(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.12(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.2(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.2(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.2(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.2(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.2(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.3(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.3(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.3(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.3(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.3(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.4(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.4(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.4(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.4(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.4(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.5(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.5(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.5(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.5(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.5(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.6(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.6(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.6(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.6(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.6(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.7(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.7(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.7(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.7(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.7(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.8(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.8(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.8(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.8(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.8(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.9(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.9(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithESClassDecorators.9(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.9(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithESClassDecorators.9(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.1(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.1(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.1(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.1(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.1(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.10(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.10(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.10(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.10(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.10(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.11(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.11(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.11(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.11(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.11(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.12(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.12(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.12(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.12(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.12(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.2(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.2(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.2(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.2(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.2(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.3(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.3(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.3(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.3(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.3(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.4(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.4(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.4(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.4(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.4(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.5(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.5(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.5(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.5(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.5(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.6(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.6(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.6(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.6(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.6(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.7(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.7(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.7(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.7(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.7(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.8(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.8(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.8(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.8(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.8(module=system,target=esnext).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.9(module=commonjs,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.9(module=esnext,target=es5).ts	unsupported target ES5
+usingDeclarationsWithLegacyClassDecorators.9(module=system,target=es2015).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.9(module=system,target=es5).ts	unsupported module kind System
+usingDeclarationsWithLegacyClassDecorators.9(module=system,target=esnext).ts	unsupported module kind System
+varArgsOnConstructorTypes.ts	unsupported module kind AMD
+verbatimModuleSyntaxRestrictionsESM(esmoduleinterop=false).ts	esModuleInterop=false is unsupported
+withExportDecl.ts	unsupported module kind AMD
+withImportDecl.ts	unsupported module kind AMD
+yieldInForInInDownlevelGenerator(target=es5).ts	unsupported target ES5
+yieldStatementNoAsiAfterTransform(target=es5).ts	unsupported target ES5

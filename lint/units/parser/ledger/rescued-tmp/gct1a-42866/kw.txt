@@ -1,0 +1,28 @@
+let x: if
+let x: in
+let x: class
+let x: function
+let x: delete
+let x: var
+let x: const
+let x: extends
+let x: if.a
+let x: in<T>
+let x: A.if
+let x: A.in.class
+let x: A.#b
+let x: #a
+const v = <in>x
+const v = <if>x
+const v = <const>x
+let x: [in]
+let x: A<in>
+let x: (in)
+let x: in | out
+let x: in[]
+let x: { a: in }
+function f(): in {}
+function f(a: in) {}
+let x = y as in
+let x = y as if
+let x = y satisfies in

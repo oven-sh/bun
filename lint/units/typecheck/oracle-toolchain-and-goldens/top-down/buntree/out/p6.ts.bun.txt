@@ -1,0 +1,44 @@
+file p6.ts bytes=171 statements=5
+s_expr @0
+  e_binary @0
+    e_arrow @4
+      b_identifier @11 a
+      e_await @15
+        e_number @21
+      b_identifier @24 b
+      s_expr @32
+        e_await @32
+          e_identifier @38 a
+    e_identifier @0 x
+s_expr @44
+  e_binary @44
+    e_arrow @48
+      b_identifier @49 a
+      b_object @52
+        e_string @53
+        b_identifier @53 b
+      b_array @57
+        b_identifier @58 c
+      e_identifier @63 d
+      b_identifier @69 e
+      s_return @75
+        e_identifier @75 a
+    e_identifier @44 x
+s_function @78
+  b_identifier @89 a
+  e_arrow @93
+    b_identifier @94 b
+    s_return @100
+      e_identifier @100 b
+s_expr @106
+  e_binary @106
+    e_function @110
+      b_identifier @128 a
+      s_expr @133
+        e_yield @133
+          e_identifier @139 a
+    e_identifier @106 x
+s_expr @145
+  e_binary @145
+    e_function @149
+    e_identifier @145 x

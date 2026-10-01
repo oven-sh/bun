@@ -1,0 +1,515 @@
+=== t.ts :: "class A { public x; private y = 1; protected z(): void {}; readonly w; override v() {} }"
+ClassDeclaration [0,88) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,19) pos=9 mods=PublicKeyword@10-16
+    PublicKeyword [10,16) pos=9
+    Identifier [17,18) pos=16 "x"
+  PropertyDeclaration [20,34) pos=19 mods=PrivateKeyword@20-27
+    PrivateKeyword [20,27) pos=19
+    Identifier [28,29) pos=27 "y"
+    FirstLiteralToken [32,33) pos=31
+  MethodDeclaration [35,57) pos=34 mods=ProtectedKeyword@35-44
+    ProtectedKeyword [35,44) pos=34
+    Identifier [45,46) pos=44 "z"
+    VoidKeyword [50,54) pos=49
+    Block [55,57) pos=54
+  SemicolonClassElement [57,58) pos=57
+  PropertyDeclaration [59,70) pos=58 mods=ReadonlyKeyword@59-67
+    ReadonlyKeyword [59,67) pos=58
+    Identifier [68,69) pos=67 "w"
+  MethodDeclaration [71,86) pos=70 mods=OverrideKeyword@71-79
+    OverrideKeyword [71,79) pos=70
+    Identifier [80,81) pos=79 "v"
+    Block [84,86) pos=83
+=== t.ts :: "class A { public public x }"
+ClassDeclaration [0,27) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,25) pos=9 mods=PublicKeyword@10-16,PublicKeyword@17-23
+    PublicKeyword [10,16) pos=9
+    PublicKeyword [17,23) pos=16
+    Identifier [24,25) pos=23 "x"
+=== t.ts :: "class A { readonly public x }"
+ClassDeclaration [0,29) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,27) pos=9 mods=ReadonlyKeyword@10-18,PublicKeyword@19-25
+    ReadonlyKeyword [10,18) pos=9
+    PublicKeyword [19,25) pos=18
+    Identifier [26,27) pos=25 "x"
+=== t.ts :: "class A { static static x }"
+ClassDeclaration [0,27) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,23) pos=9 mods=StaticKeyword@10-16
+    StaticKeyword [10,16) pos=9
+    Identifier [17,23) pos=16 "static"
+  PropertyDeclaration [24,25) pos=23
+    Identifier [24,25) pos=23 "x"
+  !! TS1434@17+6 Unexpected keyword or identifier.
+=== t.ts :: "class A { abstract abstract x }"
+ClassDeclaration [0,31) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,29) pos=9 mods=FirstContextualKeyword@10-18,FirstContextualKeyword@19-27
+    FirstContextualKeyword [10,18) pos=9
+    FirstContextualKeyword [19,27) pos=18
+    Identifier [28,29) pos=27 "x"
+=== t.ts :: "class A { declare declare x }"
+ClassDeclaration [0,29) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,27) pos=9 mods=DeclareKeyword@10-17,DeclareKeyword@18-25
+    DeclareKeyword [10,17) pos=9
+    DeclareKeyword [18,25) pos=17
+    Identifier [26,27) pos=25 "x"
+=== t.ts :: "class A { static readonly x = 1 }"
+ClassDeclaration [0,33) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,31) pos=9 mods=StaticKeyword@10-16,ReadonlyKeyword@17-25
+    StaticKeyword [10,16) pos=9
+    ReadonlyKeyword [17,25) pos=16
+    Identifier [26,27) pos=25 "x"
+    FirstLiteralToken [30,31) pos=29
+=== t.ts :: "class A { readonly static x = 1 }"
+ClassDeclaration [0,33) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,31) pos=9 mods=ReadonlyKeyword@10-18,StaticKeyword@19-25
+    ReadonlyKeyword [10,18) pos=9
+    StaticKeyword [19,25) pos=18
+    Identifier [26,27) pos=25 "x"
+    FirstLiteralToken [30,31) pos=29
+=== t.ts :: "class A { private static async *[k]() {} }"
+ClassDeclaration [0,42) pos=0
+  Identifier [6,7) pos=5 "A"
+  MethodDeclaration [10,40) pos=9 mods=PrivateKeyword@10-17,StaticKeyword@18-24,AsyncKeyword@25-30
+    PrivateKeyword [10,17) pos=9
+    StaticKeyword [18,24) pos=17
+    AsyncKeyword [25,30) pos=24
+    AsteriskToken [31,32) pos=30
+    ComputedPropertyName [32,35) pos=32
+      Identifier [33,34) pos=33 "k"
+    Block [38,40) pos=37
+=== t.ts :: "class A { accessor x = 1 }"
+ClassDeclaration [0,26) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,24) pos=9 mods=AccessorKeyword@10-18
+    AccessorKeyword [10,18) pos=9
+    Identifier [19,20) pos=18 "x"
+    FirstLiteralToken [23,24) pos=22
+=== t.ts :: "class A { static accessor x = 1 }"
+ClassDeclaration [0,33) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,31) pos=9 mods=StaticKeyword@10-16,AccessorKeyword@17-25
+    StaticKeyword [10,16) pos=9
+    AccessorKeyword [17,25) pos=16
+    Identifier [26,27) pos=25 "x"
+    FirstLiteralToken [30,31) pos=29
+=== t.ts :: "class A { accessor accessor x }"
+ClassDeclaration [0,31) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,29) pos=9 mods=AccessorKeyword@10-18,AccessorKeyword@19-27
+    AccessorKeyword [10,18) pos=9
+    AccessorKeyword [19,27) pos=18
+    Identifier [28,29) pos=27 "x"
+=== t.ts :: "class A { private accessor x = 1 }"
+ClassDeclaration [0,34) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,32) pos=9 mods=PrivateKeyword@10-17,AccessorKeyword@18-26
+    PrivateKeyword [10,17) pos=9
+    AccessorKeyword [18,26) pos=17
+    Identifier [27,28) pos=26 "x"
+    FirstLiteralToken [31,32) pos=30
+=== t.ts :: "abstract class A { abstract x: number; abstract m(): void; private abstract y }"
+ClassDeclaration [0,79) pos=0 mods=FirstContextualKeyword@0-8
+  FirstContextualKeyword [0,8) pos=0
+  Identifier [15,16) pos=14 "A"
+  PropertyDeclaration [19,38) pos=18 mods=FirstContextualKeyword@19-27
+    FirstContextualKeyword [19,27) pos=18
+    Identifier [28,29) pos=27 "x"
+    NumberKeyword [31,37) pos=30
+  MethodDeclaration [39,58) pos=38 mods=FirstContextualKeyword@39-47
+    FirstContextualKeyword [39,47) pos=38
+    Identifier [48,49) pos=47 "m"
+    VoidKeyword [53,57) pos=52
+  PropertyDeclaration [59,77) pos=58 mods=PrivateKeyword@59-66,FirstContextualKeyword@67-75
+    PrivateKeyword [59,66) pos=58
+    FirstContextualKeyword [67,75) pos=66
+    Identifier [76,77) pos=75 "y"
+=== t.ts :: "class A { declare x: number; declare readonly y: string }"
+ClassDeclaration [0,57) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,28) pos=9 mods=DeclareKeyword@10-17
+    DeclareKeyword [10,17) pos=9
+    Identifier [18,19) pos=17 "x"
+    NumberKeyword [21,27) pos=20
+  PropertyDeclaration [29,55) pos=28 mods=DeclareKeyword@29-36,ReadonlyKeyword@37-45
+    DeclareKeyword [29,36) pos=28
+    ReadonlyKeyword [37,45) pos=36
+    Identifier [46,47) pos=45 "y"
+    StringKeyword [49,55) pos=48
+=== t.ts :: "class A { x?: number; y!: number; z?(): void; static w?: 1 }"
+ClassDeclaration [0,60) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,21) pos=9 ?@11
+    Identifier [10,11) pos=9 "x"
+    QuestionToken [11,12) pos=11
+    NumberKeyword [14,20) pos=13
+  PropertyDeclaration [22,33) pos=21 !@23
+    Identifier [22,23) pos=21 "y"
+    ExclamationToken [23,24) pos=23
+    NumberKeyword [26,32) pos=25
+  MethodDeclaration [34,45) pos=33 ?@35
+    Identifier [34,35) pos=33 "z"
+    QuestionToken [35,36) pos=35
+    VoidKeyword [40,44) pos=39
+  PropertyDeclaration [46,58) pos=45 mods=StaticKeyword@46-52 ?@54
+    StaticKeyword [46,52) pos=45
+    Identifier [53,54) pos=52 "w"
+    QuestionToken [54,55) pos=54
+    LiteralType [57,58) pos=56
+      FirstLiteralToken [57,58) pos=56
+=== t.ts :: "class A { constructor(private x, public readonly y: T, protected z = 1, override w?: U) {} }"
+ClassDeclaration [0,92) pos=0
+  Identifier [6,7) pos=5 "A"
+  Constructor [10,90) pos=9
+    Parameter [22,31) pos=22 mods=PrivateKeyword@22-29
+      PrivateKeyword [22,29) pos=22
+      Identifier [30,31) pos=29 "x"
+    Parameter [33,53) pos=32 mods=PublicKeyword@33-39,ReadonlyKeyword@40-48
+      PublicKeyword [33,39) pos=32
+      ReadonlyKeyword [40,48) pos=39
+      Identifier [49,50) pos=48 "y"
+      TypeReference [52,53) pos=51
+        Identifier [52,53) pos=51 "T"
+    Parameter [55,70) pos=54 mods=ProtectedKeyword@55-64
+      ProtectedKeyword [55,64) pos=54
+      Identifier [65,66) pos=64 "z"
+      FirstLiteralToken [69,70) pos=68
+    Parameter [72,86) pos=71 mods=OverrideKeyword@72-80 ?@82
+      OverrideKeyword [72,80) pos=71
+      Identifier [81,82) pos=80 "w"
+      QuestionToken [82,83) pos=82
+      TypeReference [85,86) pos=84
+        Identifier [85,86) pos=84 "U"
+    Block [88,90) pos=87
+=== t.ts :: "class A { constructor(private private x) {} }"
+ClassDeclaration [0,45) pos=0
+  Identifier [6,7) pos=5 "A"
+  Constructor [10,43) pos=9
+    Parameter [22,39) pos=22 mods=PrivateKeyword@22-29,PrivateKeyword@30-37
+      PrivateKeyword [22,29) pos=22
+      PrivateKeyword [30,37) pos=29
+      Identifier [38,39) pos=37 "x"
+    Block [41,43) pos=40
+=== t.ts :: "class A { constructor(readonly {a}) {} }"
+ClassDeclaration [0,40) pos=0
+  Identifier [6,7) pos=5 "A"
+  Constructor [10,38) pos=9
+    Parameter [22,34) pos=22 mods=ReadonlyKeyword@22-30
+      ReadonlyKeyword [22,30) pos=22
+      ObjectBindingPattern [31,34) pos=30
+        BindingElement [32,33) pos=32
+          Identifier [32,33) pos=32 "a"
+    Block [36,38) pos=35
+=== t.ts :: "function f(private x) {}"
+FunctionDeclaration [0,24) pos=0
+  Identifier [9,10) pos=8 "f"
+  Parameter [11,20) pos=11 mods=PrivateKeyword@11-18
+    PrivateKeyword [11,18) pos=11
+    Identifier [19,20) pos=18 "x"
+  Block [22,24) pos=21
+=== t.ts :: "function f(a?, b?: T, {c}?: U, [d]?: V) {}"
+FunctionDeclaration [0,42) pos=0
+  Identifier [9,10) pos=8 "f"
+  Parameter [11,13) pos=11 ?@12
+    Identifier [11,12) pos=11 "a"
+    QuestionToken [12,13) pos=12
+  Parameter [15,20) pos=14 ?@16
+    Identifier [15,16) pos=14 "b"
+    QuestionToken [16,17) pos=16
+    TypeReference [19,20) pos=18
+      Identifier [19,20) pos=18 "T"
+  Parameter [22,29) pos=21 ?@25
+    ObjectBindingPattern [22,25) pos=21
+      BindingElement [23,24) pos=23
+        Identifier [23,24) pos=23 "c"
+    QuestionToken [25,26) pos=25
+    TypeReference [28,29) pos=27
+      Identifier [28,29) pos=27 "U"
+  Parameter [31,38) pos=30 ?@34
+    ArrayBindingPattern [31,34) pos=30
+      BindingElement [32,33) pos=32
+        Identifier [32,33) pos=32 "d"
+    QuestionToken [34,35) pos=34
+    TypeReference [37,38) pos=36
+      Identifier [37,38) pos=36 "V"
+  Block [40,42) pos=39
+=== t.ts :: "let a!: T, b: U, c!: V"
+FirstStatement [0,22) pos=0
+  VariableDeclarationList [0,22) pos=0
+    VariableDeclaration [4,9) pos=3 !@5
+      Identifier [4,5) pos=3 "a"
+      ExclamationToken [5,6) pos=5
+      TypeReference [8,9) pos=7
+        Identifier [8,9) pos=7 "T"
+    VariableDeclaration [11,15) pos=10
+      Identifier [11,12) pos=10 "b"
+      TypeReference [14,15) pos=13
+        Identifier [14,15) pos=13 "U"
+    VariableDeclaration [17,22) pos=16 !@18
+      Identifier [17,18) pos=16 "c"
+      ExclamationToken [18,19) pos=18
+      TypeReference [21,22) pos=20
+        Identifier [21,22) pos=20 "V"
+=== t.ts :: "var a!"
+FirstStatement [0,6) pos=0
+  VariableDeclarationList [0,6) pos=0
+    VariableDeclaration [4,6) pos=3 !@5
+      Identifier [4,5) pos=3 "a"
+      ExclamationToken [5,6) pos=5
+=== t.ts :: "const enum E { A }"
+EnumDeclaration [0,18) pos=0 mods=ConstKeyword@0-5
+  ConstKeyword [0,5) pos=0
+  Identifier [11,12) pos=10 "E"
+  EnumMember [15,16) pos=14
+    Identifier [15,16) pos=14 "A"
+=== t.ts :: "export const enum E { A }"
+EnumDeclaration [0,25) pos=0 mods=ExportKeyword@0-6,ConstKeyword@7-12
+  ExportKeyword [0,6) pos=0
+  ConstKeyword [7,12) pos=6
+  Identifier [18,19) pos=17 "E"
+  EnumMember [22,23) pos=21
+    Identifier [22,23) pos=21 "A"
+=== t.ts :: "declare const enum E { A }"
+EnumDeclaration [0,26) pos=0 mods=DeclareKeyword@0-7,ConstKeyword@8-13
+  DeclareKeyword [0,7) pos=0
+  ConstKeyword [8,13) pos=7
+  Identifier [19,20) pos=18 "E"
+  EnumMember [23,24) pos=22
+    Identifier [23,24) pos=22 "A"
+=== t.ts :: "abstract class A {}"
+ClassDeclaration [0,19) pos=0 mods=FirstContextualKeyword@0-8
+  FirstContextualKeyword [0,8) pos=0
+  Identifier [15,16) pos=14 "A"
+=== t.ts :: "export abstract class A {}"
+ClassDeclaration [0,26) pos=0 mods=ExportKeyword@0-6,FirstContextualKeyword@7-15
+  ExportKeyword [0,6) pos=0
+  FirstContextualKeyword [7,15) pos=6
+  Identifier [22,23) pos=21 "A"
+=== t.ts :: "export default abstract class A {}"
+ClassDeclaration [0,34) pos=0 mods=ExportKeyword@0-6,DefaultKeyword@7-14,FirstContextualKeyword@15-23
+  ExportKeyword [0,6) pos=0
+  DefaultKeyword [7,14) pos=6
+  FirstContextualKeyword [15,23) pos=14
+  Identifier [30,31) pos=29 "A"
+=== t.ts :: "export default abstract class {}"
+ClassDeclaration [0,32) pos=0 mods=ExportKeyword@0-6,DefaultKeyword@7-14,FirstContextualKeyword@15-23
+  ExportKeyword [0,6) pos=0
+  DefaultKeyword [7,14) pos=6
+  FirstContextualKeyword [15,23) pos=14
+=== t.ts :: "declare abstract class A {}"
+ClassDeclaration [0,27) pos=0 mods=DeclareKeyword@0-7,FirstContextualKeyword@8-16
+  DeclareKeyword [0,7) pos=0
+  FirstContextualKeyword [8,16) pos=7
+  Identifier [23,24) pos=22 "A"
+=== t.ts :: "import { type A, type B as C, D, type as, type as as, type as as as, type as E, type default as F, type 'x' as G } from 'm'"
+ImportDeclaration [0,123) pos=0
+  ImportClause [7,114) pos=6
+    NamedImports [7,114) pos=6
+      ImportSpecifier [9,15) pos=8 typeOnly
+        Identifier [14,15) pos=13 "A"
+      ImportSpecifier [17,28) pos=16 typeOnly
+        Identifier [22,23) pos=21 "B"
+        Identifier [27,28) pos=26 "C"
+      ImportSpecifier [30,31) pos=29
+        Identifier [30,31) pos=29 "D"
+      ImportSpecifier [33,40) pos=32 typeOnly
+        Identifier [38,40) pos=37 "as"
+      ImportSpecifier [42,52) pos=41
+        Identifier [42,46) pos=41 "type"
+        Identifier [50,52) pos=49 "as"
+      ImportSpecifier [54,67) pos=53 typeOnly
+        Identifier [59,61) pos=58 "as"
+        Identifier [65,67) pos=64 "as"
+      ImportSpecifier [69,78) pos=68
+        Identifier [69,73) pos=68 "type"
+        Identifier [77,78) pos=76 "E"
+      ImportSpecifier [80,97) pos=79 typeOnly
+        Identifier [85,92) pos=84 "default"
+        Identifier [96,97) pos=95 "F"
+      ImportSpecifier [99,112) pos=98 typeOnly
+        StringLiteral [104,107) pos=103
+        Identifier [111,112) pos=110 "G"
+  StringLiteral [120,123) pos=119
+=== t.ts :: "import { type A } from 'm'"
+ImportDeclaration [0,26) pos=0
+  ImportClause [7,17) pos=6
+    NamedImports [7,17) pos=6
+      ImportSpecifier [9,15) pos=8 typeOnly
+        Identifier [14,15) pos=13 "A"
+  StringLiteral [23,26) pos=22
+=== t.ts :: "export { type A, type B as C, D, type as, type as as, type as as as, type as E }"
+ExportDeclaration [0,80) pos=0
+  NamedExports [7,80) pos=6
+    ExportSpecifier [9,15) pos=8 typeOnly
+      Identifier [14,15) pos=13 "A"
+    ExportSpecifier [17,28) pos=16 typeOnly
+      Identifier [22,23) pos=21 "B"
+      Identifier [27,28) pos=26 "C"
+    ExportSpecifier [30,31) pos=29
+      Identifier [30,31) pos=29 "D"
+    ExportSpecifier [33,40) pos=32 typeOnly
+      Identifier [38,40) pos=37 "as"
+    ExportSpecifier [42,52) pos=41
+      Identifier [42,46) pos=41 "type"
+      Identifier [50,52) pos=49 "as"
+    ExportSpecifier [54,67) pos=53 typeOnly
+      Identifier [59,61) pos=58 "as"
+      Identifier [65,67) pos=64 "as"
+    ExportSpecifier [69,78) pos=68
+      Identifier [69,73) pos=68 "type"
+      Identifier [77,78) pos=76 "E"
+=== t.ts :: "export { type A } from 'm'"
+ExportDeclaration [0,26) pos=0
+  NamedExports [7,17) pos=6
+    ExportSpecifier [9,15) pos=8 typeOnly
+      Identifier [14,15) pos=13 "A"
+  StringLiteral [23,26) pos=22
+=== t.ts :: "export { type default as X, type 'a-b' as Y, type Z as 'z-z' } from 'm'"
+ExportDeclaration [0,71) pos=0
+  NamedExports [7,62) pos=6
+    ExportSpecifier [9,26) pos=8 typeOnly
+      Identifier [14,21) pos=13 "default"
+      Identifier [25,26) pos=24 "X"
+    ExportSpecifier [28,43) pos=27 typeOnly
+      StringLiteral [33,38) pos=32
+      Identifier [42,43) pos=41 "Y"
+    ExportSpecifier [45,60) pos=44 typeOnly
+      Identifier [50,51) pos=49 "Z"
+      StringLiteral [55,60) pos=54
+  StringLiteral [68,71) pos=67
+=== t.ts :: "((a?) => 1); ((a?: T) => 1); ((a?, b?) => 1); (({a}?: T) => 1)"
+ParenthesizedExpression [0,11) pos=0
+  ArrowFunction [1,10) pos=1
+    Parameter [2,4) pos=2 ?@3
+      Identifier [2,3) pos=2 "a"
+      QuestionToken [3,4) pos=3
+    EqualsGreaterThanToken [6,8) pos=5
+    FirstLiteralToken [9,10) pos=8
+ParenthesizedExpression [13,27) pos=12
+  ArrowFunction [14,26) pos=14
+    Parameter [15,20) pos=15 ?@16
+      Identifier [15,16) pos=15 "a"
+      QuestionToken [16,17) pos=16
+      TypeReference [19,20) pos=18
+        Identifier [19,20) pos=18 "T"
+    EqualsGreaterThanToken [22,24) pos=21
+    FirstLiteralToken [25,26) pos=24
+ParenthesizedExpression [29,44) pos=28
+  ArrowFunction [30,43) pos=30
+    Parameter [31,33) pos=31 ?@32
+      Identifier [31,32) pos=31 "a"
+      QuestionToken [32,33) pos=32
+    Parameter [35,37) pos=34 ?@36
+      Identifier [35,36) pos=34 "b"
+      QuestionToken [36,37) pos=36
+    EqualsGreaterThanToken [39,41) pos=38
+    FirstLiteralToken [42,43) pos=41
+ParenthesizedExpression [46,62) pos=45
+  ArrowFunction [47,61) pos=47
+    Parameter [48,55) pos=48 ?@51
+      ObjectBindingPattern [48,51) pos=48
+        BindingElement [49,50) pos=49
+          Identifier [49,50) pos=49 "a"
+      QuestionToken [51,52) pos=51
+      TypeReference [54,55) pos=53
+        Identifier [54,55) pos=53 "T"
+    EqualsGreaterThanToken [57,59) pos=56
+    FirstLiteralToken [60,61) pos=59
+=== t.ts :: "class A { @dec accessor x = 1; @dec static y; @dec private z }"
+ClassDeclaration [0,62) pos=0
+  Identifier [6,7) pos=5 "A"
+  PropertyDeclaration [10,30) pos=9 mods=Decorator@10-14,AccessorKeyword@15-23
+    Decorator [10,14) pos=9
+      Identifier [11,14) pos=11 "dec"
+    AccessorKeyword [15,23) pos=14
+    Identifier [24,25) pos=23 "x"
+    FirstLiteralToken [28,29) pos=27
+  PropertyDeclaration [31,45) pos=30 mods=Decorator@31-35,StaticKeyword@36-42
+    Decorator [31,35) pos=30
+      Identifier [32,35) pos=32 "dec"
+    StaticKeyword [36,42) pos=35
+    Identifier [43,44) pos=42 "y"
+  PropertyDeclaration [46,60) pos=45 mods=Decorator@46-50,PrivateKeyword@51-58
+    Decorator [46,50) pos=45
+      Identifier [47,50) pos=47 "dec"
+    PrivateKeyword [51,58) pos=50
+    Identifier [59,60) pos=58 "z"
+=== t.ts :: "class A { static {} static x; static async m() {} get p() { return 1 } set p(v) {} async *g() {} }"
+ClassDeclaration [0,98) pos=0
+  Identifier [6,7) pos=5 "A"
+  ClassStaticBlockDeclaration [10,19) pos=9
+    Block [17,19) pos=16
+  PropertyDeclaration [20,29) pos=19 mods=StaticKeyword@20-26
+    StaticKeyword [20,26) pos=19
+    Identifier [27,28) pos=26 "x"
+  MethodDeclaration [30,49) pos=29 mods=StaticKeyword@30-36,AsyncKeyword@37-42
+    StaticKeyword [30,36) pos=29
+    AsyncKeyword [37,42) pos=36
+    Identifier [43,44) pos=42 "m"
+    Block [47,49) pos=46
+  GetAccessor [50,70) pos=49
+    Identifier [54,55) pos=53 "p"
+    Block [58,70) pos=57
+      ReturnStatement [60,68) pos=59
+        FirstLiteralToken [67,68) pos=66
+  SetAccessor [71,82) pos=70
+    Identifier [75,76) pos=74 "p"
+    Parameter [77,78) pos=77
+      Identifier [77,78) pos=77 "v"
+    Block [80,82) pos=79
+  MethodDeclaration [83,96) pos=82 mods=AsyncKeyword@83-88
+    AsyncKeyword [83,88) pos=82
+    AsteriskToken [89,90) pos=88
+    Identifier [90,91) pos=90 "g"
+    Block [94,96) pos=93
+=== t.ts :: "class A { [k: string]: T; static [k: string]: T; readonly [k: number]: U }"
+ClassDeclaration [0,74) pos=0
+  Identifier [6,7) pos=5 "A"
+  IndexSignature [10,25) pos=9
+    Parameter [11,20) pos=11
+      Identifier [11,12) pos=11 "k"
+      StringKeyword [14,20) pos=13
+    TypeReference [23,24) pos=22
+      Identifier [23,24) pos=22 "T"
+  IndexSignature [26,48) pos=25 mods=StaticKeyword@26-32
+    StaticKeyword [26,32) pos=25
+    Parameter [34,43) pos=34
+      Identifier [34,35) pos=34 "k"
+      StringKeyword [37,43) pos=36
+    TypeReference [46,47) pos=45
+      Identifier [46,47) pos=45 "T"
+  IndexSignature [49,72) pos=48 mods=ReadonlyKeyword@49-57
+    ReadonlyKeyword [49,57) pos=48
+    Parameter [59,68) pos=59
+      Identifier [59,60) pos=59 "k"
+      NumberKeyword [62,68) pos=61
+    TypeReference [71,72) pos=70
+      Identifier [71,72) pos=70 "U"
+=== t.ts :: "class A { m(): void; m(a: T): void; m(a?: T) {} }"
+ClassDeclaration [0,49) pos=0
+  Identifier [6,7) pos=5 "A"
+  MethodDeclaration [10,20) pos=9
+    Identifier [10,11) pos=9 "m"
+    VoidKeyword [15,19) pos=14
+  MethodDeclaration [21,35) pos=20
+    Identifier [21,22) pos=20 "m"
+    Parameter [23,27) pos=23
+      Identifier [23,24) pos=23 "a"
+      TypeReference [26,27) pos=25
+        Identifier [26,27) pos=25 "T"
+    VoidKeyword [30,34) pos=29
+  MethodDeclaration [36,47) pos=35
+    Identifier [36,37) pos=35 "m"
+    Parameter [38,43) pos=38 ?@39
+      Identifier [38,39) pos=38 "a"
+      QuestionToken [39,40) pos=39
+      TypeReference [42,43) pos=41
+        Identifier [42,43) pos=41 "T"
+    Block [45,47) pos=44

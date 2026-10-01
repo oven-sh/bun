@@ -1,0 +1,1984 @@
+bun test v1.4.3-canary.1 (367d939d9)
+
+test/bundler/transpiler/typescript-grammar.test.ts:
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: if;" [0.40ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected class
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: class;" [0.10ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected function
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: function;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected in
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: in;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: extends;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected super
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: super;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected delete
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: delete;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: if.x;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: class<T>;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: | if;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: A | if;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected class
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: A & class;" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: keyof if;" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: (if);" [3.12ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: (class);" [0.10ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: `${if}`;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: tsx "let x: if;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected "const"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = [...const: A[]];" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected in
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = [...in: A[]];" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected class
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = [...class: A[]];" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = [...if: A[]];" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: typeof import(\"x\")<C>;" [0.08ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = typeof import(\"x\")<C>;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: import(\"x\")<T>;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = import(\"x\")<T>;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: import(\"x\", { with: { a: \"b\" } })<T>;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected +
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected +
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = import(\"x\", { with: { a: \"b\" + \"c\" } });" [0.08ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "let x: import(\"x\").A.<T>;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = import(\"x\").A.<T>;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found "B"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "type X = (a) => asserts a\nis B;" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "const f = (a): (a) => asserts a\nis B => 0;" [0.07ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "const f = (a): asserts a\nis B => 0;" [0.06ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "const f = (a): asserts this\nis B => 0;" [0.05ms]
+ 99 |     ["ts", "const f = (a): (a) => asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+100 |     ["ts", "const f = (a): asserts a\nis B => 0;", "const f = (a) => 0;\n"],
+101 |     ["ts", "const f = (a): asserts this\nis B => 0;", "const f = (a) => 0;\n"],
+102 |     ["ts", "function f(): asserts this\nis B { throw 0 }", "function f() {\n  throw 0;\n}\n"],
+103 |   ])("type forms: %s %j", (transpiler, source, expected) => {
+104 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found "B"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:104:36)
+(fail) TypeScript that tsc parses > type forms: ts "function f(): asserts this\nis B { throw 0 }" [0.06ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "type as = 1" [0.15ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "declare type as = 1" [0.07ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "type satisfies = 1" [0.06ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found end of file
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "interface as {}" [0.05ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found end of file
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "export interface as {}" [0.05ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found end of file
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "interface satisfies {}" [0.05ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "type X = { a(b = 1): A };" [0.05ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "let x: { a(b = 1): A };" [0.09ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "interface I { (a = 1): A }" [0.07ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "type X = { a(public b: B): A };" [0.06ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "interface I extends a() {}" [0.06ms]
+119 |     ["ts", "type X = { a(public b: B): A };", ""],
+120 |     // An interface extends an expression.
+121 |     ["ts", "interface I extends a() {}", ""],
+122 |     ["ts", "interface I extends a.b() {}", ""],
+123 |   ])("object types: %s %j", (transpiler, source, expected) => {
+124 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:124:36)
+(fail) TypeScript that tsc parses > object types: ts "interface I extends a.b() {}" [0.05ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let g: (a = 1) => void;" [0.12ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let x: ({ a = 1 }) => void;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let x: (public a: A) => void;" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "let g: (a = 1) => void;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let x: ([a, , b]) => void;" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "type X = ([a, , b]) => void;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let x: new ([a, , b]) => A;" [0.08ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Backtrack
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "type X = { ([a, , b]): void };" [0.05ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Backtrack
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "type X = { new ([a, , b]): A };" [3.10ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "let x: A<(a = 1) => void>;" [0.11ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "type X = A<([a, , b]) => void>;" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "class C extends B<(a = 1) => void> {}" [0.08ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "function f(public a: A) {}" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ")" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "declare class C { m(...a,): void; }" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ")" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "declare class C { constructor(...a,); }" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ")" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "declare class C { m(...a: A[],): void; }" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ")" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "declare class C { constructor(...a: A[],); }" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "function f<out>() {}" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = function <out>() {};" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "function f<out = A>() {}" [0.05ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = function <out = A>() {};" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "function f<const out>() {}" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = function <const out>() {};" [0.09ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = <out>(a): T => a;" [0.07ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = <out>(a: T) => a;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = <out = A>(a): T => a;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = <out = A>(a: T) => a;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: ts "const f = <const out>(a): T => a;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "const f = function g<out>() {};" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "async function f<out>() {}" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "const f = function g<out = A>() {};" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "async function f<const out>() {}" [0.05ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "const f = <out = A>() => 0;" [0.06ms]
+164 |     ["tsx", "const f = function g<out = A>() {};", "const f = function g() {};\n"],
+165 |     ["tsx", "async function f<const out>() {}", "async function f() {}\n"],
+166 |     ["tsx", "const f = <out = A>() => 0;", "const f = () => 0;\n"],
+167 |     ["tsx", "const f = async <out = A>() => 0;", "const f = async () => 0;\n"],
+168 |   ])("signatures, type parameters and type arguments: %s %j", (transpiler, source, expected) => {
+169 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:169:36)
+(fail) TypeScript that tsc parses > signatures, type parameters and type arguments: tsx "const f = async <out = A>() => 0;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <out>x;" [0.13ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "<out>x;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <out>(x);" [0.09ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <in>x;" [0.08ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <in>(x);" [0.07ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <if>x;" [0.05ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <class>x;" [0.08ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected enum
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <enum>x;" [0.05ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <out>(x) => x;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <out, T>(x) => x;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = <out = A>(x) => x;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "f(<out, T>(x) => x);" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: The modifier "out" is not valid here
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "f(<out = A>(x) => x);" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = x as if;" [0.08ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected var
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = x as var;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = x satisfies if;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected "=>" but found ":"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = (): if => x;" [0.05ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected if
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "x as if;" [3.12ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected var
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "x as var;" [0.08ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = x as T <= y;" [0.07ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x as T <= y;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "const v = x satisfies T <= y;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "f(x as T <= y);" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "const v = [x as T <= y];" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected :
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? 1 + async(b) : c;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected :
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? -<T>(b) : c;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? <T>(b) : c => d;" [0.07ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? y => (b) : c => d;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? (y) => (b) : c => d;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: ts "x = a ? <T>(y: T) => (b) : c => d;" [0.06ms]
+205 |     ["ts", "x = a ? y => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+206 |     ["ts", "x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+207 |     ["ts", "x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+208 |     ["tsx", "x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+209 |   ])("expressions: %s %j", (transpiler, source, expected) => {
+210 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:210:36)
+(fail) TypeScript that tsc parses > expressions: tsx "x = a ? y => ({ y }) : z => ({ z });" [0.12ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "class C { [k: string]: T, }" [0.15ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "abstract class C extends B { [k: string]: T, }" [0.07ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "const c = class { [k: string]: T, };" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found ","
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "declare class C { [k: string]: T, }" [0.05ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "class C { m(public a: A) {} }" [0.07ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: ts "class C implements a() {}" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "class C { accessor x: T; }" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "class C { static accessor x = 1; }" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "class C { accessor #x: T; }" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "class C { static accessor #x = 1; }" [0.07ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "abstract class C extends B { abstract accessor x: T; }" [0.06ms]
+226 |     ["decorators", "class C { accessor #x: T; }", "class C {\n  #x;\n}\n"],
+227 |     ["decorators", "class C { static accessor #x = 1; }", "class C {\n  static #x = 1;\n}\n"],
+228 |     ["decorators", "abstract class C extends B { abstract accessor x: T; }", "class C extends B {\n}\n"],
+229 |     ["decorators", "declare class C { accessor x: T; }", ""],
+230 |   ])("class members: %s %j", (transpiler, source, expected) => {
+231 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:231:36)
+(fail) TypeScript that tsc parses > class members: decorators "declare class C { accessor x: T; }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "import A from \"x\"\nwith { type: \"json\" };" [0.15ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "("
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace N { import(\"x\"); }" [0.08ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "."
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace N { import.meta; }" [0.07ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found "declare"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "abstract declare class C {}" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected ";" but found "declare"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "export abstract declare class C {}" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "["
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "enum E { [\"x\"] }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "["
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "enum E { [\"x\"] = 1 }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "["
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "enum E { ['x'] = 1, B = E.x }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Expected identifier but found "["
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "enum E { [`x`] = 1 }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                                                ^
+error: expect(received).toBe(expected)
+
+- ""
++ "namespace;
++ "
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:59)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace as {}" [0.20ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected "namespace"
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "declare namespace as {}" [0.07ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace as { export const x = 1; }" [0.06ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+AggregateError: Parse error
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace as.b { export const x = 1; }" [0.07ms]
+262 |       "ts",
+263 |       "namespace satisfies { export const x = 1; }",
+264 |       "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+265 |     ],
+266 |   ])("module syntax: %s %j", (transpiler, source, expected) => {
+267 |     expect(transpilers[transpiler].transformSync(source)).toBe(expected);
+                                         ^
+BuildMessage: Unexpected =
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:267:36)
+(fail) TypeScript that tsc parses > module syntax: ts "namespace satisfies { export const x = 1; }" [3.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "Number"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: number | A extends B ? string : never; }" passes design:type [0.54ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: K & A extends B ? string : never; }" passes design:type [0.15ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Array"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: K | A extends B ? string[] : number[]; }" passes design:type [0.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Function"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: string | A extends B ? () => void : () => void; }" passes design:type [0.13ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof K === "undefined" ? Object : K"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: K | A extends B ? null : K; }" passes design:type [0.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "[String]"
+Received: "[Object]"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(a: number | A extends B ? string : string) {} }" passes design:paramtypes [0.17ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): string & A extends B ? never : string { throw 0 } }" passes design:returntype [0.16ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: keyof A extends B ? string : never; }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Array"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: readonly A[] extends B ? string : number; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: unique symbol extends B ? string : never; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "[Function]"
+Received: "[Object]"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(a: keyof A extends B ? () => void : () => void) {} }" passes design:paramtypes [0.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Array"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): readonly A[] extends B ? unknown : string { throw 0 } }" passes design:returntype [0.14ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Number"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: A extends B ? string : never | number; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: A extends B ? unknown : string & string; }" passes design:type [0.09ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "typeof any === "undefined" || typeof any.b === "undefined" ? Object : any.b"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: any.b; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "typeof string === "undefined" || typeof string.b === "undefined" ? Object : string.b"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: string.b; }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "typeof bigint === "undefined" || typeof bigint.b === "undefined" ? Object : bigint.b"
+Received: "typeof BigInt === "undefined" ? Object : BigInt"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: bigint.b<T>; }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: undefined.b; }" passes design:type [0.09ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "[typeof never === "undefined" || typeof never.b === "undefined" ? Object : never.b]"
+Received: "[undefined]"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(a: never.b) {} }" passes design:paramtypes [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Array"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: unique symbol[]; }" passes design:type [0.09ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Array"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: unique [A]; }" passes design:type [3.16ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Number"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: X extends Y ? number : never; }" passes design:type [0.13ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof K === "undefined" ? Object : K"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: X extends Y ? K : K; }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof A === "undefined" ? Object : A"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: X extends Y ? A : (A | null); }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: (X extends Y ? string : unknown); }" passes design:type [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "String"
+Received: "undefined"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: X extends infer U extends V ? string : never; }" passes design:type [0.09ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: string | (never | never); }" passes design:type [0.09ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: (null | undefined) | string; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof C === "undefined" || typeof C.D === "undefined" ? Object : C.D"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: A.B | C.D; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "[Object]"
+Received: "[typeof A === "undefined" || typeof A.C === "undefined" ? Object : A.C]"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(a: A.B & A.C) {} }" passes design:paramtypes [0.14ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof A === "undefined" ? Object : A"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: A | unique symbol; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof A === "undefined" ? Object : A"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: import(\"x\") | A; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "Array"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: import(\"x\")[\"y\"]; }" passes design:type [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Boolean"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d p: this is B; }" passes design:type [0.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Boolean"
+Received: "typeof a === "undefined" ? Object : a"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): a is B { throw 0 } }" passes design:returntype [0.12ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Boolean"
+Received: "typeof a === "undefined" ? Object : a"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): a is B | C { throw 0 } }" passes design:returntype [0.10ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Boolean"
+Received: "String"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): string is B { throw 0 } }" passes design:returntype [0.11ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "undefined"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): asserts a { throw 0 } }" passes design:returntype [0.24ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "undefined"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): asserts a is B { throw 0 } }" passes design:returntype [0.19ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "undefined"
+Received: "Object"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): asserts this is B { throw 0 } }" passes design:returntype [0.15ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof B === "undefined" ? Object : B"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): asserts a | B { throw 0 } }" passes design:returntype [0.13ms]
+331 |     ["class C { @d m(): asserts a is B { throw 0 } }", "returntype", "undefined"],
+332 |     ["class C { @d m(): asserts this is B { throw 0 } }", "returntype", "undefined"],
+333 |     ["class C { @d m(): asserts a | B { throw 0 } }", "returntype", "Object"],
+334 |     ["class C { @d m(): A | asserts a { throw 0 } }", "returntype", "Object"],
+335 |   ])("decorator metadata: %j passes design:%s", (source, key, expected) => {
+336 |     expect(design(transpilers.decorators.transformSync(source), key)).toBe(expected);
+                                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "Object"
+Received: "typeof A === "undefined" ? Object : A"
+
+      at <anonymous> (/workspace/wt/parser/test/bundler/transpiler/typescript-grammar.test.ts:336:71)
+(fail) TypeScript that tsc parses > decorator metadata: "class C { @d m(): A | asserts a { throw 0 } }" passes design:returntype [0.11ms]
+
+ 0 pass
+ 180 fail
+ 43 expect() calls
+Ran 180 tests across 1 file. [1029.00ms]

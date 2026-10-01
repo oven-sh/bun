@@ -1,0 +1,16 @@
+{
+  "stage": "stage1",
+  "bun": "1.4.3 e3566be889995ffff8b08823b9233617f979c889",
+  "execPath": "/workspace/notes/lint/units/parser/measure/base/bin/bun",
+  "execSha256": "62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552",
+  "typescript": "6.0.2",
+  "corpus": "/tmp/ledger-bu/run/corpus.jsonl",
+  "rows": 331132,
+  "corpusSha256": "48a486502828091add24112ba838ff183884feea3348c28b61c5ff4b4f16136a",
+  "jobs": 6,
+  "started": "2026-09-30T01:27:16.084Z",
+  "tsgo": "/tmp/rr/parsediag-bu",
+  "tsgoSha256": "f1958dcd55b7dcd83f7261ff308f6bd9bae832ed1ae2e54d77aa3a1953bfac5f",
+  "crashes": 2,
+  "ms": 93565
+}

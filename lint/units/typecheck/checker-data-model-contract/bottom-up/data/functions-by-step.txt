@@ -1,0 +1,39 @@
+ 1 data model                         153 functions
+ 2 utilities                          150 functions
+ 3 type keys, object types             57 functions
+ 4 resolution stack                     5 functions
+ 5 init and globals                    71 functions
+ 6 symbol merging                      26 functions
+ 7 name resolution                     18 functions
+ 8 aliases and modules                 77 functions
+ 9 literal, union, intersection       106 functions
+10 tuples                              44 functions
+11 declared types                      29 functions
+12 type nodes to types                 43 functions
+13 constraints                         34 functions
+14 base types                          18 functions
+15 members                             62 functions
+16 lookup                              30 functions
+17 apparent types                       0 functions
+18 signatures                          76 functions
+19 instantiation                       26 functions
+20 types of symbols                    61 functions
+21 widening                            13 functions
+22 type printer                       258 functions
+23 relations                          149 functions
+24 elaboration                         11 functions
+25 expressions to contextual          421 functions
+26 flow, reachability                 139 functions
+27 keyof to template                   95 functions
+28 iteration, async                    46 functions
+29 JSX                                 59 functions
+30 decorators                          29 functions
+31 declaration checks                 184 functions
+32 unused, unreachable                 21 functions
+33 grammar                             76 functions
+ 0 binder                             182 functions
+99 out of scope                     291 functions
+unplaced: 0
+pull-forwards without a caller at or before their step: 0 []
+settled layer differs from the rule: 0
+PORT_STATUS rows: 235

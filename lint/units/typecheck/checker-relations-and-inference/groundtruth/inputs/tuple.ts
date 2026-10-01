@@ -1,0 +1,11 @@
+declare let t1: [number, string];
+declare let t2: [number];
+declare let t3: [number, string, boolean];
+declare let t4: readonly [number, string];
+declare let t5: [number, ...string[]];
+declare let a1: number[];
+declare let ra: readonly number[];
+t1 = t2; t1 = t3; t1 = t4; t1 = t5; t5 = t1; t1 = a1; a1 = t1; a1 = ra;
+declare let t6: [a: string, b: number]; declare let t7: [a: number, b: string];
+t6 = t7;
+declare let t8: [number, string?]; t1 = t8; t8 = t1;

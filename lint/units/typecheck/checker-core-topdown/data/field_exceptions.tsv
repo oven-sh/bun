@@ -1,0 +1,39 @@
+line	field	Go type	port
+586	id	uint32	u32, always 1: nextCheckerID (583) has no port
+587	program	Program	&'a dyn Program (rust/program.rs)
+589	files	[]*ast.SourceFile	List<'a, NodeId>: the SourceFile nodes in program order
+590	fileIndexMap	map[*ast.SourceFile]int	Map<NodeId, isize>
+591	compareSymbols	func	no field: method compare_symbols calls compare_symbols_worker
+592	compareSymbolChains	func	no field: method compare_symbol_chains calls compare_symbol_chains_worker
+621	arrayVariances	[]VarianceFlags	List<'a, VarianceFlags>, made as [Covariant]
+623	evaluate	evaluator.Evaluator	no field: method evaluate runs the evaluator with evaluate_entity as host and OEKParentheses
+625	numberLiteralTypes	map[jsnum.Number]*Type	Map<u64, TypeId>: key is the bit pattern, -0 is stored as +0, NaN never reaches the map (nanType)
+628	enumLiteralTypes	map[EnumLiteralKey]*Type	key (SymbolId, LiteralValue as String or Number with the same number rule)
+660	resolveName	func	no field: method resolve_name runs NameResolver::resolve with the host of createNameResolver
+661	resolveNameForSymbolSuggestion	func	no field: method resolve_name_for_symbol_suggestion, host of createNameResolverForSuggestion
+667-668	diagnostics, suggestionDiagnostics	ast.DiagnosticsCollection	DiagnosticsCollection over one DiagnosticStore (diagnostics-scratch/crate/ast/diagnostic.rs)
+669	symbolArena	core.Arena[ast.Symbol]	symbols: Overlay<'a, SymbolId, Symbol<'a>> over the bound symbols, plus symbol_tables: Overlay<'a, SymbolTableId, SymbolTable<'a>>
+670	signatureArena	core.Arena[Signature]	signatures: Arena<SignatureId, Signature<'a>>
+671	indexInfoArena	core.Arena[IndexInfo]	index_infos: Arena<IndexInfoId, IndexInfo<'a>>
+673	factory	ast.NodeFactory	nodes: Overlay<'a, NodeId, Node>: synthetic nodes get ids above the bound ones
+676	symbolNodeLinks	nodeLinkStore[SymbolNodeLinks]	LinkStore<NodeId, SymbolNodeLinks>: the paged store is an allocation detail
+685	valueSymbolLinks	symbolArenaLinkStore[ValueSymbolLinks]	LinkStore<u64, ValueSymbolLinks> keyed by get_symbol_id: Get, Has and TryGet all assign the lazy id
+700	sourceFileLinks	core.LinkStore[*ast.SourceFile, ...]	LinkStore<NodeId, SourceFileLinks>
+701	regExpScanner	*scanner.Scanner	Option<Scanner>, made on first use by the regular expression layer
+763	noTypePredicate	*TypePredicate	TypePredicateId: first record of type_predicates
+769-770	enumNumberIndexInfo, anyBaseTypeIndexInfo	*IndexInfo	IndexInfoId: first two records of index_infos, upstream compares them by pointer
+771	patternAmbientModules	[]*ast.PatternAmbientModule	Vec<PatternAmbientModuleId or copy>, appended per file in initializeChecker
+796	apparentArgumentCount	*int	Option<isize>
+801-802,821	freeinferenceState, freeFlowState, freeRelater	pointers	free lists: added by their layers, a pool is not needed for parity
+822-826	subtypeRelation .. identityRelation	*Relation	relations: [Relation; 5] and enum RelationKind, upstream compares the pointers
+828-878	getGlobal...	func() *Type or *ast.Symbol	Memo<TypeId> or Memo<SymbolId> plus one method each: name, arity and reportErrors are the arguments of 1068-1117
+874	getGlobalClassAccessorDecoratorContxtType	func() *Type	no port: never assigned and never read upstream
+879-880	syncIterationTypesResolver, asyncIterationTypesResolver	*IterationTypesResolver	enum IterationTypesResolverKind {Sync, Async}: methods switch on it, the two builtin iterator lists are Memo<List<TypeId>>
+881-886	isPrimitiveOrObjectOrEmptyType .. compareTypesAssignable	func	no fields: methods, passed as `Checker::name` where upstream passes the field
+887-888	emitResolver, emitResolverOnce	emit	out of scope of the unit (declaration emit)
+892	ctx	context.Context	Option<&'a CancelToken>: is_canceled is false when it is None
+896-897	ambientModulesOnce, ambientModules	sync.Once, []*ast.Symbol	Memo<List<'a, SymbolId>>
+901	deferredDiagnosticCallbacks	[]func()	Vec<Box<dyn FnOnce(&mut Checker<'a>) + 'a>>
+902	typeToStringNodebuilder	*NodeBuilder	added by the printer layer
+904	mu	sync.Mutex	no port: one checker, NewChecker returns the checker alone
+905	tracer	*Tracer	no port: see tracer sites

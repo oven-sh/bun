@@ -1,0 +1,93 @@
+# composite types as the type of a decorated field
+() => void
+(a: number) => void
+(a = 1) => void
+(public a: number) => void
+({a}: {a: number}) => void
+([a, , b]) => void
+({[k]: a}) => void
+(...a: number[]) => void
+(this: A) => void
+<T>(a: T) => void
+<in T>(a: T) => void
+<>() => void
+new () => A
+new (a = 1) => A
+abstract new () => A
+new <T>() => A
+(() => void)
+((a: number) => void)
+(A)
+(A | B)
+(string)
+(string | number)
+(() => void) | null
+(() => void) | undefined
+(() => void) | (() => void)
+(() => void) | A
+(new () => A) | null
+(() => void)[]
+(A)[]
+(A | B)[]
+[]
+[A]
+[A, B]
+[a: A]
+[a: A, b: B]
+[a?: A]
+[a: A?]
+[...a: A[]]
+[A?]
+[...A[]]
+readonly [A]
+[A] | null
+[A] | undefined
+[A][]
+[A][0]
+[a: A][number]
+{}
+{ a: number }
+{ a?: number }
+{ readonly a: number }
+{ a(): void }
+{ (): void }
+{ new (): A }
+{ get a(): number }
+{ set a(v: number) }
+{ get a() {} }
+{ [k: string]: number }
+{ [k]: number }
+{ ["a" + "b"]: number }
+{ [K in string]: number }
+{ readonly [K in string]?: number }
+{ -readonly [K in string]-?: number }
+{ [K in string as K]: number }
+{ a: number = 1 }
+{ 1n: number }
+{} | null
+{ a: number } | undefined
+{ a: number }[]
+{ a: number }["a"]
+{ [K in string]: number } | null
+{ [K in string]: number }["a"]
+A<B>
+A<B,>
+A<>
+A<B>[]
+A<B> | null
+A<() => void>
+A<(a = 1) => void>
+A<[B]>
+A<{ b: B }>
+Array<A>
+Promise<A>
+import("x")
+import("x").A
+import("x").A<B>
+import("x")<B>
+typeof import("x")
+typeof import("x").A
+typeof A
+typeof A<B>
+typeof A.b
+typeof A | null

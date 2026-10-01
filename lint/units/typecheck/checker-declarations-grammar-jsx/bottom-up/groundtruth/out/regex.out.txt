@@ -1,0 +1,10 @@
+PARSE regex.ts parse=[] js=[] bind=[]
+regex.ts(1,23)+1: error TS1532: There is no capturing group named 'b' in this regular expression.
+regex.ts(3,14)+3: error TS1517: Range out of order in character class.
+regex.ts(4,16)+3: error TS1529: Unknown Unicode property name or value.
+regex.ts(5,23)+1: error TS1515: Named capturing groups with the same name must be mutually exclusive to each other.
+regex.ts(6,16)+1: error TS1500: Duplicate regular expression flag.
+SUGGEST regex.ts(7,13)+16: suggestion TS80008: Numeric literals with absolute values equal to 2^53 or greater are too large to be represented accurately as integers.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=16 Options=1 SourceFiles=1
+COUNTS TypeCount=89 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

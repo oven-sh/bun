@@ -1,0 +1,578 @@
+A2  "var o = { m?() {} };"
+     bun: Expected "}" but found "?" @11 | Expected ";" but found "{" @15 | Unexpected } @16
+     tsc check: TS1162@11+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var o = { m?(): void {} };"
+     bun: Expected "}" but found "?" @11 | Expected ";" but found ":" @14 | Unexpected } @24
+     tsc check: TS1162@11+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var o = { a?: 1 };"
+     bun: Expected "}" but found "?" @11 | Expected ";" but found ":" @12 | Unexpected } @16
+     tsc check: TS1162@11+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { a? };"
+     bun: Expected "}" but found "?" @11 | Unexpected } @13
+     tsc check: TS18004@10+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer. ; TS1162@11+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { a };\n"
+A2  "var o = { a?, b };"
+     bun: Expected "}" but found "?" @11 | Unexpected } @16
+     tsc check: TS18004@10+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer. ; TS1162@11+1 An object member cannot be declared optional. ; TS18004@14+1 No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer.
+     tsc emit: "\"use strict\";\nvar o = { a, b };\n"
+A2  "var o = { a! };"
+     bun: Expected "}" but found "!" @11 | Unexpected } @13
+     tsc check: TS18004@10+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer. ; TS1255@11+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\nvar o = { a };\n"
+A2  "var o = { a!: 1 };"
+     bun: Expected "}" but found "!" @11 | Expected ";" but found ":" @12 | Unexpected } @16
+     tsc check: TS1255@11+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { m!() {} };"
+     bun: Expected "}" but found "!" @11 | Expected ";" but found "{" @15 | Unexpected } @16
+     tsc check: TS1255@11+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+RR  "var o = { get a?() { return 1 } };"
+     bun: Expected "(" but found "?" @15 | Expected identifier but found "(" @16 | Getter a must have zero arguments @16
+     tsc parse: TS1005@15+1 '(' expected. ; TS1136@16+1 Property assignment expected. ; TS1005@19+1 ',' expected. ; TS1005@28+1 ':' expected. ; TS1005@30+1 ':' expected. ; TS1128@32+1 Declaration or statement expected.
+A2  "var o = { async m?() {} };"
+     bun: Expected "(" but found "?" @17 | Expected identifier but found "(" @18
+     tsc check: TS2697@16+1 An async function or method must return a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; TS1162@17+1 An object member cannot be declared optional. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar o = { async m() { } };\n"
+A2  "var o = { *m?() {} };"
+     bun: Expected "(" but found "?" @12 | Expected identifier but found "(" @13
+     tsc check: TS1162@12+1 An object member cannot be declared optional. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar o = { *m() { } };\n"
+A2  "var o = { \"a\"?: 1 };"
+     bun: Expected ":" but found "?" @13 | Unexpected : @14
+     tsc check: TS1162@13+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { \"a\": 1 };\n"
+A2  "var o = { 1?: 1 };"
+     bun: Expected ":" but found "?" @11 | Unexpected : @12
+     tsc check: TS1162@11+1 An object member cannot be declared optional.
+     tsc emit: "\"use strict\";\nvar o = { 1: 1 };\n"
+A2  "var o = { [a]?: 1 };"
+     bun: Expected ":" but found "?" @13 | Unexpected : @14
+     tsc check: TS1162@13+1 An object member cannot be declared optional. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar o = { [a]: 1 };\n"
+A2  "var o = { [a]?() {} };"
+     bun: Expected ":" but found "?" @13 | Expected "=>" but found "{" @17
+     tsc check: TS1162@13+1 An object member cannot be declared optional. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar o = { [a]() { } };\n"
+AA  "var o = { m<T>() {} };"
+     bun: ok "var o = { m() {} };\n"
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+RR  "var o = { m<T>?() {} };"
+     bun: Expected ":" but found "?" @14 | Expected "=>" but found "{" @18
+     tsc parse: TS1005@14+1 '(' expected. ; TS1136@15+1 Property assignment expected. ; TS1005@18+1 ',' expected. ; TS1128@21+1 Declaration or statement expected.
+A2  "var o = { public a: 1 };"
+     bun: Expected "}" but found "a" @17 | Expected ";" but found ":" @18 | Unexpected } @22
+     tsc check: TS1042@10+6 'public' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { public m() {} };"
+     bun: Expected "}" but found "m" @17 | Expected ";" but found "{" @21 | Unexpected } @22
+     tsc check: TS1042@10+6 'public' modifier cannot be used here. ; TS1184@10+6 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var o = { private a: 1 };"
+     bun: Expected "}" but found "a" @18 | Expected ";" but found ":" @19 | Unexpected } @23
+     tsc check: TS1042@10+7 'private' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { readonly a: 1 };"
+     bun: Expected "}" but found "a" @19 | Expected ";" but found ":" @20 | Unexpected } @24
+     tsc check: TS1042@10+8 'readonly' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { static a: 1 };"
+     bun: Expected "}" but found "a" @17 | Expected ";" but found ":" @18 | Unexpected } @22
+     tsc check: TS1042@10+6 'static' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { static m() {} };"
+     bun: Expected "}" but found "m" @17 | Expected ";" but found "{" @21 | Unexpected } @22
+     tsc check: TS1042@10+6 'static' modifier cannot be used here. ; TS1184@10+6 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\nvar o = { static m() { } };\n"
+A2  "var o = { declare a: 1 };"
+     bun: Expected "}" but found "a" @18 | Expected ";" but found ":" @19 | Unexpected } @23
+     tsc check: TS1042@10+7 'declare' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { abstract a: 1 };"
+     bun: Expected "}" but found "a" @19 | Expected ";" but found ":" @20 | Unexpected } @24
+     tsc check: TS1042@10+8 'abstract' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { abstract m() {} };"
+     bun: Expected "}" but found "m" @19 | Expected ";" but found "{" @23 | Unexpected } @24
+     tsc check: TS1042@10+8 'abstract' modifier cannot be used here. ; TS1244@10+8 Abstract methods can only appear within an abstract class.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var o = { override m() {} };"
+     bun: Expected "}" but found "m" @19 | Expected ";" but found "{" @23 | Unexpected } @24
+     tsc check: TS1042@10+8 'override' modifier cannot be used here. ; TS1184@10+8 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var o = { accessor a: 1 };"
+     bun: Expected "}" but found "a" @19 | Expected ";" but found ":" @20 | Unexpected } @24
+     tsc check: TS1042@10+8 'accessor' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { export a: 1 };"
+     bun: Expected ":" but found "a" @17 | Unexpected : @18
+     tsc check: TS1042@10+6 'export' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { async a: 1 };"
+     bun: Expected "(" but found ":" @17 | Expected identifier but found "1" @19 | Expected ")" but found "}" @21 | Expected "{" but found ";" @22 | Unexpected end of file @23
+     tsc check: TS1042@10+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+RR  "var o = { const a: 1 };"
+     bun: Expected ":" but found "a" @16 | Unexpected : @17
+     tsc parse: TS1005@16+1 ':' expected. ; TS1005@17+1 ',' expected. ; TS1005@21+1 ':' expected.
+RR  "var o = { default a: 1 };"
+     bun: Expected ":" but found "a" @18 | Unexpected : @19
+     tsc parse: TS1005@18+1 ':' expected. ; TS1005@19+1 ',' expected. ; TS1005@23+1 ':' expected.
+A2  "var o = { in a: 1 };"
+     bun: Expected ":" but found "a" @13 | Unexpected : @14
+     tsc check: TS1042@10+2 'in' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { out a: 1 };"
+     bun: Expected "}" but found "a" @14 | Expected ";" but found ":" @15 | Unexpected } @19
+     tsc check: TS1042@10+3 'out' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { a: 1 };\n"
+A2  "var o = { public get a() { return 1 } };"
+     bun: Expected "}" but found "get" @17 | Expected ";" but found "a" @21 | Expected "=>" but found "{" @25
+     tsc check: TS1042@10+6 'public' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nvar o = { get a() { return 1; } };\n"
+A2  "var o = { public async m() {} };"
+     bun: Expected "}" but found "async" @17 | Expected ";" but found "m" @23 | Expected "=>" but found "{" @27
+     tsc check: TS1042@10+6 'public' modifier cannot be used here. ; TS1184@10+6 Modifiers cannot appear here. ; TS2697@23+1 An async function or method must return a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar o = { async m() { } };\n"
+A2  "var o = { public *m() {} };"
+     bun: Expected "}" but found "*" @17 | Expected ";" but found "m" @18 | Expected "=>" but found "{" @22
+     tsc check: TS1042@10+6 'public' modifier cannot be used here. ; TS1184@10+6 Modifiers cannot appear here. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar o = { *m() { } };\n"
+A2  "var o = { public a };"
+     bun: Expected "}" but found "a" @17 | Unexpected } @19
+     tsc check: TS1042@10+6 'public' modifier cannot be used here. ; TS18004@17+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+     tsc emit: "\"use strict\";\nvar o = { a };\n"
+AAg "var o = { public };"
+     bun: ok "var o = { public };\n"
+     tsc check: TS1212@10+6 Identifier expected. 'public' is a reserved word in strict mode. ; TS18004@10+6 No value exists in scope for the shorthand property 'public'. Either declare one or provide an initializer.
+     tsc emit: "\"use strict\";\nvar o = { public };\n"
+AAg "var o = { public, b };"
+     bun: ok "var o = { public, b };\n"
+     tsc check: TS1212@10+6 Identifier expected. 'public' is a reserved word in strict mode. ; TS18004@10+6 No value exists in scope for the shorthand property 'public'. Either declare one or provide an initializer. ; TS18004@18+1 No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer.
+     tsc emit: "\"use strict\";\nvar o = { public, b };\n"
+AA  "var o = { public: 1 };"
+     bun: ok "var o = { public: 1 };\n"
+     tsc emit: "\"use strict\";\nvar o = { public: 1 };\n"
+AA  "var o = { public() {} };"
+     bun: ok "var o = { public() {} };\n"
+     tsc emit: "\"use strict\";\nvar o = { public() { } };\n"
+AAg "var o = { readonly };"
+     bun: ok "var o = { readonly };\n"
+     tsc check: TS18004@10+8 No value exists in scope for the shorthand property 'readonly'. Either declare one or provide an initializer.
+     tsc emit: "\"use strict\";\nvar o = { readonly };\n"
+A2  "var o = { m(); };"
+     bun: Expected "{" but found ";" @13 | Expected "}" but found ";" @16
+     tsc check: TS1005@13+1 '{' expected.
+     tsc emit: "\"use strict\";\nvar o = {};\n"
+A2  "var o = { m(): void; };"
+     bun: Expected "{" but found ";" @19 | Expected "}" but found ";" @22
+     tsc check: TS1005@19+1 '{' expected.
+     tsc emit: "\"use strict\";\nvar o = {};\n"
+A2  "var o = { m() };"
+     bun: Expected "{" but found "}" @14 | Unexpected end of file @16
+     tsc check: TS1005@12+1 '{' expected.
+     tsc emit: "\"use strict\";\nvar o = {};\n"
+RR  "var o = { a: 1; b: 2 };"
+     bun: Expected "}" but found ";" @14 | Expected ";" but found "b" @16 | Unexpected : @17
+     tsc parse: TS1005@14+1 ',' expected.
+RR  "var o = { [k: string]: 1 };"
+     bun: Expected "]" but found ":" @12 | Expected ":" but found "string" @14 | Unexpected ] @20
+     tsc parse: TS1005@12+1 ']' expected. ; TS1005@20+1 ',' expected. ; TS1136@21+1 Property assignment expected. ; TS1005@25+1 ':' expected.
+A2  "var o = { a = 1 };"
+     bun: Unexpected "=" @12
+     tsc check: TS1312@12+1 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.
+     tsc emit: "\"use strict\";\nvar o = { a = 1 };\n"
+AA  "var o = { get a(): number { return 1 } };"
+     bun: ok "var o = { get a() {\n  return 1;\n} };\n"
+     tsc emit: "\"use strict\";\nvar o = { get a() { return 1; } };\n"
+AA  "var o = { set a(v: number) {} };"
+     bun: ok "var o = { set a(v) {} };\n"
+     tsc emit: "\"use strict\";\nvar o = { set a(v) { } };\n"
+AAg "var o = { set a(v?: number) {} };"
+     bun: ok "var o = { set a(v) {} };\n"
+     tsc check: TS1051@17+1 A 'set' accessor cannot have an optional parameter.
+     tsc emit: "\"use strict\";\nvar o = { set a(v) { } };\n"
+AAg "var o = { set a(v = 1) {} };"
+     bun: ok "var o = { set a(v = 1) {} };\n"
+     tsc check: TS1052@14+1 A 'set' accessor parameter cannot have an initializer.
+     tsc emit: "\"use strict\";\nvar o = { set a(v = 1) { } };\n"
+A2  "var o = { get a(x) { return 1 } };"
+     bun: Getter a must have zero arguments @16
+     tsc check: TS1054@14+1 A 'get' accessor cannot have parameters.
+     tsc emit: "\"use strict\";\nvar o = { get a(x) { return 1; } };\n"
+A2  "var o = { set a() {} };"
+     bun: Setter a must have exactly 1 argument (there are 0) @15
+     tsc check: TS1049@14+1 A 'set' accessor must have exactly one parameter.
+     tsc emit: "\"use strict\";\nvar o = { set a() { } };\n"
+A2  "var o = { set a(x, y) {} };"
+     bun: Setter a must have exactly 1 argument (there are 2) @19
+     tsc check: TS1049@14+1 A 'set' accessor must have exactly one parameter.
+     tsc emit: "\"use strict\";\nvar o = { set a(x, y) { } };\n"
+AAg "var o = { get a<T>() { return 1 } };"
+     bun: ok "var o = { get a() {\n  return 1;\n} };\n"
+     tsc check: TS1094@14+1 An accessor cannot have type parameters.
+     tsc emit: "\"use strict\";\nvar o = { get a<T>() { return 1; } };\n"
+AAg "var o = { set a(v): void {} };"
+     bun: ok "var o = { set a(v) {} };\n"
+     tsc check: TS1095@14+1 A 'set' accessor cannot have a return type annotation.
+     tsc emit: "\"use strict\";\nvar o = { set a(v): void { } };\n"
+A2  "var o = { get a() };"
+     bun: Expected "{" but found "}" @18 | Unexpected end of file @20
+     tsc check: TS1005@16+1 '{' expected.
+     tsc emit: "\"use strict\";\nvar o = { get a() { } };\n"
+RR  "var o = { @dec m() {} };"
+     bun: Expected identifier but found "@" @10 | Expected "}" but found "m" @15 | Expected ";" but found "{" @19 | Unexpected } @20
+     tsc parse: TS1136@10+1 Property assignment expected. ; TS1146@14+0 Declaration expected. ; TS1005@19+1 ';' expected. ; TS1128@22+1 Declaration or statement expected.
+RR  "var o = { @dec a: 1 };"
+     bun: Expected identifier but found "@" @10 | Expected "}" but found "a" @15 | Expected ";" but found ":" @16 | Unexpected } @20
+     tsc parse: TS1136@10+1 Property assignment expected. ; TS1146@14+0 Declaration expected. ; TS1128@20+1 Declaration or statement expected.
+A2  "({ a?: 1 } = b);"
+     bun: Expected "}" but found "?" @4 | Expected ")" but found "}" @9 | Unexpected ":" @5
+     tsc check: TS2364@7+1 The left-hand side of an assignment expression must be a variable or a property access. ; (noise 2304)
+     tsc emit: "\"use strict\";\n({ a: 1 } = b);\n"
+A2  "({ a? } = b);"
+     bun: Expected "}" but found "?" @4 | Expected ")" but found "}" @6 | Expected ";" but found ")" @11
+     tsc check: TS18004@3+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer. ; (noise 2304)
+     tsc emit: "\"use strict\";\n({ a } = b);\n"
+RR  "var { a?: c } = b;"
+     bun: Expected "}" but found "?" @7 | Unexpected } @12
+     tsc parse: TS1005@7+1 ',' expected. ; TS1180@8+1 Property destructuring pattern expected.
+AA  "class C { m?() {} }"
+     bun: ok "class C {\n  m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+AA  "class C { m?(): void {} }"
+     bun: ok "class C {\n  m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+AA  "class C { m?(): void }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { m?(): void; }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { a?: number }"
+     bun: ok "class C {\n  a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n}\n"
+AA  "class C { a? }"
+     bun: ok "class C {\n  a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n}\n"
+AA  "class C { a? = 1 }"
+     bun: ok "class C {\n  a = 1;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a = 1;\n}\n"
+AA  "class C { a?: number = 1 }"
+     bun: ok "class C {\n  a = 1;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a = 1;\n}\n"
+AA  "class C { a!: number }"
+     bun: ok "class C {\n  a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n}\n"
+AAg "class C { a! }"
+     bun: ok "class C {\n  a;\n}\n"
+     tsc check: TS1264@11+1 Declarations with definite assignment assertions must also have type annotations.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n}\n"
+AAg "class C { a! = 1 }"
+     bun: ok "class C {\n  a = 1;\n}\n"
+     tsc check: TS1263@11+1 Declarations with initializers cannot also have definite assignment assertions.
+     tsc emit: "\"use strict\";\nclass C {\n    a = 1;\n}\n"
+AAg "class C { a!: number = 1 }"
+     bun: ok "class C {\n  a = 1;\n}\n"
+     tsc check: TS1263@11+1 Declarations with initializers cannot also have definite assignment assertions.
+     tsc emit: "\"use strict\";\nclass C {\n    a = 1;\n}\n"
+RR  "class C { a!?: number }"
+     bun: Expected ";" but found "?" @12 | Expected identifier but found ":" @13
+     tsc parse: TS1434@10+1 Unexpected keyword or identifier. ; TS1068@12+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1068@13+1 Unexpected token. A constructor, method, accessor, or property was expected.
+RR  "class C { a?!: number }"
+     bun: Expected ";" but found "!" @12 | Expected identifier but found ":" @13
+     tsc parse: TS1434@10+1 Unexpected keyword or identifier. ; TS1068@12+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1109@13+1 Expression expected. ; TS1128@22+1 Declaration or statement expected.
+B  "class C { m!() {} }"
+     bun: ok "class C {\n  m() {}\n}\n"
+     tsc parse: TS1441@12+1 Cannot start a function call in a type annotation. ; TS1068@13+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1068@15+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1128@18+1 Declaration or statement expected.
+B  "class C { m!(): void }"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1441@12+1 Cannot start a function call in a type annotation. ; TS1068@13+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1068@14+1 Unexpected token. A constructor, method, accessor, or property was expected.
+AAg "class C { static a!: number }"
+     bun: ok "class C {\n  static a;\n}\n"
+     tsc check: TS1255@18+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\nclass C {\n    static a;\n}\n"
+AA  "class C { \"a\"!: number }"
+     bun: ok "class C {\n  a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    \"a\";\n}\n"
+AA  "class C { 1!: number }"
+     bun: ok "class C {\n  1;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    1;\n}\n"
+AA  "class C { [a]!: number }"
+     bun: ok "class C {\n  [a];\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    [a];\n}\n"
+AA  "class C { #a!: number }"
+     bun: ok "class C {\n  #a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    #a;\n}\n"
+AA  "class C { #a?: number }"
+     bun: ok "class C {\n  #a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    #a;\n}\n"
+AA  "class C { #m?() {} }"
+     bun: ok "class C {\n  #m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    #m() { }\n}\n"
+B  "class C { get a?() { return 1 } }"
+     bun: ok "class C {\n  get a() {\n    return 1;\n  }\n}\n"
+     tsc parse: TS1005@15+1 '(' expected. ; TS1068@16+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1005@19+1 '=>' expected. ; TS1128@32+1 Declaration or statement expected.
+RR  "class C { get a!() { return 1 } }"
+     bun: Expected "(" but found "!" @15 | Expected identifier but found "(" @16 | Getter a must have zero arguments @16
+     tsc parse: TS1005@15+1 '(' expected. ; TS1109@17+1 Expression expected. ; TS1005@19+1 ';' expected. ; TS1128@32+1 Declaration or statement expected.
+B  "class C { set a?(v) {} }"
+     bun: ok "class C {\n  set a(v) {}\n}\n"
+     tsc parse: TS1005@15+1 '(' expected. ; TS1068@16+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1005@20+1 '=>' expected. ; TS1128@23+1 Declaration or statement expected.
+AA  "class C { async m?() {} }"
+     bun: ok "class C {\n  async m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    async m() { }\n}\n"
+AA  "class C { *m?() {} }"
+     bun: ok "class C {\n  *m() {}\n}\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nclass C {\n    *m() { }\n}\n"
+AA  "class C { async *m?() {} }"
+     bun: ok "class C {\n  async* m() {}\n}\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nclass C {\n    async *m() { }\n}\n"
+B  "class C { constructor?() {} }"
+     bun: ok "class C {\n  constructor() {}\n}\n"
+     tsc parse: TS1005@21+1 '(' expected. ; TS1068@22+1 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1005@25+1 '=>' expected. ; TS1128@28+1 Declaration or statement expected.
+AA  "class C { static m?() {} }"
+     bun: ok "class C {\n  static m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    static m() { }\n}\n"
+AAg "class C { accessor a?: number }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, undefined);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc check: TS1276@20+1 An 'accessor' property cannot be declared optional.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a;\n}\n"
+AA  "class C { accessor a!: number }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, undefined);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a;\n}\n"
+AA  "class C { accessor a }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, undefined);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a;\n}\n"
+AA  "class C { accessor a = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a = 1;\n}\n"
+AA  "class C { accessor }"
+     bun: ok "class C {\n  accessor;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor;\n}\n"
+AA  "class C { accessor() {} }"
+     bun: ok "class C {\n  accessor() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor() { }\n}\n"
+AA  "class C { accessor = 1 }"
+     bun: ok "class C {\n  accessor = 1;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor = 1;\n}\n"
+AA  "class C { accessor: number }"
+     bun: ok "class C {\n  accessor;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor;\n}\n"
+AA  "class C { static accessor a = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  static {\n    _a$1 = new WeakMap;\n  }\n  static get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  static set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    static accessor a = 1;\n}\n"
+A2  "class C { accessor static a = 1 }"
+     bun: Expected ";" but found "a" @26 | Expected identifier but found "=" @28
+     tsc check: TS1029@19+6 'static' modifier must precede 'accessor' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor static a = 1;\n}\n"
+AA  "class C { accessor\na }"
+     bun: ok "class C {\n  accessor;\n  a;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor;\n    a;\n}\n"
+A2  "class C { accessor a() {} }"
+     bun: auto-accessor properties cannot have a method body @19
+     tsc check: TS1275@10+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a() { }\n}\n"
+A2  "class C { accessor get a() { return 1 } }"
+     bun: Expected ";" but found "a" @23 | Expected identifier but found "(" @24 | Expected ";" but found "{" @27 | Expected ";" but found "1" @36 | Unexpected } @40
+     tsc check: TS1275@10+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor get a() { return 1; }\n}\n"
+AA  "class C { accessor \"a\" = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor \"a\" = 1;\n}\n"
+AA  "class C { accessor [a] = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = a]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    accessor [a] = 1;\n}\n"
+AA  "class C { accessor #a = 1 }"
+     bun: ok "class C {\n  #a = 1;\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor #a = 1;\n}\n"
+AAg "class C { declare accessor a: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1243@18+8 'accessor' modifier cannot be used with 'declare' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { public accessor a = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a = 1;\n}\n"
+A2  "class C { accessor public a = 1 }"
+     bun: Expected ";" but found "a" @26 | Expected identifier but found "=" @28
+     tsc check: TS1029@19+6 'public' modifier must precede 'accessor' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a = 1;\n}\n"
+AAg "class C { readonly accessor a = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc check: TS1243@19+8 'accessor' modifier cannot be used with 'readonly' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a = 1;\n}\n"
+AAg "class C { abstract accessor a: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1253@10+8 Abstract properties can only appear within an abstract class.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "abstract class C { abstract accessor a: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { override accessor a = 1 }"
+     bun: ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _a$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _a$1, 1);\n  }\n  static {\n    _a$1 = new WeakMap;\n  }\n  get a() {\n    return __privateGet_t4v9rzz2(this, _a$1);\n  }\n  set a(v) {\n    __privateSet_3ajc9ey2(this, _a$1, v);\n  }\n}\n"
+     tsc check: TS4112@28+1 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+     tsc emit: "\"use strict\";\nclass C {\n    accessor a = 1;\n}\n"
+AA  "class C { @dec accessor a = 1 }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _a$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _a$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _a$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"a\", _dec$2, this, _a$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    dec\n  ], \"a\")]() {\n    return __privateGet_t4v9rzz2(this, _a$3);\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    accessor a = 1;\n}\n"
+AA  "class C { @dec static accessor a = 1 }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _a$3;\n\nclass C {\n  static {\n    _a$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 12, \"a\", _dec$2, this, _a$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n    __runInitializers_cst8seht(_init$1, 3, this);\n  }\n  static get [(_dec$2 = [\n    dec\n  ], \"a\")]() {\n    return __privateGet_t4v9rzz2(this, _a$3);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _a$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    static accessor a = 1;\n}\n"
+AA  "class C { @dec accessor }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"accessor\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"accessor\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    accessor;\n}\n"
+AA  "class C { @dec accessor = 1 }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"accessor\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"accessor\")] = __runInitializers_cst8seht(_init$1, 8, this, 1);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    accessor = 1;\n}\n"
+AA  "class C { @dec accessor: number }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"accessor\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"accessor\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    accessor;\n}\n"
+AA  "class C { @dec accessor() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"accessor\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"accessor\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @dec\n    accessor() { }\n}\n"
+AA  "class C { [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { [k: string]: number; }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A1  "class C { [k: string]: number, }"
+     bun: Expected ";" but found "," @29
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { [k: string]: number; [j: number]: string }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2413@31+19 'number' index type 'string' is not assignable to 'string' index type 'number'.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { static [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { readonly [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { static readonly [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { public [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1071@10+6 'public' modifier cannot appear on an index signature.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { declare [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1071@10+7 'declare' modifier cannot appear on an index signature.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { abstract [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1071@10+8 'abstract' modifier cannot appear on an index signature.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [k: string] }"
+     bun: Expected ":" but found "}" @22 | Unexpected end of file @23
+     tsc check: TS1021@10+11 An index signature must have a type annotation.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [k: string]; }"
+     bun: Expected ":" but found ";" @21 | Unexpected } @23
+     tsc check: TS1021@10+12 An index signature must have a type annotation.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { [k]: number }"
+     bun: ok "class C {\n  [k];\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    [k];\n}\n"
+RR  "class C { [k: string]?: number }"
+     bun: Expected ":" but found "?" @21 | Unexpected : @22
+     tsc parse: TS1005@21+1 ';' expected. ; TS1068@22+1 Unexpected token. A constructor, method, accessor, or property was expected.
+A2  "class C { [k?: string]: number }"
+     bun: Unexpected : @13
+     tsc check: TS1019@12+1 An index signature parameter cannot have a question mark.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [...k: string[]]: number }"
+     bun: Unexpected ... @11
+     tsc check: TS1017@11+3 An index signature cannot have a rest parameter.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [k: string, j: number]: number }"
+     bun: Expected "]" but found "," @20 | Expected ":" but found "j" @22 | Unexpected : @23 | Expected ";" but found "]" @31 | Expected identifier but found ":" @32
+     tsc check: TS1096@11+1 An index signature must have exactly one parameter.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [k: string,]: number }"
+     bun: Expected "]" but found "," @20 | Expected ":" but found "]" @21 | Unexpected : @22
+     tsc check: TS1025@20+1 An index signature cannot have a trailing comma.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { []: number }"
+     bun: Unexpected ] @11
+     tsc check: TS1096@10+10 An index signature must have exactly one parameter.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C { [public k: string]: number }"
+     bun: Expected "]" but found "k" @18 | Expected ";" but found "]" @27 | Expected identifier but found ":" @28
+     tsc check: TS2369@11+16 A parameter property is only allowed in a constructor implementation. ; TS1018@18+1 An index signature parameter cannot have an accessibility modifier.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { [k = 1]: number }"
+     bun: ok "class C {\n  [k = 1];\n}\n"
+     tsc check: TS1166@10+7 A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    [k = 1];\n}\n"
+A2  "class C { [k: string = \"a\"]: number }"
+     bun: Expected "]" but found "=" @21 | Expected ":" but found ""a"" @23 | Unexpected ] @26 | Expected identifier but found ":" @27
+     tsc check: TS1020@11+1 An index signature parameter cannot have an initializer. ; TS2371@11+15 A parameter initializer is only allowed in a function or constructor implementation.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A1  "class C { [await: string]: number }"
+     bun: Unexpected : @16
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { [yield: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1213@11+5 Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { [type: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+RR  "class C { [k: string]: number = 1 }"
+     bun: Expected ";" but found "=" @30
+     tsc parse: TS1005@30+1 ';' expected.
+RR  "class C { [k: string](): void }"
+     bun: Expected ":" but found "(" @21 | Unexpected ) @22 | Expected identifier but found ":" @23
+     tsc parse: TS1005@21+1 ';' expected. ; TS1005@30+1 '=>' expected.
+RR  "class C { [k: string]<T>(): void }"
+     bun: Expected ":" but found "<" @21 | Expected ";" but found ">" @23 | Expected identifier but found "(" @24
+     tsc parse: TS1005@21+1 ';' expected. ; TS1381@33+1 Unexpected token. Did you mean `{'}'}` or `&rbrace;`? ; TS17008@22+1 JSX element 'T' has no corresponding closing tag. ; TS1005@34+0 '</' expected.
+AA  "class C { [\"a\"]: number }"
+     bun: ok "class C {\n  [\"a\"];\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    [\"a\"];\n}\n"
+AA  "class C { [a.b]: number }"
+     bun: ok "class C {\n  [a.b];\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    [a.b];\n}\n"
+AAg "class C { [a as any]: number }"
+     bun: ok "class C {\n  [a];\n}\n"
+     tsc check: TS1166@10+10 A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    [a];\n}\n"
+RR  "class C { [a: string] = 1 }"
+     bun: Expected ":" but found "=" @22
+     tsc parse: TS1005@22+1 ';' expected.
+RR  "class C { [{a}: string]: number }"
+     bun: Expected "]" but found ":" @14 | Expected ";" but found "string" @16 | Expected identifier but found "]" @22 | Expected ";" but found "number" @25
+     tsc parse: TS1005@14+1 ']' expected. ; TS1442@22+1 Expected '=' for property initializer. ; TS1068@23+1 Unexpected token. A constructor, method, accessor, or property was expected.
+RR  "class C { [[a]: string]: number }"
+     bun: Expected "]" but found ":" @14 | Expected ";" but found "string" @16 | Expected identifier but found "]" @22 | Expected ";" but found "number" @25
+     tsc parse: TS1005@14+1 ']' expected. ; TS1442@22+1 Expected '=' for property initializer. ; TS1068@23+1 Unexpected token. A constructor, method, accessor, or property was expected.
+AAg "class C { @dec [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "interface I { [k: string]: number, }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "interface I { [await: string]: number }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "type T = { [k: string]: number, };"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"

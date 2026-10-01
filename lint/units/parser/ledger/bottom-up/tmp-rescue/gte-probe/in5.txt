@@ -1,0 +1,61 @@
+# DisallowConditionalTypes inheritance
+type T = A extends (x: B extends C ? D : E) => void ? 1 : 2
+type T = A extends ((x: B extends C ? D : E) => void) ? 1 : 2
+type T = A extends () => B extends C ? D : E ? 1 : 2
+type T = A extends () => B extends C ? D : E
+type T = A extends (() => B extends C ? D : E) ? 1 : 2
+type T = A extends new () => B extends C ? D : E
+type T = A extends <X extends B ? C : D>() => void ? 1 : 2
+type T = A extends <X = B extends C ? D : E>() => void ? 1 : 2
+type T = A extends <X extends Y>() => void ? 1 : 2
+type T = A extends [B extends C ? D : E] ? 1 : 2
+type T = A extends { x: B extends C ? D : E } ? 1 : 2
+type T = A extends { [K in B extends C ? D : E]: 1 } ? 1 : 2
+type T = A extends { [K in keyof B]: B[K] extends C ? D : E } ? 1 : 2
+type T = A extends { m(x: B extends C ? D : E): void } ? 1 : 2
+type T = A extends { m(): B extends C ? D : E } ? 1 : 2
+type T = A extends X<B extends C ? D : E> ? 1 : 2
+type T = A extends X[B extends C ? D : E] ? 1 : 2
+type T = A extends `${B extends C ? D : E}` ? 1 : 2
+type T = A extends typeof x<B extends C ? D : E> ? 1 : 2
+type T = A extends import("x").Y<B extends C ? D : E> ? 1 : 2
+type T = A extends keyof B extends C ? D : E
+type T = A extends keyof (B extends C ? D : E) ? 1 : 2
+type T = A extends B | C extends D ? E : F
+type T = A extends infer U extends B | C ? 1 : 2
+type T = A extends [infer U extends B | C] ? 1 : 2
+type T = A extends [infer U extends B ? 1 : 2] ? 1 : 2
+type T = A extends [infer U extends B | C ? 1 : 2] ? 1 : 2
+type T = A extends [infer U extends keyof B] ? 1 : 2
+type T = A extends [infer U extends B[]] ? 1 : 2
+type T = A extends [infer U extends () => void] ? 1 : 2
+type T = A extends [infer U extends () => B ? 1 : 2] ? 1 : 2
+type T = A extends [infer U extends (B extends C ? 1 : 2)] ? 1 : 2
+type T = A extends [infer U extends [B extends C ? 1 : 2]] ? 1 : 2
+type T = A extends [infer U extends [B extends C ? 1 : 2] ? 3 : 4] ? 1 : 2
+type T = A extends infer U extends [B extends C ? 1 : 2] ? 3 : 4
+type T = A extends infer U extends keyof B ? 1 : 2
+type T = A extends (infer U extends B) | C ? 1 : 2
+type T = A extends infer U | infer V extends B ? 1 : 2
+type T = A extends infer U extends infer V extends B ? 1 : 2
+type T = A extends [infer U extends infer V extends B ? 1 : 2] ? 3 : 4
+type T = infer U
+type T = infer U extends A
+type T = infer U extends A ? 1 : 2
+type T = infer
+type T = infer 1
+type T = infer string
+type T = infer keyof
+type T = infer infer
+type T = infer U.V
+type T = infer U<V>
+type T = infer U[]
+type T = A extends (infer U)[] ? U : never
+type T = A extends infer U[] ? U : never
+type T = A extends infer\nU ? U : never
+type T = A extends infer U\nextends B ? U : never
+function f(): infer U extends A ? 1 : 2 {}
+let v = x as A extends B ? C : D
+let v = x as A extends infer U extends B ? C : D
+let v = <A extends B ? C : D>x
+class C { m(a: A extends B ? C : D): A extends B ? C : D {} }

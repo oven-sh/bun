@@ -1,0 +1,600 @@
+group 07-module-syntax  dialect ts  config plain  inputs 1630
+counts A1=50 A1c=35 A1s=15 A2=82 AA=893 AAg=113 B=9 RR=483
+
+calls of Bun that differ from transformSync without tsconfig: 3 inputs
+  "export default let;"  base="\"let\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "export default static;"  base="\"static\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "export let;"  base="\"let\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family importType  (159 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1394-1700 t_import (1546-1610 "import type": 1548-1588 default name, 1589-1598 star, 1600-1607 clause; the path is parsed and dropped, no import record)
+  ref: parser.go:2279 parseImportDeclarationOrImportEqualsDeclaration, 2328 nextTokenIsFromKeywordOrEqualsToken, 2381 tryParseImportClause, 2393 parseImportClause
+  counts A1=4 A2=21 AA=67 AAg=26 RR=41
+  -- A1: 4 distinct
+    "import type A from \"x\" with { a: 1 };"
+        bun x1: Expected string but found "1" @33
+    "import type A from \"x\"\nwith { a: \"b\" };"
+        bun x1: Expected "(" but found "{" @28
+    "import defer \"x\";"
+        bun x1: Expected "from" but found ""x"" @13
+    "import.defer(\"x\");"
+        bun x1: Expected "meta" but found "defer" @7
+  -- A2: 21 distinct
+    "import type A, { B } from \"x\";"
+        bun x1: Expected "from" but found "," @13
+        tsc x1: TS1363 @7 len 13 "A type-only import can specify a default import or named bindings, but not both."
+    "import type A, * as B from \"x\";"
+        bun x1: Expected "from" but found "," @13
+        tsc x1: TS1363 @7 len 14 "A type-only import can specify a default import or named bindings, but not both."
+    "import type A = require(x);"
+        bun x1: Expected string but found "x" @24
+        tsc x1: TS1141 @24 len 1 "String literal expected."
+    "import type A from x;"
+        bun x1: Expected string but found "x" @19
+        tsc x1: TS1141 @19 len 1 "String literal expected."
+    "import defer A from \"x\";"
+        bun x1: Expected "from" but found "A" @13
+        tsc x1: TS18058 @7 len 7 "Default imports are not allowed in a deferred import."
+    "import defer { A } from \"x\";"
+        bun x1: Expected "from" but found "{" @13
+        tsc x1: TS18059 @7 len 11 "Named imports are not allowed in a deferred import."
+    "import.source(\"x\");"
+        bun x1: Expected "meta" but found "source" @7
+        tsc x1: TS18061 @7 len 6 "'source' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?"
+    "import.x;"
+        bun x1: Expected "meta" but found "x" @7
+        tsc x1: TS17012 @7 len 1 "'x' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?"
+    "import(\"x\", y, z);"
+        bun x1: Expected ")" but found "z" @15
+        tsc x1: TS1450 @0 len 17 "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments"
+    "import();"
+        bun x1: Unexpected ) @7
+        tsc x1: TS1450 @0 len 8 "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments"
+    "import(...x);"
+        bun x1: Unexpected ... @7
+        tsc x1: TS1325 @7 len 4 "Argument of dynamic import cannot be spread element."
+    "import<T>(\"x\");"
+        bun x1: Unexpected < @6
+        tsc x1: TS1326 @0 len 14 "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments."
+    "function f() { import type A from \"x\"; }"
+        bun x1: Unexpected type @22
+        tsc x1: TS1232 @15 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "if (a) import type A from \"x\";"
+        bun x1: Unexpected type @14
+        tsc x1: TS1232 @7 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "{ import type A from \"x\"; }"
+        bun x1: Unexpected type @9
+        tsc x1: TS1232 @2 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "export import type from \"x\";"
+        bun x1: Expected "=" but found "from" @19
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "declare import A from \"x\";"
+        bun x1: Unexpected "import" @8
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "declare import \"x\";"
+        bun x1: Unexpected "import" @8
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "async import type A from \"x\";"
+        bun x1: Expected ";" but found "import" @6
+        tsc x1: TS1042 @0 len 5 "'async' modifier cannot be used here."
+    "abstract import type A from \"x\";"
+        bun x1: Expected ";" but found "import" @9
+        tsc x1: TS1242 @0 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "@d import type A from \"x\";"
+        bun x1: Expected "class" but found "import" @3
+        tsc x1: TS1206 @0 len 1 "Decorators are not valid here."
+  -- AAg: 26 distinct
+    "import type await from \"x\";"
+        tsc x1: TS1262 @12 len 5 "Identifier expected. 'await' is a reserved word at the top-level of a module."
+    "import type yield from \"x\";"
+        tsc x1: TS1214 @12 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "import type let from \"x\";"
+        tsc x1: TS1214 @12 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "import type static from \"x\";"
+        tsc x1: TS1214 @12 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "import type from = A.B;"
+        tsc x1: TS1392 @0 len 23 "An import alias cannot use 'import type'"
+    "import type A = B.C;"
+        tsc x1: TS1392 @0 len 20 "An import alias cannot use 'import type'"
+    "import type A = B;"
+        tsc x1: TS1392 @0 len 18 "An import alias cannot use 'import type'"
+    "import type A = require;"
+        tsc x1: TS1392 @0 len 24 "An import alias cannot use 'import type'"
+    "import type A = B.C.D.E;"
+        tsc x1: TS1392 @0 len 24 "An import alias cannot use 'import type'"
+    "import type A from `x`;"
+        tsc x1: TS1141 @19 len 3 "String literal expected."
+    "import type * as A from \"x\" with {};"
+        tsc x1: TS1464 @28 len 7 "Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'."
+    "import type A from \"x\" with { a: \"b\", c: \"d\" };"
+        tsc x1: TS1464 @23 len 23 "Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'."
+    "import type A from \"x\" with { \"a\": \"b\" };"
+        tsc x1: TS1463 @30 len 3 "'resolution-mode' is the only valid key for type import attributes."
+    "await import(\"x\");"
+        tsc x1: TS1375 @0 len 5 "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "namespace N { import type A from \"x\"; }"
+        tsc x1: TS1147 @33 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { import type A = B.C; }"
+        tsc x1: TS1392 @14 len 20 "An import alias cannot use 'import type'"
+    "namespace N { import type A = require(\"x\"); }"
+        tsc x1: TS1147 @38 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { export import type A = B.C; }"
+        tsc x1: TS1392 @14 len 27 "An import alias cannot use 'import type'"
+    "declare namespace N { import type A from \"x\"; }"
+        tsc x1: TS1147 @41 len 3 "Import declarations in a namespace cannot reference a module."
+    "export import type A = B.C;"
+        tsc x1: TS1392 @0 len 27 "An import alias cannot use 'import type'"
+    "export import type A from \"x\";"
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import type { A } from \"x\";"
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import type from = A.B;"
+        tsc x1: TS1392 @0 len 30 "An import alias cannot use 'import type'"
+    "declare import type A from \"x\";"
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "declare import type A = B.C;"
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+        tsc x1: TS1392 @0 len 28 "An import alias cannot use 'import type'"
+    "declare import A = B.C;"
+        tsc x1: TS1079 @0 len 7 "A 'declare' modifier cannot be used with an import declaration."
+
+==== family exportType  (106 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:918-945 "export type", src/js_parser/parse/parse_skip_typescript.rs:1085-1120 skip_type_script_type_stmt (clause and star forms), src/js_parser/parse/parse_stmt.rs:1279-1372 export clause
+  ref: parser.go:2588 parseExportDeclaration, 2628 parseNamespaceExport, 2633 parseNamedExports
+  counts A1=3 A2=8 AA=65 AAg=4 RR=26
+  -- A1: 3 distinct
+    "export type { default };"
+        bun x1: Expected identifier but found "default" @14
+    "export type { \"a\" };"
+        bun x1: Expected identifier but found "" @14
+    "export type { if };"
+        bun x1: Expected identifier but found "if" @14
+  -- A2: 8 distinct
+    "export type { A } from x;"
+        bun x1: Expected string but found "x" @23
+        tsc x1: TS1141 @23 len 1 "String literal expected."
+    "function f() { export type { A }; }"
+        bun x1: Unexpected export @15
+        tsc x1: TS1233 @15 len 6 "An export declaration can only be used at the top level of a namespace or module."
+    "if (a) export type { A };"
+        bun x1: Unexpected export @7
+        tsc x1: TS1233 @7 len 6 "An export declaration can only be used at the top level of a namespace or module."
+    "{ export type { A }; }"
+        bun x1: Unexpected export @2
+        tsc x1: TS1233 @2 len 6 "An export declaration can only be used at the top level of a namespace or module."
+    "namespace N { export { A }; }"
+        bun x1: Unexpected { @21
+        tsc x1: TS1194 @14 len 13 "Export declarations are not permitted in a namespace."
+    "namespace N { export { type A }; }"
+        bun x1: Unexpected { @21
+        tsc x1: TS1194 @14 len 18 "Export declarations are not permitted in a namespace."
+    "namespace N { export * from \"x\"; }"
+        bun x1: Unexpected * @21
+        tsc x1: TS1194 @28 len 3 "Export declarations are not permitted in a namespace."
+    "@d export type { A };"
+        bun x1: Expected "class" but found "type" @10
+        tsc x1: TS1206 @0 len 1 "Decorators are not valid here."
+  -- AAg: 4 distinct
+    "namespace N { export type { A }; }"
+        tsc x1: TS1194 @14 len 18 "Export declarations are not permitted in a namespace."
+    "namespace N { export type { A } from \"x\"; }"
+        tsc x1: TS1194 @37 len 3 "Export declarations are not permitted in a namespace."
+    "namespace N { export type * from \"x\"; }"
+        tsc x1: TS1194 @33 len 3 "Export declarations are not permitted in a namespace."
+    "declare export type { A };"
+        tsc x1: TS1193 @0 len 7 "An export declaration cannot have modifiers."
+
+==== family importEquals  (140 inputs)
+  bun: src/js_parser/parse/parse_typescript.rs:482-575 parse_type_script_import_equals_stmt, src/js_parser/parse/parse_stmt.rs:1612-1624, src/js_parser/parse/parse_stmt.rs:863-872 "export import"
+  ref: parser.go:2343 parseImportEqualsDeclaration, 2352 parseModuleReference, 2359 parseExternalModuleReference
+  counts A1=2 A2=15 AA=65 AAg=11 RR=47
+  -- A1: 2 distinct
+    "namespace N { import(\"x\"); }"
+        bun x1: Expected identifier but found "(" @20
+    "namespace N { import.meta; }"
+        bun x1: Expected identifier but found "." @20
+  -- A2: 15 distinct
+    "import A = require(`x`);"
+        bun x1: Expected string but found "`x`" @19
+        tsc x1: TS1141 @19 len 3 "String literal expected."
+    "import A = require(x);"
+        bun x1: Expected string but found "x" @19
+        tsc x1: TS1141 @19 len 1 "String literal expected."
+    "export import A from \"x\";"
+        bun x1: Expected "=" but found "from" @16
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import { A } from \"x\";"
+        bun x1: Expected identifier but found "{" @14
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import * as A from \"x\";"
+        bun x1: Expected identifier but found "*" @14
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import \"x\";"
+        bun x1: Expected identifier but found ""x"" @14
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "export import defer * as A from \"x\";"
+        bun x1: Expected "=" but found "*" @20
+        tsc x1: TS1191 @0 len 6 "An import declaration cannot have modifiers."
+    "namespace N { import A from \"x\"; }"
+        bun x1: Expected "=" but found "from" @23
+        tsc x1: TS1147 @28 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { import { A } from \"x\"; }"
+        bun x1: Expected identifier but found "{" @21
+        tsc x1: TS1147 @32 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { import * as A from \"x\"; }"
+        bun x1: Expected identifier but found "*" @21
+        tsc x1: TS1147 @33 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { import \"x\"; }"
+        bun x1: Expected identifier but found ""x"" @21
+        tsc x1: TS1147 @21 len 3 "Import declarations in a namespace cannot reference a module."
+    "function f() { import A = B.C; }"
+        bun x1: Unexpected A @22
+        tsc x1: TS1232 @15 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "if (a) import A = B.C;"
+        bun x1: Unexpected A @14
+        tsc x1: TS1232 @7 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "{ import A = B.C; }"
+        bun x1: Unexpected A @9
+        tsc x1: TS1232 @2 len 6 "An import declaration can only be used at the top level of a namespace or module."
+    "label: import A = B.C;"
+        bun x1: Unexpected A @14
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+        tsc x1: TS1232 @7 len 6 "An import declaration can only be used at the top level of a namespace or module."
+  -- AAg: 11 distinct
+    "import yield = B;"
+        tsc x1: TS1212 @7 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "import let = B;"
+        tsc x1: TS1212 @7 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "import static = B;"
+        tsc x1: TS1212 @7 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "import A = yield;"
+        tsc x1: TS1212 @11 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "import A = let;"
+        tsc x1: TS1212 @11 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "import A = static;"
+        tsc x1: TS1212 @11 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "export declare import A = B.C;"
+        tsc x1: TS1079 @7 len 7 "A 'declare' modifier cannot be used with an import declaration."
+    "declare export import A = B.C;"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "namespace N { import A = require(\"x\"); }"
+        tsc x1: TS1147 @33 len 3 "Import declarations in a namespace cannot reference a module."
+    "namespace N { export import A = require(\"x\"); }"
+        tsc x1: TS1147 @40 len 3 "Import declarations in a namespace cannot reference a module."
+    "declare namespace N { import A = require(\"x\"); }"
+        tsc x1: TS1147 @41 len 3 "Import declarations in a namespace cannot reference a module."
+
+==== family exportAssign  (112 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1373-1385 "export =", src/js_parser/parse/parse_stmt.rs:890-899 "export as namespace"
+  ref: parser.go:2555 parseExportAssignment, 2575 parseNamespaceExportDeclaration
+  counts A2=9 AA=39 AAg=27 B=3 RR=34
+  -- A2: 9 distinct
+    "function f() { export = x; }"
+        bun x1: Unexpected export @15
+        tsc x1: TS1231 @15 len 6 "An export assignment must be at the top level of a file or module declaration."
+    "if (a) export = x;"
+        bun x1: Unexpected export @7
+        tsc x1: TS1231 @7 len 6 "An export assignment must be at the top level of a file or module declaration."
+    "{ export = x; }"
+        bun x1: Unexpected export @2
+        tsc x1: TS1231 @2 len 6 "An export assignment must be at the top level of a file or module declaration."
+    "declare export = x;"
+        bun x1: Unexpected "export" @8
+        tsc x1: TS1120 @0 len 7 "An export assignment cannot have modifiers."
+    "@d export = x;"
+        bun x1: Expected "class" but found "=" @10
+        tsc x1: TS1206 @0 len 1 "Decorators are not valid here."
+    "function f() { export as namespace X; }"
+        bun x1: Unexpected export @15
+        tsc x1: TS1316 @15 len 22 "Global module exports may only appear at top level."
+    "if (a) export as namespace X;"
+        bun x1: Unexpected export @7
+        tsc x1: TS1316 @7 len 22 "Global module exports may only appear at top level."
+    "{ export as namespace X; }"
+        bun x1: Unexpected export @2
+        tsc x1: TS1316 @2 len 22 "Global module exports may only appear at top level."
+    "@d export as namespace X;"
+        bun x1: Expected "class" but found "as" @10
+        tsc x1: TS1184 @0 len 25 "Modifiers cannot appear here."
+        tsc x1: TS1314 @0 len 25 "Global module exports may only appear in module files."
+  -- B: 3 distinct
+    "export = x, y;"
+        tsc x1: TS1005 @10 len 1 "';' expected."
+    "export declare = x;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export abstract = x;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+  -- AAg: 27 distinct
+    "export = yield;"
+        tsc x1: TS1214 @9 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "export = new.target;"
+        tsc x1: TS17013 @9 len 10 "Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor."
+    "namespace N { export = x; }"
+        tsc x1: TS1063 @14 len 11 "An export assignment cannot be used in a namespace."
+    "declare namespace N { export = x; }"
+        tsc x1: TS1063 @22 len 11 "An export assignment cannot be used in a namespace."
+    "declare module \"m\" { export = x; export as namespace X; }"
+        tsc x1: TS1316 @33 len 22 "Global module exports may only appear at top level."
+    "export as namespace X;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "export as namespace X"
+        tsc x1: TS1314 @0 len 21 "Global module exports may only appear in module files."
+    "export as namespace type;"
+        tsc x1: TS1314 @0 len 25 "Global module exports may only appear in module files."
+    "export as namespace as;"
+        tsc x1: TS1314 @0 len 23 "Global module exports may only appear in module files."
+    "export as namespace namespace;"
+        tsc x1: TS1314 @0 len 30 "Global module exports may only appear in module files."
+    "export as namespace await;"
+        tsc x1: TS1314 @0 len 26 "Global module exports may only appear in module files."
+    "export as namespace yield;"
+        tsc x1: TS1314 @0 len 26 "Global module exports may only appear in module files."
+        tsc x1: TS1212 @20 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "export as namespace let;"
+        tsc x1: TS1314 @0 len 24 "Global module exports may only appear in module files."
+        tsc x1: TS1212 @20 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "export as namespace any;"
+        tsc x1: TS1314 @0 len 24 "Global module exports may only appear in module files."
+    "export\nas namespace X;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "export as\nnamespace X;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "export as namespace\nX;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "export as namespace X\nexport as namespace Y"
+        tsc x1: TS1314 @0 len 21 "Global module exports may only appear in module files."
+        tsc x1: TS1314 @22 len 21 "Global module exports may only appear in module files."
+    "export as namespace X; export as namespace Y;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+        tsc x1: TS1314 @23 len 22 "Global module exports may only appear in module files."
+    "export as namespace X; export = x;"
+        tsc x1: TS1315 @0 len 22 "Global module exports may only appear in declaration files."
+    "export as namespace X; export {};"
+        tsc x1: TS1315 @0 len 22 "Global module exports may only appear in declaration files."
+    "export as namespace X; export default 1;"
+        tsc x1: TS1315 @0 len 22 "Global module exports may only appear in declaration files."
+    "namespace N { export as namespace X; }"
+        tsc x1: TS1316 @14 len 22 "Global module exports may only appear at top level."
+    "declare namespace N { export as namespace X; }"
+        tsc x1: TS1316 @22 len 22 "Global module exports may only appear at top level."
+    "declare module \"m\" { export as namespace X; }"
+        tsc x1: TS1316 @21 len 22 "Global module exports may only appear at top level."
+    "declare global { export as namespace X; }"
+        tsc x1: TS1316 @17 len 22 "Global module exports may only appear at top level."
+    "declare export as namespace X;"
+        tsc x1: TS1184 @0 len 30 "Modifiers cannot appear here."
+        tsc x1: TS1314 @0 len 30 "Global module exports may only appear in module files."
+
+==== family exportDecl  (152 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:840-1270 t_export (884-969 identifier arm, 971-1200 default)
+  ref: parser.go:1124 parseDeclaration, 1151 parseDeclarationWorker, 2555 parseExportAssignment
+  counts A1=1 A2=21 AA=77 AAg=11 B=6 RR=36
+  -- A1: 1 distinct
+    "export abstract declare class C {}"
+        bun x1: Expected ";" but found "declare" @16
+  -- A2: 21 distinct
+    "export declare using x: T;"
+        bun x1: Cannot use "export" with a "using" declaration @15
+        tsc x1: TS1491 @0 len 6 "'export' modifier cannot appear on a 'using' declaration."
+    "export default let;"
+        bun x1: "let" is a reserved word and cannot be used in strict mode @15
+        tsc x1: TS1214 @15 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "export default static;"
+        bun x1: "static" is a reserved word and cannot be used in strict mode @15
+        tsc x1: TS1214 @15 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "export const x: T;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export using x: T = y;"
+        bun x1: Unexpected using @7
+        tsc x1: TS1491 @0 len 6 "'export' modifier cannot appear on a 'using' declaration."
+    "export await using x: T = y;"
+        bun x1: Unexpected await @7
+        tsc x1: TS1495 @0 len 6 "'export' modifier cannot appear on an 'await using' declaration."
+    "export public class C {}"
+        bun x1: Unexpected public @7
+        tsc x1: TS1044 @7 len 6 "'public' modifier cannot appear on a module or namespace element."
+    "export private class C {}"
+        bun x1: Unexpected private @7
+        tsc x1: TS1044 @7 len 7 "'private' modifier cannot appear on a module or namespace element."
+    "export readonly class C {}"
+        bun x1: Unexpected readonly @7
+        tsc x1: TS1024 @7 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+    "export static class C {}"
+        bun x1: Unexpected static @7
+        tsc x1: TS1044 @7 len 6 "'static' modifier cannot appear on a module or namespace element."
+    "export accessor class C {}"
+        bun x1: Unexpected accessor @7
+        tsc x1: TS1275 @7 len 8 "'accessor' modifier can only appear on a property declaration."
+    "export async class C {}"
+        bun x1: Expected "function" but found "class" @13
+        tsc x1: TS1042 @7 len 5 "'async' modifier cannot be used here."
+    "export abstract interface I {}"
+        bun x1: Expected ";" but found "interface" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract function f() {}"
+        bun x1: Expected ";" but found "function" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract enum E {}"
+        bun x1: Expected ";" but found "enum" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract namespace N {}"
+        bun x1: Expected ";" but found "namespace" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract type T = 1;"
+        bun x1: Expected ";" but found "type" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract const x = 1;"
+        bun x1: Expected ";" but found "const" @16
+        tsc x1: TS1242 @7 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "export abstract abstract class C {}"
+        bun x1: Expected ";" but found "abstract" @16
+        tsc x1: TS1030 @16 len 8 "'abstract' modifier already seen."
+    "export let;"
+        bun x1: "let" is a reserved word and cannot be used in strict mode @7
+        tsc x1: TS1123 @10 len 0 "Variable declaration list cannot be empty."
+    "export export const x = 1;"
+        bun x1: Unexpected export @7
+        tsc x1: TS1030 @7 len 6 "'export' modifier already seen."
+  -- B: 6 distinct
+    "export declare;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export declare = 1;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export abstract;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export abstract = 1;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export namespace;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+    "export module;"
+        tsc x1: TS1128 @0 len 6 "Declaration or statement expected."
+  -- AAg: 11 distinct
+    "export module N {}"
+        tsc x1: TS1540 @14 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "export declare module N {}"
+        tsc x1: TS1540 @22 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "export declare async function f(): void;"
+        tsc x1: TS1040 @15 len 5 "'async' modifier cannot be used in an ambient context."
+    "export declare function* f(): void;"
+        tsc x1: TS1221 @23 len 1 "Generators are not allowed in an ambient context."
+    "export declare export const x: T;"
+        tsc x1: TS1030 @15 len 6 "'export' modifier already seen."
+    "export declare declare const x: T;"
+        tsc x1: TS1030 @15 len 7 "'declare' modifier already seen."
+    "export declare const x: T = 1;"
+        tsc x1: TS1039 @28 len 1 "Initializers are not allowed in ambient contexts."
+    "export declare let x = 1;"
+        tsc x1: TS1039 @23 len 1 "Initializers are not allowed in ambient contexts."
+    "export declare function f() {}"
+        tsc x1: TS1183 @28 len 1 "An implementation cannot be declared in ambient contexts."
+    "export declare class C { m() {} }"
+        tsc x1: TS1183 @29 len 1 "An implementation cannot be declared in ambient contexts."
+    "export function* f(): any; export function* f() {}"
+        tsc x1: TS1222 @15 len 1 "An overload signature cannot be declared as a generator."
+
+==== family attributes  (49 inputs)
+  bun: src/js_parser/parse/mod.rs:1339-1466 parse_path
+  ref: parser.go:2545 tryParseImportAttributes, 3134 parseImportAttributes, 3117 parseImportAttribute
+  counts A1=5 AA=27 AAg=2 RR=15
+  -- A1: 5 distinct
+    "import A from \"x\" with { a: 1 };"
+        bun x1: Expected string but found "1" @28
+    "import A from \"x\" with { a: `b` };"
+        bun x1: Expected string but found "`b`" @28
+    "import A from \"x\" with { a: \"b\" + \"c\" };"
+        bun x1: Expected "}" but found "+" @32
+    "import A from \"x\" with { a: b };"
+        bun x1: Expected string but found "b" @28
+    "import A from \"x\"\nwith { type: \"json\" };"
+        bun x1: Expected "(" but found "{" @23
+  -- AAg: 2 distinct
+    "import A from \"x\" with { \"resolution-mode\": \"import\" };"
+        tsc x1: TS1454 @18 len 36 "`resolution-mode` can only be set for type-only imports."
+    "import A from \"x\" with { \"resolution-mode\": \"require\" };"
+        tsc x1: TS1454 @18 len 37 "`resolution-mode` can only be set for type-only imports."
+
+==== family importSpec  (409 inputs)
+  bun: src/js_parser/parse/parse_import_export.rs:116-290 parse_import_clause (138-224 "type" on a specifier is recognised after the name was read)
+  ref: parser.go:2432 parseNamedImports, 2442 parseImportSpecifier, 2457 parseImportOrExportSpecifier
+  counts A1=8 AA=197 AAg=32 RR=172
+  -- A1: 2 distinct
+    "arguments"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        bun x4: Cannot use "arguments" as an identifier here @form+0
+    "eval"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        bun x4: Cannot use "eval" as an identifier here @form+0
+  -- AAg: 8 distinct
+    "type await"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1262 @form+5 len 5 "Identifier expected. 'await' is a reserved word at the top-level of a module."
+    "type yield"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+5 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "type let"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+5 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "type static"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+5 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "type public"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+5 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "type implements"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+5 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "yield"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1214 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "await"
+        contexts (4 of 4): import importWithDefault importType importTwo
+        tsc x4: TS1262 @form+0 len 5 "Identifier expected. 'await' is a reserved word at the top-level of a module."
+
+==== family exportSpec  (503 inputs)
+  bun: src/js_parser/parse/parse_import_export.rs:291-472 parse_export_clause (325-399 "type" on a specifier)
+  ref: parser.go:2643 parseExportSpecifier, 2457 parseImportOrExportSpecifier
+  counts A1=27 A2=8 AA=356 RR=112
+  -- A1: 15 distinct
+    "type default"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "default" @form+5
+    "type default as A"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "default" @form+5
+    "default as A"
+        contexts (2 of 4): exportLocal exportType
+        bun x2: Expected identifier but found "default" @form+0
+    "default"
+        contexts (1 of 3): exportLocal
+        bun x1: Expected identifier but found "default" @form+0
+    "type \"a\""
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "" @form+5
+    "\"a\""
+        contexts (1 of 3): exportLocal
+        bun x1: Expected identifier but found "" @form+0
+    "type if"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "if" @form+5
+    "type if as A"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "if" @form+5
+    "if as A"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "if" @form+0
+    "if"
+        contexts (1 of 3): exportLocal
+        bun x1: Expected identifier but found "if" @form+0
+    "type this"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "this" @form+5
+    "type null"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "null" @form+5
+    "type true"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "true" @form+5
+    "default as default"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "default" @form+0
+    "type default as default"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "default" @form+5
+  -- A2: 4 distinct
+    "type \"a\" as A"
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "" @form+5
+        tsc x2: TS1003 @form+5 len 3 "Identifier expected."
+    "\"a\" as A"
+        contexts (2 of 4): exportLocal exportType
+        bun x2: Expected identifier but found "" @form+0
+        tsc x2: TS1003 @form+0 len 3 "Identifier expected."
+    "type \"a\" as \"b\""
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "" @form+5
+        tsc x2: TS1003 @form+5 len 3 "Identifier expected."
+    "\"a\" as \"b\""
+        contexts (2 of 5): exportLocal exportType
+        bun x2: Expected identifier but found "" @form+0
+        tsc x2: TS1003 @form+0 len 3 "Identifier expected."

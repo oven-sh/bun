@@ -1,0 +1,35 @@
+file /utf8-positions.ts scriptKind=3 variant=0 dts=false textLen=111
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=24 identifiers=6 text=9 reparsedClones=0
+root KindSourceFile [0,111) f=0x0
+  .Statements: list [0,110) n=3
+    - KindVariableStatement [0,31) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,30) f=0x2
+        .Declarations: list [5,30) n=1
+          - KindVariableDeclaration [5,30) f=0x0
+            .Initializer: KindStringLiteral [9,30) f=0x0 Text="h\u00e9llo \U0001f600 w\u00f6rld" TokenFlags=0x0
+            .name: KindIdentifier [5,7) f=0x0 Text="s"
+    - KindVariableStatement [31,56) f=0x0
+      .DeclarationList: KindVariableDeclarationList [31,55) f=0x2
+        .Declarations: list [37,55) n=1
+          - KindVariableDeclaration [37,55) f=0x0
+            .Initializer: KindTemplateExpression [41,55) f=0x0
+              .Head: KindTemplateHead [41,48) f=0x0 RawText="\u20ac" TemplateFlags=0x0 Text="\u20ac" TokenFlags=0x0
+              .TemplateSpans: list [48,55) n=1
+                - KindTemplateSpan [48,55) f=0x0
+                  .Expression: KindIdentifier [48,49) f=0x0 Text="s"
+                  .Literal: KindTemplateTail [49,55) f=0x0 RawText="\U0001f680" TemplateFlags=0x0 Text="\U0001f680" TokenFlags=0x0
+            .name: KindIdentifier [37,39) f=0x0 Text="t"
+    - KindFunctionDeclaration [56,110) f=0x0
+      .Body: KindBlock [95,110) f=0x0
+        .Statements: list [97,108) n=1
+          - KindReturnStatement [97,108) f=0x0
+            .Expression: KindIdentifier [104,107) f=0x0 Text="\u03b1"
+      .Parameters: list [84,94) n=1
+        - KindParameter [84,94) f=0x0
+          .Type: KindNumberKeyword [87,94) f=0x0
+          .name: KindIdentifier [84,86) f=0x0 Text="\u03b1"
+      .name: KindIdentifier [77,83) f=0x0 Text="\u00fcber"
+  .EndOfFileToken: KindEndOfFile [110,111) f=0x0

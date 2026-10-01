@@ -1,0 +1,94 @@
+#bad in o;
+class GP1 { #a = 1; m() { return #a; } }
+class GP2 { static n = new.tgt; }
+class GP3 { ["a" + "b"]!: number; }
+class GP4 { declare readonly ro = "x"; declare v = fn2(); }
+class GP5 { constructor<T>(): void {} }
+const tt = o?.a`x`;
+import.metaa;
+declare const amb = 1 + 1;
+declare let amb2 = 1;
+const big = 10n;
+function us(a = 1) { "use strict"; }
+const arrow = <T>(x: T)\n  => x;
+abstract class AB1 { abstract m() {} }
+abstract class AB2 { private abstract p: number; }
+abstract class AB3 { abstract static s: number; }
+abstract class AB4 { async abstract q(): void; }
+class AB5 { readonly readonly r = 1; }
+class AB6 { public private u = 1; }
+class AB7 { static static t = 1; }
+class AB8 { abstract z(): void; }
+interface IF1 { public a: number; }
+interface IF2 { static b(): void; }
+interface IF3 { [k: string]?: number; }
+interface IF4 { [...r: string[]]: number; }
+interface IF5 { [a: number, b: number]: number; }
+interface IF6 { [k: "lit"]: number; [x: string]; }
+function params1(a?: number, b: number) {}
+function params2(...c: number[], d: number) {}
+function params3(...e?: number[]) {}
+function params4(...f: number[] = []) {}
+let { ...rest1, tail } = o;
+const ob1 = { a: 1, a: 2 };
+const ob2 = { get g() { return 1; }, get g() { return 2; } };
+const ob3 = { m?() {} };
+const ob4 = { x = 1 };
+const ob5 = { readonly q: 1 };
+const ob6 = { a: 1, get a() { return 1; } };
+export default abstract class {}
+class { }
+export async class EC {}
+async interface AI {}
+declare declare function dd(): void;
+export export const ee = 1;
+function ovl(): void;\nfunction* ovl2();\nfunction ovl2() {}
+declare function* dg(): any;
+class Acc { get a(x: number) { return 1; } set b() {} set c(...v: number[]) {} get d<T>() { return 1; } set e(v: number): void {} }
+class Ext extends A1, B1 {}
+class Ext2 extends A1 extends B1 {}
+class Ext3 implements I1 implements I2 {}
+class Ext4 implements I1 extends A1 {}
+interface Ext5 implements I1 {}
+interface Ext6 extends I1 extends I2 {}
+for (var i1 = 0 in o) {}
+for (let a1, b1 of o) {}
+for (const c1: number of o) {}
+for (async of o) {}
+for (using u1 in o) {}
+using top = null;
+label1: continue label1;
+function tp1<>() {}
+f1<>();
+const neq = o!;\nlet da!: number = 1;\nlet db!;
+var let1 = 1; let let = 2;
+const uninit;
+const { d1 };
+enum En1 { ["a"] = 1, 1 = 2, #p = 3 }
+namespace "quoted" {}
+module ModKw {}
+function dflt(this: void, new: number, ...rest) {}
+class CtorParam { constructor(public ...r: number[]) {} m(public x: number) {} }
+class CtorParam2 { constructor(public { a }: { a: number }) {} }
+const nmsp = class { constructor() {} get constructor() { return 1; } *constructor() {} };
+class Fld { "constructor" = 1; static prototype = 2; }
+type TOp = keyof unique symbol;
+let uq: unique symbol;
+class UQ { a: unique symbol = o; static readonly b: unique symbol = o; }
+import x = require("y"); declare import z = require("w");
+export type { type TA } from "./mod_a";
+import type Dft, { TB } from "./mod_a";
+import defer * as dns from "./mod_a"; import defer dd2 from "./mod_a";
+import("a", ...[]); import(); import<T>("a");
+yield 1;
+function* g2() { function inner() { yield 2; } }
+const tpl = new.target;
+@dec export class DecA {}
+export @dec class DecB {}
+@dec export @dec class DecC {}
+class DecM { @dec constructor() {} @dec static {} @dec [k: string]: any; }
+function decp(@dec p: number) {}
+class DecO { @dec m(): void; m(): void {} }
+declare namespace AmbS { function f1() {} ; const c = o; let v: number = 1; 1 + 1; }
+declare class AmbC { m() {} p = 1; get g() { return 1; } static { } }
+declare function ambDefault(x = 1): void;

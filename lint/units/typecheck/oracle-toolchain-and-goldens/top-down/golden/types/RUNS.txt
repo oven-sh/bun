@@ -1,0 +1,23 @@
+init.nolib|-strict min.ts=min.ts
+init.nolib.nostrict|-nostrict min.ts=min.ts
+init.nolib.exact|-exact min.ts=min.ts
+init.es5|-strict lib.es5.d.ts=$TSLIB/es5.d.ts min.ts=min.ts
+merge.es5|-strict lib.es5.d.ts=$TSLIB/es5.d.ts a.ts=a.ts b.ts=b.ts m1.ts=m1.ts m2.ts=m2.ts
+alias.typeof|-strict -stage typeof lib1.ts=alias/lib1.ts lib2.ts=alias/lib2.ts lib3.ts=alias/lib3.ts eq.ts=alias/eq.ts cyc1.ts=alias/cyc1.ts cyc2.ts=alias/cyc2.ts user.ts=alias/user.ts
+decl.declared|-strict -stage declared lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+decl.typenodes|-strict -stage declared -stage typenodes lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+decl.members|-strict -stage declared -stage typenodes -stage members lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+decl.typeof|-strict -stage declared -stage typenodes -stage members -stage typeof -stage returns lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+decl.relate|-strict -nolinks -stage relate lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+decl.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts decl-only.ts=decl-only.ts
+rich.declared|-strict -stage declared lib.es5.d.ts=$TSLIB/es5.d.ts rich.ts=rich.ts
+rich.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts rich.ts=rich.ts
+zero.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts zero.ts=zero.ts
+infer.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts infer.ts=infer.ts
+min.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts min.ts=min.ts
+rel.tuple.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts tuple.ts=rel/tuple.ts
+rel.enumrel.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts enumrel.ts=rel/enumrel.ts
+rel.idcmp.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts idcmp.ts=rel/idcmp.ts
+ecf.literal.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts literal.ts=ecf/literal.ts
+ecf.oper.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts oper.ts=ecf/oper.ts
+ecf.flow.check|-strict -stage check lib.es5.d.ts=$TSLIB/es5.d.ts flow.ts=ecf/flow.ts

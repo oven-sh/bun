@@ -1,0 +1,49 @@
+{
+ "counts": {
+  "baselines with an instance": 7027,
+  "round trip with the units of the case": 7027,
+  "with configuration file: units that the configuration does not name are after the others": 14
+ },
+ "examples": {
+  "baselines with an instance": [
+   "ArrowFunctionExpression1",
+   "ClassDeclaration10",
+   "ClassDeclaration11",
+   "ClassDeclaration13",
+   "ClassDeclaration14",
+   "ClassDeclaration15",
+   "ClassDeclaration21",
+   "ClassDeclaration22",
+   "ClassDeclaration24",
+   "ClassDeclaration25"
+  ],
+  "round trip with the units of the case": [
+   "ArrowFunctionExpression1",
+   "ClassDeclaration10",
+   "ClassDeclaration11",
+   "ClassDeclaration13",
+   "ClassDeclaration14",
+   "ClassDeclaration15",
+   "ClassDeclaration21",
+   "ClassDeclaration22",
+   "ClassDeclaration24",
+   "ClassDeclaration25"
+  ],
+  "with configuration file: units that the configuration does not name are after the others": [
+   "configFileExtendsAsList",
+   "declarationEmitReexportedSymlinkReference3",
+   "libTypeScriptOverrideSimpleConfig",
+   "libTypeScriptSubfileResolvingConfig",
+   "maxNodeModuleJsDepthDefaultsToZero",
+   "tsconfigExtendsPackageJsonExportsWildcard",
+   "tslibMultipleMissingHelper",
+   "tslibNotFoundDifferentModules",
+   "typesVersionsDeclarationEmit.multiFileBackReferenceToSelf",
+   "resolutionModeTripleSlash1"
+  ]
+ },
+ "newLineKinds": {
+  "one line": 624,
+  "LF": 9700
+ }
+}

@@ -1,0 +1,52 @@
+START 01-bun-install 2026-09-29T16:01:51Z load=591.12 430.81 367.69 cmd: bun install
+END   01-bun-install rc=0 wall=397s lockwait=396s run=1s 2026-09-29T16:08:28Z load=444.23 456.64 406.09
+START 02-test-bun-install 2026-09-29T16:08:28Z load=444.23 456.64 406.09 cmd: sh -c cd test && bun install
+END   02-test-bun-install rc=0 wall=496s lockwait=494s run=2s 2026-09-29T16:16:44Z load=235.03 331.23 369.60
+START 03-bun-bd-version 2026-09-29T16:16:44Z load=235.03 331.23 369.60 cmd: bun bd --version
+END   03-bun-bd-version rc=0 wall=21s lockwait=19s run=2s 2026-09-29T16:17:05Z load=223.68 322.39 365.87
+START 10-cargo-check-js_parser 2026-09-29T16:28:17Z load=354.36 319.17 339.84 cmd: cargo check -p bun_js_parser --message-format=short
+END   10-cargo-check-js_parser rc=0 wall=246s lockwait=243s run=3s 2026-09-29T16:32:23Z load=351.52 312.48 330.53
+START 11-cargo-check-ast 2026-09-29T16:32:23Z load=358.68 314.61 331.12 cmd: cargo check -p bun_ast --message-format=short
+END   11-cargo-check-ast rc=0 wall=64s lockwait=64s run=0s 2026-09-29T16:33:27Z load=313.51 310.19 328.61
+START 12-cargo-clippy-js_parser 2026-09-29T16:33:27Z load=313.51 310.19 328.61 cmd: cargo clippy -p bun_js_parser --no-deps --message-format=short
+END   12-cargo-clippy-js_parser rc=0 wall=37s lockwait=37s run=0s 2026-09-29T16:34:04Z load=295.15 305.87 326.38
+START 13-cargo-clippy-ast 2026-09-29T16:34:04Z load=295.15 305.87 326.38 cmd: cargo clippy -p bun_ast --no-deps --message-format=short
+END   13-cargo-clippy-ast rc=0 wall=20s lockwait=20s run=0s 2026-09-29T16:34:24Z load=285.62 303.02 325.01
+START 14-cargo-fmt-js_parser 2026-09-29T16:34:24Z load=285.62 303.02 325.01 cmd: cargo fmt -p bun_js_parser -- --check
+END   14-cargo-fmt-js_parser rc=0 wall=249s lockwait=245s run=4s 2026-09-29T16:38:33Z load=406.25 311.27 319.74
+START 15-cargo-fmt-ast 2026-09-29T16:38:34Z load=406.25 311.27 319.74 cmd: cargo fmt -p bun_ast -- --check
+END   15-cargo-fmt-ast rc=0 wall=1247s lockwait=1246s run=1s 2026-09-29T16:59:21Z load=249.62 291.04 335.83
+START 20-test-decorator-metadata 2026-09-29T16:59:36Z load=250.90 289.33 334.55 cmd: bun bd test test/bundler/transpiler/decorator-metadata.test.ts --timeout 180000
+END   20-test-decorator-metadata rc=0 wall=422s lockwait=410s run=12s 2026-09-29T17:06:39Z load=380.87 347.07 349.41
+START 21-test-bundler_decorator_metadata 2026-09-29T17:06:40Z load=380.87 347.07 349.41 cmd: bun bd test test/bundler/bundler_decorator_metadata.test.ts --timeout 180000
+END   21-test-bundler_decorator_metadata rc=0 wall=440s lockwait=421s run=19s 2026-09-29T17:14:00Z load=302.19 399.96 384.54
+START 22-test-transpiler 2026-09-29T17:14:00Z load=302.19 399.96 384.54 cmd: bun bd test test/bundler/transpiler/transpiler.test.js --timeout 180000
+END   22-test-transpiler rc=0 wall=798s lockwait=719s run=79s 2026-09-29T17:27:18Z load=224.33 263.70 312.59
+START 23-test-ts 2026-09-29T17:27:18Z load=224.33 263.70 312.59 cmd: bun bd test test/bundler/esbuild/ts.test.ts --timeout 180000
+END   23-test-ts rc=0 wall=927s lockwait=794s run=133s 2026-09-29T17:42:45Z load=534.32 377.37 325.52
+START 24-test-decorators 2026-09-29T17:42:47Z load=534.32 377.37 325.52 cmd: bun bd test test/bundler/transpiler/decorators.test.ts --timeout 180000
+END   24-test-decorators rc=0 wall=509s lockwait=482s run=27s 2026-09-29T17:51:16Z load=134.93 219.03 278.43
+START 25-test-type-export 2026-09-29T17:51:16Z load=134.93 219.03 278.43 cmd: bun bd test test/js/bun/typescript/type-export.test.ts --timeout 180000
+END   25-test-type-export rc=0 wall=308s lockwait=237s run=71s 2026-09-29T17:56:24Z load=138.97 168.66 240.09
+START 26-test-transpiler-stack-overflow 2026-09-29T17:56:24Z load=138.97 168.66 240.09 cmd: bun bd test test/bundler/transpiler/transpiler-stack-overflow.test.ts --timeout 180000
+END   26-test-transpiler-stack-overflow rc=0 wall=383s lockwait=333s run=50s 2026-09-29T18:02:47Z load=201.23 180.35 220.85
+START 27-test-transpiler-cache 2026-09-29T18:02:47Z load=201.23 180.35 220.85 cmd: bun bd test test/cli/run/transpiler-cache.test.ts --timeout 180000
+END   27-test-transpiler-cache rc=0 wall=116s lockwait=69s run=47s 2026-09-29T18:04:43Z load=265.77 208.33 226.12
+START 31-linkprobe 2026-09-29T18:04:43Z load=265.77 208.33 226.12 cmd: cargo test --manifest-path /workspace/notes/lint/units/parser/measure/linkprobe/Cargo.toml --offline --target-dir /tmp/parser-base/tgt-linkprobe -- --test-threads=1
+END   31-linkprobe rc=101 wall=182s lockwait=126s run=56s 2026-09-29T18:07:45Z load=328.09 264.30 244.84
+START 32-psize 2026-09-29T18:07:45Z load=328.09 264.30 244.84 cmd: /tmp/parser-base/psize.sh
+START 31b-linkprobe-all 2026-09-29T18:08:43Z load=291.55 264.33 245.94 cmd: cargo test --manifest-path /workspace/notes/lint/units/parser/measure/linkprobe/Cargo.toml --offline --target-dir /tmp/parser-base/tgt-linkprobe -- --test-threads=1
+END   32-psize rc=0 wall=95s lockwait=55s run=40s 2026-09-29T18:09:20Z load=299.18 269.69 248.52
+START 33-clippy-pitfall 2026-09-29T18:09:20Z load=299.18 269.69 248.52 cmd: /tmp/parser-base/clippy-pitfall.sh
+END   31b-linkprobe-all rc=101 wall=44s lockwait=37s run=7s 2026-09-29T18:09:27Z load=295.80 269.48 248.56
+END   33-clippy-pitfall rc=0 wall=47s lockwait=12s run=35s 2026-09-29T18:10:07Z load=269.19 266.41 248.44
+START 34-gd-targeted-debug 2026-09-29T18:10:07Z load=269.19 266.41 248.44 cmd: sh -c cd /workspace/notes/lint/units/parser/grammar-diff && BUN_DEBUG_QUIET_LOGS=1 /workspace/wt/parser/build/debug/bun-debug harness.mjs corpus.targeted.json /tmp/parser-base/gd-a/debug.targeted.jsonl.gz --jobs=8
+END   34-gd-targeted-debug rc=0 wall=35s lockwait=6s run=29s 2026-09-29T18:10:42Z load=257.46 263.50 248.11
+START 35-release-rebuild 2026-09-29T18:10:44Z load=257.46 263.50 248.11 cmd: /tmp/parser-base/rebuild.sh
+END   35-release-rebuild rc=0 wall=590s lockwait=14s run=576s 2026-09-29T18:20:36Z load=609.26 510.67 374.68
+START 36-gd-small-installed 2026-09-29T18:20:42Z load=600.75 510.54 375.37 cmd: sh -c cd /workspace/notes/lint/units/parser/grammar-diff && /workspace/bun/build/release/bun harness.mjs corpus.small.json /tmp/parser-base/gd-a/installed.small.jsonl.gz --jobs=8
+END   36-gd-small-installed rc=0 wall=41s lockwait=18s run=23s 2026-09-29T18:21:23Z load=474.34 490.78 374.50
+START 37-miri-ast 2026-09-29T18:21:23Z load=474.34 490.78 374.50 cmd: env MIRIFLAGS=-Zmiri-tree-borrows cargo miri test -p bun_ast --lib --offline
+END   37-miri-ast rc=0 wall=213s lockwait=84s run=129s 2026-09-29T18:24:56Z load=387.18 413.70 365.62
+START 33b-clippy-ast-primary 2026-09-29T18:25:04Z load=371.73 409.61 364.81 cmd: cargo clippy -p bun_ast --no-deps --message-format=short --target-dir /tmp/parser-base/tgt-clippy2
+END   33b-clippy-ast-primary rc=0 wall=106s lockwait=30s run=76s 2026-09-29T18:26:50Z load=523.89 448.93 383.40

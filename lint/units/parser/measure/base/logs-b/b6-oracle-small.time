@@ -1,0 +1,8 @@
+QUEUED 1790704585481 2026-09-29T17:56:25+00:00
+CMD bun oracle.mjs corpus.small.json /workspace/notes/lint/units/parser/grammar-diff/oracle.small.jsonl.gz
+START 1790704967171 2026-09-29T18:02:47+00:00 load=201.23 180.35 220.85
+END 1790704996555 2026-09-29T18:03:16+00:00 load=212.47 184.83 221.04
+EXIT 0
+WAIT_MS 381690
+RUN_MS 29384
+DONE

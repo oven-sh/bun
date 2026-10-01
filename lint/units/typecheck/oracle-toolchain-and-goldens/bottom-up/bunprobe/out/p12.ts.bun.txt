@@ -1,0 +1,2 @@
+file p12.ts bytes=61
+error: does not parse (errors=1)

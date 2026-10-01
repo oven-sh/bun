@@ -1,0 +1,2217 @@
+import type A from "m";
+import type { A } from "m";
+import type * as A from "m";
+import type A, { B } from "m";
+import type A, * as B from "m";
+import type from "m";
+import type, { A } from "m";
+import type, * as A from "m";
+import type type from "m";
+import type from from "m";
+import type as from "m";
+import type * as from from "m";
+import type * as type from "m";
+import type * as as from "m";
+import type { type } from "m";
+import type { type A } from "m";
+import type { A as B } from "m";
+import type { default as A } from "m";
+import type { "a" as b } from "m";
+import type {} from "m";
+import type { A, } from "m";
+import type { A, B as C, } from "m";
+import type { , } from "m";
+import type { A B } from "m";
+import type "m";
+import type;
+import type
+import type A;
+import type A from;
+import type { A };
+import type * from "m";
+import type * as from "m";
+import type A, B from "m";
+import type { A }, B from "m";
+import type A from "m" with { type: "json" };
+import type { A } from "m" with { "resolution-mode": "import" };
+import type { A } from "m" assert { "resolution-mode": "import" };
+import type A from "m"\nimport type B from "n"
+import type\nA from "m";
+import\ntype A from "m";
+import type A\nfrom "m";
+import type A from\n"m";
+import type\n{ A } from "m";
+import type\n* as A from "m";
+import type\nfrom "m";
+import type A = require("m");
+import type A = B.C;
+import type A = B;
+import type type = require("m");
+import type = B;
+import type = require("m");
+import type from = B;
+import type from = require("m");
+import type as = B;
+import A = require("m");
+import A = B.C.D;
+import A = B;
+import A = B.default;
+import A = B.class;
+import A = class;
+import A = require("m").B;
+import A = require(m);
+import A = require();
+import A = require("m", "n");
+import A = require;
+import A = require.B;
+import A = B<C>;
+import A = B[0];
+import A = B();
+import A = typeof B;
+import A = import('m');
+import A = 1;
+import A = "m";
+import A =
+import A = B.;
+import A = B.#c;
+import A = this;
+import A = this.B;
+import A\n= B;
+import A =\nB;
+import A = B\n.C;
+import { A } = require("m");
+import * as A = B;
+import A, B = require("m");
+export import A = B.C;
+export import A = require("m");
+export import type A = B;
+export import type A = require("m");
+export import A = B;\nexport import C = D.E;
+export default import A = B;
+declare import A = B;
+export declare import A = B;
+import { type A } from "m";
+import { type A as B } from "m";
+import { type } from "m";
+import { type as } from "m";
+import { type as as } from "m";
+import { type as as as } from "m";
+import { type as as as as } from "m";
+import { type type } from "m";
+import { type type as type } from "m";
+import { type as type } from "m";
+import { type "a" as b } from "m";
+import { type "a" } from "m";
+import { type default as A } from "m";
+import { type default } from "m";
+import { type if as A } from "m";
+import { type A as if } from "m";
+import { type A, B, type C as D } from "m";
+import { type, A } from "m";
+import { A, type } from "m";
+import { type as, A } from "m";
+import { type\nA } from "m";
+import { type A, } from "m";
+import { type A B } from "m";
+import { type type type } from "m";
+import { type as B } from "m";
+import { type as as B } from "m";
+import { type as as as B } from "m";
+import { type from } from "m";
+import { type from as from } from "m";
+import { type of } from "m";
+import { type await } from "m";
+import { type yield } from "m";
+import { type 1 } from "m";
+import { type * as A } from "m";
+import { type { A } } from "m";
+import { type A.B } from "m";
+import { "a" as type } from "m";
+import { a as type } from "m";
+import { type as "a" } from "m";
+import { type A as "b" } from "m";
+import A, { type B } from "m";
+import A, type { B } from "m";
+import A, type B from "m";
+import { A }, type { B } from "m";
+import a from "m" with { type: "json" };
+import a from "m" assert { type: "json" };
+import a from "m"\nassert { type: "json" };
+import a from "m"\nwith { type: "json" };
+import "m" with {};
+import "m" with { type: "json", };
+import "m" with { "type": "json" };
+import "m" with { type: 1 };
+import "m" with { type };
+import "m" with { [type]: "json" };
+import "m" with { 1: "json" };
+import "m" with
+import "m" with { type: "json" } with { a: "b" };
+import "m" as A;
+import a from "m" as A;
+import defer * as a from "m";
+import defer from "m";
+import defer a from "m";
+import defer { a } from "m";
+import defer, { a } from "m";
+import defer = B;
+import defer from from "m";
+import defer * as defer from "m";
+import source a from "m";
+import source from "m";
+import("m");
+import("m") as A;
+import<A>("m");
+import.meta as A;
+import.meta!;
+import("m")!;
+import("m", { with: { type: "json" } });
+var v = import("m") as Promise<A>;
+var v = <A>import("m");
+var v = await import("m") as A;
+import type('m');
+import type.a;
+import type of from "m";
+import type async from "m";
+import type await from "m";
+import type yield from "m";
+import type let from "m";
+import type static from "m";
+import type default from "m";
+import type if from "m";
+import type class from "m";
+import type function from "m";
+import type defer from "m";
+import type source from "m";
+import type module from "m";
+import type namespace from "m";
+import type global from "m";
+import type declare from "m";
+import type abstract from "m";
+import type interface from "m";
+import type enum from "m";
+import type any from "m";
+import type string from "m";
+import type undefined from "m";
+import type arguments from "m";
+import type eval from "m";
+import type implements from "m";
+import type package from "m";
+import type public from "m";
+import type { as } from "m";
+import type { from } from "m";
+import type { of } from "m";
+import type { async } from "m";
+import type { await } from "m";
+import type { yield } from "m";
+import type { let } from "m";
+import type { static } from "m";
+import type { default } from "m";
+import type { if } from "m";
+import type { class } from "m";
+import type { function } from "m";
+import type { defer } from "m";
+import type { source } from "m";
+import type { module } from "m";
+import type { namespace } from "m";
+import type { global } from "m";
+import type { declare } from "m";
+import type { abstract } from "m";
+import type { interface } from "m";
+import type { enum } from "m";
+import type { any } from "m";
+import type { string } from "m";
+import type { undefined } from "m";
+import type { arguments } from "m";
+import type { eval } from "m";
+import type { implements } from "m";
+import type { package } from "m";
+import type { public } from "m";
+import { type async } from "m";
+import { type let } from "m";
+import { type static } from "m";
+import { type if } from "m";
+import { type class } from "m";
+import { type function } from "m";
+import { type defer } from "m";
+import { type source } from "m";
+import { type module } from "m";
+import { type namespace } from "m";
+import { type global } from "m";
+import { type declare } from "m";
+import { type abstract } from "m";
+import { type interface } from "m";
+import { type enum } from "m";
+import { type any } from "m";
+import { type string } from "m";
+import { type undefined } from "m";
+import { type arguments } from "m";
+import { type eval } from "m";
+import { type implements } from "m";
+import { type package } from "m";
+import { type public } from "m";
+import { type type as A } from "m";
+import { type as as A } from "m";
+import { type from as A } from "m";
+import { type of as A } from "m";
+import { type async as A } from "m";
+import { type await as A } from "m";
+import { type yield as A } from "m";
+import { type let as A } from "m";
+import { type static as A } from "m";
+import { type class as A } from "m";
+import { type function as A } from "m";
+import { type defer as A } from "m";
+import { type source as A } from "m";
+import { type module as A } from "m";
+import { type namespace as A } from "m";
+import { type global as A } from "m";
+import { type declare as A } from "m";
+import { type abstract as A } from "m";
+import { type interface as A } from "m";
+import { type enum as A } from "m";
+import { type any as A } from "m";
+import { type string as A } from "m";
+import { type undefined as A } from "m";
+import { type arguments as A } from "m";
+import { type eval as A } from "m";
+import { type implements as A } from "m";
+import { type package as A } from "m";
+import { type public as A } from "m";
+import { type A as type } from "m";
+import { type A as as } from "m";
+import { type A as from } from "m";
+import { type A as of } from "m";
+import { type A as async } from "m";
+import { type A as await } from "m";
+import { type A as yield } from "m";
+import { type A as let } from "m";
+import { type A as static } from "m";
+import { type A as default } from "m";
+import { type A as class } from "m";
+import { type A as function } from "m";
+import { type A as defer } from "m";
+import { type A as source } from "m";
+import { type A as module } from "m";
+import { type A as namespace } from "m";
+import { type A as global } from "m";
+import { type A as declare } from "m";
+import { type A as abstract } from "m";
+import { type A as interface } from "m";
+import { type A as enum } from "m";
+import { type A as any } from "m";
+import { type A as string } from "m";
+import { type A as undefined } from "m";
+import { type A as arguments } from "m";
+import { type A as eval } from "m";
+import { type A as implements } from "m";
+import { type A as package } from "m";
+import { type A as public } from "m";
+import type = A.B;
+import as = A.B;
+import from = A.B;
+import of = A.B;
+import async = A.B;
+import await = A.B;
+import yield = A.B;
+import let = A.B;
+import static = A.B;
+import default = A.B;
+import if = A.B;
+import class = A.B;
+import function = A.B;
+import defer = A.B;
+import source = A.B;
+import module = A.B;
+import namespace = A.B;
+import global = A.B;
+import declare = A.B;
+import abstract = A.B;
+import interface = A.B;
+import enum = A.B;
+import any = A.B;
+import string = A.B;
+import undefined = A.B;
+import arguments = A.B;
+import eval = A.B;
+import implements = A.B;
+import package = A.B;
+import public = A.B;
+import type type = A.B;
+import type as = A.B;
+import type from = A.B;
+import type of = A.B;
+import type async = A.B;
+import type await = A.B;
+import type yield = A.B;
+import type let = A.B;
+import type static = A.B;
+import type default = A.B;
+import type if = A.B;
+import type class = A.B;
+import type function = A.B;
+import type defer = A.B;
+import type source = A.B;
+import type module = A.B;
+import type namespace = A.B;
+import type global = A.B;
+import type declare = A.B;
+import type abstract = A.B;
+import type interface = A.B;
+import type enum = A.B;
+import type any = A.B;
+import type string = A.B;
+import type undefined = A.B;
+import type arguments = A.B;
+import type eval = A.B;
+import type implements = A.B;
+import type package = A.B;
+import type public = A.B;
+import A = type.B;
+import A = as.B;
+import A = from.B;
+import A = of.B;
+import A = async.B;
+import A = await.B;
+import A = yield.B;
+import A = let.B;
+import A = static.B;
+import A = default.B;
+import A = if.B;
+import A = class.B;
+import A = function.B;
+import A = defer.B;
+import A = source.B;
+import A = module.B;
+import A = namespace.B;
+import A = global.B;
+import A = declare.B;
+import A = abstract.B;
+import A = interface.B;
+import A = enum.B;
+import A = any.B;
+import A = string.B;
+import A = undefined.B;
+import A = arguments.B;
+import A = eval.B;
+import A = implements.B;
+import A = package.B;
+import A = public.B;
+import A = B.type;
+import A = B.as;
+import A = B.from;
+import A = B.of;
+import A = B.async;
+import A = B.await;
+import A = B.yield;
+import A = B.let;
+import A = B.static;
+import A = B.if;
+import A = B.function;
+import A = B.defer;
+import A = B.source;
+import A = B.module;
+import A = B.namespace;
+import A = B.global;
+import A = B.declare;
+import A = B.abstract;
+import A = B.interface;
+import A = B.enum;
+import A = B.any;
+import A = B.string;
+import A = B.undefined;
+import A = B.arguments;
+import A = B.eval;
+import A = B.implements;
+import A = B.package;
+import A = B.public;
+export type { A };
+export type { A } from "m";
+export type { A as B } from "m";
+export type { A as default } from "m";
+export type { default } from "m";
+export type { default as A } from "m";
+export type { "a" as b } from "m";
+export type { A as "b" } from "m";
+export type * from "m";
+export type * as A from "m";
+export type * as default from "m";
+export type * as "a" from "m";
+export type * as type from "m";
+export type * as from from "m";
+export type * as as from "m";
+export type *;
+export type * as A;
+export type * from;
+export type * as from "m";
+export type * as A, { B } from "m";
+export type *, { A } from "m";
+export type * from "m" with { type: "json" };
+export type { A } from "m" with { "resolution-mode": "import" };
+export type {};
+export type {} from "m";
+export type { A, B as C, };
+export type { , };
+export type { A B };
+export type { type A };
+export type { type };
+export type { A }\nexport type { B }
+export type\n{ A };
+export type\nA = B;
+export type\n* from 'm';
+export type
+export type;
+export type = 1;
+export type A;
+export type A
+export type { A } from;
+export type { A } "m";
+export type A from "m";
+export type A, { B } from "m";
+export type { default };
+export type { if };
+export type { A as if };
+export type { if as A };
+export type { if } from "m";
+export type { "a" };
+export type { "a" } from "m";
+export { type A };
+export { type A as B };
+export { type A } from "m";
+export { type };
+export { type as };
+export { type as as };
+export { type as as as };
+export { type as as as as };
+export { type type };
+export { type type as type };
+export { type "a" } from "m";
+export { type "a" as b } from "m";
+export { type A as "b" };
+export { type A as "b" } from "m";
+export { type default } from "m";
+export { type default as A } from "m";
+export { type A as default };
+export { type as default };
+export { type A, B, type C as D };
+export { type, A };
+export { A, type };
+export { type\nA };
+export { type A, };
+export { type A B };
+export { type if };
+export { type if } from "m";
+export { type A as if };
+export { type * };
+export { type { A } };
+export { type A.B };
+export { type 1 };
+export { A as type };
+export { type as type };
+export { type from } from "m";
+export { type from };
+export { type of };
+export { type await };
+export { type yield };
+export {};
+export {} from "m";
+export { A, };
+export { , };
+export { A as B, C as default };
+export { default } from "m";
+export { default as default } from "m";
+export * from "m";
+export * as A from "m";
+export * as default from "m";
+export * as "a" from "m";
+export * from "m" with { type: "json" };
+export { a } from "m" with { type: "json" };
+export { a } from "m" assert { type: "json" };
+export { a } "m";
+export { a } from;
+export * as A;
+export *;
+export * as;
+export = A;
+export = A.B;
+export = { a: 1 };
+export = class {};
+export = class C<T> {};
+export = function () {};
+export = function f<T>(a: T): T { return a };
+export = <T>(a: T) => a;
+export = a as A;
+export = <A>a;
+export = a!;
+export = 1;
+export = "s";
+export = [a];
+export = a, b;
+export = a = b;
+export =
+export =;
+export = A\nexport = B
+export\n= A;
+export =\nA;
+export = A; export default B;
+export = interface I {}
+export = type X = 1
+export = enum E {}
+export = namespace N {}
+export = declare class C {}
+export = abstract class C {}
+export = async function () {}
+export = await a;
+export = yield;
+export = import('m');
+export = new A();
+export = typeof a;
+export = a ? b : c;
+declare export = A;
+export declare = A;
+export default = A;
+@d export = A;
+namespace N { export = A }
+{ export = A }
+function f() { export = A }
+if (a) export = A;
+export as namespace A;
+export as namespace A
+export as namespace A.B;
+export as namespace;
+export as namespace
+export as namespace default;
+export as namespace type;
+export as namespace as;
+export as namespace namespace;
+export as namespace "A";
+export as namespace A, B;
+export as namespace A = B;
+export as namespace A {}
+export as A;
+export as;
+export as
+export as module A;
+export as\nnamespace A;
+export as namespace\nA;
+export\nas namespace A;
+export as namespace A;\nexport as namespace B;
+declare export as namespace A;
+export declare as namespace A;
+@d export as namespace A;
+export default as namespace A;
+namespace N { export as namespace A }
+{ export as namespace A }
+export as namespace if;
+export as namespace await;
+export as namespace yield;
+export as namespace 1;
+export default A;
+export default interface I {}
+export default interface I<T> extends J<T> { a: A }
+export default interface {}
+export default interface\nI {}
+export default abstract class C {}
+export default abstract\nclass C {}
+export default enum E {}
+export default const enum E {}
+export default namespace N {}
+export default module M {}
+export default type X = A;
+export default declare class C {}
+export default declare function f(): void;
+export default async function f<T>() {}
+export default function <T>(a: T): T { return a }
+export default class<T> {}
+export default class implements I {}
+export default class C<T> extends D<T> implements I<T> {}
+export default (a: A): B => a;
+export default a as A;
+export default <A>a;
+export default a!;
+export default a satisfies A;
+export default { a: 1 } as const;
+export default type;
+export default type
+export default interface;
+export default abstract;
+export default declare;
+export default namespace;
+export default module;
+export default async;
+export default of;
+export default as;
+export default from;
+export default function f(): void;
+export default function (): void;
+export default var a: A;
+export default let a;
+export default const a = 1;
+export default a, b;
+export default;
+export default
+export default default;
+export default export default a;
+export default import a from 'm';
+export default @d class {}
+@d export default class {}
+export default @d abstract class {}
+export default abstract @d class {}
+export default async <T>(a: T) => a;
+export default async (a: A): Promise<B> => a;
+export default class { a: A; m(): void {} }
+export default function f(this: A) {}
+export declare const a: A;
+export declare let a: A, b: B;
+export declare var a;
+export declare function f(): void;
+export declare function f(): void
+export declare class C {}
+export declare enum E {}
+export declare const enum E {}
+export declare namespace N {}
+export declare module M {}
+export declare module "m" {}
+export declare global {}
+export declare type X = A;
+export declare interface I {}
+export declare abstract class C {}
+export declare async function f(): void;
+export declare function* f(): void;
+export declare default class {}
+export declare;
+export declare
+export declare a;
+export declare { a };
+export declare * from 'm';
+export declare export const a: A;
+export declare declare const a: A;
+export declare\nconst a: A;
+export\ndeclare const a: A;
+declare export const a: A;
+declare export function f(): void;
+declare export class C {}
+declare export default class {}
+declare export { a };
+declare export * from 'm';
+export abstract class C {}
+export const enum E {}
+export enum E {}
+export namespace N {}
+export module M {}
+export interface I {}
+export async function f<T>() {}
+export function f<T>(a: T): T { return a }
+export class C<T> {}
+export const a: A = 1;
+export let a: A, b: B = 2;
+export var a: A;
+export const f = <T>(a: T) => a;
+export const f = (a: A): B => a;
+export const a = b as A;
+export const a = <A>b;
+export const a = b!;
+export const { a, b }: A = c;
+export const [a, b]: A = c;
+export let a!: A;
+export using a: A = b;
+export async;
+export interface;
+export abstract;
+export namespace;
+export a;
+export A.B;
+export 1;
+export;
+export
+export export const a = 1;
+export public class C {}
+export static a;
+export readonly a;
+export import a from 'm';
+export import 'm';
+export import * as a from 'm';
+export import { a } from 'm';
+export function f(): void;
+export function f(): void; export function f(a?: any) {}
+export async function f(): Promise<void>;
+export class C { m(): void; m(a?: any) {} }
+export abstract class C { abstract m(): void }
+declare var a;
+declare var a: A;
+declare var a: A, b: B;
+declare var a = 1;
+declare var a: A = 1;
+declare let a: A;
+declare let a;
+declare let a = 1;
+declare const a: A;
+declare const a = 1;
+declare const a = "s";
+declare const a = -1;
+declare const a = 1n;
+declare const a = true;
+declare const a = {};
+declare const a = E.A;
+declare const a = b;
+declare const a: A = 1;
+declare const a;
+declare const a, b;
+declare const a: A, b = 1;
+declare const { a }: A;
+declare const { a } = b;
+declare let [a]: A;
+declare var { a, b: [c] }: A;
+declare const a: unique symbol;
+declare let a!: A;
+declare using a: A;
+declare using a = b;
+declare await using a: A;
+declare var
+declare var;
+declare const
+declare let
+declare let\na: A;
+declare var a: A\ndeclare var b: B
+declare var a: A declare var b: B
+declare var a: A; declare var b: B
+declare function f(): void;
+declare function f(): void
+declare function f();
+declare function f()
+declare function f() {}
+declare function f(): void {}
+declare function f<T>(a: T): T;
+declare function f(a?: A, ...b: B[]): C;
+declare function f(a = 1): void;
+declare function f(a: A = 1): void;
+declare function f({ a }: A, [b]: B): void;
+declare function f({ a = 1 }): void;
+declare function f(...a, b): void;
+declare function f(...a,): void;
+declare function f(...a: A[],): void;
+declare function f(a,): void;
+declare function f(this: A): void;
+declare function f(a: any): a is A;
+declare function f(a: any): asserts a;
+declare function f(a: any): asserts a is A;
+declare function f(public a: A): void;
+declare function f(@d a: A): void;
+declare function* f(): A;
+declare async function f(): A;
+declare async function* f(): A;
+declare function f(): void; declare function f(a: A): void;
+declare function f(): void\ndeclare function f(a: A): void
+declare function f(): void function g() {}
+declare function f(): void declare function g(): void
+declare function (): void;
+declare function default(): void;
+declare function f: A;
+declare function f<T>;
+declare function
+declare function f(): A<B>\ndeclare function g(): C
+declare function f(): typeof a\ndeclare function g(): C
+declare function f(): A\n(b)
+declare class C {}
+declare class C<T> extends D<T> implements I<T> {}
+declare class C { a: A; m(): void; constructor(a: A); static s: A; get g(): A; set g(v: A); [k: string]: A; private p; protected q: A; readonly r: A; #x: A; declare y: A }
+declare class C { m() {} }
+declare class C { a = 1 }
+declare class C { static readonly a = 1 }
+declare class C { readonly a = 1 }
+declare class C { static {} }
+declare class C { constructor(public a: A); }
+declare class C { constructor(public a: A) {} }
+declare class C { get a() { return 1 } }
+declare class C { accessor a: A }
+declare class C { m(): void; m(a: A): void }
+declare class C { @d m(): void }
+declare class C { abstract m(): void }
+declare class C { m?(): void; a?: A; b!: B }
+declare abstract class C { abstract m(): void; abstract a: A; protected abstract readonly b: B }
+declare class
+declare class {}
+declare class C
+declare class C extends D
+declare @d class C {}
+@d declare class C {}
+declare class C {} declare class D {}
+declare enum E { A, B = 1, C = 'c', D = A | B }
+declare enum E {}
+declare const enum E { A }
+declare const enum E { A = 'a'.length }
+declare enum E { A = f() }
+const declare enum E {}
+declare enum
+declare const enum
+declare enum E
+declare const\nenum E {}
+declare namespace N {}
+declare namespace N { const a: A; function f(): void; class C {} interface I {} type X = A; enum E {} namespace M {} export const b: B; var c; let d }
+declare namespace N.M.O {}
+declare namespace N { export {} }
+declare namespace N { export { a } }
+declare namespace N { export default a }
+declare namespace N { export = a }
+declare namespace N { import a = M.b }
+declare namespace N { export import a = M.b }
+declare namespace N { import a from 'm' }
+declare namespace N { export * from 'm' }
+declare namespace N { declare const a: A }
+declare namespace N { function f() {} }
+declare namespace N { const a = 1; let b = 2; var c = 3 }
+declare namespace N { a; }
+declare namespace N { if (a) {} }
+declare namespace N { f(); }
+declare namespace N { class C { m() {} } }
+declare namespace N { ; }
+declare namespace N { {} }
+declare namespace N { label: a }
+declare namespace N { return }
+declare namespace N { export function f(): void }
+declare namespace N { export function f(): void\nexport function g(): void }
+declare namespace N { function f(): void function g(): void }
+declare namespace N
+declare namespace N;
+declare namespace
+declare namespace {}
+declare namespace N { namespace M { const a: A } }
+declare module M {}
+declare module M.N {}
+declare module M { const a: A }
+declare module "m" {}
+declare module "m";
+declare module "m"
+declare module 'm' {}
+declare module `m` {}
+declare module "*.css" { const a: string; export default a }
+declare module "m" { export = A }
+declare module "m" { import a from "n"; export { a } }
+declare module "m" { export * from "n" }
+declare module "m" { export default function f(): void }
+declare module "m" { export default class {} }
+declare module "m" { export default interface I {} }
+declare module "m" { const a: A; export default a }
+declare module "m" { export const a: A; export function f(): void; export class C {} export type X = A; export interface I {} export enum E {} export namespace N {} }
+declare module "m" { function f() {} }
+declare module "m" { const a = f() }
+declare module "m" { a; }
+declare module "m" { declare const a: A }
+declare module "m" { declare module "n" {} }
+declare module "m" { namespace N {} module O {} }
+declare module "m" { export as namespace A }
+declare module "m" { import type { A } from "n"; export type { A } }
+declare module "m" { import a = require("n"); export import b = a.c }
+declare module "m" {} declare module "n" {}
+declare module "m" {}\ndeclare module "n" {}
+declare module "m"\ndeclare module "n"
+declare module "m"; declare module "n";
+declare module "m" "n"
+declare module "m".n {}
+declare module "m" extends A {}
+declare module "m"<T> {}
+declare module "m" {
+declare module 1 {}
+declare module {}
+declare module
+declare module;
+declare module\n"m" {}
+declare module "m"\n{}
+declare global {}
+declare global { interface Window { a: A } }
+declare global { var a: A }
+declare global { const a: A; function f(): void }
+declare global;
+declare global
+declare global { a; }
+declare global {} declare global {}
+declare global.a {}
+declare global a {}
+declare\nglobal {}
+declare global\n{}
+declare namespace global {}
+declare module global {}
+declare global { export {} }
+declare module "m" { global { var a: A } }
+declare namespace N { global {} }
+global {}
+global { var a: A }
+global;
+global = 1;
+global();
+global.a;
+global\n{}
+var global = 1;
+global + 1;
+module "m" {}
+module "m";
+module "m"
+namespace "m" {}
+export module "m" {}
+module\n"m" {}
+module "m"\n{}
+declare type X = A;
+declare interface I {}
+declare import a = b;
+declare import a from 'm';
+declare import 'm';
+declare export default a;
+declare;
+declare = 1;
+declare();
+declare.a;
+declare\nconst a: A = 1;
+declare\nconst a: A;
+declare\nfunction f(): void
+declare\nfunction f() {}
+declare\nclass C {}
+declare\nvar a;
+declare\nenum E {}
+declare\nnamespace N {}
+declare\nmodule M {}
+declare\ninterface I {}
+declare\ntype X = A;
+declare\nlet a;
+declare declare const a: A;
+declare async function f(): void;
+declare a;
+declare a: A;
+declare {}
+declare if (a) {}
+declare return;
+declare 1;
+declare +a;
+declare ? a : b;
+declare => 1;
+(declare) => 1;
+a = declare;
+var declare = 1;
+let declare: declare;
+declare `t`;
+declare\n(a);
+declare in a;
+declare instanceof A;
+declare++;
+declare as A;
+declare!;
+declare<A>(b);
+declare<A>;
+namespace N { declare const a: A }
+namespace N { export declare const a: A }
+namespace N { declare function f(): void }
+function f() { declare const a: A }
+function f() { declare function g(): void }
+{ declare const a: A }
+{ declare class C {} }
+if (a) declare const b: B;
+label: declare const a: A;
+for (;;) declare const a: A;
+class C { declare a: A }
+declare label: a
+declare public class C {}
+declare static const a: A;
+declare readonly a: A;
+declare abstract;
+declare abstract\nclass C {}
+declare const a: A<B>\ndeclare const c: C
+declare const a: typeof b\ndeclare const c: C
+declare var a: A.B\n<C>d;
+namespace N {}
+namespace N { export const a = 1 }
+namespace N.M {}
+namespace N.M.O { export const a = 1 }
+namespace N { namespace M {} }
+namespace N { export namespace M {} }
+module M {}
+module M.N {}
+module M { export const a = 1 }
+namespace\nN {}
+module\nM {}
+namespace N\n{}
+module M\n{}
+namespace N.\nM {}
+namespace N\n.M {}
+namespace N {
+namespace {}
+namespace N.{}
+namespace N. M {}
+namespace N..M {}
+namespace .N {}
+namespace "N" {}
+namespace 1 {}
+namespace N<T> {}
+namespace N extends M {}
+namespace N()
+namespace N = M;
+namespace N;
+namespace N
+namespace N {};
+namespace N {} namespace N {}
+namespace N { } namespace M { }
+namespace N.default {}
+namespace N.class.if {}
+namespace N.type.as {}
+namespace N.#a {}
+namespace N."a" {}
+namespace N.1 {}
+namespace N { export default a }
+namespace N { import a = M.b }
+namespace N { export import a = M.b }
+namespace N { import a = require('m') }
+namespace N { import a from 'm' }
+namespace N { import 'm' }
+namespace N { export * from 'm' }
+namespace N { export { a } }
+namespace N { export { a } from 'm' }
+namespace N { export {} }
+namespace N { export = a }
+namespace N { return }
+namespace N { await a }
+namespace N { yield }
+namespace N { break }
+namespace N { this.a }
+namespace N { super.a }
+namespace N { new.target }
+namespace N { arguments }
+namespace N { type X = A; interface I {} }
+namespace N { export type X = A }
+namespace N { export interface I {} }
+namespace N { declare module 'm' {} }
+namespace N { export let a: A, b: B = 1 }
+namespace N { export var a: A }
+namespace N { export const [a, b] = c }
+namespace N { export const { a, b: { c } } = d }
+namespace N { export const { a = 1, ...b } = c }
+namespace N { export function f<T>(a: T): T { return a } }
+namespace N { export class C<T> {} }
+namespace N { export enum E {} }
+namespace N { export const enum E {} }
+namespace N { export abstract class C {} }
+namespace N { export async function f() {} }
+namespace N { export function* f() {} }
+namespace N { export using a = b }
+namespace N { export a }
+namespace N { export; }
+namespace N { export export const a = 1 }
+namespace N { export public a }
+namespace N { export let a }\nnamespace N { a = 1 }
+namespace N { export const a = 1; export const b = a }
+namespace N { let a: A = 1; a as B; <B>a; a! }
+namespace N { @d class C {} }
+namespace N { export @d class C {} }
+namespace N { @d export class C {} }
+namespace N { export default class {} }
+async namespace N {}
+abstract namespace N {}
+static namespace N {}
+public namespace N {}
+const namespace N {}
+readonly namespace N {}
+declare export namespace N {}
+@d namespace N {}
+function f() { namespace N {} }
+{ namespace N {} }
+if (a) namespace N {}
+label: namespace N {}
+for (;;) namespace N {}
+class C { namespace N {} }
+function f() { module M {} }
+{ module M {} }
+namespace N { { namespace M {} } }
+namespace N { function f() { namespace M {} } }
+namespace;
+namespace = 1;
+namespace();
+namespace.a;
+var namespace = 1;
+namespace\n(a);
+namespace + 1;
+namespace => 1;
+(namespace) => 1;
+a = namespace;
+namespace\n{}
+namespace `t`;
+namespace++;
+namespace in a;
+namespace as A;
+namespace!;
+namespace<A>(b);
+namespace ? a : b;
+let namespace: namespace;
+module;
+module = 1;
+module();
+module.exports = 1;
+module\n.exports = 1;
+var module = 1;
+module\n(a);
+module + 1;
+module => 1;
+(module) => 1;
+a = module;
+module\n{}
+module `t`;
+module++;
+module in a;
+module as A;
+module!;
+module<A>(b);
+module ? a : b;
+let module: module;
+module\nM\n{}
+namespace\nN\n{}
+typeof module;
+module.id as A;
+namespace type {}
+namespace as {}
+namespace of {}
+namespace is {}
+namespace async {}
+namespace await {}
+namespace yield {}
+namespace let {}
+namespace static {}
+namespace public {}
+namespace implements {}
+namespace package {}
+namespace interface {}
+namespace abstract {}
+namespace declare {}
+namespace readonly {}
+namespace global {}
+namespace namespace {}
+namespace module {}
+namespace require {}
+namespace constructor {}
+namespace from {}
+namespace get {}
+namespace set {}
+namespace using {}
+namespace any {}
+namespace string {}
+namespace number {}
+namespace object {}
+namespace undefined {}
+namespace unknown {}
+namespace never {}
+namespace arguments {}
+namespace eval {}
+namespace if {}
+namespace class {}
+namespace function {}
+namespace default {}
+namespace in {}
+namespace new {}
+namespace typeof {}
+namespace enum {}
+namespace extends {}
+namespace import {}
+namespace export {}
+namespace var {}
+namespace const {}
+namespace void {}
+namespace null {}
+namespace this {}
+namespace true {}
+module type {}
+module as {}
+module of {}
+module is {}
+module async {}
+module await {}
+module yield {}
+module let {}
+module static {}
+module public {}
+module implements {}
+module package {}
+module interface {}
+module abstract {}
+module declare {}
+module readonly {}
+module global {}
+module namespace {}
+module module {}
+module require {}
+module constructor {}
+module from {}
+module get {}
+module set {}
+module using {}
+module any {}
+module string {}
+module number {}
+module object {}
+module undefined {}
+module unknown {}
+module never {}
+module arguments {}
+module eval {}
+module if {}
+module class {}
+module function {}
+module default {}
+module in {}
+module new {}
+module typeof {}
+module enum {}
+module extends {}
+module import {}
+module export {}
+module var {}
+module const {}
+module void {}
+module null {}
+module this {}
+module true {}
+namespace N.type {}
+namespace N.as {}
+namespace N.of {}
+namespace N.is {}
+namespace N.async {}
+namespace N.await {}
+namespace N.yield {}
+namespace N.let {}
+namespace N.static {}
+namespace N.public {}
+namespace N.implements {}
+namespace N.package {}
+namespace N.interface {}
+namespace N.abstract {}
+namespace N.declare {}
+namespace N.readonly {}
+namespace N.global {}
+namespace N.namespace {}
+namespace N.module {}
+namespace N.require {}
+namespace N.constructor {}
+namespace N.from {}
+namespace N.get {}
+namespace N.set {}
+namespace N.using {}
+namespace N.any {}
+namespace N.string {}
+namespace N.number {}
+namespace N.object {}
+namespace N.undefined {}
+namespace N.unknown {}
+namespace N.never {}
+namespace N.arguments {}
+namespace N.eval {}
+namespace N.if {}
+namespace N.class {}
+namespace N.function {}
+namespace N.in {}
+namespace N.new {}
+namespace N.typeof {}
+namespace N.enum {}
+namespace N.extends {}
+namespace N.import {}
+namespace N.export {}
+namespace N.var {}
+namespace N.const {}
+namespace N.void {}
+namespace N.null {}
+namespace N.this {}
+namespace N.true {}
+declare namespace type {}
+declare namespace as {}
+declare namespace of {}
+declare namespace is {}
+declare namespace async {}
+declare namespace await {}
+declare namespace yield {}
+declare namespace let {}
+declare namespace static {}
+declare namespace public {}
+declare namespace implements {}
+declare namespace package {}
+declare namespace interface {}
+declare namespace abstract {}
+declare namespace declare {}
+declare namespace readonly {}
+declare namespace namespace {}
+declare namespace module {}
+declare namespace require {}
+declare namespace constructor {}
+declare namespace from {}
+declare namespace get {}
+declare namespace set {}
+declare namespace using {}
+declare namespace any {}
+declare namespace string {}
+declare namespace number {}
+declare namespace object {}
+declare namespace undefined {}
+declare namespace unknown {}
+declare namespace never {}
+declare namespace arguments {}
+declare namespace eval {}
+declare namespace if {}
+declare namespace class {}
+declare namespace function {}
+declare namespace default {}
+declare namespace in {}
+declare namespace new {}
+declare namespace typeof {}
+declare namespace enum {}
+declare namespace extends {}
+declare namespace import {}
+declare namespace export {}
+declare namespace var {}
+declare namespace const {}
+declare namespace void {}
+declare namespace null {}
+declare namespace this {}
+declare namespace true {}
+enum E {}
+enum E { A }
+enum E { A, }
+enum E { A, B }
+enum E { A = 1 }
+enum E { A = 1, B, C = 'c' }
+enum E { "A" }
+enum E { "A" = 1 }
+enum E { 'a-b' = 1 }
+enum E { 1 }
+enum E { 1 = 2 }
+enum E { 1.5 }
+enum E { 0x10 }
+enum E { 1n }
+enum E { -1 }
+enum E { [a] }
+enum E { [a] = 1 }
+enum E { ["a"] }
+enum E { ["a"] = 1 }
+enum E { [`a`] = 1 }
+enum E { [`a${b}`] = 1 }
+enum E { [1] = 1 }
+enum E { ["a" + "b"] = 1 }
+enum E { [a.b] = 1 }
+enum E { #a }
+enum E { #a = 1 }
+enum E { `a` }
+enum E { `a` = 1 }
+enum E { A B }
+enum E { A\nB }
+enum E { A = 1\nB }
+enum E { A; B }
+enum E { A; }
+enum E { A = }
+enum E { = 1 }
+enum E { , }
+enum E { ,A }
+enum E { A,, B }
+enum E { A,, }
+enum E { A = B.C }
+enum E { A = 1 << 2, B = A | 1, C = -A, D = ~A, E = 'a'.length, F = f() }
+enum E { A = (1) }
+enum E { A = 1 as any }
+enum E { A = <any>1 }
+enum E { A = 1! }
+enum E { A = 1 satisfies number }
+enum E { A = a ? 1 : 2 }
+enum E { A = a, b }
+enum E { A = (a, b) }
+enum E { A = 1 in a }
+enum E { A = () => 1 }
+enum E { A = (a: A): B => a }
+enum E { A = <T>(a: T) => a }
+enum E { A = function () {} }
+enum E { A = class {} }
+enum E { A = yield }
+enum E { A = await 1 }
+enum E { A = await }
+enum E { A = this }
+enum E { A = new.target }
+enum E { A = import.meta }
+enum E { A = a = 1 }
+enum E { A = [1] }
+enum E { A = {} }
+enum E { A = `a` }
+enum E { A = `a${1}` }
+enum E { A = 'a' + 'b' }
+enum E { A = E.B, B = 1 }
+enum E { A = B, B = 1 }
+enum E { A = A }
+enum E { A, A }
+enum E { A = f<T>(a) }
+enum E { A = a<b>(c) }
+enum E { A = a < b > c }
+enum E { A = a<B> }
+enum E { A = typeof a }
+enum E { A = void 0 }
+enum E { if, class, default, function, new, typeof, void, null, true, this, in, instanceof }
+enum E { type, as, of, async, await, yield, let, static }
+enum E { if = 1 }
+enum E { in = 1 }
+enum E { constructor }
+enum E { prototype }
+enum E { __proto__ }
+enum E { Infinity, NaN, undefined }
+enum E { A: 1 }
+enum E { A() {} }
+enum E { get A }
+enum E { get A() { return 1 } }
+enum E { static A }
+enum E { readonly A }
+enum E { public A }
+enum E { declare A }
+enum E { ...a }
+enum E { A? }
+enum E { A! }
+enum E { A?: 1 }
+enum E { @d A }
+enum E { A = 1, }
+enum E {\n  A,\n  B,\n}
+enum E {\n  A = 1\n  ,B\n}
+enum E { /* c */ A /* d */ = /* e */ 1 /* f */ , }
+enum {}
+enum E
+enum E;
+enum
+enum;
+enum E {
+enum E { A
+enum E { A =
+enum E }
+enum\nE {}
+enum E\n{}
+enum E<T> {}
+enum E extends F {}
+enum E implements F {}
+enum E.F {}
+enum "E" {}
+enum 1 {}
+enum E() {}
+enum E = {}
+enum E {};
+const enum E {}
+const enum E { A = 1, B = A }
+const enum E { A = 'a', B = `b` }
+const\nenum E {}
+const enum\nE {}
+const enum
+const enum;
+const enum {}
+const const enum E {}
+enum const E {}
+let enum E {}
+var enum E {}
+declare const enum E {}
+async enum E {}
+abstract enum E {}
+static enum E {}
+public enum E {}
+readonly enum E {}
+@d enum E {}
+enum E {} enum E {}
+enum E { A } enum E { B = A }
+enum E { A }\nenum E { B = 1 }
+enum E { A } namespace E { export const b = 1 }
+function f() { enum E { A } }
+{ enum E {} }
+if (a) enum E {}
+label: enum E {}
+for (;;) enum E {}
+class C { enum E {} }
+namespace N { enum E {} export enum F {} export const enum G {} }
+var v = enum E {};
+(enum E {})
+a = enum;
+enum.a;
+var enum = 1;
+enum type {}
+enum as {}
+enum of {}
+enum is {}
+enum async {}
+enum await {}
+enum yield {}
+enum let {}
+enum static {}
+enum public {}
+enum implements {}
+enum package {}
+enum interface {}
+enum abstract {}
+enum declare {}
+enum readonly {}
+enum global {}
+enum namespace {}
+enum module {}
+enum require {}
+enum constructor {}
+enum from {}
+enum get {}
+enum set {}
+enum using {}
+enum any {}
+enum string {}
+enum number {}
+enum object {}
+enum undefined {}
+enum unknown {}
+enum never {}
+enum arguments {}
+enum eval {}
+enum if {}
+enum class {}
+enum function {}
+enum default {}
+enum in {}
+enum new {}
+enum typeof {}
+enum enum {}
+enum extends {}
+enum import {}
+enum export {}
+enum var {}
+enum const {}
+enum void {}
+enum null {}
+enum this {}
+enum true {}
+enum E { type }
+enum E { as }
+enum E { of }
+enum E { is }
+enum E { async }
+enum E { await }
+enum E { yield }
+enum E { let }
+enum E { static }
+enum E { public }
+enum E { implements }
+enum E { package }
+enum E { interface }
+enum E { abstract }
+enum E { declare }
+enum E { readonly }
+enum E { global }
+enum E { namespace }
+enum E { module }
+enum E { require }
+enum E { from }
+enum E { get }
+enum E { set }
+enum E { using }
+enum E { any }
+enum E { string }
+enum E { number }
+enum E { object }
+enum E { undefined }
+enum E { unknown }
+enum E { never }
+enum E { arguments }
+enum E { eval }
+enum E { if }
+enum E { class }
+enum E { function }
+enum E { default }
+enum E { in }
+enum E { new }
+enum E { typeof }
+enum E { enum }
+enum E { extends }
+enum E { import }
+enum E { export }
+enum E { var }
+enum E { const }
+enum E { void }
+enum E { null }
+enum E { this }
+enum E { true }
+enum E { type = 1 }
+enum E { as = 1 }
+enum E { of = 1 }
+enum E { is = 1 }
+enum E { async = 1 }
+enum E { await = 1 }
+enum E { yield = 1 }
+enum E { let = 1 }
+enum E { static = 1 }
+enum E { public = 1 }
+enum E { implements = 1 }
+enum E { package = 1 }
+enum E { interface = 1 }
+enum E { abstract = 1 }
+enum E { declare = 1 }
+enum E { readonly = 1 }
+enum E { global = 1 }
+enum E { namespace = 1 }
+enum E { module = 1 }
+enum E { require = 1 }
+enum E { constructor = 1 }
+enum E { from = 1 }
+enum E { get = 1 }
+enum E { set = 1 }
+enum E { using = 1 }
+enum E { any = 1 }
+enum E { string = 1 }
+enum E { number = 1 }
+enum E { object = 1 }
+enum E { undefined = 1 }
+enum E { unknown = 1 }
+enum E { never = 1 }
+enum E { arguments = 1 }
+enum E { eval = 1 }
+enum E { class = 1 }
+enum E { function = 1 }
+enum E { default = 1 }
+enum E { new = 1 }
+enum E { typeof = 1 }
+enum E { enum = 1 }
+enum E { extends = 1 }
+enum E { import = 1 }
+enum E { export = 1 }
+enum E { var = 1 }
+enum E { const = 1 }
+enum E { void = 1 }
+enum E { null = 1 }
+enum E { this = 1 }
+enum E { true = 1 }
+type as = 1;
+type satisfies = 1;
+type as<T> = T;
+type as = 1; let x: as;
+interface as {}
+interface satisfies { a: 1 }
+interface as<T> extends B {}
+declare type as = 1;
+declare interface as {}
+type as T;
+type as T X = 1;
+type as <T>() => void;
+interface as T;
+type is = 1;
+type asserts = 1;
+type infer = 1;
+type of = 1;
+type type = 1;
+type async = 1;
+type await = 1;
+type yield = 1;
+type let = 1;
+type static = 1;
+type readonly = 1;
+type keyof = 1;
+type unique = 1;
+type declare = 1;
+type abstract = 1;
+type namespace = 1;
+type module = 1;
+type global = 1;
+type out = 1;
+type in = 1;
+type any = 1;
+namespace as.b {}
+namespace satisfies { export const a = 1 }
+declare module as {}
+export type as = 1;
+export interface as {}
+export namespace as { export const a = 1 }
+export declare type as = 1;
+namespace as { a }
+namespace as { a: 1 }
+namespace as { let x: number }
+namespace as { foo(): void }
+namespace as {} X {}
+namespace as {} X\n{}
+namespace as {}\nfoo()
+namespace as {};
+namespace as { export const a = 1 }
+namespace as {} + 1
+namespace as any
+namespace as any;
+namespace as any X {}
+namespace as.b.c { export const a = 1 }
+namespace satisfies {}
+namespace satisfies any
+module as { a }
+module as any
+module as.b {}
+export namespace as {}
+export namespace as { a }
+export namespace as any
+export module as {}
+export interface as { a: 1 }
+export interface as {}\nfoo()
+export interface as any
+declare namespace as { a }
+declare interface as { a: 1 }
+declare type as = 1
+declare type as any
+declare type as any X = 1
+interface as {}\nfoo()
+interface as { a: 1 }\nfoo()
+interface as {} Foo {}
+interface as any Foo {}
+interface as any\nfoo()
+interface as any
+interface as any;
+interface as extends B {}
+interface as<T> {}
+interface as<T> extends B<T> { a: T }
+interface as <T>() => void\nfoo()
+interface as <T>() => void Foo {}
+interface satisfies {}
+type as any
+type as any;
+type as any\nfoo()
+type as any X = 1
+type as <T>() => void
+type as <T>() => void X = 1
+type as <T> = T
+type as<T> = T
+type as<in T> = T
+type as<out T> = T
+type as<const T> = T
+type as<T,> = T
+type as<> = 1
+type as = as
+type as = 1\ntype satisfies = as
+type satisfies = 1
+type satisfies<T> = T
+type satisfies any
+type /* c */ as = 1
+type as /* c */ = 1
+type\nas = 1
+type as\n= 1
+let type = 1; type as any;
+let type: any; type as = 1;
+function f() { type as = 1; return 1 as as }
+function f() { namespace as {} }
+function f() { interface as {} }
+{ type as = 1 }
+if (x) type as = 1;
+if (x) type as any;
+label: type as = 1;
+export type as = 1
+export type as any
+export type satisfies = 1
+export default interface as {}
+export declare namespace as {}
+export declare interface as {}
+export declare type satisfies = 1
+abstract as any
+abstract as any class C {}
+declare as any
+declare as any const x = 1
+global as any
+global as {}
+interface as {}\n
+interface as {\n  a: 1\n}\nconst x = 1;\n
+namespace as {}\n
+namespace as {\n}\nconst x = 1;\n
+type as any\n
+export interface as {}\n
+declare interface as {}\n
+namespace as {}.foo
+namespace as {}[0]
+namespace as {} as any
+namespace as {} ? 1 : 2
+namespace as {}, x
+namespace as {} = 1
+namespace as {}()
+namespace as {}`x`
+namespace as {}!
+namespace as {}++
+namespace as {} in x
+namespace as {} | X {}
+namespace as {} & { a: 1 } X {}
+interface as {} | X\nfoo()
+interface as {}[]\nfoo()
+interface as { a: 1 } extends B ? C : D\nfoo()
+global { var x: number; }
+global { interface A {} }
+declare global { var x: number }
+namespace N { global {} }
+declare module "m" { global { var x: number } }
+module "m" { global { var x: number } }
+export {}; declare global { var x: number }
+export {}; global { var x: number }
+global
+global.x = 1;
+{ namespace N { export const a = 1 } }
+if (a) { namespace N { export const a = 1 } }
+function f() { namespace N { export const a = 1 } }
+function f() { module N { export const a = 1 } }
+{ declare namespace N {} }
+{ module N {} }
+{ declare module "m" {} }
+{ enum E { A } }
+{ type T = 1 }
+{ interface I {} }
+{ declare const x: number }
+{ declare function f(): void }
+{ abstract class C {} }
+{ import x = require("y") }
+{ export const a = 1 }
+namespace N {}\nnamespace N { export const a = 1 }
+module\nN {}
+declare module N.M {}
+declare module "m" { export const a: number }
+declare namespace "m" {}
+abstract class C {}
+abstract\nclass C {}
+declare abstract class C {}
+abstract declare class C {}
+declare async function f(): Promise<void>;
+declare function* f(): void;
+declare enum E { A }
+declare const x: number;
+declare let x: number;
+declare var x: number;
+declare using x: number;
+declare type T = 1;
+declare type\nT = 1;
+declare import x = require("y");
+declare import x from "y";
+declare export const x: number;
+export declare const x: number;
+export default abstract class {}
+export abstract declare class C {}
+declare declare const x: number;
+declare
+declare x
+declare\nx
+abstract
+abstract;
+type
+type;
+type\nT = 1;
+interface
+interface;
+interface\nI {}
+namespace
+module
+type T = 1
+type\nT
+interface I {} interface J {}
+import { type } from "x";
+import { type as } from "x";
+import { type as as } from "x";
+import { type as as as } from "x";
+import { type as as as as } from "x";
+import { type as b } from "x";
+import { type a } from "x";
+import { type a as b } from "x";
+import { type a as as } from "x";
+import { type type } from "x";
+import { type type as b } from "x";
+import { type type as as } from "x";
+import { as } from "x";
+import { as as } from "x";
+import { as as as } from "x";
+import { as as b } from "x";
+import { a as type } from "x";
+import { type "a" as b } from "x";
+import { "a" as b } from "x";
+import { "type" as b } from "x";
+import { "type" } from "x";
+import { "a" } from "x";
+import { type "a" } from "x";
+import { type default as b } from "x";
+import { default as b } from "x";
+import { type default } from "x";
+import { default } from "x";
+import { type if as b } from "x";
+import { if as b } from "x";
+import { type if } from "x";
+import { if } from "x";
+import { type as if } from "x";
+import { a as if } from "x";
+import { type a as if } from "x";
+import { type as as if } from "x";
+import { type, a } from "x";
+import { type, } from "x";
+import { type as, a } from "x";
+import { type as as, a } from "x";
+import { a, type b } from "x";
+import { a, type } from "x";
+import { type\na } from "x";
+import { type a\nas b } from "x";
+import { type eval } from "x";
+import { type arguments } from "x";
+import { type await } from "x";
+import { type yield } from "x";
+import { type let } from "x";
+import { type static } from "x";
+import { eval } from "x";
+import { arguments } from "x";
+import { a as eval } from "x";
+import { await } from "x";
+import { a as await } from "x";
+import type { type a } from "x";
+import type { type } from "x";
+import type { type as } from "x";
+import type { type as as } from "x";
+import type { a as b } from "x";
+import type { "a" as b } from "x";
+import type { default as b } from "x";
+export { type as b };
+export { type a };
+export { type a as b };
+export { type a as as };
+export { type type as b };
+export { as };
+export { as as };
+export { as as as };
+export { as as b };
+export { a as type };
+export { type a as "b" };
+export { a as "b" };
+export { type "a" };
+export { "a" };
+export { "a" as b };
+export { type "a" as b };
+export { "type" as b };
+export { "type" };
+export { type default };
+export { default };
+export { type default as b };
+export { default as b };
+export { if };
+export { type if as b };
+export { if as b };
+export { a as if };
+export { type a as if };
+export { type as if };
+export { type as as if };
+export { a as default };
+export { type a as default };
+export { type this };
+export { type null };
+export { type true };
+export { this };
+export { type, a };
+export { type as, a };
+export { type a, };
+export { type } from "x";
+export { type as } from "x";
+export { type as as } from "x";
+export { type as as as } from "x";
+export { type a } from "x";
+export { type a as b } from "x";
+export { type if } from "x";
+export { if } from "x";
+export { type if as b } from "x";
+export { type default } from "x";
+export { default } from "x";
+export { type default as b } from "x";
+export { type "a" } from "x";
+export { "a" } from "x";
+export { type "a" as "b" } from "x";
+export { "type" } from "x";
+export { "type" as b } from "x";
+export { a as "type" } from "x";
+export { type a as default } from "x";
+export type { type a };
+export type { type as };
+export type { a as b };
+export type { a };
+export type { a as if };
+export type { a as default };
+export type { a } from "x";
+export type { default } from "x";
+export type { if } from "x";
+export type { "a" } from "x";
+export type { default as a } from "x";
+export type * from "x";
+export type * as ns from "x";
+export type * as default from "x";
+export type * as "s" from "x";
+export * as "s" from "x";
+export * as default from "x";
+export * as if from "x";
+export type\nT = 1;
+export type T = 1;
+export type T<U> = U;
+export type\n{ a };
+export type\n* from "x";
+export type { a }\nfrom "x";
+export type from "x";
+export type from = 1;
+import type A, { B } from "x";
+import type A, * as B from "x";
+import type A from "x";
+import type { A } from "x";
+import type * as A from "x";
+import type from "x";
+import type, { A } from "x";
+import type, * as A from "x";
+import type from from "x";
+import type as from "x";
+import type type from "x";
+import type A = require("x");
+import type = require("x");
+import type = B.C;
+import type type = require("x");
+import type from = require("x");
+import type as = require("x");
+import type\nA from "x";
+import type A\nfrom "x";
+import type\n{ A } from "x";
+import type from\n"x";
+import type {} from "x";
+import type { } from "x";
+import type "x";
+import type A from "x" with { type: "json" };
+import type { A } from "x" with { "resolution-mode": "import" };
+import type A from "x" assert { type: "json" };
+import A = require("x");
+import A = B.C;
+import A = require("x").y;
+import A = require(x);
+import A = "x";
+import A = import("x");
+import await = require("x");
+import eval = require("x");
+import let = require("x");
+import as = B;
+export import A = require("x");
+export import type A = B.C;
+export import type A = require("x");
+export type A = require("x");
+import type A = B.if;
+namespace N { import A = B.C; }
+namespace N { export import A = B.C; }
+namespace N { import A = require("x"); }
+namespace N { import type A = B.C; }
+namespace N { import A from "x"; }
+namespace N { import "x"; }
+namespace N { import("x"); }
+namespace N { import.meta; }
+namespace N { export * from "x"; }
+namespace N { export { a }; }
+namespace N { export { a } from "x"; }
+namespace N { export default 1; }
+namespace N { export = 1; }
+namespace N { export as namespace X; }
+namespace N { export type { a }; }
+namespace N { export type T = 1; }
+function f() { import A = B.C; }
+function f() { import type A from "x"; }
+{ import A = B.C; }
+export = A as any;
+export = A; export = B;
+export = A; export const b = 1;
+export default 1; export = A;
+export as namespace X;
+export as namespace X
+export as namespace X.Y;
+export as namespace "X";
+export as\nnamespace X;
+export as namespace\nX;
+export as X;
+import defer * as ns from "x";
+import defer A from "x";
+import defer { A } from "x";
+import defer "x";
+import defer from "x";
+import defer, { A } from "x";
+import defer = require("x");
+import.defer("x");
+import source A from "x";
+import source from "x";
+import.source("x");
+import type defer from "x";
+import type defer * as ns from "x";
+import defer type A from "x";
+enum E { "x" = 1, B = x }
+enum E { ["x"] = 1, B = x }
+enum E { ["x"] = 1, B = E.x }
+enum E { ["x"] = 1, B = E["x"] }
+enum E { [`x`] = 1, B = x }
+enum E { ["a-b"] = 1, B = E["a-b"] }
+enum E { ["x"], ["y"] }
+enum E { ["x"] = "s" }
+enum E { ['x'] }
+enum E { ["x"], }
+enum E { [ "x" ] = 1 }
+enum E { ["x" ] = 1 }
+enum E { [("x")] = 1 }
+enum E { ["x" as any] = 1 }
+enum E { ["\u0078"] = 1 }
+enum E { ["x"]: 1 }
+enum E { ["x"]() {} }
+const enum E { ["x"] = 1 } var v = E.x;
+const enum E { ["x"] = 1 } var v = E["x"];
+declare enum E { ["x"] = 1 }
+export enum E { ["x"] = 1 }
+namespace N { export enum E { ["x"] = 1 } }
+enum E { [`x`] = 1, [`y`] }
+enum E { ["x"] = 1 } enum E { ["y"] = 2 }
+enum E { ["__proto__"] = 1 }
+enum E { ["constructor"] }
+export default @d class C {}
+export default @d abstract class C {}
+@d export default abstract class C {}
+var v = a ? x : c ? <T>(d) : e => f;
+var v = a ? <T>(b) : c => d ? e : f;
+var v = a ? (<T>(b)) : c => d;
+interface as {};
+interface as {}; foo()
+type as = 1; type X = as;
+declare namespace as.b {}
+declare module as.b {}
+abstract declare class C { m(): void }
+@d abstract declare class C {}
+export default @d() abstract class C {}
+class C { @d()!! m() {} }
+@d.e()! class C {}
+@d!()! class C {}
+enum E { ["x"] = 1, ["y"] = x + 1 }
+type as = 1
+type of = 1
+type async = 1
+type await = 1
+type yield = 1
+type type = 1
+type interface = 1
+type declare = 1
+type as T
+type as <T>(x: T) => void
+type satisfies T
+type in x
+type = 1
+type => 1
+type.x = 1
+type\nFoo = 1
+interface as T\nfoo()
+interface as {} + 1
+interface\nFoo {}
+interface + 1
+export default interface\nFoo {}
+export interface\nFoo {}
+interface of {}
+interface type {}
+interface await {}
+namespace as { export const x = 1 }
+module as { export const x = 1 }
+namespace as T
+module "foo" {}
+module "foo";
+namespace "foo" {}
+if (x) namespace N {}
+declare as T
+declare as {}
+declare const as: number
+declare let as: number
+declare var of
+declare function as(): void
+declare class as {}
+declare enum as {}
+declare type\nFoo = 1
+declare\ntype Foo = 1
+abstract interface I {}
+abstract type T = 1
+abstract function f() {}
+abstract const x = 1
+declare declare class C {}
+declare async function f(): void
+declare import a = b
+global as T
+global x {}
+global export

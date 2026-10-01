@@ -1,0 +1,86 @@
+needs-and-lint-channel, bottom-up pass (read from the code). Research only: no file of a worktree was changed.
+
+needs-draft.txt   the draft of NEEDS.md of the unit "conformance" (ids of the top-down draft, channel (d)). To use it:
+                  cp needs-draft.txt /workspace/notes/lint/units/conformance/NEEDS.md
+                  It holds every entry of the second edition of ../top-down/NEEDS.draft.md (which chooses (d) too) and
+                  what the second check of this pass added. The notes were not saved with save-notes by this pass.
+probes/           what measured its numbers; every probe reads the reference clones only
+
+Run (each prints one JSON line or a short table):
+  cd probes
+  bun comment_runs.ts            {"files":12445,"utf8Bom":844,"slashRunUtf8":8352,"commentCopRunUtf8":8386,"onlyDirectiveRuns":6455,"markers":29}
+  bun comment_runs_variants.ts   8162 two trimmed // lines when read as latin-1, 8131 at column 0, 8200 with /* and *; 8352 without the byte order mark
+  bun baseline_comment_runs.ts   TypeScript 9056 baselines: 469 with a run, 19 with a marker; typescript-go 7027: 408, 21
+  bun config_units.ts            cases 12445: unit tsconfig.json 130, package.json 242, under node_modules 298, @link/@symlink 22, longest directive text 424 bytes
+  bun line_ends.ts               {"files":12445,"crlfOnly":8879,"lfOnly":3203,"mixed":362,"noLineBreak":1,"withLoneCr":8,"withNulByte":9,"utf16Bom":7}
+  bun unit_extensions.ts         units: .ts 14264, .js 1213, .json 560, .tsx 454, .mts 115, .cts 102, .mjs 24, .cjs 24, .jsx 15; 6 cases with another extension
+  bun plain_only.ts              {"total":7027,"pretty":14,"withRelated":1035,"noSquiggleLine":151,"noSquiggleAndNoRelated":144}
+  bun syntax_gate.ts             {"total":7027,"withParserOnlyCode":533,"ofThose_alsoACodeTheParserNeverEmits":293,"ofThose_severalDiagnosticsAllParserCodes":96,"ofThose_exactlyOneDiagnostic":144}
+  bun no_owner_codes.ts          {"errorBaselines":7027,"withADiagnosticWithoutFile":156,"withACodeNoCheckerBinderParserScannerEmits":235}; compiler 145, transformers 48, tsoptions 26, module 18
+  bun lib_parse_cost.ts          102 library files, 2984246 bytes, 10 ms with the installed release bun (types dropped)
+  bun spawn_concurrent.ts <binary> <count> <concurrency...>
+                                 release, 200 x --revision: 63.7 ms each with 1 at a time, 39.7 with 8, 24.2 with 16
+                                 debug,    64 x --revision: 270 ms each with 1 at a time, 57.4 with 8, 57.9 with 16
+                                 (16 threads, load average above 600 when measured)
+  bash experiments.sh [scratch]  tsc exclude semantics, oxlint --fix (106 of 6537 files rewritten, 0 with the entry),
+                                 git add below typecheck/fixtures (blob 31990f31 instead of 38206f54), the nested
+                                 .gitignore, LeakSanitizer on three paths that parse and exit (no report)
+
+One-line measurements that have no script:
+  git -C /workspace/wt/conformance check-attr text eol -- test/cli/lint/typecheck/fixtures/x.ts      text: set, eol: lf
+  git ls-tree -r --name-only 5848bc5 -- tests/cases/conformance tests/cases/compiler | wc -l          12445 (12114 .ts, 330 .tsx, 1 .js; 40 end in .d.ts)
+  names that match \.test|spec\. , (\.|_)(test|spec)\. or \.(test|spec)\.<ext>$                        0
+  planned paths of the corpus against `git check-ignore --no-index --stdin`                            1 (.gitignore:139 *.generated.ts)
+  case-insensitive duplicates and names that Windows refuses among 28,647 planned paths                0 and 0
+  longest case path below tests/cases                                                                  152 characters
+  tests/lib: 4 files, 394,949 bytes; cases that name /.lib/: 163
+  internal/bundled/libs: 108 files, 3,785,075 bytes; against node_modules/typescript 6.0.2/lib: 101 equal without CR, 7 differ
+  case files with #NNN: 547; with "Repro from #": 336
+  case files with @allowJs or @checkJs: 934; harness directives: captureSuggestions 1, useCaseSensitiveFileNames 11 (6 false),
+    noImplicitReferences 155, currentDirectory 50, symlink 5, link 17
+
+The probes of the top-down pass (../top-down/probes/run.sh) were run again here and gave the numbers that
+needs-draft.txt marks (td).
+
+Second check of the draft against the code (2026-09-30, 00:20 to 01:10 UTC). Added probes:
+  bun comment_runs_more.ts       nine more ways to define a run of `//` lines: 8162 to 8424, none gives 8238; 642 files with two
+                                 `//` lines in a row that are no directives; markers 29; names that the test discovery takes: 0
+  python3 harness_gate.py        typecheck's manifest of the reference's programs: 691 run instances with a syntactic diagnostic,
+                                 406 lose another diagnostic at program.go:1970, 61 more at :1979, pre-emit count = post-emit
+                                 count in all 12,797, 10,639 programs with one file beside the libraries, noEmit true in 988
+  python3 case_collisions.py <scratch of ../top-down/probes/run.sh>/split.tsv
+                                 whole names that differ only by case: 0; a leading part: compiler/commonSourceDir3.ts, commonSourceDir4.ts
+  (cd ../../error-baseline-format/top-down && bun ties.ts)
+                                 22 baselines, 36 pairs tie on file, start, end, code and category; all 36 ascend by text
+  python3 /workspace/notes/lint/units/cli/c2-seam-arbitration/probes/order_probe.py <typescript-go baselines>
+                                 1212 pairs at one line and column, 77 with the codes in descending order
+One-line measurements of the second check:
+  LeakSanitizer runs on a path that parses and exits (debug build of the cli worktree, e3566be88):
+    ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1 \
+    LSAN_OPTIONS=use_stacks=0:use_registers=0:use_globals=0:use_tls=0:use_root_regions=0:max_leaks=2 \
+    BUN_DEBUG_QUIET_LOGS=1 bun-debug build --no-bundle ok.ts     -> "LeakSanitizer: detected memory leaks", 185563 bytes in 1034 blocks, exit 1
+    the same without LSAN_OPTIONS and without detect_leaks=1     -> no line, exit 0
+  BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 bun --lint probe.ts         the release binary (1.4.3-canary.1+367d939d9) and bun-debug of the cli
+                                                                   worktree (1.4.3-debug+e3566be88) run probe.ts: exit 0, the mark is written
+  grep -rlP '\r$' tests/cases/{conformance,compiler} | wc -l       9247 (line_ends.ts: 8879 + 362 = 9241 with CR LF)
+  case files with a unit bunfig.toml, jsconfig.json or .env        0; with tsconfig.json 130; with package.json 242; with a debugger statement 15
+  run instances with a tsconfig.json                               73: 72 in split.tsv and compiler/tsconfigExtendsPackageJsonExportsWildcard.ts, which it lacks
+  node_modules/typescript in /workspace/wt/conformance             not installed (bun install was not run there); /workspace/bun has 6.0.2
+  windows-x64, windows-aarch64 (00:40 UTC)                          "not available in this session"
+  a real checker, one process for each run (/tmp/e2e/k4real, typescript-go's command line built by the typecheck research):
+    ten runs of `k4real min.ts --noEmit --skipDefaultLibCheck --noErrorTruncation --target es2015`   user 1.07 s, sys 0.31 s
+    the same with `--lib es5`                                                                        user 0.19 s, sys 0.10 s
+    with an empty tsconfig.json beside min.ts                                                        error TS5112, exit code 1
+  a scratch repository with the root .gitignore and .gitattributes of the worktree:
+    corpus/.gitignore `!*` and corpus/.gitattributes `* -text`, then git add <directory>             the *.generated.ts case is added, blob = git hash-object --no-filters
+    the same CR LF file below test/cli/lint/typecheck/fixtures                                       another blob, "CRLF will be replaced by LF"
+    without the nested .gitignore                                                                    git add <directory> leaves the case out and prints nothing
+  read in the code for the entries that came from the second edition of the top-down draft:
+    REVIEW.md:15; .claude/docs/landing-prs.md:48, :66, :67; src/js/internal-for-testing.ts:3-8; src/bun_core/output.rs:841, :2257, :398-438;
+    src/bun_core/Global.rs:691-727; src/runtime/bin_entry/mod.rs:80-92; scripts/rust-miri.ts:39-57; .github/workflows/rust-lints.yml:76-96, :98-123;
+    scripts/runner.node.ts:543-565 (test/parallel-allowlist.json); internal/execute/tsc.go:180-188, :269-281; internal/tsoptions/declscompiler.go:319;
+    internal/testutil/harnessutil/harnessutil.go:493-530, :661-691, :699; test-file-and-sweep/top-down/sweep.ts:117-121
+  not measured again: the size of the corpus (22,186 files, 7.97 MiB packed: validate.sh of the sync prototype)
+
+Not verified: anything on Windows or macOS (no machine), a real `bun --lint` (no binary has it), the limit of
+3,000 files of GitHub's file list and the order of that list.

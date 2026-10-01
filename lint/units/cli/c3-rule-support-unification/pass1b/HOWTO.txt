@@ -1,0 +1,18 @@
+pass1b: a second, independent check of ../final (the text of src/lint that the other pass of this unit wrote) and five amendments to it.
+
+amendments.patch   git apply --directory=<dir of the lint modules> amendments.patch   (paths a/ b/ are relative to ../final/probe/src/lint)
+                   1 context.rs  binary_start: a left operand longer than 4096 bytes is not read again (a chain of n comparisons read its head n times)
+                   2 context.rs  binary_start: the spans are collected under the left operand only (the scan ends where the right one starts)
+                   3 tokens.rs   Tokens<'l, 'c, 's> holds the borrow of the Log that the lexer writes to through a pointer
+                   4 tokens.rs   Collector::visit_binding has the stack guard of visit_expr and visit_stmt
+                   5 context.rs  case_start(case, value): Case.loc first, when the parser records it (it is Loc::EMPTY today)
+                   and token_len with saturating_sub.
+Build and checks of the amended text (copy ../final/probe, ../final/oracle, ../final/make-vectors.sh to a scratch dir, apply the patch):
+  python3 probe/build.py /workspace/wt/cli <out>            one rustc run against the rlibs of build/debug (2 s)
+  CLIPPY=1 python3 probe/build.py /workspace/wt/cli <out2>  clippy-driver with the lint flags of the unit bun_lint and the clippy.toml of the worktree
+  rustfmt --edition 2024 --check probe/src/lint/mod.rs      (rustfmt of the pinned toolchain)
+  python3 comment-runs.py $(find probe/src/lint -name '*.rs')   the rule of .github/workflows/comment-cop.yml on whole files
+  node run-recorded.cjs <lintprobe> [-v]                    the vector files that survived, against what they RECORD (families A to D)
+  python3 chain.py <lintprobe> 4000 16000 64000             chains of comparisons
+RESULTS.txt        the numbers of these runs.
+The first version of this pass (its own merge of the two probes, in ../final) was overwritten by the other pass at 01:27; its results are in RESULTS.txt too.

@@ -1,0 +1,16 @@
+   121    35 bc2f91ddd58ef370 <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+   124    35 12a3bef81f28c1ba <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+   162    55 e32ff4d26b99c0bb <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+   181    57 60ff8a89fd3a3e36 <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, false>
+   273    80 15e0b569f6d4c954 <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+   349   102 7d16acef375c056f <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+   569   150 47c27408f9a927f0 <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+   609   167 fefcc2218d0c385c <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+   726   136 2ecdfe7c0db030fb <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+   781   146 908aa6db116e9aa1 <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+   949   249 a8942a4996520781 <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+   958   190 ced72b12044b4ddb <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+  1052   216 7f9126c140050a95 <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+  1674   415 dba30bd9b9e26723 <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+  3446   816 c94075d69fd512d6 <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+  7017  1605 49307df72da0a7f5 <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>

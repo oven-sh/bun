@@ -1,0 +1,24 @@
+group 00-smoke  dialect ts  config plain  inputs 9
+counts A1=4 A1c=3 A1s=1 AA=1 B=3 RR=1
+
+calls of Bun that differ from transformSync without tsconfig: 1 inputs
+  "type T = { foo(1): void }"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+
+==== family smoke  (9 inputs)
+  counts A1=4 AA=1 B=3 RR=1
+  -- A1: 4 distinct
+    "const v = <out>x"
+        bun x1: The modifier "out" is not valid here @11
+    "let g: (a = 1) => void"
+        bun x1: Expected ")" but found "=" @10
+    "type as = 1"
+        bun x1: Unexpected = @8
+    "interface as {}"
+        bun x1: Expected identifier but found end of file @15
+  -- B: 3 distinct
+    "let x: (a: ) => void"
+        tsc x1: TS1110 @11 len 1 "Type expected."
+    "let f = (a): => a"
+        tsc x1: TS1005 @11 len 1 "',' expected."
+    "f<A | >(x)"
+        tsc x1: TS1110 @6 len 1 "Type expected."

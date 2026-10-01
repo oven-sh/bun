@@ -1,0 +1,257 @@
+== E-CORE
+E-CORE	E-LITERAL	checkArrayLiteral	<- checkExpressionWorker
+E-CORE	E-LITERAL	checkObjectLiteral	<- checkExpressionWorker
+E-CORE	E-LITERAL	checkRegularExpressionLiteral	<- checkExpressionWorker
+E-CORE	E-LITERAL	checkTemplateExpression	<- checkExpressionWorker
+E-CORE	E-LITERAL	isConstContext	<- checkExpressionForMutableLocation
+E-CORE	E-LITERAL	isValidConstAssertionArgument	<- checkAssertion
+E-CORE	E-OPER	checkAwaitExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkBinaryExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkConditionalExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkDeleteExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkPostfixUnaryExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkPrefixUnaryExpression	<- checkExpressionWorker
+E-CORE	E-OPER	checkVoidExpression	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkIdentifier	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkIndexedAccess	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkPrivateIdentifierExpression	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkPropertyAccessExpression	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkQualifiedName	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkSuperExpression	<- checkExpressionWorker
+E-CORE	E-ACCESS	checkThisExpression	<- checkExpressionWithTypeArguments, checkExpressionWorker
+E-CORE	E-ACCESS	getOptionalExpressionType	<- checkNonNullChain, getReturnTypeOfSingleNonGenericSignatureOfCallChain
+E-CORE	E-FACTS	getTypeFacts	<- checkNonNullTypeWithReporter
+E-CORE	E-FUNC	checkClassExpression	<- checkExpressionWorker
+E-CORE	E-FUNC	checkFunctionExpressionOrObjectLiteralMethod	<- checkExpressionWorker
+E-CORE	E-CALL	checkCallExpression	<- checkExpressionWorker
+E-CORE	E-CALL	checkImportCallExpression	<- checkExpressionWorker
+E-CORE	E-CALL	checkTaggedTemplateExpression	<- checkExpressionWorker
+E-CORE	E-CALL	checkTypeArguments	<- getInstantiationExpressionType
+E-CORE	E-CALL	hasCorrectTypeArgumentArity	<- getInstantiationExpressionType
+E-CORE	E-CALL	isSymbolOrSymbolForCall	<- getQuickTypeOfExpression
+E-CORE	E-CALL	skippedGenericFunction	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	applyToParameterTypes	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	applyToReturnTypes	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	hasInferenceCandidates	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	hasOverlappingInferences	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	inferTypes	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	isSkipDirectInferenceNode	<- checkExpressionWorker
+E-CORE	I-INFER	mergeInferences	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	I-INFER	newInferenceInfo	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	E-CTX	checkGeneratorInstantiationAssignabilityToReturnType	<- checkYieldExpression
+E-CORE	E-CTX	getApparentTypeOfContextualType	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	E-CTX	getContextualIterationType	<- checkYieldExpression
+E-CORE	E-CTX	getContextualType	<- checkExpressionForMutableLocation, checkYieldExpression
+E-CORE	E-CTX	getInferenceContext	<- instantiateTypeWithSingleGenericCallSignature
+E-CORE	E-CTX	instantiateContextualType	<- checkExpressionForMutableLocation, checkExpressionWithContextualType
+E-CORE	E-CTX	popContextualType	<- checkExpressionWithContextualType, getContextFreeTypeOfExpression
+E-CORE	E-CTX	popInferenceContext	<- checkExpressionWithContextualType
+E-CORE	E-CTX	pushContextualType	<- checkExpressionWithContextualType, getContextFreeTypeOfExpression
+E-CORE	E-CTX	pushInferenceContext	<- checkExpressionWithContextualType
+E-CORE	K-INDEXED	getIndexedAccessType	<- checkSyntheticExpression
+E-CORE	X-ITER	checkIteratedTypeOrElementType	<- checkSpreadExpression, getYieldedTypeOfYieldExpression
+E-CORE	X-ITER	getIterationTypeOfGeneratorFunctionReturnType	<- checkYieldExpression
+E-CORE	X-ITER	getIterationTypeOfIterable	<- checkYieldExpression
+E-CORE	X-ITER	getIterationTypesOfGeneratorFunctionReturnType	<- checkYieldExpression
+E-CORE	X-ASYNC	getAwaitedType	<- getQuickTypeOfExpression
+E-CORE	X-ASYNC	getAwaitedTypeEx	<- getYieldedTypeOfYieldExpression
+E-CORE	X-JSX	checkJsxAttributes	<- checkExpressionWorker
+E-CORE	X-JSX	checkJsxElement	<- checkExpressionWorker
+E-CORE	X-JSX	checkJsxExpression	<- checkExpressionWorker
+E-CORE	X-JSX	checkJsxFragment	<- checkExpressionWorker
+E-CORE	X-JSX	checkJsxSelfClosingElement	<- checkExpressionWorker
+E-CORE	X-SOURCE	checkSourceElement	<- checkAssertion, checkSatisfiesExpression
+E-CORE	X-SOURCE	checkSourceElements	<- checkExpressionWithTypeArguments
+E-CORE	X-DEFERRED	checkNodeDeferred	<- checkAssertion
+E-CORE	X-DEFERRED	shouldCheckErasableSyntax	<- checkAssertion
+E-CORE	X-ENUM-MODULE	getIsolatedModulesLikeFlagName	<- checkConstEnumAccess
+E-CORE	X-MARKREF	checkExternalEmitHelpers	<- checkYieldExpression
+E-CORE	X-GRAMMAR	checkGrammarBigIntLiteral	<- checkExpressionWorker
+E-CORE	X-GRAMMAR	checkGrammarExpressionWithTypeArguments	<- checkExpressionWithTypeArguments
+E-CORE	X-GRAMMAR	checkGrammarMetaProperty	<- checkMetaProperty
+E-CORE	X-GRAMMAR	checkGrammarNumericLiteral	<- checkExpressionWorker
+E-CORE	X-GRAMMAR	checkGrammarStatementInAmbientContext	<- checkExpressionStatement
+E-CORE	X-GRAMMAR	checkGrammarYieldExpression	<- checkYieldExpression
+E-CORE	X-GRAMMAR	grammarErrorOnNode	<- checkAssertion
+== E-LITERAL
+E-LITERAL	E-ACCESS	isReadonlySymbol	<- getSpreadSymbol
+E-LITERAL	E-FACTS	removeDefinitelyFalsyTypes	<- isValidSpreadType
+E-LITERAL	E-FUNC	checkFunctionExpressionOrObjectLiteralMethod	<- checkObjectLiteralMethod
+E-LITERAL	I-INFER	addIntraExpressionInferenceSite	<- checkArrayLiteral, checkObjectLiteral
+E-LITERAL	E-CTX	getApparentTypeOfContextualType	<- checkArrayLiteral, checkContextualDeprecations, checkObjectLiteral
+E-LITERAL	E-CTX	getContextualType	<- checkTemplateExpression, isConstContext
+E-LITERAL	E-CTX	getInferenceContext	<- checkArrayLiteral, checkObjectLiteral
+E-LITERAL	E-CTX	isContextSensitive	<- checkArrayLiteral, checkObjectLiteral
+E-LITERAL	E-CTX	popContextualType	<- checkArrayLiteral, checkObjectLiteral
+E-LITERAL	E-CTX	pushCachedContextualType	<- checkArrayLiteral, checkObjectLiteral
+E-LITERAL	K-KEYOF	checkComputedPropertyName	<- checkObjectLiteral, checkObjectLiteralMethod, checkPropertyAssignment
+E-LITERAL	K-INDEXED	getIndexedAccessTypeOrUndefined	<- checkArrayLiteral
+E-LITERAL	T-MAPPED	getHomomorphicTypeVariable	<- checkArrayLiteral, isConstTypeVariable
+E-LITERAL	K-TEMPLATE	getTemplateLiteralType	<- checkTemplateExpression
+E-LITERAL	X-ITER	checkIteratedTypeOrElementType	<- checkArrayLiteral
+E-LITERAL	X-ITER	getIteratedTypeOrElementType	<- checkArrayLiteral
+E-LITERAL	X-DEFERRED	checkNodeDeferred	<- checkObjectLiteral
+E-LITERAL	X-GRAMMAR	checkGrammarMethod	<- checkObjectLiteralMethod
+E-LITERAL	X-GRAMMAR	checkGrammarObjectLiteralExpression	<- checkObjectLiteral
+E-LITERAL	X-GRAMMAR	checkGrammarRegularExpressionLiteral	<- checkRegularExpressionLiteral
+== E-OPER
+E-OPER	E-ACCESS	checkPropertyAccessExpression	<- checkAssignmentOperator
+E-OPER	E-ACCESS	checkPropertyAccessibility	<- checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	E-ACCESS	isReadonlySymbol	<- checkDeleteExpression
+E-OPER	E-ACCESS	markPropertyAsReferenced	<- checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	E-ACCESS	reportNonexistentProperty	<- checkInExpression
+E-OPER	E-FACTS	extractDefinitelyFalsyTypes	<- checkBinaryLikeExpression
+E-OPER	E-FACTS	getTypeFacts	<- checkPrefixUnaryExpression
+E-OPER	E-FACTS	getTypeWithFacts	<- checkArrayLiteralDestructuringElementAssignment, checkDestructuringAssignment
+E-OPER	E-FACTS	hasTypeFacts	<- checkBinaryLikeExpression, checkDeleteExpressionMustBeOptional, checkDestructuringAssignment
+E-OPER	E-FACTS	removeDefinitelyFalsyTypes	<- checkBinaryLikeExpression
+E-OPER	E-CALL	createSyntheticExpression	<- checkArrayLiteralDestructuringElementAssignment
+E-OPER	E-CALL	getResolvedSignature	<- checkInstanceOfExpression
+E-OPER	K-KEYOF	getLiteralTypeFromPropertyName	<- checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	K-INDEXED	getIndexedAccessTypeEx	<- checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	K-INDEXED	getIndexedAccessTypeOrUndefined	<- checkArrayLiteralDestructuringElementAssignment
+E-OPER	X-ITER	checkIteratedTypeOrElementType	<- checkArrayLiteralAssignment
+E-OPER	X-ASYNC	checkAwaitedType	<- checkAwaitExpression
+E-OPER	X-ASYNC	getAwaitedTypeNoAlias	<- reportOperatorError
+E-OPER	X-ASYNC	getAwaitedTypeOfPromise	<- checkArithmeticOperandType
+E-OPER	X-DEFERRED	checkNodeDeferred	<- checkVoidExpression
+E-OPER	X-STMT	checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	<- checkBinaryLikeExpression, checkConditionalExpression
+E-OPER	X-MARKREF	checkExternalEmitHelpers	<- checkInExpression, checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	X-GRAMMAR	checkGrammarAwaitOrAwaitUsing	<- checkAwaitExpression
+E-OPER	X-GRAMMAR	checkGrammarForDisallowedTrailingComma	<- checkArrayLiteralDestructuringElementAssignment, checkObjectLiteralDestructuringPropertyAssignment
+E-OPER	X-GRAMMAR	grammarErrorOnNode	<- checkNullishCoalesceOperands
+== E-ACCESS
+E-ACCESS	E-FACTS	convertAutoToAny	<- checkIdentifier
+E-ACCESS	E-FACTS	getTypeWithFacts	<- removeOptionalityFromDeclaredType
+E-ACCESS	E-FACTS	hasTypeFacts	<- parameterInitializerContainsUndefined, removeOptionalityFromDeclaredType
+E-ACCESS	E-FUNC	getContextualSignature	<- getContextualThisParameterType, getNarrowedTypeOfSymbol
+E-ACCESS	I-INFER	getMapperFromContext	<- getContextualThisParameterType
+E-ACCESS	E-CTX	getApparentTypeOfContextualType	<- getContextualThisParameterType
+E-ACCESS	E-CTX	getInferenceContext	<- getContextualThisParameterType, getNarrowedTypeOfSymbol
+E-ACCESS	E-CTX	isContextSensitiveFunctionOrObjectLiteralMethod	<- getContextualThisParameterType, getNarrowedTypeOfSymbol
+E-ACCESS	F-NARROW	getFlowNodeOfNode	<- getNarrowedTypeOfSymbol
+E-ACCESS	F-NARROW	getFlowTypeOfReference	<- tryGetThisTypeAtEx
+E-ACCESS	F-NARROW	getFlowTypeOfReferenceEx	<- checkIdentifier, getFlowTypeOfAccessExpression, getFlowTypeOfProperty, getNarrowedTypeOfSymbol
+E-ACCESS	F-NARROW	getNarrowableTypeForReference	<- checkIdentifier, getFlowTypeOfAccessExpression
+E-ACCESS	F-NARROW	hasMatchingArgument	<- isUncalledFunctionReference
+E-ACCESS	F-NARROW	isDestructuringAssignmentTarget	<- checkIdentifier
+E-ACCESS	F-NARROW	isEvolvingArrayOperationTarget	<- checkIdentifier
+E-ACCESS	F-NARROW	isPastLastAssignment	<- checkIdentifier
+E-ACCESS	F-NARROW	isSomeSymbolAssigned	<- getNarrowedTypeOfSymbol
+E-ACCESS	F-NARROW	isSymbolAssignedDefinitely	<- checkIdentifier
+E-ACCESS	F-REACH	isPostSuperFlowNode	<- checkThisBeforeSuper
+E-ACCESS	K-KEYOF	getIndexTypeEx	<- checkIndexedAccessIndexType
+E-ACCESS	K-KEYOF	getIndexTypeForMappedType	<- checkIndexedAccessIndexType
+E-ACCESS	K-KEYOF	getMappedTypeNameTypeKind	<- checkIndexedAccessIndexType
+E-ACCESS	K-INDEXED	getIndexedAccessType	<- getNarrowedTypeOfSymbol
+E-ACCESS	K-INDEXED	getIndexedAccessTypeOrUndefined	<- checkElementAccessExpression
+E-ACCESS	K-INDEXED	getPropertyNameFromIndex	<- checkIndexedAccessIndexType
+E-ACCESS	K-INDEXED	isAssignmentToReadonlyEntity	<- checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	K-INDEXED	isAutoTypedProperty	<- getFlowTypeOfProperty
+E-ACCESS	K-INDEXED	isSelfTypeAccess	<- checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	K-INDEXED	isThisPropertyAccessInConstructor	<- checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	K-INDEXED	typeHasStaticProperty	<- reportNonexistentProperty
+E-ACCESS	T-MAPPED	getMappedTypeModifiers	<- checkIndexedAccessIndexType
+E-ACCESS	X-ASYNC	GetPromisedTypeOfPromise	<- reportNonexistentProperty
+E-ACCESS	X-CLASS	isPropertyWithoutInitializer	<- getFlowTypeOfAccessExpression
+E-ACCESS	X-MARKREF	checkExternalEmitHelpers	<- checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	X-MARKREF	markLinkedReferences	<- checkIdentifier, checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	X-MARKREF	shouldMarkIdentifierAliasReferenced	<- checkIdentifier
+E-ACCESS	X-GRAMMAR	checkGrammarPrivateIdentifierExpression	<- checkPrivateIdentifierExpression
+E-ACCESS	X-GRAMMAR	grammarErrorOnNode	<- checkPropertyAccessExpressionOrQualifiedName
+E-ACCESS	API-SYMLOC	getThisTypeOfObjectLiteralFromContextualType	<- getContextualThisParameterType
+== E-FACTS
+== E-FUNC
+E-FUNC	T-RETINFER	getReturnTypeFromBody	<- checkFunctionExpressionOrObjectLiteralMethod, contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+E-FUNC	T-RETINFER	unwrapReturnType	<- checkFunctionExpressionOrObjectLiteralMethodDeferred
+E-FUNC	I-INFER	inferTypes	<- inferFromAnnotatedParametersAndReturn
+E-FUNC	E-CTX	getApparentTypeOfContextualType	<- getContextualSignature
+E-FUNC	E-CTX	getInferenceContext	<- contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+E-FUNC	E-CTX	isContextSensitive	<- checkFunctionExpressionOrObjectLiteralMethod, contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+E-FUNC	X-SOURCE	checkSourceElement	<- checkFunctionExpressionOrObjectLiteralMethodDeferred
+E-FUNC	X-SOURCE	checkSourceElements	<- checkClassExpressionDeferred
+E-FUNC	X-DEFERRED	checkNodeDeferred	<- checkClassExpression, checkFunctionExpressionOrObjectLiteralMethod
+E-FUNC	X-MEMBERS	checkSignatureDeclaration	<- contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+E-FUNC	X-FUNCDECL	checkAllCodePathsInNonVoidFunctionReturnOrThrow	<- checkFunctionExpressionOrObjectLiteralMethodDeferred
+E-FUNC	X-STMT	checkReturnExpression	<- checkFunctionExpressionOrObjectLiteralMethodDeferred
+E-FUNC	X-CLASS	checkClassLikeDeclaration	<- checkClassExpression
+E-FUNC	X-ALIAS-UNUSED	registerForUnusedIdentifiersCheck	<- checkClassExpressionDeferred
+E-FUNC	X-COLLISION	checkCollisionsForDeclarationName	<- checkFunctionExpressionOrObjectLiteralMethod
+E-FUNC	X-MARKREF	checkExternalEmitHelpers	<- checkClassExpressionExternalHelpers
+E-FUNC	X-GRAMMAR	checkGrammarForGenerator	<- checkFunctionExpressionOrObjectLiteralMethod
+E-FUNC	X-GRAMMAR	checkGrammarFunctionLikeDeclaration	<- checkFunctionExpressionOrObjectLiteralMethod
+== T-RETINFER
+T-RETINFER	E-CTX	getContextualIterationType	<- getReturnTypeFromBody
+T-RETINFER	E-CTX	getContextualReturnType	<- getReturnTypeFromBody
+T-RETINFER	E-CTX	getContextualSignatureForFunctionLikeDeclaration	<- getReturnTypeFromBody
+T-RETINFER	E-CTX	getContextualType	<- checkAndAggregateYieldOperandTypes
+T-RETINFER	E-CTX	instantiateContextualType	<- getReturnTypeFromBody
+T-RETINFER	F-NARROW	getFlowNodeOfNode	<- checkIfExpressionRefinesParameter
+T-RETINFER	F-NARROW	getFlowTypeOfReferenceEx	<- checkIfExpressionRefinesParameter
+T-RETINFER	F-NARROW	isConstantReference	<- checkAndAggregateReturnExpressionTypes
+T-RETINFER	F-NARROW	isSymbolAssigned	<- checkIfExpressionRefinesAnyParameter
+T-RETINFER	F-REACH	isReachableFlowNode	<- functionHasImplicitReturn
+T-RETINFER	X-ITER	getIterationTypeOfGeneratorFunctionReturnType	<- getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded, unwrapReturnType
+T-RETINFER	X-ITER	getIterationTypesOfIterable	<- checkAndAggregateYieldOperandTypes
+T-RETINFER	X-ASYNC	GetPromisedTypeOfPromise	<- getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded
+T-RETINFER	X-ASYNC	checkAwaitedType	<- checkAndAggregateReturnExpressionTypes, getReturnTypeFromBody
+T-RETINFER	X-ASYNC	getAwaitedTypeNoAlias	<- createPromiseLikeType, createPromiseType, unwrapReturnType
+T-RETINFER	X-ASYNC	unwrapAwaitedType	<- checkAndAggregateReturnExpressionTypes, createPromiseLikeType, createPromiseType, getReturnTypeFromBody, unwrapReturnType
+== E-CALL
+E-CALL	I-INFER	cloneInferenceContext	<- inferTypeArguments
+E-CALL	I-INFER	cloneInferredPartOfContext	<- inferTypeArguments
+E-CALL	I-INFER	createOuterReturnMapper	<- inferTypeArguments
+E-CALL	I-INFER	getInferredTypes	<- inferTypeArguments
+E-CALL	I-INFER	getMapperFromContext	<- inferTypeArguments
+E-CALL	I-INFER	hasInferenceCandidates	<- inferTypeArguments
+E-CALL	I-INFER	inferTypes	<- inferTypeArguments
+E-CALL	I-INFER	newInferenceContext	<- chooseOverload, inferSignatureInstantiationForOverloadFailure, inferTypeArguments
+E-CALL	E-CTX	getContextualType	<- inferTypeArguments
+E-CALL	E-CTX	getInferenceContext	<- inferTypeArguments, skippedGenericFunction
+E-CALL	E-CTX	getSpreadArgumentType	<- inferTypeArguments, isSignatureApplicable
+E-CALL	E-CTX	isContextSensitive	<- resolveCall
+E-CALL	F-NARROW	getEffectsSignature	<- checkCallExpression
+E-CALL	F-NARROW	getSymbolHasInstanceMethodOfObjectType	<- resolveInstanceofExpression
+E-CALL	F-NARROW	getTypeOfDottedName	<- checkCallExpression
+E-CALL	X-ASYNC	getAwaitedType	<- invocationErrorDetails
+E-CALL	X-ASYNC	getAwaitedTypeOfPromise	<- maybeAddMissingAwaitInfo
+E-CALL	X-JSX	checkApplicableSignatureForJsxCallLikeElement	<- isSignatureApplicable
+E-CALL	X-JSX	inferJsxTypeArguments	<- inferTypeArguments
+E-CALL	X-JSX	resolveJsxOpeningLikeElement	<- resolveSignature
+E-CALL	X-DECORATOR	getDecoratorCallSignature	<- resolveDecorator
+E-CALL	X-DECORATOR	getEffectiveDecoratorArguments	<- getEffectiveCallArguments
+E-CALL	X-SOURCE	checkSourceElements	<- resolveCall, resolveUntypedCall
+E-CALL	X-DEFERRED	checkNodeDeferred	<- getCandidateForOverloadFailure
+E-CALL	X-MEMBERS	getDeprecatedSuggestionNode	<- checkDeprecatedSignature
+E-CALL	X-GRAMMAR	checkGrammarImportCallExpression	<- checkImportCallExpression
+E-CALL	X-GRAMMAR	checkGrammarTaggedTemplateChain	<- checkTaggedTemplateExpression
+E-CALL	X-GRAMMAR	checkGrammarTypeArguments	<- checkCallExpression, checkTaggedTemplateExpression
+== E-CTX
+E-CTX	K-KEYOF	getLiteralTypeFromPropertyName	<- getContextualTypeForBindingElement, getContextualTypeForObjectLiteralElement
+E-CTX	K-KEYOF	getMappedTypeNameTypeKind	<- getTypeOfPropertyOfContextualTypeEx
+E-CTX	K-INDEXED	getIndexedAccessTypeEx	<- getContextualTypeForArgumentAtIndex, getSpreadArgumentType
+E-CTX	K-INDEXED	substituteIndexedMappedType	<- getIndexedMappedTypeSubstitutedTypeOfContextualType
+E-CTX	K-SUBST	getActualTypeVariable	<- isExcludedMappedPropertyName
+E-CTX	K-COND	getFalseTypeFromConditionalType	<- isExcludedMappedPropertyName
+E-CTX	K-COND	getTrueTypeFromConditionalType	<- isExcludedMappedPropertyName
+E-CTX	T-MAPPED	getConstraintTypeFromMappedType	<- getIndexedMappedTypeSubstitutedTypeOfContextualType
+E-CTX	X-ITER	checkIteratedTypeOrElementType	<- getSpreadArgumentType
+E-CTX	X-ITER	getIteratedTypeOrElementType	<- getContextualTypeForElementExpression
+E-CTX	X-ITER	getIterationTypeOfGeneratorFunctionReturnType	<- checkGeneratorInstantiationAssignabilityToReturnType, getContextualIterationType, getContextualTypeForReturnExpression, getContextualTypeForYieldOperand
+E-CTX	X-ITER	getIterationTypesOfGeneratorFunctionReturnType	<- getContextualTypeForYieldOperand
+E-CTX	X-ASYNC	getAwaitedTypeNoAlias	<- getContextualTypeForAwaitOperand, getContextualTypeForReturnExpression
+E-CTX	X-ASYNC	getAwaitedTypeOfPromise	<- getContextualReturnType
+E-CTX	X-JSX	discriminateContextualTypeByJSXAttributes	<- getApparentTypeOfContextualType
+E-CTX	X-JSX	getContextualJsxElementAttributesType	<- getContextualType
+E-CTX	X-JSX	getContextualTypeForJsxAttribute	<- getContextualType
+E-CTX	X-JSX	getContextualTypeForJsxExpression	<- getContextualType
+E-CTX	X-JSX	getEffectiveFirstArgumentForJsxSignature	<- getContextualTypeForArgumentAtIndex
+E-CTX	X-DECORATOR	getDecoratorCallSignature	<- getContextualTypeForDecorator
+== F-NARROW
+F-NARROW	F-REACH	isReachableFlowNode	<- getTypeAtFlowAssignment
+F-NARROW	K-KEYOF	getLiteralTypeFromPropertyName	<- getLiteralPropertyNameText, getTypeOfDestructuredProperty
+F-NARROW	K-INDEXED	getTypeOfPropertyOrIndexSignatureOfType	<- narrowTypeByDiscriminant
+F-NARROW	K-SUBST	isNoInferType	<- getNarrowableTypeForReference
+F-NARROW	X-ITER	checkIteratedTypeOrElementType	<- getExplicitTypeOfSymbol, getTypeOfDestructuredArrayElement, getTypeOfDestructuredSpreadExpression
+== F-REACH
+== F-UNREACH

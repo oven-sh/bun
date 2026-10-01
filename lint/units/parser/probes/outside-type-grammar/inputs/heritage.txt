@@ -1,0 +1,116 @@
+class C extends A, B {}
+class C extends A extends B {}
+class C implements I extends A {}
+class C implements I implements J {}
+class C extends A implements I, J {}
+class C extends {}
+class C extends { } { }
+class C extends {} implements I {}
+class C implements {}
+class C extends A<T> {}
+class C extends A<T>, B<U> {}
+class C extends A.B.C<T> {}
+class C extends A<> {}
+class C extends f()<T> {}
+class C extends f() {}
+class C extends f<T>() {}
+class C extends (A) {}
+class C extends (A)<T> {}
+class C extends A! {}
+class C extends A!<T> {}
+class C extends A as any {}
+class C extends (A as any) {}
+class C extends A<T>() {}
+class C extends A<T>.B {}
+class C extends A?.B {}
+class C extends A[0] {}
+class C extends A`x` {}
+class C extends A<T>`x` {}
+class C extends new A {}
+class C extends new A() {}
+class C extends class {} {}
+class C extends function () {} {}
+class C extends null {}
+class C extends undefined {}
+class C extends void 0 {}
+class C extends typeof x {}
+class C extends await x {}
+class C extends async () => {} {}
+class C extends a ? b : c {}
+class C extends a = b {}
+class C extends a, b = c {}
+class C extends 1 {}
+class C extends "s" {}
+class C extends [] {}
+class C extends [A][0] {}
+class C extends this {}
+class C extends super.x {}
+class C extends import("x") {}
+class C extends import.meta {}
+class C extends A\n<T> {}
+class C extends A\nimplements I {}
+class C extends\nA {}
+class C implements I.J<T> {}
+class C implements I<T>.J {}
+class C implements typeof x {}
+class C implements (I) {}
+class C implements I[] {}
+class C implements I | J {}
+class C implements I & J {}
+class C implements { a: 1 } {}
+class C implements string {}
+class C implements "s" {}
+class C implements 1 {}
+class C implements f() {}
+class C implements new () => I {}
+class C implements () => I {}
+class C implements I extends J ? K : L {}
+class C implements keyof I {}
+class C implements import("x") {}
+class C implements import("x").I {}
+class C implements this {}
+class C implements void {}
+class C implements null {}
+class C implements I, {}
+class C implements , I {}
+class C implements I, {}
+class C implements I! {}
+class C implements I? {}
+class C implements A.B?.C {}
+class C implements A[0] {}
+class C implements A`x` {}
+class C implements a.b<T>.c {}
+interface I extends A, B {}
+interface I extends A extends B {}
+interface I implements A {}
+interface I extends {}
+interface I extends A<T> {}
+interface I extends A.B.C<T> {}
+interface I extends typeof x {}
+interface I extends (A) {}
+interface I extends A[] {}
+interface I extends A | B {}
+interface I extends { a: 1 } {}
+interface I extends string {}
+interface I extends "s" {}
+interface I extends f() {}
+interface I extends () => void {}
+interface I extends keyof A {}
+interface I extends import("x").A {}
+interface I extends this {}
+interface I extends A? {}
+interface I extends A! {}
+interface I extends A[0] {}
+interface I extends A?.B {}
+interface I extends new A {}
+interface I extends A.B<T>.C {}
+interface I extends A\n<T> {}
+interface I extends A, {}
+interface I extends {}, A {}
+var x = class extends A implements I {};
+var x = class implements I {};
+var x = class C<T> extends A<T> implements I<T> {};
+class C<T> extends A<T> implements I<T> {}
+class C<> {}
+class C<T,> {}
+class C < T > extends A < T > { }

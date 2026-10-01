@@ -1,0 +1,5 @@
+E-CORE	checker.go:7680	c.checkConstEnumAccess	debug.Assert(t.symbol.Flags&ast.SymbolFlagsConstEnum != 0)
+E-CALL	checker.go:9318	c.checkTypeArguments	debug.Assert(typeParameters[i] != nil, "Should not call checkTypeArguments with too many type arguments")
+E-CORE	checker.go:10850	c.checkMetaProperty	debug.Assert(!ast.IsCallExpression(node.Parent) || node.Parent.Expression() != node, "Trying to get the type of `import.defer` in `import.defer(...)`")
+E-CORE	checker.go:10882	c.checkImportMetaProperty	debug.Assert(file.Flags&ast.NodeFlagsPossiblyContainsImportMeta != 0, "Containing file is missing import meta node flag.")
+E-LITERAL	checker.go:13403	c.checkObjectLiteral	debug.Assert(memberDecl.Kind == ast.KindGetAccessor || memberDecl.Kind == ast.KindSetAccessor)

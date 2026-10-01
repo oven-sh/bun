@@ -1,0 +1,216 @@
+test/bundler/transpiler/decorator-metadata.test.ts: 1 sources with decorators, 16 decorate calls with metadata, 0 differ
+test/bundler/bundler_decorator_metadata.test.ts: 3 sources with decorators, 10 decorate calls with metadata, 0 differ
+test/bundler/transpiler/transpiler.test.js: 5 sources with decorators, 0 decorate calls with metadata, 0 differ
+test/bundler/esbuild/ts.test.ts: 21 sources with decorators, 24 decorate calls with metadata, 23 differ
+  test/bundler/esbuild/ts.test.ts:878  Foo.prototype.mDecl
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:878  Foo.prototype.mAbst
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:878  Foo.prototype.mDecl
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:982  input_default.prototype.foo
+      bun: type=Function  paramtypes=[Object]  returntype=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:982  default_1.prototype.foo
+      bun: (no call)
+      tsc: type=Function  paramtypes=[Object]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:987  Foo.prototype.arguments[0]
+      bun: type=Function  paramtypes=[]  returntype=undefined
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:987  Foo.prototype._a
+      bun: (no call)
+      tsc: type=Function  paramtypes=[]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:1010  Foo.prototype.method1
+      bun: type=Function  paramtypes=[Object]  returntype=Object
+      tsc: type=Function  paramtypes=[Object]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:1010  Foo.prototype.method2
+      bun: type=Function  paramtypes=[Object]  returntype=Object
+      tsc: type=Function  paramtypes=[Object]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:1010  Baz.prototype.method3
+      bun: type=Function  paramtypes=[Object]  returntype=Object
+      tsc: type=Function  paramtypes=[Object]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:1010  Baz.prototype.method4
+      bun: type=Function  paramtypes=[Object]  returntype=Object
+      tsc: type=Function  paramtypes=[Object]  returntype=undefined
+  test/bundler/esbuild/ts.test.ts:1559  Foo.prototype.x
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1559  Foo.prototype.y
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1559  Foo.prototype._b
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:1559  Foo.prototype._c
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:1607  Foo.prototype.x
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1607  Foo.prototype.y
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1607  Foo.prototype._b
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:1607  Foo.prototype._c
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:1654  Foo.prototype.x
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1654  Foo.prototype.y
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/esbuild/ts.test.ts:1654  Foo.prototype._b
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/esbuild/ts.test.ts:1654  Foo.prototype._c
+      bun: (no call)
+      tsc: type=Object
+test/bundler/transpiler/decorators.test.ts: 2 sources with decorators, 71 decorate calls with metadata, 40 differ
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype.y
+      bun: type=undefined  paramtypes=[]
+      tsc: type=Number  paramtypes=[Number]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype.computedProp
+      bun: type=String
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype.y
+      bun: type=undefined  paramtypes=[]
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype.y
+      bun: type=Number  paramtypes=[Number]
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype.computedProp
+      bun: type=String
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  HappyDecorator.prototype.move
+      bun: type=Function  paramtypes=[Number, Number]  returntype=Object
+      tsc: type=Function  paramtypes=[Number, Number]  returntype=undefined
+  test/bundler/transpiler/decorators.test.ts:(whole file)  HappyDecorator.prototype.dance
+      bun: type=Function  paramtypes=[Number]  returntype=Object
+      tsc: type=Function  paramtypes=[Number]  returntype=undefined
+  test/bundler/transpiler/decorators.test.ts:(whole file)  HappyDecorator
+      bun: paramtypes=[Object, Object, Object, Number, Number]
+      tsc: paramtypes=[Number, String, Boolean, Number, Number]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype.t
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype.i
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype.y
+      bun: type=undefined  paramtypes=[]
+      tsc: type=Object  paramtypes=[Object]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype.u5
+      bun: type=Number
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype.u6
+      bun: type=Number
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.h
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.q
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.u3
+      bun: type=Number
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.u8
+      bun: type=Number
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.arguments[0]
+      bun: type=Function  paramtypes=[]  returntype=undefined
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.y
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.arguments[2]
+      bun: type=Object
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.12000 + 1
+      bun: type=Function  paramtypes=[]  returntype=undefined
+      tsc: (no call)
+  test/bundler/transpiler/decorators.test.ts:(whole file)  C.prototype.c
+      bun: type=undefined  paramtypes=[]
+      tsc: type=Object  paramtypes=[]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.a
+      bun: type=Function  paramtypes=[String]  returntype=Object
+      tsc: type=Function  paramtypes=[String]  returntype=undefined
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A
+      bun: paramtypes=[Object, Number, String]
+      tsc: paramtypes=[Number, Number, String]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A
+      bun: paramtypes=[Object, Number, Number]
+      tsc: paramtypes=[String, Number, Number]
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype._a
+      bun: (no call)
+      tsc: type=String
+  test/bundler/transpiler/decorators.test.ts:(whole file)  BugReport.prototype._a
+      bun: (no call)
+      tsc: type=String
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype._b
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype._c
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype._f
+      bun: (no call)
+      tsc: type=Number
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S.prototype._g
+      bun: (no call)
+      tsc: type=Number
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S._a
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S._d
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S._e
+      bun: (no call)
+      tsc: type=Number
+  test/bundler/transpiler/decorators.test.ts:(whole file)  S._h
+      bun: (no call)
+      tsc: type=Number
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype._a
+      bun: (no call)
+      tsc: type=Function  paramtypes=[]  returntype=undefined
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype._b
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype._c
+      bun: (no call)
+      tsc: type=Object
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype._d
+      bun: (no call)
+      tsc: type=Function  paramtypes=[]  returntype=undefined
+  test/bundler/transpiler/decorators.test.ts:(whole file)  A.prototype.a
+      bun: (no call)
+      tsc: type=Number
+test/js/bun/typescript/type-export.test.ts: 2 sources with decorators, 1 decorate calls with metadata, 0 differ
+test/bundler/transpiler/transpiler-stack-overflow.test.ts: 0 sources with decorators, 0 decorate calls with metadata, 0 differ
+test/cli/run/transpiler-cache.test.ts: 1 sources with decorators, 0 decorate calls with metadata, 0 differ
+test/regression/issue/27575.test.ts: 5 sources with decorators, 4 decorate calls with metadata, 0 differ
+test/regression/issue/27526.test.ts: 3 sources with decorators, 2 decorate calls with metadata, 0 differ
+test/integration/nest/nest_metadata.test.ts: 1 sources with decorators, 2 decorate calls with metadata, 0 differ
+test/integration/typegraphql/src/typegraphql.test.ts: 1 sources with decorators, 6 decorate calls with metadata, 1 differ
+  test/integration/typegraphql/src/typegraphql.test.ts:(whole file)  User.prototype.enum3
+      bun: type=Ref(Enum3)
+      tsc: type=String
+test/integration/typegraphql/src/unsolvable.test.ts: 1 sources with decorators, 2 decorate calls with metadata, 1 differ
+  test/integration/typegraphql/src/unsolvable.test.ts:(whole file)  M.prototype.myval2
+      bun: type=Ref(Demo)
+      tsc: type=Number
+test/integration/typegraphql/src/ts_example.test.ts: 1 sources with decorators, 4 decorate calls with metadata, 2 differ
+  test/integration/typegraphql/src/ts_example.test.ts:(whole file)  HasBothGetterAndSetter.prototype.start
+      bun: type=Ref(Point)  paramtypes=[]
+      tsc: type=Ref(Point)  paramtypes=[Ref(Point)]
+  test/integration/typegraphql/src/ts_example.test.ts:(whole file)  HasBothGetterAndSetter.prototype.start
+      bun: type=Ref(Point)  paramtypes=[Ref(Point)]
+      tsc: (no call)
+test/bundler/bundler_cjs2esm.test.ts: 2 sources with decorators, 1 decorate calls with metadata, 0 differ

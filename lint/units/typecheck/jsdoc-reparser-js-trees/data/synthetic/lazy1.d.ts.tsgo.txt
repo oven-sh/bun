@@ -1,0 +1,65 @@
+file /lazy1.d.ts scriptKind=3 variant=0 dts=true textLen=195
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=31 identifiers=5 text=8 reparsedClones=0
+root KindSourceFile [0,195) f=0x800000
+  .Statements: list [0,194) n=4
+    - KindVariableStatement [0,47) f=0xa00000
+      .DeclarationList: KindVariableDeclarationList [30,46) f=0x800002
+        .Declarations: list [36,46) n=1
+          - KindVariableDeclaration [36,46) f=0x800000
+            .Type: KindNumberKeyword [39,46) f=0x800000
+            .name: KindIdentifier [36,38) f=0x800000 Text="a"
+      .modifiers.flags=0x80
+      .modifiers: list [0,30) n=1
+        - KindDeclareKeyword [0,30) f=0x800000
+      .jsdoc: KindJSDoc [0,22) f=0xc00000
+        .Comment: list [0,20) n=3
+          - KindJSDocText [0,10) f=0xc00000 text="eager "
+          - KindJSDocLink [10,19) f=0xc00000 text=""
+            .name: KindIdentifier [17,18) f=0xc00000 Text="b"
+          - KindJSDocText [19,20) f=0xc00000 text=""
+    - KindVariableStatement [47,94) f=0xa00000
+      .DeclarationList: KindVariableDeclarationList [77,93) f=0x800002
+        .Declarations: list [83,93) n=1
+          - KindVariableDeclaration [83,93) f=0x800000
+            .Type: KindNumberKeyword [86,93) f=0x800000
+            .name: KindIdentifier [83,85) f=0x800000 Text="b"
+      .modifiers.flags=0x80
+      .modifiers: list [47,77) n=1
+        - KindDeclareKeyword [47,77) f=0x800000
+      .jsdoc: KindJSDoc [47,69) f=0x400000
+        .Comment: list [48,67) n=1
+          - KindJSDocText [48,67) f=0x400000 text="lazy only text"
+    - KindVariableStatement [94,148) f=0xa00000
+      .DeclarationList: KindVariableDeclarationList [131,147) f=0x800002
+        .Declarations: list [137,147) n=1
+          - KindVariableDeclaration [137,147) f=0x800000
+            .Type: KindNumberKeyword [140,147) f=0x800000
+            .name: KindIdentifier [137,139) f=0x800000 Text="c"
+      .modifiers.flags=0x80
+      .modifiers: list [94,131) n=1
+        - KindDeclareKeyword [94,131) f=0x800000
+      .jsdoc: KindJSDoc [94,123) f=0x400000
+        .Comment: list [95,99) n=0
+        .Tags: list [99,121) n=1
+          - KindJSDocDeprecatedTag [99,121) f=0x400000
+            .Comment: list [110,121) n=1
+              - KindJSDocText [110,121) f=0x400000 text=".x strange"
+            .TagName: KindIdentifier [100,110) f=0x400000 Text="deprecated"
+    - KindVariableStatement [148,194) f=0xa00000
+      .DeclarationList: KindVariableDeclarationList [177,193) f=0x800002
+        .Declarations: list [183,193) n=1
+          - KindVariableDeclaration [183,193) f=0x800000
+            .Type: KindNumberKeyword [186,193) f=0x800000
+            .name: KindIdentifier [183,185) f=0x800000 Text="d"
+      .modifiers.flags=0x80
+      .modifiers: list [148,177) n=1
+        - KindDeclareKeyword [148,177) f=0x800000
+      .jsdoc: KindJSDoc [148,169) f=0x400000
+        .Comment: list [149,167) n=3
+          - KindJSDocText [149,153) f=0x400000 text=""
+          - KindJSDocLink [153,166) f=0x400000 text=".a odd"
+          - KindJSDocText [166,167) f=0x400000 text=""
+  .EndOfFileToken: KindEndOfFile [194,195) f=0x800000

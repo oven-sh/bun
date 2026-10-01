@@ -1,0 +1,331 @@
+typeof foo === 'string'
+----
+typeof foo === 'object'
+----
+typeof foo === 'function'
+----
+typeof foo === 'undefined'
+----
+typeof foo === 'boolean'
+----
+typeof foo === 'number'
+----
+typeof foo === 'bigint'
+----
+'string' === typeof foo
+----
+'object' === typeof foo
+----
+'function' === typeof foo
+----
+'undefined' === typeof foo
+----
+'boolean' === typeof foo
+----
+'number' === typeof foo
+----
+typeof foo === typeof bar
+----
+typeof foo === baz
+----
+typeof foo !== someType
+----
+typeof bar != someType
+----
+someType === typeof bar
+----
+someType == typeof bar
+----
+typeof foo == 'string'
+----
+typeof(foo) === 'string'
+----
+typeof(foo) !== 'string'
+----
+typeof(foo) == 'string'
+----
+typeof(foo) != 'string'
+----
+var oddUse = typeof foo + 'thing'
+----
+function f(undefined) { typeof x === undefined }
+----
+typeof foo === `str${somethingElse}`
+----
+typeof foo === 'strnig'
+----
+'strnig' === typeof foo
+----
+if (typeof bar === 'umdefined') {}
+----
+typeof foo !== 'strnig'
+----
+'strnig' !== typeof foo
+----
+if (typeof bar !== 'umdefined') {}
+----
+typeof foo != 'strnig'
+----
+'strnig' != typeof foo
+----
+if (typeof bar != 'umdefined') {}
+----
+typeof foo == 'strnig'
+----
+'strnig' == typeof foo
+----
+if (typeof bar == 'umdefined') {}
+----
+if (typeof bar === `umdefined`) {}
+----
+if (typeof bar !== undefined) {}
+----
+typeof a === "string"
+----
+typeof a === "symbol"
+----
+typeof a === "undefined"
+----
+typeof a === "object"
+----
+typeof a === "boolean"
+----
+typeof a === "number"
+----
+typeof a === "function"
+----
+typeof a === "bigint"
+----
+typeof a === 'string'
+----
+typeof a === `string`
+----
+typeof a == "string"
+----
+typeof a != "string"
+----
+typeof a !== "string"
+----
+"string" === typeof a
+----
+typeof a === "strnig"
+----
+typeof a == "strnig"
+----
+typeof a != "strnig"
+----
+typeof a !== "strnig"
+----
+"strnig" === typeof a
+----
+typeof a === 'strnig'
+----
+typeof a === `strnig`
+----
+typeof a === "String"
+----
+typeof a === "STRING"
+----
+typeof a === " string"
+----
+typeof a === ""
+----
+typeof a === "null"
+----
+typeof a === "array"
+----
+typeof a === "nunber"
+----
+typeof a === "fucntion"
+----
+typeof a === "str\u0069ng"
+----
+typeof a === "\x73tring"
+----
+typeof a === `str\u0069ng`
+----
+typeof a === "strin\
+g"
+----
+typeof a === `${b}`
+----
+typeof a === `strnig${b}`
+----
+typeof a === tag`strnig`
+----
+typeof a === 5
+----
+typeof a === 5n
+----
+typeof a === null
+----
+typeof a === true
+----
+typeof a === false
+----
+typeof a === /re/
+----
+typeof a === undefined
+----
+undefined === typeof a
+----
+typeof a == undefined
+----
+typeof a != undefined
+----
+typeof a !== undefined
+----
+typeof a === void 0
+----
+typeof a === b
+----
+typeof a === typeof b
+----
+typeof a === "strnig" + ""
+----
+typeof a === ("strnig")
+----
+(typeof a) === "strnig"
+----
+typeof (a) === "strnig"
+----
+typeof(a) === "strnig"
+----
+typeof a.b.c === "strnig"
+----
+typeof a() === "strnig"
+----
+typeof typeof a === "strnig"
+----
+!typeof a === "strnig"
+----
+typeof a + "" === "strnig"
+----
+typeof a < "strnig"
+----
+typeof a > "strnig"
+----
+typeof a <= "strnig"
+----
+typeof a >= "strnig"
+----
+typeof a + "strnig"
+----
+typeof a in "strnig"
+----
+typeof a instanceof "strnig"
+----
+typeof a && "strnig"
+----
+typeof a ?? "strnig"
+----
+x = typeof a === "strnig" ? 1 : 2
+----
+switch (typeof a) { case "strnig": }
+----
+f(typeof a, "strnig")
+----
+typeof a === "strnig" === b
+----
+b === typeof a === "strnig"
+----
+typeof a === "strnig" || typeof b === "nubmer"
+----
+typeof a === (b, "strnig")
+----
+typeof a === NaN
+----
+typeof a === Infinity
+----
+typeof a === -1
+----
+typeof a === [ ]
+----
+typeof a === {}
+----
+if (typeof a ===
+    "strnig") {}
+----
+é = typeof a === "strnig"
+----
+"😀" + (typeof a === "strnig")
+----
+typeof a === "😀"
+----
+typeof a === <a/>
+----
+typeof a === undefined$
+----
+typeof a === (undefined)
+----
+function f(undefined) { typeof x === undefined }
+----
+function f(undefined) {} typeof x === undefined
+----
+var undefined; typeof x === undefined
+----
+let undefined$ = 1; typeof x === undefined
+----
+typeof x === undefined; var undefined;
+----
+{ let undefined = 1; } typeof x === undefined
+----
+{ let undefined = 1; typeof x === undefined }
+----
+function f() { var undefined; } typeof x === undefined
+----
+function f() { typeof x === undefined; var undefined; }
+----
+(undefined) => typeof x === undefined
+----
+try {} catch (undefined) { typeof x === undefined }
+----
+try {} catch (undefined) {} typeof x === undefined
+----
+undefined = 1; typeof x === undefined
+----
+class undefined {} typeof x === undefined
+----
+function undefined() {} typeof x === undefined
+----
+(function undefined() { typeof x === undefined })
+----
+(function undefined() {}); typeof x === undefined
+----
+(class undefined { m() { typeof x === undefined } })
+----
+import undefined from "a"; typeof x === undefined
+----
+import { a as undefined } from "a"; typeof x === undefined
+----
+import * as undefined from "a"; typeof x === undefined
+----
+undefined: for (;;) { typeof x === undefined; break undefined; }
+----
+var o = { undefined: 1 }; typeof x === undefined
+----
+a.undefined = 1; typeof x === undefined
+----
+var { undefined } = o; typeof x === undefined
+----
+var { a: undefined } = o; typeof x === undefined
+----
+var [undefined] = o; typeof x === undefined
+----
+function f({ undefined }) { typeof x === undefined }
+----
+function f(...undefined) { typeof x === undefined }
+----
+for (var undefined in o) {} typeof x === undefined
+----
+for (let undefined of o) { typeof x === undefined }
+----
+with (o) { typeof x === undefined }
+----
+function f() { eval(""); return typeof x === undefined }
+----
+function f(undefined) { with (o) { typeof x === undefined } }
+----
+function f(a = typeof x === undefined) { var undefined; }
+----
+typeof a === "x" === "y"

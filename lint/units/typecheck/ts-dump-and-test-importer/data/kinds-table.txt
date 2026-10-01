@@ -1,0 +1,360 @@
+0	Unknown	Unknown
+1	EndOfFileToken	EndOfFile	*
+2	SingleLineCommentTrivia	SingleLineCommentTrivia
+3	MultiLineCommentTrivia	MultiLineCommentTrivia
+4	NewLineTrivia	NewLineTrivia
+5	WhitespaceTrivia	WhitespaceTrivia
+6	ShebangTrivia	ConflictMarkerTrivia	*
+7	ConflictMarkerTrivia	NonTextFileMarkerTrivia	*
+8	NonTextFileMarkerTrivia	NumericLiteral	*
+9	NumericLiteral	BigIntLiteral	*
+10	BigIntLiteral	StringLiteral	*
+11	StringLiteral	JsxText	*
+12	JsxText	JsxTextAllWhiteSpaces	*
+13	JsxTextAllWhiteSpaces	RegularExpressionLiteral	*
+14	RegularExpressionLiteral	NoSubstitutionTemplateLiteral	*
+15	NoSubstitutionTemplateLiteral	TemplateHead	*
+16	TemplateHead	TemplateMiddle	*
+17	TemplateMiddle	TemplateTail	*
+18	TemplateTail	OpenBraceToken	*
+19	OpenBraceToken	CloseBraceToken	*
+20	CloseBraceToken	OpenParenToken	*
+21	OpenParenToken	CloseParenToken	*
+22	CloseParenToken	OpenBracketToken	*
+23	OpenBracketToken	CloseBracketToken	*
+24	CloseBracketToken	DotToken	*
+25	DotToken	DotDotDotToken	*
+26	DotDotDotToken	SemicolonToken	*
+27	SemicolonToken	CommaToken	*
+28	CommaToken	QuestionDotToken	*
+29	QuestionDotToken	LessThanToken	*
+30	LessThanToken	LessThanSlashToken	*
+31	LessThanSlashToken	GreaterThanToken	*
+32	GreaterThanToken	LessThanEqualsToken	*
+33	LessThanEqualsToken	GreaterThanEqualsToken	*
+34	GreaterThanEqualsToken	EqualsEqualsToken	*
+35	EqualsEqualsToken	ExclamationEqualsToken	*
+36	ExclamationEqualsToken	EqualsEqualsEqualsToken	*
+37	EqualsEqualsEqualsToken	ExclamationEqualsEqualsToken	*
+38	ExclamationEqualsEqualsToken	EqualsGreaterThanToken	*
+39	EqualsGreaterThanToken	PlusToken	*
+40	PlusToken	MinusToken	*
+41	MinusToken	AsteriskToken	*
+42	AsteriskToken	AsteriskAsteriskToken	*
+43	AsteriskAsteriskToken	SlashToken	*
+44	SlashToken	PercentToken	*
+45	PercentToken	PlusPlusToken	*
+46	PlusPlusToken	MinusMinusToken	*
+47	MinusMinusToken	LessThanLessThanToken	*
+48	LessThanLessThanToken	GreaterThanGreaterThanToken	*
+49	GreaterThanGreaterThanToken	GreaterThanGreaterThanGreaterThanToken	*
+50	GreaterThanGreaterThanGreaterThanToken	AmpersandToken	*
+51	AmpersandToken	BarToken	*
+52	BarToken	CaretToken	*
+53	CaretToken	ExclamationToken	*
+54	ExclamationToken	TildeToken	*
+55	TildeToken	AmpersandAmpersandToken	*
+56	AmpersandAmpersandToken	BarBarToken	*
+57	BarBarToken	QuestionToken	*
+58	QuestionToken	ColonToken	*
+59	ColonToken	AtToken	*
+60	AtToken	QuestionQuestionToken	*
+61	QuestionQuestionToken	BacktickToken	*
+62	BacktickToken	HashToken	*
+63	HashToken	EqualsToken	*
+64	EqualsToken	PlusEqualsToken	*
+65	PlusEqualsToken	MinusEqualsToken	*
+66	MinusEqualsToken	AsteriskEqualsToken	*
+67	AsteriskEqualsToken	AsteriskAsteriskEqualsToken	*
+68	AsteriskAsteriskEqualsToken	SlashEqualsToken	*
+69	SlashEqualsToken	PercentEqualsToken	*
+70	PercentEqualsToken	LessThanLessThanEqualsToken	*
+71	LessThanLessThanEqualsToken	GreaterThanGreaterThanEqualsToken	*
+72	GreaterThanGreaterThanEqualsToken	GreaterThanGreaterThanGreaterThanEqualsToken	*
+73	GreaterThanGreaterThanGreaterThanEqualsToken	AmpersandEqualsToken	*
+74	AmpersandEqualsToken	BarEqualsToken	*
+75	BarEqualsToken	BarBarEqualsToken	*
+76	BarBarEqualsToken	AmpersandAmpersandEqualsToken	*
+77	AmpersandAmpersandEqualsToken	QuestionQuestionEqualsToken	*
+78	QuestionQuestionEqualsToken	CaretEqualsToken	*
+79	CaretEqualsToken	Identifier	*
+80	Identifier	PrivateIdentifier	*
+81	PrivateIdentifier	JSDocCommentTextToken	*
+82	JSDocCommentTextToken	BreakKeyword	*
+83	BreakKeyword	CaseKeyword	*
+84	CaseKeyword	CatchKeyword	*
+85	CatchKeyword	ClassKeyword	*
+86	ClassKeyword	ConstKeyword	*
+87	ConstKeyword	ContinueKeyword	*
+88	ContinueKeyword	DebuggerKeyword	*
+89	DebuggerKeyword	DefaultKeyword	*
+90	DefaultKeyword	DeleteKeyword	*
+91	DeleteKeyword	DoKeyword	*
+92	DoKeyword	ElseKeyword	*
+93	ElseKeyword	EnumKeyword	*
+94	EnumKeyword	ExportKeyword	*
+95	ExportKeyword	ExtendsKeyword	*
+96	ExtendsKeyword	FalseKeyword	*
+97	FalseKeyword	FinallyKeyword	*
+98	FinallyKeyword	ForKeyword	*
+99	ForKeyword	FunctionKeyword	*
+100	FunctionKeyword	IfKeyword	*
+101	IfKeyword	ImportKeyword	*
+102	ImportKeyword	InKeyword	*
+103	InKeyword	InstanceOfKeyword	*
+104	InstanceOfKeyword	NewKeyword	*
+105	NewKeyword	NullKeyword	*
+106	NullKeyword	ReturnKeyword	*
+107	ReturnKeyword	SuperKeyword	*
+108	SuperKeyword	SwitchKeyword	*
+109	SwitchKeyword	ThisKeyword	*
+110	ThisKeyword	ThrowKeyword	*
+111	ThrowKeyword	TrueKeyword	*
+112	TrueKeyword	TryKeyword	*
+113	TryKeyword	TypeOfKeyword	*
+114	TypeOfKeyword	VarKeyword	*
+115	VarKeyword	VoidKeyword	*
+116	VoidKeyword	WhileKeyword	*
+117	WhileKeyword	WithKeyword	*
+118	WithKeyword	ImplementsKeyword	*
+119	ImplementsKeyword	InterfaceKeyword	*
+120	InterfaceKeyword	LetKeyword	*
+121	LetKeyword	PackageKeyword	*
+122	PackageKeyword	PrivateKeyword	*
+123	PrivateKeyword	ProtectedKeyword	*
+124	ProtectedKeyword	PublicKeyword	*
+125	PublicKeyword	StaticKeyword	*
+126	StaticKeyword	YieldKeyword	*
+127	YieldKeyword	AbstractKeyword	*
+128	AbstractKeyword	AccessorKeyword	*
+129	AccessorKeyword	AsKeyword	*
+130	AsKeyword	AssertsKeyword	*
+131	AssertsKeyword	AssertKeyword	*
+132	AssertKeyword	AnyKeyword	*
+133	AnyKeyword	AsyncKeyword	*
+134	AsyncKeyword	AwaitKeyword	*
+135	AwaitKeyword	BooleanKeyword	*
+136	BooleanKeyword	ConstructorKeyword	*
+137	ConstructorKeyword	DeclareKeyword	*
+138	DeclareKeyword	GetKeyword	*
+139	GetKeyword	ImmediateKeyword	*
+140	InferKeyword	InferKeyword
+141	IntrinsicKeyword	IntrinsicKeyword
+142	IsKeyword	IsKeyword
+143	KeyOfKeyword	KeyOfKeyword
+144	ModuleKeyword	ModuleKeyword
+145	NamespaceKeyword	NamespaceKeyword
+146	NeverKeyword	NeverKeyword
+147	OutKeyword	OutKeyword
+148	ReadonlyKeyword	ReadonlyKeyword
+149	RequireKeyword	RequireKeyword
+150	NumberKeyword	NumberKeyword
+151	ObjectKeyword	ObjectKeyword
+152	SatisfiesKeyword	SatisfiesKeyword
+153	SetKeyword	SetKeyword
+154	StringKeyword	StringKeyword
+155	SymbolKeyword	SymbolKeyword
+156	TypeKeyword	TypeKeyword
+157	UndefinedKeyword	UndefinedKeyword
+158	UniqueKeyword	UniqueKeyword
+159	UnknownKeyword	UnknownKeyword
+160	UsingKeyword	UsingKeyword
+161	FromKeyword	FromKeyword
+162	GlobalKeyword	GlobalKeyword
+163	BigIntKeyword	BigIntKeyword
+164	OverrideKeyword	OverrideKeyword
+165	OfKeyword	OfKeyword
+166	DeferKeyword	DeferKeyword
+167	QualifiedName	QualifiedName
+168	ComputedPropertyName	ComputedPropertyName
+169	TypeParameter	TypeParameter
+170	Parameter	Parameter
+171	Decorator	Decorator
+172	PropertySignature	PropertySignature
+173	PropertyDeclaration	PropertyDeclaration
+174	MethodSignature	MethodSignature
+175	MethodDeclaration	MethodDeclaration
+176	ClassStaticBlockDeclaration	ClassStaticBlockDeclaration
+177	Constructor	Constructor
+178	GetAccessor	GetAccessor
+179	SetAccessor	SetAccessor
+180	CallSignature	CallSignature
+181	ConstructSignature	ConstructSignature
+182	IndexSignature	IndexSignature
+183	TypePredicate	TypePredicate
+184	TypeReference	TypeReference
+185	FunctionType	FunctionType
+186	ConstructorType	ConstructorType
+187	TypeQuery	TypeQuery
+188	TypeLiteral	TypeLiteral
+189	ArrayType	ArrayType
+190	TupleType	TupleType
+191	OptionalType	OptionalType
+192	RestType	RestType
+193	UnionType	UnionType
+194	IntersectionType	IntersectionType
+195	ConditionalType	ConditionalType
+196	InferType	InferType
+197	ParenthesizedType	ParenthesizedType
+198	ThisType	ThisType
+199	TypeOperator	TypeOperator
+200	IndexedAccessType	IndexedAccessType
+201	MappedType	MappedType
+202	LiteralType	LiteralType
+203	NamedTupleMember	NamedTupleMember
+204	TemplateLiteralType	TemplateLiteralType
+205	TemplateLiteralTypeSpan	TemplateLiteralTypeSpan
+206	ImportType	ImportType
+207	ObjectBindingPattern	ObjectBindingPattern
+208	ArrayBindingPattern	ArrayBindingPattern
+209	BindingElement	BindingElement
+210	ArrayLiteralExpression	ArrayLiteralExpression
+211	ObjectLiteralExpression	ObjectLiteralExpression
+212	PropertyAccessExpression	PropertyAccessExpression
+213	ElementAccessExpression	ElementAccessExpression
+214	CallExpression	CallExpression
+215	NewExpression	NewExpression
+216	TaggedTemplateExpression	TaggedTemplateExpression
+217	TypeAssertionExpression	TypeAssertionExpression
+218	ParenthesizedExpression	ParenthesizedExpression
+219	FunctionExpression	FunctionExpression
+220	ArrowFunction	ArrowFunction
+221	DeleteExpression	DeleteExpression
+222	TypeOfExpression	TypeOfExpression
+223	VoidExpression	VoidExpression
+224	AwaitExpression	AwaitExpression
+225	PrefixUnaryExpression	PrefixUnaryExpression
+226	PostfixUnaryExpression	PostfixUnaryExpression
+227	BinaryExpression	BinaryExpression
+228	ConditionalExpression	ConditionalExpression
+229	TemplateExpression	TemplateExpression
+230	YieldExpression	YieldExpression
+231	SpreadElement	SpreadElement
+232	ClassExpression	ClassExpression
+233	OmittedExpression	OmittedExpression
+234	ExpressionWithTypeArguments	ExpressionWithTypeArguments
+235	AsExpression	AsExpression
+236	NonNullExpression	NonNullExpression
+237	MetaProperty	MetaProperty
+238	SyntheticExpression	SyntheticExpression
+239	SatisfiesExpression	SatisfiesExpression
+240	TemplateSpan	TemplateSpan
+241	SemicolonClassElement	SemicolonClassElement
+242	Block	Block
+243	EmptyStatement	EmptyStatement
+244	VariableStatement	VariableStatement
+245	ExpressionStatement	ExpressionStatement
+246	IfStatement	IfStatement
+247	DoStatement	DoStatement
+248	WhileStatement	WhileStatement
+249	ForStatement	ForStatement
+250	ForInStatement	ForInStatement
+251	ForOfStatement	ForOfStatement
+252	ContinueStatement	ContinueStatement
+253	BreakStatement	BreakStatement
+254	ReturnStatement	ReturnStatement
+255	WithStatement	WithStatement
+256	SwitchStatement	SwitchStatement
+257	LabeledStatement	LabeledStatement
+258	ThrowStatement	ThrowStatement
+259	TryStatement	TryStatement
+260	DebuggerStatement	DebuggerStatement
+261	VariableDeclaration	VariableDeclaration
+262	VariableDeclarationList	VariableDeclarationList
+263	FunctionDeclaration	FunctionDeclaration
+264	ClassDeclaration	ClassDeclaration
+265	InterfaceDeclaration	InterfaceDeclaration
+266	TypeAliasDeclaration	TypeAliasDeclaration
+267	EnumDeclaration	EnumDeclaration
+268	ModuleDeclaration	ModuleDeclaration
+269	ModuleBlock	ModuleBlock
+270	CaseBlock	CaseBlock
+271	NamespaceExportDeclaration	NamespaceExportDeclaration
+272	ImportEqualsDeclaration	ImportEqualsDeclaration
+273	ImportDeclaration	ImportDeclaration
+274	ImportClause	ImportClause
+275	NamespaceImport	NamespaceImport
+276	NamedImports	NamedImports
+277	ImportSpecifier	ImportSpecifier
+278	ExportAssignment	ExportAssignment
+279	ExportDeclaration	ExportDeclaration
+280	NamedExports	NamedExports
+281	NamespaceExport	NamespaceExport
+282	ExportSpecifier	ExportSpecifier
+283	MissingDeclaration	MissingDeclaration
+284	ExternalModuleReference	ExternalModuleReference
+285	JsxElement	JsxElement
+286	JsxSelfClosingElement	JsxSelfClosingElement
+287	JsxOpeningElement	JsxOpeningElement
+288	JsxClosingElement	JsxClosingElement
+289	JsxFragment	JsxFragment
+290	JsxOpeningFragment	JsxOpeningFragment
+291	JsxClosingFragment	JsxClosingFragment
+292	JsxAttribute	JsxAttribute
+293	JsxAttributes	JsxAttributes
+294	JsxSpreadAttribute	JsxSpreadAttribute
+295	JsxExpression	JsxExpression
+296	JsxNamespacedName	JsxNamespacedName
+297	CaseClause	CaseClause
+298	DefaultClause	DefaultClause
+299	HeritageClause	HeritageClause
+300	CatchClause	CatchClause
+301	ImportAttributes	ImportAttributes
+302	ImportAttribute	ImportAttribute
+303	ImportTypeAssertionContainer	PropertyAssignment	*
+304	PropertyAssignment	ShorthandPropertyAssignment	*
+305	ShorthandPropertyAssignment	SpreadAssignment	*
+306	SpreadAssignment	EnumMember	*
+307	EnumMember	SourceFile	*
+308	SourceFile	JSDocTypeExpression	*
+309	Bundle	JSDocNameReference	*
+310	JSDocTypeExpression	JSDocAllType	*
+311	JSDocNameReference	JSDocNullableType	*
+312	JSDocMemberName	JSDocNonNullableType	*
+313	JSDocAllType	JSDocOptionalType	*
+314	JSDocUnknownType	JSDocVariadicType	*
+315	JSDocNullableType	JSDoc	*
+316	JSDocNonNullableType	JSDocText	*
+317	JSDocOptionalType	JSDocTypeLiteral	*
+318	JSDocFunctionType	JSDocSignature	*
+319	JSDocVariadicType	JSDocLink	*
+320	JSDocNamepathType	JSDocLinkCode	*
+321	JSDoc	JSDocLinkPlain	*
+322	JSDocText	JSDocUnknownTag	*
+323	JSDocTypeLiteral	JSDocAugmentsTag	*
+324	JSDocSignature	JSDocImplementsTag	*
+325	JSDocLink	JSDocDeprecatedTag	*
+326	JSDocLinkCode	JSDocPublicTag	*
+327	JSDocLinkPlain	JSDocPrivateTag	*
+328	JSDocTag	JSDocProtectedTag	*
+329	JSDocAugmentsTag	JSDocReadonlyTag	*
+330	JSDocImplementsTag	JSDocOverrideTag	*
+331	JSDocAuthorTag	JSDocCallbackTag	*
+332	JSDocDeprecatedTag	JSDocOverloadTag	*
+333	JSDocClassTag	JSDocParameterTag	*
+334	JSDocPublicTag	JSDocReturnTag	*
+335	JSDocPrivateTag	JSDocThisTag	*
+336	JSDocProtectedTag	JSDocTypeTag	*
+337	JSDocReadonlyTag	JSDocTemplateTag	*
+338	JSDocOverrideTag	JSDocTypedefTag	*
+339	JSDocCallbackTag	JSDocSeeTag	*
+340	JSDocOverloadTag	JSDocPropertyTag	*
+341	JSDocEnumTag	JSDocThrowsTag	*
+342	JSDocParameterTag	JSDocSatisfiesTag	*
+343	JSDocReturnTag	JSDocImportTag	*
+344	JSDocThisTag	SyntaxList	*
+345	JSDocTypeTag	JSTypeAliasDeclaration	*
+346	JSDocTemplateTag	JSImportDeclaration	*
+347	JSDocTypedefTag	NotEmittedStatement	*
+348	JSDocSeeTag	PartiallyEmittedExpression	*
+349	JSDocPropertyTag	SyntheticReferenceExpression	*
+350	JSDocThrowsTag	NotEmittedTypeElement	*
+351	JSDocSatisfiesTag	-	*
+352	JSDocImportTag	-	*
+353	SyntaxList	-	*
+354	NotEmittedStatement	-	*
+355	NotEmittedTypeElement	-	*
+356	PartiallyEmittedExpression	-	*
+357	CommaListExpression	-	*
+358	SyntheticReferenceExpression	-	*
+359	Count	-	*

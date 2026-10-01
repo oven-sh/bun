@@ -1,0 +1,6 @@
+queued 02:40:26
+lock 02:44:36
+    Checking bun_ast v0.0.0 (/tmp/c2final/alt/ast)
+    Checking bun_lint v0.0.0 (/tmp/c2final/alt/lint)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.82s
+alt-check-done 02:44:54

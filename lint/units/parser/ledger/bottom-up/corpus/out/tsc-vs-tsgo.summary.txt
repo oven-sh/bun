@@ -1,0 +1,145 @@
+rows x dialects compared: 993396
+identical (count and the first six [code, start, length]): 990927
+same verdict and same first diagnostic, later diagnostics or the count differ: 208
+both reject, the first diagnostic differs: 1080
+verdict differs: 1181
+typescript-go panicked or died: 0
+rows whose parse diagnostics as input.d.ts differ from those as input.ts: tsc 0, typescript-go 3
+
+verdict differs, by dialect and direction:
+      96  ts: tsc accepts, typescript-go rejects with TS1005
+      96  dts: tsc accepts, typescript-go rejects with TS1005
+      94  ts: typescript-go accepts, tsc rejects with TS1003
+      94  dts: typescript-go accepts, tsc rejects with TS1003
+      92  tsx: tsc accepts, typescript-go rejects with TS1005
+      91  tsx: typescript-go accepts, tsc rejects with TS1003
+      80  ts: tsc accepts, typescript-go rejects with TS1110
+      80  dts: tsc accepts, typescript-go rejects with TS1110
+      76  tsx: tsc accepts, typescript-go rejects with TS1110
+      65  ts: tsc accepts, typescript-go rejects with TS2880
+      65  dts: tsc accepts, typescript-go rejects with TS2880
+      63  tsx: tsc accepts, typescript-go rejects with TS2880
+      19  ts: typescript-go accepts, tsc rejects with TS1005
+      19  tsx: typescript-go accepts, tsc rejects with TS1005
+      19  dts: typescript-go accepts, tsc rejects with TS1005
+      18  ts: tsc accepts, typescript-go rejects with TS1144
+      18  tsx: tsc accepts, typescript-go rejects with TS1144
+      18  dts: tsc accepts, typescript-go rejects with TS1144
+      12  ts: tsc accepts, typescript-go rejects with TS1441
+      12  tsx: tsc accepts, typescript-go rejects with TS1441
+      12  dts: tsc accepts, typescript-go rejects with TS1441
+       3  ts: tsc accepts, typescript-go rejects with TS1359
+       3  tsx: tsc accepts, typescript-go rejects with TS1359
+       3  dts: tsc accepts, typescript-go rejects with TS1359
+       3  ts: tsc accepts, typescript-go rejects with TS1109
+       3  tsx: tsc accepts, typescript-go rejects with TS1109
+       3  ts: typescript-go accepts, tsc rejects with TS1110
+       3  tsx: typescript-go accepts, tsc rejects with TS1110
+       3  dts: typescript-go accepts, tsc rejects with TS1110
+       3  ts: tsc accepts, typescript-go rejects with TS1084
+       3  tsx: tsc accepts, typescript-go rejects with TS1084
+       3  dts: tsc accepts, typescript-go rejects with TS1084
+       2  ts: typescript-go accepts, tsc rejects with TS1442
+       2  tsx: typescript-go accepts, tsc rejects with TS1442
+       2  dts: typescript-go accepts, tsc rejects with TS1442
+       1  dts: tsc accepts, typescript-go rejects with TS1109
+       1  ts: tsc accepts, typescript-go rejects with TS1003
+       1  tsx: tsc accepts, typescript-go rejects with TS1003
+
+both reject, first diagnostic differs (tsc -> typescript-go), with examples [code,start,length]:
+     368  same code TS1005, span differs
+            ts "type X = function () {};"  tsc [1005,21,1] go [1005,18,1]
+            tsx "type X = function () {};"  tsc [1005,21,1] go [1005,18,1]
+            dts "type X = function () {};"  tsc [1005,21,1] go [1005,18,1]
+     273  code TS1005 -> TS2880
+            ts "type X = import('x', { assert { 'resolution-mode': 'import' } });"  tsc [1005,30,1] go [2880,23,6]
+            tsx "type X = import('x', { assert { 'resolution-mode': 'import' } });"  tsc [1005,30,1] go [2880,23,6]
+            dts "type X = import('x', { assert { 'resolution-mode': 'import' } });"  tsc [1005,30,1] go [2880,23,6]
+     148  code TS1005 -> TS1110
+            ts "let x: (?) => void;"  tsc [1005,11,2] go [1110,9,1]
+            tsx "let x: (?) => void;"  tsc [1005,11,2] go [1110,9,1]
+            dts "let x: (?) => void;"  tsc [1005,11,2] go [1110,9,1]
+      47  code TS1109 -> TS2880
+            ts "type X = import('x', { assert: { 'resolution-mode':  } });"  tsc [1109,53,1] go [2880,23,6]
+            tsx "type X = import('x', { assert: { 'resolution-mode':  } });"  tsc [1109,53,1] go [2880,23,6]
+            dts "type X = import('x', { assert: { 'resolution-mode':  } });"  tsc [1109,53,1] go [2880,23,6]
+      44  code TS1478 -> TS2880
+            ts "type X = import('x', { assert: { : 'import' } });"  tsc [1478,33,1] go [2880,23,6]
+            tsx "type X = import('x', { assert: { : 'import' } });"  tsc [1478,33,1] go [2880,23,6]
+            dts "type X = import('x', { assert: { : 'import' } });"  tsc [1478,33,1] go [2880,23,6]
+      42  code TS1005 -> TS1144
+            ts "class C { @d m(): function (a: A): B { return x; } }"  tsc [1005,29,1] go [1144,27,1]
+            tsx "class C { @d m(): function (a: A): B { return x; } }"  tsc [1005,29,1] go [1144,27,1]
+            dts "class C { @d m(): function (a: A): B { return x; } }"  tsc [1005,29,1] go [1144,27,1]
+      32  code TS1138 -> TS1005
+            ts "type X = function (: A): B;"  tsc [1138,19,1] go [1005,18,1]
+            tsx "type X = function (: A): B;"  tsc [1138,19,1] go [1005,18,1]
+            dts "type X = function (: A): B;"  tsc [1138,19,1] go [1005,18,1]
+      21  code TS1005 -> TS1441
+            ts "class C { @d x: function (a: A): B; }"  tsc [1005,27,1] go [1441,25,1]
+            tsx "class C { @d x: function (a: A): B; }"  tsc [1005,27,1] go [1441,25,1]
+            dts "class C { @d x: function (a: A): B; }"  tsc [1005,27,1] go [1441,25,1]
+      15  same code TS1127, span differs
+            ts "x = \\"  tsc [1127,4,0] go [1127,4,1]
+            tsx "x = \\"  tsc [1127,4,0] go [1127,4,1]
+            dts "x = \\"  tsc [1127,4,0] go [1127,4,1]
+      12  code TS1005 -> TS1128
+            ts "export type = A;"  tsc [1005,12,1] go [1128,0,6]
+            tsx "export type = A;"  tsc [1005,12,1] go [1128,0,6]
+            dts "export type = A;"  tsc [1005,12,1] go [1128,0,6]
+      12  code TS1128 -> TS1005
+            ts "type X =  function(): A };"  tsc [1128,24,1] go [1005,18,1]
+            tsx "type X =  function(): A };"  tsc [1128,24,1] go [1005,18,1]
+            dts "type X =  function(): A };"  tsc [1128,24,1] go [1005,18,1]
+       9  code TS1359 -> TS1128
+            ts "export type default = 1"  tsc [1359,12,7] go [1128,0,6]
+            tsx "export type default = 1"  tsc [1359,12,7] go [1128,0,6]
+            dts "export type default = 1"  tsc [1359,12,7] go [1128,0,6]
+       9  same code TS1453, span differs
+            ts "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"  tsc [1453,22,3] go [1453,44,3]
+            tsx "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"  tsc [1453,22,3] go [1453,44,3]
+            dts "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"  tsc [1453,22,3] go [1453,44,3]
+       6  code TS1442 -> TS1441
+            ts "class K { @d p: function () {}; }"  tsc [1442,28,1] go [1441,25,1]
+            tsx "class K { @d p: function () {}; }"  tsc [1442,28,1] go [1441,25,1]
+            dts "class K { @d p: function () {}; }"  tsc [1442,28,1] go [1441,25,1]
+       6  code TS1068 -> TS1144
+            ts "class K { @d m(x: any): function () {} { return null as any } }"  tsc [1068,39,1] go [1144,33,1]
+            tsx "class K { @d m(x: any): function () {} { return null as any } }"  tsc [1068,39,1] go [1144,33,1]
+            dts "class K { @d m(x: any): function () {} { return null as any } }"  tsc [1068,39,1] go [1144,33,1]
+       6  code TS1144 -> TS1110
+            ts "class C { @d m(): (?) => B { return x; } }"  tsc [1144,22,2] go [1110,20,1]
+            tsx "class C { @d m(): (?) => B { return x; } }"  tsc [1144,22,2] go [1110,20,1]
+            dts "class C { @d m(): (?) => B { return x; } }"  tsc [1144,22,2] go [1110,20,1]
+       6  code TS1138 -> TS1144
+            ts "class C { @d m(): function (: A): B { return x; } }"  tsc [1138,28,1] go [1144,27,1]
+            tsx "class C { @d m(): function (: A): B { return x; } }"  tsc [1138,28,1] go [1144,27,1]
+            dts "class C { @d m(): function (: A): B { return x; } }"  tsc [1138,28,1] go [1144,27,1]
+       6  code TS1128 -> TS1144
+            ts "class C { @d m():  function(): A } { return x; } }"  tsc [1128,49,1] go [1144,27,1]
+            tsx "class C { @d m():  function(): A } { return x; } }"  tsc [1128,49,1] go [1144,27,1]
+            dts "class C { @d m():  function(): A } { return x; } }"  tsc [1128,49,1] go [1144,27,1]
+       3  code TS1351 -> TS1125
+            ts "x = 0x"  tsc [1351,5,1] go [1125,6,0]
+            tsx "x = 0x"  tsc [1351,5,1] go [1125,6,0]
+            dts "x = 0x"  tsc [1351,5,1] go [1125,6,0]
+       3  code TS1351 -> TS1177
+            ts "x = 0b"  tsc [1351,5,1] go [1177,6,0]
+            tsx "x = 0b"  tsc [1351,5,1] go [1177,6,0]
+            dts "x = 0b"  tsc [1351,5,1] go [1177,6,0]
+       3  code TS1351 -> TS1178
+            ts "x = 0o"  tsc [1351,5,1] go [1178,6,0]
+            tsx "x = 0o"  tsc [1351,5,1] go [1178,6,0]
+            dts "x = 0o"  tsc [1351,5,1] go [1178,6,0]
+       3  code TS1442 -> TS1110
+            ts "class C { @d x: (?) => B; }"  tsc [1442,20,2] go [1110,18,1]
+            tsx "class C { @d x: (?) => B; }"  tsc [1442,20,2] go [1110,18,1]
+            dts "class C { @d x: (?) => B; }"  tsc [1442,20,2] go [1110,18,1]
+       3  code TS1138 -> TS1441
+            ts "class C { @d x: function (: A): B; }"  tsc [1138,26,1] go [1441,25,1]
+            tsx "class C { @d x: function (: A): B; }"  tsc [1138,26,1] go [1441,25,1]
+            dts "class C { @d x: function (: A): B; }"  tsc [1138,26,1] go [1441,25,1]
+       3  code TS1128 -> TS1441
+            ts "class C { @d x:  function(): A }; }"  tsc [1128,34,1] go [1441,25,1]
+            tsx "class C { @d x:  function(): A }; }"  tsc [1128,34,1] go [1441,25,1]
+            dts "class C { @d x:  function(): A }; }"  tsc [1128,34,1] go [1441,25,1]

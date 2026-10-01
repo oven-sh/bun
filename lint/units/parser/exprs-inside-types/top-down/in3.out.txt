@@ -1,0 +1,242 @@
+
+## D property signature initializer
+P-ok/C-err / bun REJ     | type A = { a: number = 1 }
+    tsc parse=[] check=[TS1247@23]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-rej / bun REJ          | type A = { a = 1 }
+    tsc parse=[TS1131@11,TS1128@17] check=[]
+    tsc emit: "use strict"; a = 1;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { a?: number = 1 }
+    tsc parse=[] check=[TS1247@24]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { a? = 1 }
+    tsc parse=[] check=[TS1247@16]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { readonly a: number = 1; b: string }
+    tsc parse=[] check=[TS1247@32]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | interface I { a: number = 1 }
+    tsc parse=[] check=[TS1246@26]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-rej / bun REJ          | interface I { a = 1 }
+    tsc parse=[TS1131@14,TS1128@20] check=[]
+    tsc emit: "use strict"; a = 1;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | interface I { a: number = f(() => { let q = 2 }) }
+    tsc parse=[] check=[TS1246@26]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | interface I { a: number\n= 1 }
+    tsc parse=[] check=[TS1246@26]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | interface I { a\n= 1 }
+    tsc parse=[] check=[TS1246@18]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-rej / bun REJ          | type A = { "a": number = 1, b = 2 }
+    tsc parse=[TS1131@28,TS1128@34] check=[]
+    tsc emit: "use strict"; b = 2;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { [k]: number = 1 }
+    tsc parse=[] check=[TS1247@25]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { a: number = 1 = 2 }
+    tsc parse=[] check=[TS1247@23]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-rej / bun REJ          | type A = { m(): void = 1 }
+    tsc parse=[TS1005@21] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { a: number = b, c }
+    tsc parse=[] check=[TS1247@23]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | let x: { a: number = 1 }
+    tsc parse=[] check=[TS1247@21]
+    tsc emit: "use strict"; let x;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | let x: ({ a: number = 1 })
+    tsc parse=[] check=[TS1247@22]
+    tsc emit: "use strict"; let x;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | class C { @d p: { a: number = 1 } }
+    tsc parse=[] check=[TS1247@30]
+    tsc emit: "use strict"; var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) { var c = arguments.length, r = c < 3 ? target : 
+    bun: Unexpected =
+
+## E accessor in type literal / interface
+valid / bun ok           | type A = { get x(): number }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { set x(v: number) }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { get x(): number; set x(v: number) }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { get x() { return 1 } }
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { set x(v) { this.y = v } }
+    tsc parse=[] check=[TS1183@20]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | interface I { get x() { return 1 } }
+    tsc parse=[] check=[TS1183@22]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | interface I { get x(): number { return 1 } set x(v) { } }
+    tsc parse=[] check=[TS1183@30,TS1183@52]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { get x()\n{ return 1 } }
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-rej / bun REJ          | type A = { get x() { return 1 }; y: 1 }
+    tsc parse=[TS1131@31] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-rej / bun REJ          | type A = { get x() { return 1 }, y: 1 }
+    tsc parse=[TS1131@31] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { get x() { return 1 } y: 1 }
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { get x() { var a; function f() {}; class K {}; return () => a } }
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict";
+    bun: Unexpected {
+valid / bun ok           | type A = { get<T>(): T }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { get: 1, set: 2 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { get(): 1; set(v): void }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { get x<T>(): T }
+    tsc parse=[] check=[TS1094@15]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun REJ          | type A = { m() { return 1 } }
+    tsc parse=[TS1005@15,TS1128@28] check=[]
+    tsc emit: "use strict"; { return 1; }
+    bun: Unexpected {
+P-rej / bun REJ          | type A = { (): void { } }
+    tsc parse=[TS1005@20,TS1128@24] check=[]
+    tsc emit: "use strict"; { }
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { get [Symbol.iterator]() { return 1 } }
+    tsc parse=[] check=[TS1183@35]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | let x: { get a() { return 1 } }
+    tsc parse=[] check=[TS1183@17]
+    tsc emit: "use strict"; let x;
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | class C { @d p: { get a() { return 1 } } }
+    tsc parse=[] check=[TS1183@26]
+    tsc emit: "use strict"; var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) { var c = arguments.length, r = c < 3 ? target : 
+    bun: Unexpected {
+
+## F import type attributes
+valid / bun ok           | type A = import("x", { with: { "resolution-mode": "import" } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = import("x", { with: { type: "json" } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = import("x", { assert: { type: "json" } })
+    tsc parse=[] check=[TS2880@31]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = import("x", { with: { type: "json" }, })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = import("x", { with: { type: "json", } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun REJ          | type A = import("x", { with: { type: f() } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected (
+valid / bun REJ          | type A = import("x", { with: { type: 1 + 1 } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected +
+valid / bun ok           | type A = import("x", { with: { type: () => { let a } } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = import("x", { with: { type: a, b: c } })
+    tsc parse=[] check=[TS1464@29]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = import("x", { with: {} })
+    tsc parse=[] check=[TS1464@29]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun ok           | type A = import("x", { with: { type } })
+    tsc parse=[TS1005@36] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun ok           | type A = import("x", { with: { [type]: "json" } })
+    tsc parse=[TS1478@31,TS1005@37,TS1128@46,TS1128@48,TS1128@49] check=[]
+    tsc emit: "use strict"; "json";
+    bun: 
+P-rej / bun ok           | type A = import("x", { foo: { type: "json" } })
+    tsc parse=[TS1005@23,TS1128@45,TS1128@46] check=[]
+    tsc emit: "use strict"; foo: { type: "json"; }
+    bun: 
+P-rej / bun ok           | type A = import("x", {})
+    tsc parse=[TS1005@22] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun REJ          | type A = import("x", )
+    tsc parse=[TS1005@21] check=[]
+    tsc emit: "use strict";
+    bun: Expected "{" but found ")" | Unexpected end of file
+valid / bun ok           | type A = import("x", { with: { type: "json" } }).Y<Z>
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = typeof import("x", { with: { type: "json" } })
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = import(x)
+    tsc parse=[] check=[TS1141@16]
+    tsc emit: "use strict";
+    bun: Expected string but found "x"
+P-ok/C-err / bun REJ     | type A = import(`x`)
+    tsc parse=[] check=[TS1141@16]
+    tsc emit: "use strict";
+    bun: Expected string but found "`x`"
+P-rej / bun REJ          | type A = import("x" + "y")
+    tsc parse=[TS1005@20,TS1005@25] check=[]
+    tsc emit: "use strict"; +"y";
+    bun: Expected ")" but found "+" | Expected ";" but found ""y""

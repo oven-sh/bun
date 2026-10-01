@@ -1,0 +1,22 @@
+// SCRATCH STAND-IN, not delivered: the ids of the messages that the JavaScript step reports, by their codes.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Debug)]
+pub struct MessageId(pub u32);
+pub const IDENTIFIER_EXPECTED: MessageId = MessageId(1003);
+pub const DECORATORS_ARE_NOT_VALID_HERE: MessageId = MessageId(1206);
+pub const DECORATOR_USED_BEFORE_EXPORT_HERE: MessageId = MessageId(1486);
+pub const X_IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8002);
+pub const X_EXPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8003);
+pub const TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8004);
+pub const X_IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8005);
+pub const X_0_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8006);
+pub const TYPE_ALIASES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8008);
+pub const THE_0_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8009);
+pub const TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8010);
+pub const TYPE_ARGUMENTS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8011);
+pub const PARAMETER_MODIFIERS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8012);
+pub const NON_NULL_ASSERTIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8013);
+pub const TYPE_ASSERTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8016);
+pub const SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8017);
+pub const TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES: MessageId = MessageId(8037);
+pub const DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEFORE_EXPORT: MessageId = MessageId(8038);

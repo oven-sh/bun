@@ -1,0 +1,135 @@
+A1c	as	"x as if"	[init,stmt,arg,element,return]	bun: Unexpected if @5	tsc: parses
+A1c	as	"x as var"	[init,stmt,arg,element,return]	bun: Unexpected var @5	tsc: parses
+A1c	as	"x as T <= y"	[init,stmt,arg,element,return]	bun: Unexpected = @8	tsc: parses
+A1c	nonNull	"this.#x!"	[stmt,init,arg]	bun: Expected identifier but found "#x" @5	tsc: parses
+A1c	cast	"<out, T>(x) => x"	[init,stmt,arg]	bun: The modifier "out" is not valid here @1	tsc: parses
+A1c	cast	"<out = A>(x) => x"	[init,stmt,arg]	bun: The modifier "out" is not valid here @1	tsc: parses
+A1c	arrow	"(): if => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected "=>" but found ":" @2	tsc: parses
+A1c	arrow	"a ? (await) : b"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected ) @10	tsc: parses
+A1c	arrow	"a ? ((b)) : c => d"	[condTrue]	bun: Expected ":" but found ";" @22	tsc: parses
+A1c	catch	"try {} catch (e: any = 1) {}"	[-]	bun: Expected ")" but found "=" @21	tsc: parses
+A1s	nonNull	"super.x!"	[stmt,init,arg]	bun: Unexpected "super" @0	tsc: parses also TS2660
+A1s	arrow	"(this: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid binding pattern @1	tsc: parses also TS2730
+A1s	arrow	"(this: A, a: B) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid binding pattern @1	tsc: parses also TS2730
+A1s	arrow	"(this) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid binding pattern @1	tsc: parses also TS2730
+A1s	arrow	"(this: A): this is B => true"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected ":" @5	tsc: parses also TS2730
+A1s	arrow	"(a: A = 1 = 2) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid assignment target @8	tsc: parses also TS2364
+A1s	arrow	"(public a: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	arrow	"(private a) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	arrow	"(readonly a: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	arrow	"(protected a?: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @11	tsc: parses also TS2369
+A1s	arrow	"(override a) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	arrow	"(public readonly) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "readonly" @8	tsc: parses also TS2369
+A1s	arrow	"async (this: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid binding pattern @7	tsc: parses also TS2730
+A1s	arrow	"a ? (this): b => c : d"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ";" but found ":" @19	tsc: parses also TS2730
+A1s	arrow	"a ? (this: T): b => c : d"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected ":" @9	tsc: parses also TS2730
+A1s	objLit	"{ a?: 1 } = b"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: parses also TS2364
+A1s	objLit	"{ m(public a: A) {} }"	[init,arg,paren]	bun: Expected ")" but found "a" @11	tsc: parses also TS2369
+A2	as	"x as asserts a"	[init,stmt,arg,element,return]	bun: Expected ";" but found "a" @13	tsc: TS1228 @5+9 A type predicate is only allowed in return type position for functions and methods.
+A2	as	"x as ?T"	[init,stmt,arg,element,return]	bun: Unexpected ? @5	tsc: TS17020 @5+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	as	"x as T?"	[init,stmt,arg,element,return]	bun: Unexpected ; @7	tsc: TS17019 @5+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	as	"x as *"	[init,stmt,arg,element,return]	bun: Unexpected * @5	tsc: TS8020 @5+1 JSDoc types can only be used inside documentation comments.
+A2	as	"x as T, y"	[init]	bun: The constant "y" must be initialized @8	tsc: TS1155 @8+1 'const' declarations must be initialized.
+A2	as	"x satisfies T, y"	[init]	bun: The constant "y" must be initialized @15	tsc: TS1155 @15+1 'const' declarations must be initialized.
+A2	as	"await x as T"	[return]	bun: "await" can only be used inside an "async" function @6	tsc: TS1308 @0+5 'await' expressions are only allowed within async functions and at the top levels of modules.
+A2	nonNull	"yield x!"	[stmt,init,arg]	bun: Cannot use "yield" outside a generator function @0	tsc: TS1163 @0+5 A 'yield' expression is only allowed in a generator body.
+A2	nonNull	"x!.#y"	[stmt,init,arg]	bun: Expected identifier but found "#y" @3	tsc: TS18016 @3+2 Private identifiers are not allowed outside class bodies.
+A2	nonNull	"x!, y!"	[init]	bun: Expected ":" but found ";" @6	tsc: TS1155 @4+1 'const' declarations must be initialized.
+A2	target	"({ a! } = y)"	[-]	bun: Expected "}" but found "!" @4	tsc: TS18004 @3+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+A2	arrow	"(): ?A => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected "=>" but found ":" @2	tsc: TS17020 @4+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrow	"(): A? => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected "=>" but found ":" @2	tsc: TS17019 @4+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrow	"(): * => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected "=>" but found ":" @2	tsc: TS8020 @4+1 JSDoc types can only be used inside documentation comments.
+A2	arrow	"(a): T\n=> x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected newline before "=>" @7	tsc: TS1200 @7+2 Line terminator not permitted before arrow.
+A2	arrow	"(a? = 1) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected = @4	tsc: TS1015 @1+1 Parameter cannot have question mark and initializer.
+A2	arrow	"(a: A?) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "?" @5	tsc: TS17019 @4+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrow	"(a: ?A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected ? @4	tsc: TS17020 @4+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrow	"(...a: A[], b) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected "," after rest pattern @10	tsc: TS1014 @1+3 A rest parameter must be last in a parameter list.
+A2	arrow	"(...a: A[] = []) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Invalid binding pattern @0	tsc: TS1048 @4+1 A rest parameter cannot have an initializer.
+A2	arrow	"(...a = []) => x"	[init,stmt,arg,condTrue,condFalse]	bun: A rest argument cannot have a default initializer @6	tsc: TS1048 @4+1 A rest parameter cannot have an initializer.
+A2	arrow	"(static a) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @8	tsc: TS1090 @1+6 'static' modifier cannot appear on a parameter.
+A2	arrow	"(declare a) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @9	tsc: TS1090 @1+7 'declare' modifier cannot appear on a parameter.
+A2	arrow	"(abstract a) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Expected ")" but found "a" @10	tsc: TS1242 @1+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	arrow	"async (a: A)\n=> x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected newline before "=>" @13	tsc: TS1200 @13+2 Line terminator not permitted before arrow.
+A2	arrow	"async (a: A): T\n=> x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected newline before "=>" @16	tsc: TS1200 @16+2 Line terminator not permitted before arrow.
+A2	arrow	"async (await) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected ) @12	tsc: TS1359 @7+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrow	"async (await: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected : @12	tsc: TS1359 @7+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrow	"a ? (b): c\n=> d : e"	[init,stmt,arg,condTrue,condFalse]	bun: Unexpected newline before "=>" @11	tsc: TS1200 @11+2 Line terminator not permitted before arrow.
+A2	varAnnot	"const x: T"	[-]	bun: The constant "x" must be initialized @6	tsc: TS1155 @6+1 'const' declarations must be initialized.
+A2	varAnnot	"let x!"	[-]	bun: Expected ":" but found end of file @6	tsc: TS1264 @5+1 Declarations with definite assignment assertions must also have type annotations.
+A2	varAnnot	"let x! = 1"	[-]	bun: Expected ":" but found "=" @7	tsc: TS1263 @5+1 Declarations with initializers cannot also have definite assignment assertions.
+A2	varAnnot	"using x: T"	[-]	bun: The declaration "x" must be initialized @6	tsc: TS1155 @6+1 'using' declarations must be initialized.
+A2	varAnnot	"using { a }: T = y"	[-]	bun: Expected ";" but found "{" @6	tsc: TS1492 @6+5 'using' declarations may not have binding patterns.
+A2	varAnnot	"let x: asserts a = y"	[-]	bun: Expected ";" but found "a" @15	tsc: TS1228 @7+9 A type predicate is only allowed in return type position for functions and methods.
+A2	varAnnot	"declare using x: T"	[-]	bun: Cannot use "declare" with a "using" declaration @8	tsc: TS1491 @0+7 'declare' modifier cannot appear on a 'using' declaration.
+A2	catch	"try {} catch (e = 1) {}"	[-]	bun: Expected ")" but found "=" @16	tsc: TS1197 @18+1 Catch clause variable cannot have an initializer.
+A2	catch	"try {} catch (e: asserts e) {}"	[-]	bun: Expected ")" but found "e" @25	tsc: TS1196 @17+7 Catch clause variable type annotation must be 'any' or 'unknown' if specified.
+A2	objLit	"{ a?: 1 }"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: TS1162 @3+1 An object member cannot be declared optional.
+A2	objLit	"{ a!: 1 }"	[init,arg,paren]	bun: Expected "}" but found "!" @3	tsc: TS1255 @3+1 A definite assignment assertion '!' is not permitted in this context.
+A2	objLit	"{ a? }"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: TS18004 @2+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+A2	objLit	"{ a! }"	[init,arg,paren]	bun: Expected "}" but found "!" @3	tsc: TS18004 @2+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+A2	objLit	"{ a?, b }"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: TS18004 @2+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.
+A2	objLit	"{ a = 1 }"	[init,arg,paren]	bun: Unexpected "=" @4	tsc: TS1312 @4+1 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.
+A2	objLit	"{ m?() {} }"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: TS1162 @3+1 An object member cannot be declared optional.
+A2	objLit	"{ m!() {} }"	[init,arg,paren]	bun: Expected "}" but found "!" @3	tsc: TS1255 @3+1 A definite assignment assertion '!' is not permitted in this context.
+A2	objLit	"{ m?<T>() {} }"	[init,arg,paren]	bun: Expected "}" but found "?" @3	tsc: TS1162 @3+1 An object member cannot be declared optional.
+A2	objLit	"{ [a]?: 1 }"	[init,arg,paren]	bun: Expected ":" but found "?" @5	tsc: TS1162 @5+1 An object member cannot be declared optional.
+A2	objLit	"{ \"a\"?: 1 }"	[init,arg,paren]	bun: Expected ":" but found "?" @5	tsc: TS1162 @5+1 An object member cannot be declared optional.
+A2	objLit	"{ readonly a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @11	tsc: TS1042 @2+8 'readonly' modifier cannot be used here.
+A2	objLit	"{ public a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @9	tsc: TS1042 @2+6 'public' modifier cannot be used here.
+A2	objLit	"{ private a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @10	tsc: TS1042 @2+7 'private' modifier cannot be used here.
+A2	objLit	"{ protected a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @12	tsc: TS1042 @2+9 'protected' modifier cannot be used here.
+A2	objLit	"{ static a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @9	tsc: TS1042 @2+6 'static' modifier cannot be used here.
+A2	objLit	"{ abstract a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @11	tsc: TS1042 @2+8 'abstract' modifier cannot be used here.
+A2	objLit	"{ declare a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @10	tsc: TS1042 @2+7 'declare' modifier cannot be used here.
+A2	objLit	"{ override a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @11	tsc: TS1042 @2+8 'override' modifier cannot be used here.
+A2	objLit	"{ accessor a: 1 }"	[init,arg,paren]	bun: Expected "}" but found "a" @11	tsc: TS1042 @2+8 'accessor' modifier cannot be used here.
+A2	objLit	"{ export a: 1 }"	[init,arg,paren]	bun: Expected ":" but found "a" @9	tsc: TS1042 @2+6 'export' modifier cannot be used here.
+A2	objLit	"{ readonly m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @11	tsc: TS1024 @2+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	objLit	"{ public m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @9	tsc: TS1042 @2+6 'public' modifier cannot be used here.
+A2	objLit	"{ static m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @9	tsc: TS1042 @2+6 'static' modifier cannot be used here.
+A2	objLit	"{ abstract m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @11	tsc: TS1042 @2+8 'abstract' modifier cannot be used here.
+A2	objLit	"{ declare m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @10	tsc: TS1042 @2+7 'declare' modifier cannot be used here.
+A2	objLit	"{ override m() {} }"	[init,arg,paren]	bun: Expected "}" but found "m" @11	tsc: TS1042 @2+8 'override' modifier cannot be used here.
+A2	objLit	"{ public get a() { return 1 } }"	[init,arg,paren]	bun: Expected "}" but found "get" @9	tsc: TS1042 @2+6 'public' modifier cannot be used here.
+A2	objLit	"{ static async m() {} }"	[init,arg,paren]	bun: Expected "}" but found "async" @9	tsc: TS1042 @2+6 'static' modifier cannot be used here.
+A2	objLit	"{ async readonly m() {} }"	[init,arg,paren]	bun: Expected "(" but found "m" @17	tsc: TS1024 @8+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	objLit	"{ a(): A; }"	[init,arg,paren]	bun: Expected "{" but found ";" @8	tsc: TS1005 @8+1 '{' expected.
+A2	objLit	"{ m(): void }"	[init,arg,paren]	bun: Expected "{" but found "}" @12	tsc: TS1005 @10+1 '{' expected.
+A2	objLit	"{ m(); }"	[init,arg,paren]	bun: Expected "{" but found ";" @5	tsc: TS1005 @5+1 '{' expected.
+A2	objLit	"{ new (): A }"	[init,arg,paren]	bun: Expected "{" but found "}" @12	tsc: TS1005 @10+1 '{' expected.
+A2	objLit	"{ async, await }"	[init,arg,paren]	bun: Cannot use "await" here @9	tsc: TS18004 @2+5 No value exists in scope for the shorthand property 'async'. Either declare one or provide an initializer.
+A2	objLit	"{ async?() {} }"	[init,arg,paren]	bun: Expected "}" but found "?" @7	tsc: TS1162 @7+1 An object member cannot be declared optional.
+B	as	"x as a is B"	[init,stmt,arg,element,return]	bun: accepts	tsc: TS1005 @7+2 ',' expected.
+B	as	"type as T"	[stmt]	bun: accepts	tsc: TS1005 @8+1 '=' expected.
+B	as	"await as T"	[return]	bun: accepts	tsc: TS1005 @9+1 ';' expected.
+B	nonNull	"(x!) => y"	[stmt,init,arg]	bun: accepts	tsc: TS1005 @5+2 ';' expected.
+B	nonNull	"(x!, y) => z"	[stmt,init,arg]	bun: accepts	tsc: TS1005 @8+2 ';' expected.
+B	nonNull	"label!: x"	[stmt]	bun: accepts	tsc: TS1005 @6+1 ';' expected.
+B	nonNull	"x!: y"	[stmt]	bun: accepts	tsc: TS1005 @2+1 ';' expected.
+B	target	"(x as T) => y"	[-]	bun: accepts	tsc: TS1005 @9+2 ';' expected.
+B	target	"(x!) => y"	[-]	bun: accepts	tsc: TS1005 @5+2 ';' expected.
+B	target	"(x satisfies T) => y"	[-]	bun: accepts	tsc: TS1005 @16+2 ';' expected.
+B	target	"([x as T]) => y"	[-]	bun: accepts	tsc: TS1005 @4+2 ',' expected.
+B	target	"({ a: x as T }) => y"	[-]	bun: accepts	tsc: TS1005 @8+2 ',' expected.
+B	target	"(x as T, z) => y"	[-]	bun: accepts	tsc: TS1005 @12+2 ';' expected.
+B	target	"(...x as T) => y"	[-]	bun: accepts	tsc: TS1005 @6+2 ',' expected.
+B	target	"async (x as T) => y"	[-]	bun: accepts	tsc: TS1005 @15+2 ';' expected.
+B	target	"label as T: x"	[-]	bun: accepts	tsc: TS1005 @10+1 ';' expected.
+B	target	"label!: x"	[-]	bun: accepts	tsc: TS1005 @6+1 ';' expected.
+B	arrow	"(a): => a"	[init,stmt,arg,condFalse]	bun: accepts	tsc: TS1005 @3+1 ',' expected.
+B	arrow	"(a!: A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @3+1 ')' expected.
+B	arrow	"(a!) => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @5+2 ';' expected.
+B	arrow	"(a as A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @9+2 ';' expected.
+B	arrow	"((a): A) => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @4+1 ')' expected.
+B	arrow	"((a)): T => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @5+1 ',' expected.
+B	arrow	"(a, (b): T) => x"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @7+1 ')' expected.
+B	arrow	"async (a): => x"	[init,stmt,arg,condFalse]	bun: accepts	tsc: TS1005 @9+1 ',' expected.
+B	arrow	"a ? (b,) : c"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1109 @7+1 Expression expected.
+B	arrow	"a ? (b as T): c => d : e"	[init,stmt,arg,condTrue,condFalse]	bun: accepts	tsc: TS1005 @21+1 ',' expected.
+B	varAnnot	"let { a }!: T = b"	[-]	bun: accepts	tsc: TS1005 @9+1 ',' expected.
+B	varAnnot	"let [a]!: T = b"	[-]	bun: accepts	tsc: TS1005 @7+1 ',' expected.
+B	varAnnot	"for (let x!: T of y) {}"	[-]	bun: accepts	tsc: TS1005 @10+1 ',' expected.
+B	varAnnot	"for (let x!: T = 0;;) {}"	[-]	bun: accepts	tsc: TS1005 @10+1 ',' expected.
+B	varAnnot	"let x: a is B = y"	[-]	bun: accepts	tsc: TS1005 @9+2 ',' expected.
+B	catch	"try {} catch (e: a is B) {}"	[-]	bun: accepts	tsc: TS1005 @19+2 ')' expected.
+B	objLit	"{ a<T>: 1 }"	[init,arg,paren]	bun: accepts	tsc: TS1005 @6+1 '(' expected.

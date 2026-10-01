@@ -1,0 +1,34 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+misc.ts(3,1): error TS2559: Type '{ c: number; }' has no properties in common with type 'W'.
+misc.ts(4,42): error TS2560: Value of type '() => { a: number; }' has no properties in common with type 'W'. Did you mean to call it?
+  related: misc.ts(4,42): message TS6212: Did you mean to call this expression?
+misc.ts(5,31): error TS2322: Type 'String' is not assignable to type 'string'.
+  'string' is a primitive, but 'String' is a wrapper object. Prefer using 'string' when possible.
+misc.ts(6,28): error TS2322: Type 'Object' is not assignable to type '{ a: number; }'.
+  The 'Object' type is assignable to very few other types. Did you mean to use the 'any' type instead?
+    Property 'a' is missing in type 'Object' but required in type '{ a: number; }'.
+  related: misc.ts(6,34): message TS2728: 'a' is declared here.
+misc.ts(8,5): error TS2322: Type 'P2' is not assignable to type 'P1'.
+  Types have separate declarations of a private property 'x'.
+misc.ts(9,28): error TS2322: Type 'T' is not assignable to type 'string'.
+  related: misc.ts(9,13): error TS2208: This type parameter might need an `extends string` constraint.
+misc.ts(9,47): error TS2322: Type 'string' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'string'.
+misc.ts(10,44): error TS2322: Type 'string' is not assignable to type 'T'.
+  'string' is assignable to the constraint of type 'T', but 'T' could be instantiated with a different subtype of constraint 'string'.
+misc.ts(12,1): error TS2322: Type '{ a: string; }' is not assignable to type '{ [k: string]: number; }'.
+  Property 'a' is incompatible with index signature.
+    Type 'string' is not assignable to type 'number'.
+misc.ts(13,44): error TS2322: Type '{ [k: string]: string; }' is not assignable to type '{ [k: string]: number; }'.
+  'string' index signatures are incompatible.
+    Type 'string' is not assignable to type 'number'.
+misc.ts(14,68): error TS2322: Type '{ a?: number | undefined; }' is not assignable to type '{ a: number; }'.
+  Types of property 'a' are incompatible.
+    Type 'number | undefined' is not assignable to type 'number'.
+      Type 'undefined' is not assignable to type 'number'.
+misc.ts(15,56): error TS2739: Type '{}' is missing the following properties from type '{ a: number; b: number; c: number; }': a, b, c
+misc.ts(16,116): error TS2740: Type '{ z: 1; }' is missing the following properties from type '{ a: number; b: number; c: number; d: number; e: number; f: number; }': a, b, c, d, and 2 more.
+misc.ts(17,71): error TS2322: Type '"b"' is not assignable to type '`a${string}`'.
+misc.ts(18,62): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+SIZES after check: identity=0 assignable=13 comparable=0 subtype=0 strictSubtype=0 enum=0 types=122

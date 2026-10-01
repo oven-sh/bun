@@ -1,0 +1,4 @@
+export default @d class C {}
+export default @d abstract class C {}
+@d export default abstract class C {}
+export default @d class {}

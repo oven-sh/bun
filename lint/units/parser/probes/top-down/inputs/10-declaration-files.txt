@@ -1,0 +1,869 @@
+# Declaration files.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== dts dts.001
+export declare const a: A;
+=== dts dts.002
+declare const a: A;
+=== dts dts.003
+export const a: A;
+=== dts dts.004
+const a: A;
+=== dts dts.005
+let a: A;
+=== dts dts.006
+var a: A;
+=== dts dts.007
+export let a: A;
+=== dts dts.008
+export var a: A, b: B;
+=== dts dts.009
+export const a = 1;
+=== dts dts.010
+export const a = "s";
+=== dts dts.011
+export const a = -1;
+=== dts dts.012
+export const a = 1n;
+=== dts dts.013
+export const a = true;
+=== dts dts.014
+export const a = {};
+=== dts dts.015
+export const a = E.A;
+=== dts dts.016
+export const a = b;
+=== dts dts.017
+export const a: A = 1;
+=== dts dts.018
+export const a;
+=== dts dts.019
+export let a = 1;
+=== dts dts.020
+export var a = 1;
+=== dts dts.021
+export const a: unique symbol;
+=== dts dts.022
+export declare const { a, b }: A;
+=== dts dts.023
+export const { a, b }: A;
+=== dts dts.024
+export declare let [a]: A;
+=== dts dts.025
+export const a: A, b: B;
+=== dts dts.026
+export declare let a!: A;
+=== dts dts.027
+export using a: A;
+=== dts dts.028
+declare function f(): void;
+=== dts dts.029
+export function f(): void;
+=== dts dts.030
+function f(): void;
+=== dts dts.031
+export declare function f(): void;
+=== dts dts.032
+export function f(): void
+=== dts dts.033
+export function f()
+=== dts dts.034
+export function f() {}
+=== dts dts.035
+function f() {}
+=== dts dts.036
+declare function f() {}
+=== dts dts.037
+export function f(a: A, b?: B, ...c: C[]): D;
+=== dts dts.038
+export function f(a: A): void; export function f(a: B): void;
+=== dts dts.039
+export function f(a: A): void
+export function f(a: B): void
+=== dts dts.040
+export function f<T>(a: T): a is T;
+=== dts dts.041
+export function f(a: any): asserts a;
+=== dts dts.042
+export function f(a: any): asserts a is A;
+=== dts dts.043
+export function f(this: A, ...a: any[]): void;
+=== dts dts.044
+export function f<const T>(a: T): T;
+=== dts dts.045
+export function f(a = 1): void;
+=== dts dts.046
+export function f({ a }: A, [b]: B): void;
+=== dts dts.047
+export function f(public a: A): void;
+=== dts dts.048
+export function f(a: A,): void;
+=== dts dts.049
+export function f(...a: A[],): void;
+=== dts dts.050
+export function* f(): A;
+=== dts dts.051
+export async function f(): Promise<A>;
+=== dts dts.052
+export declare async function f(): Promise<A>;
+=== dts dts.053
+export default function f(): void;
+=== dts dts.054
+export default function (): void;
+=== dts dts.055
+export default function f<T>(a: T): T;
+=== dts dts.056
+export default function f(): void; export default function f(a: A): void;
+=== dts dts.057
+export default async function f(): Promise<void>;
+=== dts dts.058
+export default function f() {}
+=== dts dts.059
+export default class C {}
+=== dts dts.060
+export default class {}
+=== dts dts.061
+export default class C<T> extends D<T> implements I<T> { m(): void; a: A }
+=== dts dts.062
+export default abstract class C { abstract m(): void }
+=== dts dts.063
+export default interface I {}
+=== dts dts.064
+export default a;
+=== dts dts.065
+declare const a: A; export default a;
+=== dts dts.066
+export default A.B;
+=== dts dts.067
+export default 1;
+=== dts dts.068
+export default {};
+=== dts dts.069
+export default a as A;
+=== dts dts.070
+export default function f(): void;
+export default interface f {}
+=== dts dts.071
+export default enum E {}
+=== dts dts.072
+export default namespace N {}
+=== dts dts.073
+export default type X = A;
+=== dts dts.074
+export default declare class C {}
+=== dts dts.075
+export = A;
+=== dts dts.076
+export = A.B;
+=== dts dts.077
+declare const a: A;
+export = a;
+=== dts dts.078
+declare namespace N {}
+export = N;
+=== dts dts.079
+export = 1;
+=== dts dts.080
+export = {};
+=== dts dts.081
+export = class {};
+=== dts dts.082
+export = function (): void;
+=== dts dts.083
+export as namespace N;
+=== dts dts.084
+export as namespace N;
+export = N;
+=== dts dts.085
+export as namespace N;
+export const a: A;
+=== dts dts.086
+export as namespace N.M;
+=== dts dts.087
+export as namespace;
+=== dts dts.088
+declare namespace N { function f(): void; const a: A; class C { m(): void } }
+=== dts dts.089
+namespace N { function f(): void }
+=== dts dts.090
+export namespace N { const a: A; function f(): void }
+=== dts dts.091
+export declare namespace N { const a: A }
+=== dts dts.092
+export declare namespace N.M {}
+=== dts dts.093
+export namespace N { export const a: A }
+=== dts dts.094
+export namespace N { declare const a: A }
+=== dts dts.095
+export namespace N { function f() {} }
+=== dts dts.096
+export namespace N { const a = f() }
+=== dts dts.097
+export namespace N { export {} }
+=== dts dts.098
+export namespace N { export { a } }
+=== dts dts.099
+export namespace N { a; }
+=== dts dts.100
+declare module M {}
+=== dts dts.101
+module M {}
+=== dts dts.102
+export module M {}
+=== dts dts.103
+declare module "m" {}
+=== dts dts.104
+declare module "m";
+=== dts dts.105
+module "m" {}
+=== dts dts.106
+export declare module "m" {}
+=== dts dts.107
+declare module "m" { export default function f(): void; }
+=== dts dts.108
+declare module "m" { const a: A; export = a; }
+=== dts dts.109
+declare module "*.svg" { const content: string; export default content; }
+=== dts dts.110
+declare module "m" { function f(): void; export function g(): void; class C {} }
+=== dts dts.111
+declare module "m" { import { A } from "n"; export { A } }
+=== dts dts.112
+declare module "m" { export * from "n"; }
+=== dts dts.113
+declare global {}
+=== dts dts.114
+declare global { interface Window { a: A } var b: B; function f(): void }
+=== dts dts.115
+global {}
+=== dts dts.116
+export declare global {}
+=== dts dts.117
+export {};
+declare global { var a: A }
+=== dts dts.118
+interface I {}
+=== dts dts.119
+export interface I {}
+=== dts dts.120
+declare interface I {}
+=== dts dts.121
+interface I { (a: A): B; new (a: A): I; readonly [k: string]: A; m?(): void; get a(): A; set a(v: A); }
+=== dts dts.122
+interface I { a: A = 1 }
+=== dts dts.123
+interface I { m() {} }
+=== dts dts.124
+interface I extends J<K>, L.M {}
+=== dts dts.125
+type X = A;
+=== dts dts.126
+export type X = A;
+=== dts dts.127
+declare type X = A;
+=== dts dts.128
+export declare type X<T> = T;
+=== dts dts.129
+export type X = { [K in keyof A]: A[K] };
+=== dts dts.130
+export type { A };
+=== dts dts.131
+export type { A } from "m";
+=== dts dts.132
+export type * from "m";
+=== dts dts.133
+export type * as N from "m";
+=== dts dts.134
+export { a, type B };
+=== dts dts.135
+import type { A } from "m";
+=== dts dts.136
+import { A } from "m";
+=== dts dts.137
+import { type A } from "m";
+=== dts dts.138
+import A from "m";
+=== dts dts.139
+import * as A from "m";
+=== dts dts.140
+import "m";
+=== dts dts.141
+import type A = require("m");
+=== dts dts.142
+import A = require("m");
+=== dts dts.143
+import A = N.B;
+=== dts dts.144
+export import A = N.A;
+=== dts dts.145
+export import A = require("m");
+=== dts dts.146
+export * from "m";
+=== dts dts.147
+export * as N from "m";
+=== dts dts.148
+export { a } from "m";
+=== dts dts.149
+export {};
+=== dts dts.150
+export { a };
+=== dts dts.151
+export { a as default };
+=== dts dts.152
+declare const a: A; export { a as default };
+=== dts dts.153
+export class C {}
+=== dts dts.154
+class C {}
+=== dts dts.155
+declare class C {}
+=== dts dts.156
+export declare class C {}
+=== dts dts.157
+export abstract class C { abstract m(): void; protected abstract readonly a: A }
+=== dts dts.158
+export declare class C<T = any> extends D<T> implements I<T> {}
+=== dts dts.159
+export class C { private a; protected b: B; constructor(a: A); m(): void; static s(): void; get g(): A; set g(v: A); readonly r: A; #p; static #q: A }
+=== dts dts.160
+export class C { m() {} }
+=== dts dts.161
+export class C { a = 1 }
+=== dts dts.162
+export class C { static readonly a = 1 }
+=== dts dts.163
+export class C { readonly a = 1 }
+=== dts dts.164
+export class C { static readonly a = "s" }
+=== dts dts.165
+export class C { readonly a = -1 }
+=== dts dts.166
+export class C { readonly a = 1n }
+=== dts dts.167
+export class C { readonly a = true }
+=== dts dts.168
+export class C { readonly a = {} }
+=== dts dts.169
+export class C { readonly a: A = 1 }
+=== dts dts.170
+export class C { static a = 1 }
+=== dts dts.171
+export class C { constructor(public a: A) }
+=== dts dts.172
+export class C { constructor(public a: A); }
+=== dts dts.173
+export class C { constructor(a: A) {} }
+=== dts dts.174
+export class C { constructor(); constructor(a: A); }
+=== dts dts.175
+export class C { private constructor(); }
+=== dts dts.176
+export class C { protected constructor(a: A, b?: B); }
+=== dts dts.177
+export class C { get a() { return 1 } }
+=== dts dts.178
+export class C { get a(): A; set a(v: A); }
+=== dts dts.179
+export class C { get a(): A
+set a(v: A) }
+=== dts dts.180
+export class C { accessor a: A }
+=== dts dts.181
+export class C { static accessor a: A; }
+=== dts dts.182
+export class C { static {} }
+=== dts dts.183
+export class C { declare a: A }
+=== dts dts.184
+export class C { @d a: A }
+=== dts dts.185
+@d export class C {}
+=== dts dts.186
+export class C { m(@d a: A): void }
+=== dts dts.187
+export class C { [Symbol.iterator](): Iterator<A>; }
+=== dts dts.188
+export class C { readonly [k: string]: A }
+=== dts dts.189
+export class C { static [k: string]: A }
+=== dts dts.190
+export class C { m?(): void; a?: A; b!: B }
+=== dts dts.191
+export class C { "a-b": A; 1: B; }
+=== dts dts.192
+export class C { m(): void; m(a: A): void; }
+=== dts dts.193
+export class C { m(): void
+m(a: A): void }
+=== dts dts.194
+export class C { m(): void m(a: A): void }
+=== dts dts.195
+export class C { a: A b: B }
+=== dts dts.196
+export class C { a: A
+b: B }
+=== dts dts.197
+export class C { async m(): Promise<void>; }
+=== dts dts.198
+export class C { *m(): Generator<A>; }
+=== dts dts.199
+export class C { m(a = 1): void; }
+=== dts dts.200
+export class C { m(this: C): void; }
+=== dts dts.201
+export class C { override m(): void; }
+=== dts dts.202
+export class C { private m(); private static n(); private a; private get b(); private set b(value: any); }
+=== dts dts.203
+export class C { private m(a: A): B; }
+=== dts dts.204
+export class C { #m(): void; }
+=== dts dts.205
+export class C { static #m(): void; }
+=== dts dts.206
+export enum E { A = 1 }
+=== dts dts.207
+export enum E { A, B = A }
+=== dts dts.208
+export enum E { A = f() }
+=== dts dts.209
+export enum E { A = "a".length }
+=== dts dts.210
+export declare enum E {}
+=== dts dts.211
+export const enum E { A }
+=== dts dts.212
+export declare const enum E { A = 1 }
+=== dts dts.213
+enum E {}
+=== dts dts.214
+const enum E {}
+=== dts dts.215
+declare enum E {}
+=== dts dts.216
+a;
+=== dts dts.217
+a = 1;
+=== dts dts.218
+f();
+=== dts dts.219
+if (a) {}
+=== dts dts.220
+for (;;) {}
+=== dts dts.221
+while (a) {}
+=== dts dts.222
+do {} while (a)
+=== dts dts.223
+switch (a) {}
+=== dts dts.224
+try {} catch {}
+=== dts dts.225
+throw a;
+=== dts dts.226
+return;
+=== dts dts.227
+debugger;
+=== dts dts.228
+{}
+=== dts dts.229
+;
+=== dts dts.230
+label: a;
+=== dts dts.231
+label: {}
+=== dts dts.232
+with (a) {}
+=== dts dts.233
+break;
+=== dts dts.234
+continue;
+=== dts dts.235
+"use strict";
+=== dts dts.236
+1;
+=== dts dts.237
+`t`;
+=== dts dts.238
+a as A;
+=== dts dts.239
+a!;
+=== dts dts.240
+<A>a;
+=== dts dts.241
+new A();
+=== dts dts.242
+class {};
+=== dts dts.243
+(class {});
+=== dts dts.244
+function () {};
+=== dts dts.245
+(function () {});
+=== dts dts.246
+() => {};
+=== dts dts.247
+declare const a: A; a;
+=== dts dts.248
+export const a: A; export function f(): void; export class C {} export interface I {} export type X = A; export enum E {} export namespace N {}
+=== dts dts.249
+export declare const a: typeof import('m');
+=== dts dts.250
+export declare const a: import('m').A<B>;
+=== dts dts.251
+export declare type X = import("m", { with: { "resolution-mode": "import" } }).A;
+=== dts dts.252
+export declare const a: import("m", { assert: { "resolution-mode": "import" } }).A;
+=== dts dts.253
+export declare const a: typeof import('m', { with: { 'resolution-mode': 'require' } });
+=== dts dts.254
+declare function f(): void; declare namespace f { const a: A }
+=== dts dts.255
+declare class C {} declare namespace C { const a: A }
+=== dts dts.256
+declare const a: A<B>
+declare const c: C
+=== dts dts.257
+export declare const a: A
+export declare function f(): void
+export declare class C {}
+export {}
+=== dts pragma.dts.001
+/// <reference types="node" />
+=== dts pragma.dts.002
+/// <reference path="a.d.ts" />
+=== dts pragma.dts.003
+/// <reference lib="es2015" />
+=== dts pragma.dts.004
+/// <reference no-default-lib="true"/>
+=== dts pragma.dts.005
+/// <amd-module name="m"/>
+=== dts pragma.dts.006
+/// <amd-dependency path="a" name="b"/>
+=== dts pragma.dts.007
+/// <reference types="node" resolution-mode="import" />
+=== dts pragma.dts.008
+/// <reference types="node" preserve="true" />
+=== dts pragma.dts.009
+/// <reference types='node' />
+=== dts pragma.dts.010
+///<reference types="node"/>
+=== dts pragma.dts.011
+/// <reference types="node">
+=== dts pragma.dts.012
+/// <reference types=node />
+=== dts pragma.dts.013
+/// <reference types="node" /> trailing
+=== dts pragma.dts.014
+  /// <reference types="node" />
+=== dts pragma.dts.015
+//// <reference types="node" />
+=== dts pragma.dts.016
+// / <reference types="node" />
+=== dts pragma.dts.017
+/* /// <reference types="node" /> */
+=== dts pragma.dts.018
+/** <reference types="node" /> */
+=== dts pragma.dts.019
+/// <reference />
+=== dts pragma.dts.020
+/// <reference
+=== dts pragma.dts.021
+/// <Reference types="node" />
+=== dts pragma.dts.022
+/// <reference TYPES="node" />
+=== dts pragma.dts.023
+/// <reference types="" />
+=== dts pragma.dts.024
+/// <reference unknown="a" />
+=== dts pragma.dts.025
+/// <reference types="a" path="b" lib="c" />
+=== dts pragma.dts.026
+/// <reference types="node" />
+/// <reference path="a.d.ts" />
+/// <reference lib="dom" />
+=== dts pragma.dts.027
+/// <reference types="node" />
+
+// comment
+/// <reference path="a.d.ts" />
+=== dts pragma.dts.028
+// comment
+/// <reference types="node" />
+=== dts pragma.dts.029
+/* comment */
+/// <reference types="node" />
+=== dts pragma.dts.030
+#!/usr/bin/env node
+/// <reference types="node" />
+=== dts pragma.dts.031
+"use strict";
+/// <reference types="node" />
+=== dts pragma.dts.032
+export {};
+/// <reference types="node" />
+=== dts pragma.dts.033
+declare const a: A;
+/// <reference types="node" />
+=== dts pragma.dts.034
+/// <reference types="node" />
+export declare const a: A;
+=== dts pragma.dts.035
+// @ts-nocheck
+=== dts pragma.dts.036
+// @ts-check
+=== dts pragma.dts.037
+// @ts-nocheck
+export declare const a: A;
+=== dts pragma.dts.038
+/* @ts-nocheck */
+=== dts pragma.dts.039
+/** @ts-nocheck */
+=== dts pragma.dts.040
+//@ts-nocheck
+=== dts pragma.dts.041
+// @ts-nocheck trailing
+=== dts pragma.dts.042
+// @TS-NOCHECK
+=== dts pragma.dts.043
+//  @ts-nocheck
+=== dts pragma.dts.044
+// x @ts-nocheck
+=== dts pragma.dts.045
+// @ts-check
+// @ts-nocheck
+=== dts pragma.dts.046
+export {};
+// @ts-nocheck
+=== dts pragma.dts.047
+// @ts-ignore
+export declare const a: A;
+=== dts pragma.dts.048
+// @ts-expect-error
+export declare const a: A;
+=== dts pragma.dts.049
+/* @ts-ignore */
+export declare const a: A;
+=== dts pragma.dts.050
+// @jsx h
+=== dts pragma.dts.051
+/** @jsx h */
+=== dts pragma.dts.052
+/** @jsxFrag Fragment */
+=== dts pragma.dts.053
+/** @jsxImportSource preact */
+=== dts pragma.dts.054
+/** @jsxRuntime automatic */
+=== dts pragma.dts.055
+// @ts-nocheck
+/// <reference types='node' />
+=== dts pragma.dts.056
+/// <reference types='node' />
+// @ts-nocheck
+=== dts pragma.dts.057
+﻿/// <reference types='node' />
+=== dts pragma.dts.058
+﻿export declare const a: A;
+=== dts pragma.dts.059
+/// <reference types='node' />
+/// <reference path='a.d.ts' />
+export {};
+=== file pragma.ts.001
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.002
+/// <reference path="a.d.ts" />
+let v = 1;
+=== file pragma.ts.003
+/// <reference lib="es2015" />
+let v = 1;
+=== file pragma.ts.004
+/// <reference no-default-lib="true"/>
+let v = 1;
+=== file pragma.ts.005
+/// <amd-module name="m"/>
+let v = 1;
+=== file pragma.ts.006
+/// <amd-dependency path="a" name="b"/>
+let v = 1;
+=== file pragma.ts.007
+/// <reference types="node" resolution-mode="import" />
+let v = 1;
+=== file pragma.ts.008
+/// <reference types="node" preserve="true" />
+let v = 1;
+=== file pragma.ts.009
+/// <reference types='node' />
+let v = 1;
+=== file pragma.ts.010
+///<reference types="node"/>
+let v = 1;
+=== file pragma.ts.011
+/// <reference types="node">
+let v = 1;
+=== file pragma.ts.012
+/// <reference types=node />
+let v = 1;
+=== file pragma.ts.013
+/// <reference types="node" /> trailing
+let v = 1;
+=== file pragma.ts.014
+  /// <reference types="node" />
+let v = 1;
+=== file pragma.ts.015
+//// <reference types="node" />
+let v = 1;
+=== file pragma.ts.016
+// / <reference types="node" />
+let v = 1;
+=== file pragma.ts.017
+/* /// <reference types="node" /> */
+let v = 1;
+=== file pragma.ts.018
+/** <reference types="node" /> */
+let v = 1;
+=== file pragma.ts.019
+/// <reference />
+let v = 1;
+=== file pragma.ts.020
+/// <reference
+let v = 1;
+=== file pragma.ts.021
+/// <Reference types="node" />
+let v = 1;
+=== file pragma.ts.022
+/// <reference TYPES="node" />
+let v = 1;
+=== file pragma.ts.023
+/// <reference types="" />
+let v = 1;
+=== file pragma.ts.024
+/// <reference unknown="a" />
+let v = 1;
+=== file pragma.ts.025
+/// <reference types="a" path="b" lib="c" />
+let v = 1;
+=== file pragma.ts.026
+/// <reference types="node" />
+/// <reference path="a.d.ts" />
+/// <reference lib="dom" />
+let v = 1;
+=== file pragma.ts.027
+/// <reference types="node" />
+
+// comment
+/// <reference path="a.d.ts" />
+let v = 1;
+=== file pragma.ts.028
+// comment
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.029
+/* comment */
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.030
+#!/usr/bin/env node
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.031
+"use strict";
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.032
+export {};
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.033
+declare const a: A;
+/// <reference types="node" />
+let v = 1;
+=== file pragma.ts.034
+/// <reference types="node" />
+export declare const a: A;
+let v = 1;
+=== file pragma.ts.035
+// @ts-nocheck
+let v = 1;
+=== file pragma.ts.036
+// @ts-check
+let v = 1;
+=== file pragma.ts.037
+// @ts-nocheck
+export declare const a: A;
+let v = 1;
+=== file pragma.ts.038
+/* @ts-nocheck */
+let v = 1;
+=== file pragma.ts.039
+/** @ts-nocheck */
+let v = 1;
+=== file pragma.ts.040
+//@ts-nocheck
+let v = 1;
+=== file pragma.ts.041
+// @ts-nocheck trailing
+let v = 1;
+=== file pragma.ts.042
+// @TS-NOCHECK
+let v = 1;
+=== file pragma.ts.043
+//  @ts-nocheck
+let v = 1;
+=== file pragma.ts.044
+// x @ts-nocheck
+let v = 1;
+=== file pragma.ts.045
+// @ts-check
+// @ts-nocheck
+let v = 1;
+=== file pragma.ts.046
+export {};
+// @ts-nocheck
+let v = 1;
+=== file pragma.ts.047
+// @ts-ignore
+export declare const a: A;
+let v = 1;
+=== file pragma.ts.048
+// @ts-expect-error
+export declare const a: A;
+let v = 1;
+=== file pragma.ts.049
+/* @ts-ignore */
+export declare const a: A;
+let v = 1;
+=== file pragma.ts.050
+// @jsx h
+let v = 1;
+=== file pragma.ts.051
+/** @jsx h */
+let v = 1;
+=== file pragma.ts.052
+/** @jsxFrag Fragment */
+let v = 1;
+=== file pragma.ts.053
+/** @jsxImportSource preact */
+let v = 1;
+=== file pragma.ts.054
+/** @jsxRuntime automatic */
+let v = 1;
+=== file pragma.ts.055
+// @ts-nocheck
+/// <reference types='node' />
+let v = 1;
+=== file pragma.ts.056
+/// <reference types='node' />
+// @ts-nocheck
+let v = 1;
+=== file pragma.ts.057
+﻿/// <reference types='node' />
+let v = 1;
+=== file pragma.ts.058
+﻿export declare const a: A;
+let v = 1;
+=== file pragma.ts.059
+/// <reference types='node' />
+/// <reference path='a.d.ts' />
+export {};
+let v = 1;

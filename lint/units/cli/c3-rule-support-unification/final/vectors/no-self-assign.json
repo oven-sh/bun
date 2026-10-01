@@ -1,0 +1,9318 @@
+[
+	{
+		"code": "var a = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a = b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a += a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a = +a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a = [a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a &= a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a |= a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "let a = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "const a = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a = 1] = [a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, b] = [b, a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a,, b] = [, b, a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[x, a] = [...x, a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[...a] = [...a, 1]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, ...b] = [0, ...b, 1]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, b] = {a, b}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a} = a)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a = 1} = {a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a: b} = {a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a} = {a: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a} = {a() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a} = {[a]: a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({[a]: b} = {[a]: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({'foo': a, 1: a} = {'bar': a, 2: a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "({a, ...b} = {a, ...b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b = a.c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b = c.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b = a[b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a[b] = a.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b().c = a.b().c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "b().c = b().c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a.null = a[/(?<zero>0)/]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a[b + 1] = a[b + 1]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "this.x = this.y",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class C { #field; foo() { this['#field'] = this.#field; } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class C { #field; foo() { this.#field = this['#field']; } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[a] = [a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, b] = [a, b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, b] = [a, c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, b] = [, b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[a, ...b] = [a, ...b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "[[a], {b}] = [[a], {b}]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a: b} = {a: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({'a': b} = {'a': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a: b} = {'a': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({'a': b} = {a: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({1: b} = {1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({1: b} = {'1': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({'1': b} = {1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({['a']: b} = {a: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({'a': b} = {[`a`]: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({1: b} = {[1]: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a, b} = {a, b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a, b} = {b, a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a, b} = {c, a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a: {b}, c: [d]} = {a: {b}, c: [d]})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 35,
+				"message": "'d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"start": 25,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 34,
+				"start": 33,
+				"length": 1,
+				"message": "'d' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "({a, b} = {a, ...x, b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b.c = a.b.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a.b.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b.c' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a[b] = a[b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a['b'] = a['b']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a[\n    'b'\n] = a[\n    'b'\n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 3,
+				"column": 5,
+				"endLine": 5,
+				"endColumn": 2,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 3,
+				"column": 5,
+				"start": 15,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "this.x = this.x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'this.x' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 4,
+				"message": "'this.x' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a['/(?<zero>0)/'] = a[/(?<zero>0)/]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "'a[/(?<zero>0)/]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'a[/(?<zero>0)/]' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "(a?.b).c = (a?.b).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'(a?.b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'(a?.b).c' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a.b = a?.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a?.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a?.b' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class C { #field; foo() { this.#field = this.#field; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 52,
+				"message": "'this.#field' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 41,
+				"start": 40,
+				"length": 4,
+				"message": "'this.#field' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class C { #field; foo() { [this.#field] = [this.#field]; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 44,
+				"endLine": 1,
+				"endColumn": 55,
+				"message": "'this.#field' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 44,
+				"start": 43,
+				"length": 4,
+				"message": "'this.#field' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a &&= a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a ||= a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a ??= a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "a = a\n",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b\n",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0x10n] = a[16n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[16n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[16n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0b101n] = a[5n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[5n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a[5n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0o17n] = a[15n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[15n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[15n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1_0n] = a[10n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a[10n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[10n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/gi] = a[/x/ig]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a[/x/ig]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[/x/ig]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/ig] = a['/x/gi']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a['/x/gi']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a['/x/gi']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['b'] = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`b`] = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1] = a['1']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a['1']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a['1']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1.0] = a[1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[1]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[1]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (a).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = ( a ).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (\na).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 5,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"start": 8,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"differs": "moved"
+	},
+	{
+		"code": "a.b = ((a)).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = ((a).b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a).b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = (a.b).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'(a.b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'(a.b).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[(b)] = a[b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[b]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b] = a[(b)]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[(b)]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[(b)]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b.c] = a[b.c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[b.c]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[b.c]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b[c]] = a[b[c]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[b[c]]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[b[c]]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`${b}`] = a[`${b}`]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[b] = a[c]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.#b = a.#b",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "this.#b = this.#b",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "class A { #b; m() { this.#b = this.#b; a.#b = a.#b; this.#b = a.#b } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "'this.#b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 51,
+				"message": "'a.#b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 31,
+				"start": 30,
+				"length": 4,
+				"message": "'this.#b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"start": 46,
+				"length": 1,
+				"message": "'a.#b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a?.b.c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b ??= a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b &&= a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b ||= a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b += a.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a.b] = [a.b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[...a] = [...a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: b} = {a: c})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: b = 1} = {a: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {...b, a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {a, ...b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [b]} = {a: [b]})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {get a() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a, a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {a, a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = b = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a = a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a = a)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"start": 5,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "f(a = a)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "for (a = a;;);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = (a)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"start": 5,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = ((a))",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a) = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = /* c */ a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = // c\na",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 2,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "aé = aé",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'aé' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"start": 6,
+				"length": 3,
+				"message": "'aé' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "\"😀\"; a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 12,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a . b = a . b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a\n.b = a\n.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 6,
+				"endLine": 3,
+				"endColumn": 3,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 6,
+				"start": 7,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a /* c */ . b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[ 0 ] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[\n0\n] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 3,
+				"column": 5,
+				"endLine": 3,
+				"endColumn": 9,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 3,
+				"column": 5,
+				"start": 9,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/* c */0] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['\\u0062'] = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a['b'/* c */]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['b'/*c*/]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a['b'/*c*/]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[']'] = a[']']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[']']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[']']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/]/] = a[/]/]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[/]/]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[/]/]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`]`] = a[`]`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[`]`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[`]`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b[']']] = a[b[']']]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a[b[']']]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a[b[']']]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[[1][0]] = a[[1][0]]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "this.a = this.a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'this.a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 4,
+				"message": "'this.a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "super.a = super.a",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "a.b.c.d = a.b.c.d",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a.b.c.d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a.b.c.d' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c.d = a.b.x.d",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[this] = a[this]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[this]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[this]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[null] = a[null]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[null]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[null]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[true] = a[true]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[true]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[true]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[true] = a['true']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['true']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['true']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[null] = a.null",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a.null' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a.null' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "1..a = 1..a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'1..a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 2,
+				"message": "'1..a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "'a'.b = 'a'.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "''a'.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 3,
+				"message": "''a'.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "'a'.b = \"a\".b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'\"a\".b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 3,
+				"message": "'\"a\".b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "`a`.b = `a`.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "/a/.b = /a/.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'/a/.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'/a/.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "1n.a = 1n.a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'1n.a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 2,
+				"message": "'1n.a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "null.a = null.a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'null.a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 4,
+				"message": "'null.a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "true.a = false.a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a().b = a().b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "new A().b = new A().b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let {a} = {a}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a = a.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, , b] = [a, , b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[, a] = [, a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, b] = [a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a] = [a, b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[[a]] = [[a]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[{a}] = [{a}]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, ...[b]] = [a, ...[b]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: {b}} = {a: {b}})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "for ([a] of [a]);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (a of a);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a = a, b = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = a ? a : a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(a.b) = (a.b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = ( /* c */ a).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'(/*c*/a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"differs": "other-text"
+	},
+	{
+		"code": "a.b = (// c\na).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 5,
+				"message": "'(//ca).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 1,
+				"start": 12,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"differs": "other-text"
+	},
+	{
+		"code": "x = (a.b = a.b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b] = a [ b ]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[b]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a\n  .b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 5,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a .b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 6,
+				"endLine": 2,
+				"endColumn": 9,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 6,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a﻿.b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a . b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[ '😀' ] = a['😀']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['😀']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 14,
+				"length": 1,
+				"message": "'a['😀']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "export default a = a",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b; <a>{c = c}</a>",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a.b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = b = b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a = a) + 1",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"start": 5,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = (a = a)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a = a] = x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a = b = b] = x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[[a = a]] = x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: b = b} = x)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a = a} = x)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([a = a] of x) ;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ({a: b = b} of x) ;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ([a = a] in x) ;",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, ...b] = [a, ...b, c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[...[a]] = [...[a]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a] = [...a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[...a] = [a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, b] = [...x, b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, b] = [a, ...x]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a,] = [a,]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a] = ([a])",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = ({a}))",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({...a} = {...a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a, b} = {...x, a, b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {a, ...x})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {async a() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {*a() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: b} = {a: (b)})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: b.c} = {a: b.c})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'b.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1: b} = {1.0: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1: b} = {0x1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1: b} = {1n: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1n: b} = {1n: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({16: b} = {0x10n: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[1n]: b} = {1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[null]: b} = {null: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[true]: b} = {true: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[/a/g]: b} = {'/a/g': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[/a/ig]: b} = {'/a/gi': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"start": 26,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[/a/ig]: b} = {'/a/ig': b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({[`a`]: b} = {a: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[`a${1}`]: b} = {a1: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({'a b': b} = {'a b': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: b} = {\\u0061: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1e3: b} = {1000: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({1e21: b} = {'1e+21': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"start": 23,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({.5: b} = {'0.5': b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0.1: b} = {'.1': b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({__proto__: a} = {__proto__: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 31,
+				"start": 30,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (a.b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a.b) = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = a?.b.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a?.b.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a?.b.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = a.b?.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a.b?.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b?.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = (a?.b).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'(a?.b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'(a?.b).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "(a?.b).c = a?.b.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a?.b.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a?.b.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b] = a?.[b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a?.[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a?.[b]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a['b']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['b'] = a[\"b\"]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[\"b\"]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[\"b\"]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['b'] = a[`b`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[`b`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[`b`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`b`] = a[`b`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[`b`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[`b`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`b${c}`] = a[`b${c}`]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[0] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0] = a['0']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a['0']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a['0']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0] = a[0.0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[0.0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[0.0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0x10] = a[16]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[16]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[16]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1n] = a[1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a[1]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[1]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1n] = a[1n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[1n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[1n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[true] = a.true",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a.true' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a.true' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/] = a[/x/]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[/x/]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[/x/]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/g] = a['/x/g']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['/x/g']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['/x/g']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b?.c] = a[b?.c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[b?.c]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[b?.c]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b?.c] = a[b.c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a[b.c]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[b.c]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b()] = a[b()]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[-1] = a[-1]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[ b ] = a[b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[b]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a . b = a /* c */ . b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a/*c*/.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a/*c*/.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a\n.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 3,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "this[x] = this[x]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'this[x]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 4,
+				"message": "'this[x]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C extends B { foo() { super.x = super.x; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 39,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "'super.x' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 39,
+				"start": 38,
+				"length": 5,
+				"message": "'super.x' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C extends B { foo() { super[x] = super[x]; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 40,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "'super[x]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 40,
+				"start": 39,
+				"length": 5,
+				"message": "'super[x]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C { #f; foo() { this.#f = this.#f; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 40,
+				"message": "'this.#f' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"start": 32,
+				"length": 4,
+				"message": "'this.#f' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C { #f; foo() { this.#f = this?.#f; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "'this?.#f' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"start": 32,
+				"length": 4,
+				"message": "'this?.#f' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C { #f; foo() { a.#f = a.#f; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "'a.#f' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"start": 29,
+				"length": 1,
+				"message": "'a.#f' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class C { #f; #g; foo() { this.#f = this.#g; } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class C { #f; foo() { this.#f = this.f; } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class C { #f; foo() { this.a.#f = this.a.#f; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "'this.a.#f' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 35,
+				"start": 34,
+				"length": 4,
+				"message": "'this.a.#f' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "1..b = 1..b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'1..b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 2,
+				"message": "'1..b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "1..b = 1.0.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'1.0.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 3,
+				"message": "'1.0.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "1n.b = 1n.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'1n.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 2,
+				"message": "'1n.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "0x10n.b = 16n.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'16n.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 3,
+				"message": "'16n.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "null.b = null.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'null.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 4,
+				"message": "'null.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "true.b = true.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'true.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 4,
+				"message": "'true.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "true.b = false.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "/x/.b = /x/.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'/x/.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'/x/.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "/x/g.b = /x/g.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'/x/g.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'/x/g.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "/x/gi.b = /x/ig.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "/x/.b = /y/.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(1).b = 1..b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'1..b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 2,
+				"message": "'1..b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b ||= a?.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a?.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a?.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a -= a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a **= a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a >>>= a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a\n=\na",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 3,
+				"column": 1,
+				"endLine": 3,
+				"endColumn": 2,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = \\u0061",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'\\u0061' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 6,
+				"message": "'\\u0061' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "\\u0061 = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.\\u0062",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a.\\u0062' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.\\u0062' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['b c'] = a['b c']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['bc']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a['bc']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['b\\tc'] = a['b\\tc']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a['b\\tc']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a['b\\tc']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`b c`] = a[`b c`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a[`bc`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[`bc`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a [ 'b' ] = a [ 'b' ]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = /* x */ a /* y */ . /* z */ b /* w */",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "'a/*y*/./*z*/b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a/*y*/./*z*/b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a // c\n.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 3,
+				"message": "'a//c.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a//c.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "undefined = undefined",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'undefined' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 9,
+				"message": "'undefined' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "async = async",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'async' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 5,
+				"message": "'async' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "let x; x = x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'x' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'x' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, [b, c]] = [a, [b, c]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, {b, c: [d]}] = [a, {b, c: [d]}]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "'d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 32,
+				"start": 31,
+				"length": 1,
+				"message": "'d' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: {b: {c}}} = {a: {b: {c}}})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"start": 26,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a.b, c[d]] = [a.b, c[d]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a.b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'c[d]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'c[d]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: b.c} = {a: b?.c})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'b?.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b?.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[{a = 1}] = [{a}]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: [b = 1]} = {a: [b]})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a, 'a': a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, a] = [a, a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = a; a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: b.c, a: b.c} = {a: b.c})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'b.c' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'b.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "'b.c' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "'b.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b.c",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b.c = a.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a = a.a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[a] = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b = a . b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a .b = a . b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "é.é = é.é",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'é.é' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 8,
+				"length": 2,
+				"message": "'é.é' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['é'] = a.é",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.é' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 10,
+				"length": 1,
+				"message": "'a.é' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['\\u00e9'] = a.é",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a.é' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a.é' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.é = a['\\xe9']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a['\\xe9']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 7,
+				"length": 1,
+				"message": "'a['\\xe9']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['\\uD83D\\uDE00'] = a['😀']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'a['😀']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "'a['😀']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['😀'] = a[`😀`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[`😀`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 12,
+				"length": 1,
+				"message": "'a[`😀`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0] = a[-0]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[0] = a[+0]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[1e999] = a.Infinity",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a.Infinity' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a.Infinity' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1e999] = a[Infinity]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[0.1] = a['0.1']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a['0.1']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a['0.1']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1e-7] = a['1e-7']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['1e-7']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['1e-7']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[123456789012345680000] = a['123456789012345680000']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 54,
+				"message": "'a['123456789012345680000']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"start": 27,
+				"length": 1,
+				"message": "'a['123456789012345680000']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1e21] = a['1e+21']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'a['1e+21']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['1e+21']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0b11] = a[3]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[3]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[3]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0o17] = a[15]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[15]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[15]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[017] = a[15]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[15]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[15]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[08] = a[8]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a[8]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[8]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1_0] = a[10]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[10]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[10]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[.5] = a[0.5]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[0.5]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[0.5]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[5.] = a[5]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a[5]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[5]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[9007199254740993] = a[9007199254740992]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "'a[9007199254740992]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'a[9007199254740992]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[9007199254740993n] = a[9007199254740992n]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a[0xffffffffffffffffffffn] = a[1208925819614629174706175n]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 59,
+				"message": "'a[1208925819614629174706175n]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"start": 29,
+				"length": 1,
+				"message": "'a[1208925819614629174706175n]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0n] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0n] = a[-0]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a['constructor'] = a.constructor",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "'a.constructor' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'a.constructor' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`constructor`] = a['constructor']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "'a['constructor']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'a['constructor']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[''] = a['']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a['']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a['']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[``] = a['']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a['']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a['']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/a/] = a['/a/']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a['/a/']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a['/a/']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/a\\/b/] = a['/a\\\\/b/']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'a['/a\\\\/b/']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a['/a\\\\/b/']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/[/]/] = a['/[/]/']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a['/[/]/']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a['/[/]/']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/a/dgimsuy] = a[/a/yusmigd]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "'a[/a/yusmigd]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a[/a/yusmigd]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/a/v] = a['/a/v']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['/a/v']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['/a/v']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b, a.c = a.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a.b' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'a.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'a.c' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (a.b, a.b)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b ??= (a.b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = ((a.b))",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = ( (a) . b )",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (((a)).b)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = ((a).b).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'((a).b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'((a).b).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = ((a.b)).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'((a.b)).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'((a.b)).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b].c = (a)[(b)].c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'(a)[(b)].c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'(a)[(b)].c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b][c] = (a[b])[c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'(a[b])[c]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'(a[b])[c]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b][c] = ((a)[b])[(c)]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'((a)[b])[(c)]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'((a)[b])[(c)]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = a.b = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a.b = x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "let [b] = [b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "function f(a = a) {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (a = a;;) break;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "for (;; a = a) break;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "while (a = a) break;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "if ((a = a)) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = {a: a = a}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = [a = a]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = () => a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = () => { a = a }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = function() { a = a }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class A { x = (a = a); static { a = a } [(a = a)]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 38,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 48,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 37,
+				"start": 36,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 47,
+				"start": 46,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "`${a = a}`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "label: a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a = b, b = a",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a, b] = [b, a] = [a, b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[[[a]]] = [[[a]]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, [b]] = [[b], a]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[] = []",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({} = {})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({} = {a})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[...[a, b]] = [...[a, b]]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[...{a}] = [...{a}]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[...a.b] = [...a.b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: [...b]} = {a: [...b]})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"start": 23,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a, ...b} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({...b} = {b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({...a.b} = {...a.b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: a.b} = {a: a.b, ...x})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: a.b} = {...x, a: a.b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: a.b} = {...x, a: a.b, ...y})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: a.b, ...r} = {a: a.b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: this.b} = {a: this.b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'this.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 4,
+				"message": "'this.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({'a': this.b} = {a: this.b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'this.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 4,
+				"message": "'this.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: this['b']} = {a: this.b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "'this.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 4,
+				"message": "'this.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[a]: this.b} = {a: this.b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {'a': a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {[`a`]: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {a: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a: a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {\"a\": a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({if: a} = {if: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0: a} = {0: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0: a} = {'0': a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0: a} = {0.0: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0: a} = {[0]: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[0]: a} = {0: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[`0`]: a} = {0: a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {get a() { return a }})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {set a(v) {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {a: function() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {async *a() {}})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a} = {a: a}), ({a} = {a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = <a b={c = c} />",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = <a>{c.d = c.d}</a>",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'c.d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'c.d' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = <a {...(c = c)} />",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = <a/>.b",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a = a] = []",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: b = b} = {})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "[a = (b = b)] = []",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a[b = b] = 1] = []",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "for ([a = a] of xs);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for ({a: b = b} of xs);",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "for (x = x;;);",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "'x' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'x' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a./*c*/b = a./*c*/b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a./*c*/b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a./*c*/b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0x1] = a[1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[1]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[1]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1e3] = a[1000]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a[1000]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[1000]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1n] = a['1']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a['1']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a['1']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/gi] = a['/x/gi']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a['/x/gi']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a['/x/gi']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "/x/g.b = /x/.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a?.b.c = a.b.c",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a.b.c' is assigned to itself."
+			}
+		],
+		"differs": "eslint-rejects"
+	},
+	{
+		"code": "a.b.c = a?.b?.c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a?.b?.c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a?.b?.c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a?.b()",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a?.[b] = 1",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": [],
+		"differs": "eslint-rejects"
+	},
+	{
+		"code": "super.x = super.x",
+		"sourceType": "script",
+		"eslint": null,
+		"expect": null,
+		"differs": "both-reject"
+	},
+	{
+		"code": "class A extends B { m() { super.x = super.x; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 44,
+				"message": "'super.x' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 37,
+				"start": 36,
+				"length": 5,
+				"message": "'super.x' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class A { m() { this.#a = this.a; } #a }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { #a; m() { a.#a = a.#a; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "'a.#a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"start": 27,
+				"length": 1,
+				"message": "'a.#a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "class A { #a; m() { a.#a = a?.#a; } }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "'a?.#a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"start": 27,
+				"length": 1,
+				"message": "'a?.#a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {...x, a})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({a} = {get a() { return 1 }})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({'a b': c} = {'a b': c})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "'c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "'c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({[a]: b} = {a: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({a: b} = {[a]: b})",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "({1n: b} = {1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({0x1: b} = {1: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "({.5: b} = {0.5: b})",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "[a, ...b] = [...b]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a \n = \n a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 3,
+				"column": 2,
+				"endLine": 3,
+				"endColumn": 3,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 3,
+				"column": 2,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.\\u0062 = a.b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[\"b\"] = a['b']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[ 'b' ] = a[ 'b' ]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a['b']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a['b']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c.d.e = a.b.c.d.e",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'a.b.c.d.e' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a.b.c.d.e' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0][1] = a[0][1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[0][1]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[0][1]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b[c].d = a.b[c].d",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a.b[c].d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a.b[c].d' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "é = é",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'é' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 5,
+				"length": 2,
+				"message": "'é' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.é = a.é",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a.é' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 7,
+				"length": 1,
+				"message": "'a.é' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "x = '😀'; a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "  a = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "\ta = a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 6,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 6,
+				"start": 5,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a ||= a.b",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(a, b) => { a = a }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "var {a = a} = {}",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a = a;\na = a;",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 2,
+				"column": 5,
+				"endLine": 2,
+				"endColumn": 6,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			},
+			{
+				"line": 2,
+				"column": 5,
+				"start": 11,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "if (a = a) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "((a)) = ((a))",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "'a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[(0)] = a[0]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[0]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[0]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "((a).b).c = ((a).b).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "'((a).b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'((a).b).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "( a ).b = ( a ).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'(a).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'(a).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0.000001] = a['0.000001']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 15,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "'a['0.000001']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 15,
+				"start": 14,
+				"length": 1,
+				"message": "'a['0.000001']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[.5] = a['0.5']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "'a['0.5']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a['0.5']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0.1] = a[.1]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "'a[.1]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[.1]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1_000] = a[1000]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a[1000]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[1000]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[0o17] = a['15']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a['15']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a['15']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[/x/yg] = a[/x/gy]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a[/x/gy]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "'a[/x/gy]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['a'] = a[\"a\"]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[\"a\"]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[\"a\"]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['\\x61'] = a.a",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a.a' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "'a.a' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['a\\\nb'] = a.ab",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 11,
+				"message": "'a.ab' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 7,
+				"start": 12,
+				"length": 1,
+				"message": "'a.ab' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a['😀'] = a['\\u{1F600}']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "'a['\\u{1F600}']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 12,
+				"length": 1,
+				"message": "'a['\\u{1F600}']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[''] = a[``]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[``]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'a[``]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[1] = a[`1`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 8,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "'a[`1`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"start": 7,
+				"length": 1,
+				"message": "'a[`1`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.a = a[`a`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "'a[`a`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a[`a`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`a`] = a['a']",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a['a']' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a['a']' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b.c = ( a.b ).c",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'(a.b).c' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 8,
+				"length": 1,
+				"message": "'(a.b).c' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b][c] = a[b][c]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 11,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "'a[b][c]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 11,
+				"start": 10,
+				"length": 1,
+				"message": "'a[b][c]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = (( a )).b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'((a)).b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`x`] = a[`x`]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 10,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "'a[`x`]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "'a[`x`]' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[`x${y}`] = a[`x${y}`]",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "a.b /* c */ .d = a.b.d",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "'a.b.d' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "'a.b.d' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a.b = a /* c */ .b",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "'a/*c*/.b' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "'a/*c*/.b' is assigned to itself."
+			}
+		]
+	},
+	{
+		"code": "a[b /* c */] = a[b]",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "'a[b]' is assigned to itself."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "'a[b]' is assigned to itself."
+			}
+		]
+	}
+]

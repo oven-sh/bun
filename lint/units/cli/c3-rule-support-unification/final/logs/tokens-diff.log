@@ -1,0 +1,19 @@
+== /workspace/notes/lint/units/cli/c3-rule-support-unification/results/corpus.txt
+1923 files: 1923 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 980070 tokens, 844 regular expressions, 935 JSX elements
+== /workspace/notes/lint/units/cli/c3-rule-support-unification/results/corpus2.txt
+6334 files: 5902 with the same tokens, 0 different, 0 where the scan failed, 91 Bun's parser rejects, 341 espree rejects; 4152000 tokens, 2362 regular expressions, 286 JSX elements
+== /tmp/c3tok/corpus3.list
+673 files: 582 with the same tokens, 0 different, 0 where the scan failed, 91 Bun's parser rejects, 0 espree rejects; 50159 tokens, 7 regular expressions, 739 JSX elements
+== /workspace/notes/lint/units/cli/rule-support-unification-bottomup/logs/corpus-big.list
+12 files: 12 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 4851780 tokens, 1335 regular expressions, 0 JSX elements
+== corpus-node_modules.list, in the five chunks of run-corpus.sh
+== /tmp/c3final/corpus/nm.00
+2000 files: 1999 with the same tokens, 0 different, 0 where the scan failed, 1 Bun's parser rejects, 0 espree rejects; 5099412 tokens, 3736 regular expressions, 0 JSX elements
+== /tmp/c3final/corpus/nm.01
+2000 files: 2000 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 5838191 tokens, 1581 regular expressions, 0 JSX elements
+== /tmp/c3final/corpus/nm.02
+2000 files: 1997 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 3 espree rejects; 3398224 tokens, 4423 regular expressions, 0 JSX elements
+== /tmp/c3final/corpus/nm.03
+2000 files: 2000 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 5384750 tokens, 7845 regular expressions, 0 JSX elements
+== /tmp/c3final/corpus/nm.04
+1813 files: 1813 with the same tokens, 0 different, 0 where the scan failed, 0 Bun's parser rejects, 0 espree rejects; 4449251 tokens, 5531 regular expressions, 0 JSX elements

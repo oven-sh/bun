@@ -1,0 +1,14 @@
+[
+  {"name":"as","path":"/a.ts","text":"x as T;\nconst c = [1] as const;\na.b satisfies T;\n"},
+  {"name":"non-null","path":"/a.ts","text":"x!;\nx!.y;\nf()!;\n"},
+  {"name":"postfix-chain","path":"/a.ts","text":"a.b! as C satisfies D;\n"},
+  {"name":"type-assertion","path":"/a.ts","text":"<T>x;\n<T>x.y;\n<T>x++;\n<const>[1];\n<T><U>x;\n-<T>x;\n<T>a.b as C;\n"},
+  {"name":"type-assertion-of-parentheses","path":"/a.ts","text":"<T>(x);\n<A.B>(x).y;\n<T>(x) => x;\n<T>(x)!;\n"},
+  {"name":"parentheses","path":"/a.ts","text":"(a);\n((a));\n(a, b);\na * (b + c);\nf((a));\n(a) => (b);\nx = (y);\n(function () {})();\nnew (Foo)();\nif ((a)) {}\n"},
+  {"name":"parentheses-and-wrappers","path":"/a.ts","text":"(x as T)!;\n(x!) as T;\n(<T>x);\n"},
+  {"name":"conditional","path":"/a.ts","text":"a ? (b) : c;\n"},
+  {"name":"conditional-arrow-read-twice","path":"/a.ts","text":"a ? (b) : c => (d) : e;\n"},
+  {"name":"decorator","path":"/a.ts","text":"@(d) class C {}\n"},
+  {"name":"javascript","path":"/a.js","text":"(a) + b;\nasync (x);\nx = (y => y);\n"},
+  {"name":"tsx","path":"/a.tsx","text":"const e = <div>{(a) as T}</div>;\n"}
+]

@@ -1,0 +1,27 @@
+file jsx1.tsx bytes=112 statements=1
+s_local @0
+  b_identifier @6 el
+  e_jsx_element @11
+    e_string @106
+    e_string @16
+    e_string @18
+    e_string @22
+    e_identifier @25 c
+    e_identifier @32 d
+    e_string @35
+    e_boolean @36
+    e_string @11
+    e_identifier @46 x
+    e_string @11
+    e_jsx_element @49
+      e_string @50
+    e_string @11
+    e_string @11
+    e_spread @11
+      e_identifier @62 ys
+    e_jsx_element @68
+      e_dot @87
+        e_identifier @87 Foo
+      e_string @77
+      e_string @81
+    e_jsx_element @98

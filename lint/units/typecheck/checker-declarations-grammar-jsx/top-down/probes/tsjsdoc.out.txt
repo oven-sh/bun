@@ -1,0 +1,7 @@
+PARSE tsjsdoc.ts parse=[] js=[] bind=[]
+tsjsdoc.ts(2,10)+7: error TS17020: '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'string | null | undefined'?
+tsjsdoc.ts(5,15)+7: error TS17019: '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'string'?
+tsjsdoc.ts(5,25)+1: error TS8020: JSDoc types can only be used inside documentation comments.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=4 Options=1 SourceFiles=1
+COUNTS TypeCount=88 SymbolCount=6 SignatureCount=5 TotalInstantiationCount=0

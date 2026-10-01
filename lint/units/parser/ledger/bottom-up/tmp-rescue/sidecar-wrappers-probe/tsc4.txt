@@ -1,0 +1,324 @@
+=== t.ts :: "((a as T) => x)"
+ParenthesizedExpression [0,9) pos=0
+  ParenthesizedExpression [1,9) pos=1
+    AsExpression [2,8) pos=2
+      Identifier [2,3) pos=2 "a"
+      TypeReference [7,8) pos=6
+        Identifier [7,8) pos=6 "T"
+Identifier [13,14) pos=12 "x"
+  !! TS1005@10+2 ')' expected.
+  !! TS1434@13+1 Unexpected keyword or identifier.
+  !! TS1128@14+1 Declaration or statement expected.
+=== t.ts :: "((a!) => x)"
+ParenthesizedExpression [0,5) pos=0
+  ParenthesizedExpression [1,5) pos=1
+    NonNullExpression [2,4) pos=2
+      Identifier [2,3) pos=2 "a"
+Identifier [9,10) pos=8 "x"
+  !! TS1005@6+2 ')' expected.
+  !! TS1434@9+1 Unexpected keyword or identifier.
+  !! TS1128@10+1 Declaration or statement expected.
+=== t.ts :: "((<T>a) => x)"
+ParenthesizedExpression [0,7) pos=0
+  ParenthesizedExpression [1,7) pos=1
+    TypeAssertionExpression [2,6) pos=2
+      TypeReference [3,4) pos=3
+        Identifier [3,4) pos=3 "T"
+      Identifier [5,6) pos=5 "a"
+Identifier [11,12) pos=10 "x"
+  !! TS1005@8+2 ')' expected.
+  !! TS1434@11+1 Unexpected keyword or identifier.
+  !! TS1128@12+1 Declaration or statement expected.
+=== t.ts :: "(((a)) => x)"
+ParenthesizedExpression [0,6) pos=0
+  ParenthesizedExpression [1,6) pos=1
+    ParenthesizedExpression [2,5) pos=2
+      Identifier [3,4) pos=3 "a"
+Identifier [10,11) pos=9 "x"
+  !! TS1005@7+2 ')' expected.
+  !! TS1434@10+1 Unexpected keyword or identifier.
+  !! TS1128@11+1 Declaration or statement expected.
+=== t.ts :: "((a, (b)) => x)"
+ParenthesizedExpression [0,9) pos=0
+  ParenthesizedExpression [1,9) pos=1
+    BinaryExpression [2,8) pos=2
+      Identifier [2,3) pos=2 "a"
+      CommaToken [3,4) pos=3
+      ParenthesizedExpression [5,8) pos=4
+        Identifier [6,7) pos=6 "b"
+Identifier [13,14) pos=12 "x"
+  !! TS1005@10+2 ')' expected.
+  !! TS1434@13+1 Unexpected keyword or identifier.
+  !! TS1128@14+1 Declaration or statement expected.
+=== t.ts :: "(([a]) => x)"
+ParenthesizedExpression [0,12) pos=0
+  ArrowFunction [1,11) pos=1
+    Parameter [2,5) pos=2
+      ArrayBindingPattern [2,5) pos=2
+        BindingElement [3,4) pos=3
+          Identifier [3,4) pos=3 "a"
+    EqualsGreaterThanToken [7,9) pos=6
+    Identifier [10,11) pos=9 "x"
+=== t.ts :: "((([a])) => x)"
+ParenthesizedExpression [0,8) pos=0
+  ParenthesizedExpression [1,8) pos=1
+    ParenthesizedExpression [2,7) pos=2
+      ArrayLiteralExpression [3,6) pos=3
+        Identifier [4,5) pos=4 "a"
+Identifier [12,13) pos=11 "x"
+  !! TS1005@9+2 ')' expected.
+  !! TS1434@12+1 Unexpected keyword or identifier.
+  !! TS1128@13+1 Declaration or statement expected.
+=== t.ts :: "a + b as T * c"
+BinaryExpression [0,14) pos=0
+  AsExpression [0,10) pos=0
+    BinaryExpression [0,5) pos=0
+      Identifier [0,1) pos=0 "a"
+      PlusToken [2,3) pos=1
+      Identifier [4,5) pos=3 "b"
+    TypeReference [9,10) pos=8
+      Identifier [9,10) pos=8 "T"
+  AsteriskToken [11,12) pos=10
+  Identifier [13,14) pos=12 "c"
+=== t.ts :: "a as T ** b"
+BinaryExpression [0,11) pos=0
+  AsExpression [0,6) pos=0
+    Identifier [0,1) pos=0 "a"
+    TypeReference [5,6) pos=4
+      Identifier [5,6) pos=4 "T"
+  AsteriskAsteriskToken [7,9) pos=6
+  Identifier [10,11) pos=9 "b"
+=== t.ts :: "<T>a ** b"
+BinaryExpression [0,9) pos=0
+  TypeAssertionExpression [0,4) pos=0
+    TypeReference [1,2) pos=1
+      Identifier [1,2) pos=1 "T"
+    Identifier [3,4) pos=3 "a"
+  AsteriskAsteriskToken [5,7) pos=4
+  Identifier [8,9) pos=7 "b"
+  !! TS17007@0+4 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+=== t.ts :: "(a as T)++"
+PostfixUnaryExpression [0,10) pos=0
+  ParenthesizedExpression [0,8) pos=0
+    AsExpression [1,7) pos=1
+      Identifier [1,2) pos=1 "a"
+      TypeReference [6,7) pos=5
+        Identifier [6,7) pos=5 "T"
+=== t.ts :: "a as T++"
+AsExpression [0,6) pos=0
+  Identifier [0,1) pos=0 "a"
+  TypeReference [5,6) pos=4
+    Identifier [5,6) pos=4 "T"
+PrefixUnaryExpression [6,8) pos=6
+  Identifier [8,8) pos=8 ""
+  !! TS1005@6+2 ';' expected.
+  !! TS1109@8+0 Expression expected.
+=== t.ts :: "x = a as T\n(y)"
+BinaryExpression [0,10) pos=0
+  Identifier [0,1) pos=0 "x"
+  FirstAssignment [2,3) pos=1
+  AsExpression [4,10) pos=3
+    Identifier [4,5) pos=3 "a"
+    TypeReference [9,10) pos=8
+      Identifier [9,10) pos=8 "T"
+ParenthesizedExpression [11,14) pos=10
+  Identifier [12,13) pos=12 "y"
+=== t.ts :: "x = a!\n(y)"
+BinaryExpression [0,10) pos=0
+  Identifier [0,1) pos=0 "x"
+  FirstAssignment [2,3) pos=1
+  CallExpression [4,10) pos=3
+    NonNullExpression [4,6) pos=3
+      Identifier [4,5) pos=3 "a"
+    Identifier [8,9) pos=8 "y"
+=== t.ts :: "x = a\n!b"
+BinaryExpression [0,5) pos=0
+  Identifier [0,1) pos=0 "x"
+  FirstAssignment [2,3) pos=1
+  Identifier [4,5) pos=3 "a"
+PrefixUnaryExpression [6,8) pos=5
+  Identifier [7,8) pos=7 "b"
+=== t.ts :: "for ((a) of b) ;"
+ForOfStatement [0,16) pos=0
+  ParenthesizedExpression [5,8) pos=5
+    Identifier [6,7) pos=6 "a"
+  Identifier [12,13) pos=11 "b"
+  EmptyStatement [15,16) pos=14
+=== t.ts :: "for (a as any of b) ;"
+ForOfStatement [0,21) pos=0
+  AsExpression [5,13) pos=5
+    Identifier [5,6) pos=5 "a"
+    AnyKeyword [10,13) pos=9
+  Identifier [17,18) pos=16 "b"
+  EmptyStatement [20,21) pos=19
+=== t.ts :: "for ((a) in b) ;"
+ForInStatement [0,16) pos=0
+  ParenthesizedExpression [5,8) pos=5
+    Identifier [6,7) pos=6 "a"
+  Identifier [12,13) pos=11 "b"
+  EmptyStatement [15,16) pos=14
+=== t.ts :: "[(a)] = b"
+BinaryExpression [0,9) pos=0
+  ArrayLiteralExpression [0,5) pos=0
+    ParenthesizedExpression [1,4) pos=1
+      Identifier [2,3) pos=2 "a"
+  FirstAssignment [6,7) pos=5
+  Identifier [8,9) pos=7 "b"
+=== t.ts :: "({x: (a)} = b)"
+ParenthesizedExpression [0,14) pos=0
+  BinaryExpression [1,13) pos=1
+    ObjectLiteralExpression [1,9) pos=1
+      PropertyAssignment [2,8) pos=2
+        Identifier [2,3) pos=2 "x"
+        ParenthesizedExpression [5,8) pos=4
+          Identifier [6,7) pos=6 "a"
+    FirstAssignment [10,11) pos=9
+    Identifier [12,13) pos=11 "b"
+=== t.ts :: "`${(a)}`"
+TemplateExpression [0,8) pos=0
+  TemplateHead [0,3) pos=0
+  TemplateSpan [3,8) pos=3
+    ParenthesizedExpression [3,6) pos=3
+      Identifier [4,5) pos=4 "a"
+    LastTemplateToken [6,8) pos=6
+=== t.ts :: "f?.((a))"
+CallExpression [0,8) pos=0 [chain]
+  Identifier [0,1) pos=0 "f"
+  QuestionDotToken [1,3) pos=1
+  ParenthesizedExpression [4,7) pos=4
+    Identifier [5,6) pos=5 "a"
+=== t.ts :: "new F((a))"
+NewExpression [0,10) pos=0
+  Identifier [4,5) pos=3 "F"
+  ParenthesizedExpression [6,9) pos=6
+    Identifier [7,8) pos=7 "a"
+=== t.ts :: "(a)`x`"
+TaggedTemplateExpression [0,6) pos=0
+  ParenthesizedExpression [0,3) pos=0
+    Identifier [1,2) pos=1 "a"
+  FirstTemplateToken [3,6) pos=3
+=== t.ts :: "(function(){})()"
+CallExpression [0,16) pos=0
+  ParenthesizedExpression [0,14) pos=0
+    FunctionExpression [1,13) pos=1
+      Block [11,13) pos=11
+=== t.ts :: "(() => 1)()"
+CallExpression [0,11) pos=0
+  ParenthesizedExpression [0,9) pos=0
+    ArrowFunction [1,8) pos=1
+      EqualsGreaterThanToken [4,6) pos=3
+      FirstLiteralToken [7,8) pos=6
+=== t.ts :: "(class {})"
+ParenthesizedExpression [0,10) pos=0
+  ClassExpression [1,9) pos=1
+=== t.ts :: "(/* c */ a /* d */) /* e */ . b"
+PropertyAccessExpression [0,31) pos=0
+  ParenthesizedExpression [0,19) pos=0
+    Identifier [9,10) pos=1 "a"
+  Identifier [30,31) pos=29 "b"
+=== t.ts :: "( // c\n a\n)"
+ParenthesizedExpression [0,11) pos=0
+  Identifier [8,9) pos=1 "a"
+=== t.ts :: "yield"
+Identifier [0,5) pos=0 "yield"
+=== t.ts :: "a ? (b) : (c)"
+ConditionalExpression [0,13) pos=0 ?@2
+  Identifier [0,1) pos=0 "a"
+  QuestionToken [2,3) pos=1
+  ParenthesizedExpression [4,7) pos=3
+    Identifier [5,6) pos=5 "b"
+  ColonToken [8,9) pos=7
+  ParenthesizedExpression [10,13) pos=9
+    Identifier [11,12) pos=11 "c"
+=== t.ts :: "a ? (b) : c => d"
+ConditionalExpression [0,16) pos=0 ?@2
+  Identifier [0,1) pos=0 "a"
+  QuestionToken [2,3) pos=1
+  ParenthesizedExpression [4,7) pos=3
+    Identifier [5,6) pos=5 "b"
+  ColonToken [8,9) pos=7
+  ArrowFunction [10,16) pos=9
+    Parameter [10,11) pos=9
+      Identifier [10,11) pos=9 "c"
+    EqualsGreaterThanToken [12,14) pos=11
+    Identifier [15,16) pos=14 "d"
+=== t.ts :: "a ? (b): T => c : d"
+ConditionalExpression [0,19) pos=0 ?@2
+  Identifier [0,1) pos=0 "a"
+  QuestionToken [2,3) pos=1
+  ArrowFunction [4,15) pos=3
+    Parameter [5,6) pos=5
+      Identifier [5,6) pos=5 "b"
+    TypeReference [9,10) pos=8
+      Identifier [9,10) pos=8 "T"
+    EqualsGreaterThanToken [11,13) pos=10
+    Identifier [14,15) pos=13 "c"
+  ColonToken [16,17) pos=15
+  Identifier [18,19) pos=17 "d"
+=== t.ts :: "(a)?.b"
+PropertyAccessExpression [0,6) pos=0 [chain]
+  ParenthesizedExpression [0,3) pos=0
+    Identifier [1,2) pos=1 "a"
+  QuestionDotToken [3,5) pos=3
+  Identifier [5,6) pos=5 "b"
+=== t.ts :: "(a as T)?.b!"
+NonNullExpression [0,12) pos=0
+  PropertyAccessExpression [0,11) pos=0 [chain]
+    ParenthesizedExpression [0,8) pos=0
+      AsExpression [1,7) pos=1
+        Identifier [1,2) pos=1 "a"
+        TypeReference [6,7) pos=5
+          Identifier [6,7) pos=5 "T"
+    QuestionDotToken [8,10) pos=8
+    Identifier [10,11) pos=10 "b"
+=== t.ts :: "delete (a).b"
+DeleteExpression [0,12) pos=0
+  PropertyAccessExpression [7,12) pos=6
+    ParenthesizedExpression [7,10) pos=6
+      Identifier [8,9) pos=8 "a"
+    Identifier [11,12) pos=11 "b"
+=== t.ts :: "void (0)"
+VoidExpression [0,8) pos=0
+  ParenthesizedExpression [5,8) pos=4
+    FirstLiteralToken [6,7) pos=6
+=== t.ts :: "((a)) = 1"
+BinaryExpression [0,9) pos=0
+  ParenthesizedExpression [0,5) pos=0
+    ParenthesizedExpression [1,4) pos=1
+      Identifier [2,3) pos=2 "a"
+  FirstAssignment [6,7) pos=5
+  FirstLiteralToken [8,9) pos=7
+=== t.ts :: "((a))()"
+CallExpression [0,7) pos=0
+  ParenthesizedExpression [0,5) pos=0
+    ParenthesizedExpression [1,4) pos=1
+      Identifier [2,3) pos=2 "a"
+=== t.ts :: "a((b), (c))"
+CallExpression [0,11) pos=0
+  Identifier [0,1) pos=0 "a"
+  ParenthesizedExpression [2,5) pos=2
+    Identifier [3,4) pos=3 "b"
+  ParenthesizedExpression [7,10) pos=6
+    Identifier [8,9) pos=8 "c"
+=== t.ts :: "a(((b)))"
+CallExpression [0,8) pos=0
+  Identifier [0,1) pos=0 "a"
+  ParenthesizedExpression [2,7) pos=2
+    ParenthesizedExpression [3,6) pos=3
+      Identifier [4,5) pos=4 "b"
+=== t.ts :: "(a)(b)(c)"
+CallExpression [0,9) pos=0
+  CallExpression [0,6) pos=0
+    ParenthesizedExpression [0,3) pos=0
+      Identifier [1,2) pos=1 "a"
+    Identifier [4,5) pos=4 "b"
+  Identifier [7,8) pos=7 "c"
+=== t.ts :: "(((a)(b))(c))"
+ParenthesizedExpression [0,13) pos=0
+  CallExpression [1,12) pos=1
+    ParenthesizedExpression [1,9) pos=1
+      CallExpression [2,8) pos=2
+        ParenthesizedExpression [2,5) pos=2
+          Identifier [3,4) pos=3 "a"
+        Identifier [6,7) pos=6 "b"
+    Identifier [10,11) pos=10 "c"

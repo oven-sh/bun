@@ -1,0 +1,171 @@
+[
+ {
+  "name": "only-erased",
+  "text": "interface A<T> extends B<T> { a: T }\ntype C = A<string> | undefined;\ndeclare var v1: number, v2: string;\ndeclare let l1: A<number>;\ndeclare const c1: unique symbol;\ndeclare function f1<T>(a: T, ...rest: T[]): T;\ndeclare async function f2(): Promise<void>;\ndeclare function* f3(): Generator<number>;\nfunction over(a: string): void;\nfunction over(a: number): void;\ndeclare class K1<T> extends Base<T> implements A<T> { x: T; static y: number; m(): void; constructor(a: T); }\ndeclare abstract class K2 { abstract m(): void }\ndeclare enum E1 { A = 1, B, C = 'c' }\ndeclare const enum E2 { A }\ndeclare namespace N1 { const a: number; function g(): void; interface I {} }\ndeclare namespace N2.N3.N4 { type T = 1 }\ndeclare module M1 { export let z: number }\ndeclare module 'mod-a' { export function h(): void; export default h; }\ndeclare module \"*.css\";\ndeclare module '*!text' { const content: string; export = content; }\ndeclare global { interface Window { w: number } var gv: number }\nnamespace TypesOnly { export interface I {} export type T = I }\nnamespace Empty {}\nexport as namespace Lib;\nimport type D1 from 'm1';\nimport type * as S1 from 'm2';\nimport type { A1, B1 as B2 } from 'm3';\nimport { type T1, type T2 as T3 } from 'm4';\nimport type Q1 = require('m5');\nimport type Q2 = N1.I;\nexport type { A1 } from 'm6';\nexport type * from 'm7';\nexport type * as S2 from 'm8';\nexport { type T4 } from 'm9';\nexport { type C };\nexport type { A };\nexport type X1 = 1;\nexport interface X2 {}\nexport declare const x3: number;\nexport declare function x4(): void;\nexport declare class X5 {}\nexport declare namespace X6 { const a: number }\nexport namespace X7 { export type T = 1 }\nexport default interface X8 {}\n"
+ },
+ {
+  "name": "interleaved",
+  "text": "interface A {}\nconst a = 1;\ntype B = A;\ndeclare const b: B;\nlet c = a;\nfunction f(x: string): void;\nfunction f(x: number): void;\nfunction f(x: any) {}\nexport type { A };\nexport { c };\ninterface Z {}\n"
+ },
+ {
+  "name": "leading-directive-and-empty",
+  "text": "'use strict';\ninterface A {}\n;\ntype B = 1;\n'other';\ndeclare var x: number;\nfoo();\n"
+ },
+ {
+  "name": "trailing",
+  "text": "foo();\ninterface A {}\ntype B = 1"
+ },
+ {
+  "name": "block",
+  "text": "{ interface A {} let a = 1; type B = 1; { type C = 2 } declare const d: number; }"
+ },
+ {
+  "name": "function-bodies",
+  "text": "function f() { interface A {} return 1; type B = 1 }\nconst g = function () { type C = 1; };\nconst h = () => { declare const d: number; return d; };\nconst o = { m() { interface E {} }, get p() { type F = 1; return 1 } };\nclass K { m() { type G = 1 } static { interface H {} foo(); type J = 1 } constructor() { type L = 1 } }"
+ },
+ {
+  "name": "try-catch-finally",
+  "text": "try { type A = 1; a() } catch (e) { interface B {} b() } finally { c(); declare let d: number }"
+ },
+ {
+  "name": "kept-namespace",
+  "text": "namespace N { export const a = 1; interface I {} export type T = I; export function f(): void; export function f() {} namespace Inner { type U = 1 } }"
+ },
+ {
+  "name": "kept-namespace-dotted",
+  "text": "namespace A.B.C { interface X {} export const c = 1; type Y = X }\nnamespace D.E { interface Z {} }\nmodule F.G { export type T = 1 }"
+ },
+ {
+  "name": "deep",
+  "text": "function outer() { if (a) { for (;;) { try { interface A {} } finally { type B = 1 } } } else { switch (b) { default: { type C = 1 } } } }"
+ },
+ {
+  "name": "in-tree-single-statement",
+  "text": "if (a) interface A {}\nif (b) type B = 1; else declare var c: number;\nwhile (d) declare function e(): void;\ndo type F = 1; while (g);\nfor (;;) interface H {}\nfor (const i in j) type K = 1;\nfor (const l of m) declare const n: number;\nlabel: interface O {}\nif (p) function q(): void;"
+ },
+ {
+  "name": "in-tree-switch-case",
+  "text": "switch (a) { case 1: type A = 1; interface B {} b(); declare const c: number; break; default: type D = 1 }"
+ },
+ {
+  "name": "in-tree-dotted",
+  "text": "namespace A.B { type T = 1 }\ndeclare namespace C.D.E { const e: number }\nexport namespace F.G { export interface I {} }"
+ },
+ {
+  "name": "prefix-export",
+  "text": "export interface A {}\nexport type B = 1;\nexport declare const c: number;\nexport declare function d(): void;\nexport declare class E {}\nexport declare abstract class F {}\nexport declare enum G {}\nexport declare const enum H {}\nexport declare namespace I {}\nexport declare module J {}\nexport function k(): void;\nexport async function l(): Promise<void>;\nexport namespace M {}\nexport import type N = require('n');"
+ },
+ {
+  "name": "prefix-export-default",
+  "text": "export default interface A {}\nexport default function f(a: string): void;\nexport default function f(a: any) {}"
+ },
+ {
+  "name": "prefix-export-default-async",
+  "text": "export default async function f(a: string): Promise<void>;\nexport default async function f(a: any) {}"
+ },
+ {
+  "name": "prefix-declare-order",
+  "text": "declare export class A {}\ndeclare export function b(): void;\ndeclare abstract class C {}\ndeclare type D = 1;\ndeclare interface E {}\ndeclare import F = G.H;\ndeclare import type I from 'i';\ndeclare;"
+ },
+ {
+  "name": "prefix-decorators",
+  "text": "@a declare class A {}\n@b.c(1) @(d) export declare abstract class B {}\nexport @e declare class C {}\n@f declare abstract class D { @g m(): void }"
+ },
+ {
+  "name": "prefix-async-generator",
+  "text": "async function a(): Promise<void>;\nasync function a() {}\nfunction* b(): Generator;\nfunction* b() {}\ndeclare async function c(): Promise<void>;"
+ },
+ {
+  "name": "prefix-comments",
+  "text": "/** doc */ export /* a */ declare /* b */ const /* c */ x: number; // tail\n/* lead */ interface A {} /* trail */\n// line\ntype B = 1 // no semicolon\ndeclare function f(): void /* before eof */"
+ },
+ {
+  "name": "nested-declare-namespace",
+  "text": "declare namespace N { interface A {} const a: number; type B = A; function f(): void; class K { m(): void; [k: string]: any } enum E { X } namespace Inner { interface C {} let c: C } import q = Inner.C; export import r = Inner.C; export { a }; foo(); }"
+ },
+ {
+  "name": "nested-ambient-module",
+  "text": "declare module 'pkg' { import type { T } from 'dep'; import v from 'dep2'; export function f(t: T): void; export default f; global { interface G {} var gg: number; } export as namespace pkgNs; }"
+ },
+ {
+  "name": "nested-global",
+  "text": "declare global { interface A {} var a: A; namespace NS { type T = 1 } function f(): void; declare global { type Inner = 1 } }"
+ },
+ {
+  "name": "nested-kept-in-erased",
+  "text": "declare function f() { interface A {} return 1; type B = 1 }\ndeclare class K { m() { type C = 1 } static { interface D {} } x = () => { type E = 1 } }\ndeclare namespace N { const o = { m() { interface F {} } }; class L { n() { type G = 1 } } }"
+ },
+ {
+  "name": "stand-in",
+  "text": "namespace N { export declare const a: number; export declare let { b, c }: T, [d]: U; interface I {} export declare var e: string; export const f = 1 }\ndeclare namespace M { export declare const g: number; interface J {} }"
+ },
+ {
+  "name": "speculation-arrow-kept",
+  "text": "const r = a ? (b): c => { type T = 1; interface I {} declare const d: number; return d } : e;"
+ },
+ {
+  "name": "speculation-arrow-dropped",
+  "text": "const r = a ? (b) : c => { type T = 1; interface I {} return c };"
+ },
+ {
+  "name": "speculation-arrow-nested",
+  "text": "const r = a ? (b): c => { type T = 1; return x ? (y): z => { interface I {} return 1 } : w } : e;"
+ },
+ {
+  "name": "members-overloads",
+  "text": "class C { m(): void; m(a: string): void; m(a?: string) {} static s(): void; static s() {} async n(): Promise<void>; async n() {} *g(): Generator; *g() {} [k](): void; [k]() {} 'q'(): void; 'q'() {} 1(): void; 1() {} #p(): void; #p() {} constructor(); constructor(a: string); constructor(a?: any) {} get x(): number; set x(v: number); }"
+ },
+ {
+  "name": "members-abstract",
+  "text": "abstract class C { abstract a: number; abstract b(): void; abstract get c(): number; abstract set c(v: number); protected abstract d?: string; abstract static e: number; private abstract f(): void; abstract g() {} abstract [h]: number; kept = 1; abstract i: number }"
+ },
+ {
+  "name": "members-declare",
+  "text": "class C { declare a: number; declare readonly b: string; declare static c: number; static declare d: number; declare e; kept() {} declare f(): void }"
+ },
+ {
+  "name": "members-index-signatures",
+  "text": "class C { [k: string]: any; static [k: number]: string; readonly [k: symbol]: unknown; a = 1; static readonly [k: string]: number; declare [k: string]: any }"
+ },
+ {
+  "name": "members-decorated",
+  "text": "abstract class C { @d abstract a: number; @d declare b: number; @d abstract c(): void; @d m(): void; @d m() {} }"
+ },
+ {
+  "name": "members-class-expression",
+  "text": "const C = class { m(): void; m() {} [k: string]: any; declare x: number };\nexport default class { n(): void; n() {} }"
+ },
+ {
+  "name": "members-semicolons",
+  "text": "class C { ; m(): void;; m() {}; ; [k: string]: any;; }"
+ },
+ {
+  "name": "ends",
+  "text": "type A = 1\ntype B = 2;\ninterface C {}\ninterface D {};\ndeclare const e: number\ndeclare function f(): void\nexport type { A }\nexport type { B } from 'b'\nimport type G from 'g'\nimport type H = require('h')\nexport as namespace ns\ndeclare namespace I {}\ndeclare module 'j'\ndeclare enum K {}\n{ type L = 1 }\nfunction m() { type N = 1 }"
+ },
+ {
+  "name": "paths-and-attributes",
+  "text": "import type A from 'a' with { 'resolution-mode': 'import' };\nimport type { B } from \"b\" with { type: 'json' };\nexport type { C } from 'c' with { 'resolution-mode': 'require' };\nexport type * as D from 'd';\nexport type * as 'e-e' from 'e';\nimport { type default as F, type 'g-g' as G } from 'f';\nexport { type H as default, type I as 'i-i' } from 'h';"
+ },
+ {
+  "name": "contextual-names",
+  "text": "type type = 1;\ninterface of {}\ndeclare namespace global { }\ndeclare module async { }\nimport type from_ from 'x';\nimport type type from 'y';\nimport type * as as from 'z';"
+ },
+ {
+  "name": "export-scan-traps",
+  "text": "export declare global { interface A {} var v: typeof a.export\ninterface B {} }\nnamespace N.export.C { type T = 1 }\nexport\ninterface D {}\nfoo.export\ninterface E {}"
+ },
+ {
+  "name": "ambient-module-names",
+  "text": "declare module \"a\\u0062c\" {}\ndeclare module '*.svg' { const s: string; export default s }\ndeclare module \"quote\\\"d\";\ndeclare module Foo.Bar {}"
+ },
+ {
+  "name": "import-equals-forms",
+  "text": "import type A = require('a');\nexport import type B = C.D.E;\ndeclare namespace N { import F = G; import H = require('h'); export import I = J.K; }\ndeclare import /* c */ L = M;\nnamespace O { import P = Q.R; }"
+ },
+ {
+  "name": "dts",
+  "file": "a.d.ts",
+  "text": "export function f(a: string): void;\nexport const c: number;\nexport class K { m(): void; x: number }\ninterface I {}\ndeclare namespace N { const a: number }\nexport as namespace lib;\nexport default f;\n"
+ }
+]

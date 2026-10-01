@@ -1,0 +1,605 @@
+AA  "import { type } from \"x\";"
+     bun: ok "import { type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type as } from \"x\";"
+     bun: ok "import\"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type as as } from \"x\";"
+     bun: ok "import { type as as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type as as as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import { type as as as as } from \"x\";"
+     bun: Expected "}" but found "as" @23 | Expected "from" but found "}" @26
+     tsc parse: TS1005@23+2 ',' expected.
+AA  "import { type as b } from \"x\";"
+     bun: ok "import { type as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type a as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type a as as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type type } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type type as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type type as as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { as } from \"x\";"
+     bun: ok "import { as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import { as as } from \"x\";"
+     bun: Expected identifier but found "}" @15 | Expected "}" but found "from" @17 | Expected "from" but found ""x"" @22
+     tsc parse: TS1003@15+1 Identifier expected.
+AA  "import { as as as } from \"x\";"
+     bun: ok "import { as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { as as b } from \"x\";"
+     bun: ok "import { as as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { a as type } from \"x\";"
+     bun: ok "import { a as type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type \"a\" as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { \"a\" as b } from \"x\";"
+     bun: ok "import { a as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { \"type\" as b } from \"x\";"
+     bun: ok "import { type as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import { \"type\" } from \"x\";"
+     bun: Expected "as" but found "}" @16
+     tsc parse: TS1003@9+6 Identifier expected.
+RR  "import { \"a\" } from \"x\";"
+     bun: Expected "as" but found "}" @13
+     tsc parse: TS1003@9+3 Identifier expected.
+RR  "import { type \"a\" } from \"x\";"
+     bun: Expected "as" but found "}" @18
+     tsc parse: TS1003@14+3 Identifier expected.
+AA  "import { type default as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { default as b } from \"x\";"
+     bun: ok "import { default as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import { type default } from \"x\";"
+     bun: Expected "as" but found "}" @22
+     tsc parse: TS1003@14+7 Identifier expected.
+RR  "import { default } from \"x\";"
+     bun: Expected "as" but found "}" @17
+     tsc parse: TS1003@9+7 Identifier expected.
+AA  "import { type if as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { if as b } from \"x\";"
+     bun: ok "import { if as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "import { type if } from \"x\";"
+     bun: Expected "as" but found "}" @17
+     tsc parse: TS1003@14+2 Identifier expected.
+RR  "import { if } from \"x\";"
+     bun: Expected "as" but found "}" @12
+     tsc parse: TS1003@9+2 Identifier expected.
+RR  "import { type as if } from \"x\";"
+     bun: Expected "}" but found "if" @17 | Expected "from" but found "}" @20
+     tsc parse: TS1003@17+2 Identifier expected.
+RR  "import { a as if } from \"x\";"
+     bun: Expected identifier but found "if" @14
+     tsc parse: TS1003@14+2 Identifier expected.
+RR  "import { type a as if } from \"x\";"
+     bun: Expected identifier but found "if" @19
+     tsc parse: TS1003@19+2 Identifier expected.
+RR  "import { type as as if } from \"x\";"
+     bun: Expected "}" but found "if" @20 | Expected "from" but found "}" @23
+     tsc parse: TS1003@20+2 Identifier expected.
+AA  "import { type, a } from \"x\";"
+     bun: ok "import { type, a } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type, } from \"x\";"
+     bun: ok "import { type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type as, a } from \"x\";"
+     bun: ok "import { a } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type as as, a } from \"x\";"
+     bun: ok "import { type as as, a } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { a, type b } from \"x\";"
+     bun: ok "import { a } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { a, type } from \"x\";"
+     bun: ok "import { a, type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type\na } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type a\nas b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type eval } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { type arguments } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { type await } from \"x\";"
+     bun: ok ""
+     tsc check: TS1262@14+5 Identifier expected. 'await' is a reserved word at the top-level of a module. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { type yield } from \"x\";"
+     bun: ok ""
+     tsc check: TS1214@14+5 Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { type let } from \"x\";"
+     bun: ok ""
+     tsc check: TS1214@14+3 Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { type static } from \"x\";"
+     bun: ok ""
+     tsc check: TS1214@14+6 Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode. ; (noise 2307)
+     tsc emit: "export {};\n"
+A1  "import { eval } from \"x\";"
+     bun: Cannot use "eval" as an identifier here @9
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+A1  "import { arguments } from \"x\";"
+     bun: Cannot use "arguments" as an identifier here @9
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+A1  "import { a as eval } from \"x\";"
+     bun: Cannot use "eval" as an identifier here @9
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { await } from \"x\";"
+     bun: ok "import { await } from \"x\";\n"
+     tsc check: TS1262@9+5 Identifier expected. 'await' is a reserved word at the top-level of a module. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import { a as await } from \"x\";"
+     bun: ok "import { a as await } from \"x\";\n"
+     tsc check: TS1262@14+5 Identifier expected. 'await' is a reserved word at the top-level of a module. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import type { type a } from \"x\";"
+     bun: ok ""
+     tsc check: TS2206@14+4 The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement.
+     tsc emit: "export {};\n"
+AA  "import type { type } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "import type { type as } from \"x\";"
+     bun: ok ""
+     tsc check: TS2206@14+4 The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement.
+     tsc emit: "export {};\n"
+AA  "import type { type as as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type { a as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type { \"a\" as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import type { default as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { type };\n"
+AA  "export { type as };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type as as };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { type as as };\n"
+AA  "export { type as as as };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+RR  "export { type as as as as };"
+     bun: Expected "}" but found "as" @23 | Unexpected } @26
+     tsc parse: TS1005@23+2 ',' expected.
+AA  "export { type as b };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { type as b };\n"
+AA  "export { type a };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type a as b };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type a as as };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type type };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type type as b };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { as };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { as };\n"
+RR  "export { as as };"
+     bun: Expected identifier but found "}" @15 | Expected "}" but found end of file @17
+     tsc parse: TS1003@15+1 Identifier expected.
+AA  "export { as as as };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { as as as };\n"
+AA  "export { as as b };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { as as b };\n"
+AA  "export { a as type };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { a as type };\n"
+AA  "export { type a as \"b\" };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { a as \"b\" };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { a as \"b\" };\n"
+A1  "export { type \"a\" };"
+     bun: Expected identifier but found "" @14
+     tsc emit: "export {};\n"
+A1  "export { \"a\" };"
+     bun: Expected identifier but found "" @9
+     tsc emit: "export { \"a\" };\n"
+A2  "export { \"a\" as b };"
+     bun: Expected identifier but found "" @9
+     tsc check: TS1003@9+3 Identifier expected.
+     tsc emit: "export { \"a\" as b };\n"
+A2  "export { type \"a\" as b };"
+     bun: Expected identifier but found "" @14
+     tsc check: TS1003@14+3 Identifier expected.
+     tsc emit: "export {};\n"
+A2  "export { \"type\" as b };"
+     bun: Expected identifier but found "" @9
+     tsc check: TS1003@9+6 Identifier expected.
+     tsc emit: "export { \"type\" as b };\n"
+A1  "export { \"type\" };"
+     bun: Expected identifier but found "" @9
+     tsc emit: "export { \"type\" };\n"
+A1  "export { type default };"
+     bun: Expected identifier but found "default" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { default };"
+     bun: Expected identifier but found "default" @9
+     tsc check: (noise 2304)
+     tsc emit: "export { default };\n"
+A1  "export { type default as b };"
+     bun: Expected identifier but found "default" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { default as b };"
+     bun: Expected identifier but found "default" @9
+     tsc check: (noise 2304)
+     tsc emit: "export { default as b };\n"
+A1  "export { type if };"
+     bun: Expected identifier but found "if" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { if };"
+     bun: Expected identifier but found "if" @9
+     tsc check: (noise 2304)
+     tsc emit: "export { if };\n"
+A1  "export { type if as b };"
+     bun: Expected identifier but found "if" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { if as b };"
+     bun: Expected identifier but found "if" @9
+     tsc check: (noise 2304)
+     tsc emit: "export { if as b };\n"
+AA  "export { a as if };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { a as if };\n"
+AA  "export { type a as if };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type as if };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { type as if };\n"
+AA  "export { type as as if };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { a as default };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { a as default };\n"
+AA  "export { type a as default };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { type this };"
+     bun: Expected identifier but found "this" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { type null };"
+     bun: Expected identifier but found "null" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { type true };"
+     bun: Expected identifier but found "true" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export { this };"
+     bun: Expected identifier but found "this" @9
+     tsc check: (noise 2304)
+     tsc emit: "export { this };\n"
+AA  "export { type, a };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { type, a };\n"
+AA  "export { type as, a };"
+     bun: ok "export {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "export { a };\n"
+AA  "export { type a, };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { type } from \"x\";"
+     bun: ok "export { type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { type } from \"x\";\n"
+AA  "export { type as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type as as } from \"x\";"
+     bun: ok "export { type as as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { type as as } from \"x\";\n"
+AA  "export { type as as as } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type a as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type if } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { if } from \"x\";"
+     bun: ok "export { if } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { if } from \"x\";\n"
+AA  "export { type if as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type default } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { default } from \"x\";"
+     bun: ok "export { default } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { default } from \"x\";\n"
+AA  "export { type default as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { type \"a\" } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { \"a\" } from \"x\";"
+     bun: ok "export { a } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { \"a\" } from \"x\";\n"
+AA  "export { type \"a\" as \"b\" } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { \"type\" } from \"x\";"
+     bun: ok "export { type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { \"type\" } from \"x\";\n"
+AA  "export { \"type\" as b } from \"x\";"
+     bun: ok "export { type as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { \"type\" as b } from \"x\";\n"
+AA  "export { a as \"type\" } from \"x\";"
+     bun: ok "export { a as type } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { a as \"type\" } from \"x\";\n"
+AA  "export { type a as default } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AAg "export type { type a };"
+     bun: ok ""
+     tsc check: TS2207@14+4 The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement. ; (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { type };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AAg "export type { type as };"
+     bun: ok ""
+     tsc check: TS2207@14+4 The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement. ; (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { a as b };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { a };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export type { default };"
+     bun: Expected identifier but found "default" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export type { \"a\" };"
+     bun: Expected identifier but found "" @14
+     tsc emit: "export {};\n"
+A1  "export type { if };"
+     bun: Expected identifier but found "if" @14
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { a as if };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { a as default };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type { a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type { default } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type { if } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type { \"a\" } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type { default as a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type * from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type * as ns from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type * as default from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type * as \"s\" from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export * as \"s\" from \"x\";"
+     bun: ok "export * as s from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export * as \"s\" from \"x\";\n"
+AA  "export * as default from \"x\";"
+     bun: ok "export * as default from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export * as default from \"x\";\n"
+AA  "export * as if from \"x\";"
+     bun: ok "export * as if from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export * as if from \"x\";\n"
+B  "export type as = 1;"
+     bun: ok ""
+     tsc parse: TS1005@12+2 '{' expected.
+RR  "export type = 1;"
+     bun: Expected identifier but found "=" @12 | Expected "=" but found "1" @14 | Unexpected ; @15
+     tsc parse: TS1005@12+1 '{' expected.
+RR  "export type;"
+     bun: Expected identifier but found ";" @11 | Expected "=" but found end of file @12
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+RR  "export type\nT = 1;"
+     bun: Unexpected newline after "type" @11
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+AA  "export type T = 1;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export type T<U> = U;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export type\n{ a };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export type\n* from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export type { a }\nfrom \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+RR  "export type from \"x\";"
+     bun: Expected "=" but found ""x"" @17 | Unexpected ; @20
+     tsc parse: TS1005@17+3 '=' expected.
+AA  "export type from = 1;"
+     bun: ok ""
+     tsc emit: "export {};\n"

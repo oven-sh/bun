@@ -1,0 +1,11 @@
+no-debugger: 36 cases: same 36
+no-sparse-arrays: 77 cases: same 76, both-reject 1
+no-empty-pattern: 110 cases: same 110
+no-dupe-keys: 163 cases: same 158, missing 1, eslint-rejects 4
+no-dupe-class-members: 132 cases: same 132
+no-compare-neg-zero: 86 cases: same 85, moved 1
+use-isnan: 316 cases: same 307, moved 2, missing 6, both-reject 1
+valid-typeof: 202 cases: same 195, missing 6, both-reject 1
+no-unsafe-negation: 102 cases: same 102
+no-duplicate-case: 342 cases: same 317, moved 17, missing 2, bun-rejects 1, eslint-rejects 1, both-reject 4
+no-self-assign: 493 cases: same 484, missing 3, eslint-rejects 2, both-reject 4

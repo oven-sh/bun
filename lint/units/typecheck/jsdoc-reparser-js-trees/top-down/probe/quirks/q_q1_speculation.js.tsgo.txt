@@ -1,0 +1,30 @@
+file /q_q1_speculation.js scriptKind=1 variant=1 dts=false textLen=82
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=43 identifiers=13 text=16 reparsedClones=0
+root KindSourceFile [0,82) f=0x10000
+  .Statements: list [0,81) n=4
+    - KindJSTypeAliasDeclaration [5,25) f=0x210008
+      .Type: KindNumberKeyword [15,21) f=0x410008
+      .name: KindIdentifier [23,25) f=0x410008 Text="T1"
+    - KindExpressionStatement [0,35) f=0x10000
+      .Expression: KindParenthesizedExpression [0,34) f=0x10000
+        .Expression: KindBinaryExpression [1,33) f=0x10000
+          .Left: KindIdentifier [1,30) f=0x10000 Text="a"
+          .OperatorToken: KindCommaToken [30,31) f=0x10000
+          .Right: KindIdentifier [31,33) f=0x10000 Text="b"
+    - KindJSTypeAliasDeclaration [49,70) f=0x210008
+      .Type: KindStringKeyword [59,65) f=0x410008
+      .name: KindIdentifier [67,70) f=0x410008 Text="T1b"
+    - KindVariableStatement [35,81) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [35,80) f=0x10000
+        .Declarations: list [39,80) n=1
+          - KindVariableDeclaration [39,80) f=0x10000
+            .Initializer: KindBinaryExpression [43,80) f=0x10000
+              .Left: KindParenthesizedExpression [43,76) f=0x10000
+                .Expression: KindIdentifier [45,75) f=0x10000 Text="c"
+              .OperatorToken: KindPlusToken [76,78) f=0x10000
+              .Right: KindNumericLiteral [78,80) f=0x10000 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [39,41) f=0x10000 Text="y"
+  .EndOfFileToken: KindEndOfFile [81,82) f=0x10000

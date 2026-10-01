@@ -1,0 +1,23 @@
+--- a/src/js_parser/parse/parse_skip_typescript.rs	2026-09-30 10:19:18.374541879 +0000
++++ b/src/js_parser/parse/parse_skip_typescript.rs	2026-09-30 10:19:18.398541761 +0000
+@@ -13,6 +13,7 @@
+ use crate::typescript;
+ use crate::typescript::SkipTypeOptions;
+ use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
++use bun_ast::expr::EFlags;
+ use bun_ast::op::Level;
+ use bun_ast::ts;
+ use bun_ast::ts::Metadata;
+@@ -3511,7 +3512,11 @@
+             self.lexer.expect(T::TColon)?;
+             self.skip_typescript_return_type()?;
+             arrow_start = self.lexer.start;
+-            self.parse_arrow_body(&mut [], &mut data)?;
++            self.parse_arrow_body_with_flags(
++                &mut [],
++                &mut data,
++                EFlags::AfterQuestionAndBeforeColon,
++            )?;
+             // The ":" that pairs with the "?"
+             self.lexer.expect(T::TColon)?;
+             Ok(())

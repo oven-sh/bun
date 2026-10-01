@@ -1,0 +1,31 @@
+min|-strict|es5|min.ts
+gate|-strict|es5|gate.ts
+gate_parse|-strict|es5|gate_parse.ts
+unreach|-strict -sugg|es5|unreach.ts
+unreach_err|-strict -sugg -o allowUnreachableCode=false -o allowUnusedLabels=false|es5|unreach.ts
+unreach_allow|-strict -sugg -o allowUnreachableCode=true -o allowUnusedLabels=true|es5|unreach.ts
+unused|-strict -sugg -o noUnusedLocals=true -o noUnusedParameters=true|es5|other.ts unused.ts
+unused_off|-strict -sugg|es5|other.ts unused.ts
+regex|-strict -sugg|es5|regex.ts
+regex_es5|-strict -o target=#1|es5|regex.ts
+tla|-strict|es5|tla.ts
+jsx_react|-strict -o jsx=#3|es5|jsx1.tsx
+jsx_factory|-strict -o jsx=#3 -o jsxFactory=h.create|es5|jsx1.tsx
+jsx_badfactory|-strict -o jsx=#3 -o jsxFactory=h create|es5|jsx1.tsx
+jsx_none|-strict|es5|jsx1.tsx
+jsx_auto|-strict -o jsx=#4|es5|jsx1.tsx
+jsx2|-strict -o jsx=#3|es5|jsx2.tsx
+deco_es|-strict|es5 decorators|deco.ts
+deco_legacy|-strict -o experimentalDecorators=true|es5 decorators.legacy|deco.ts
+cls|-strict|es5|cls.ts
+mod|-strict -o module=#1|es5|mod_a.ts mod_b.ts
+iter|-strict -o target=#9|es5 es2015.iterable es2015.symbol es2015.promise es2015.generator|iter.ts
+jsdoc_js|-strict -checkjs -sugg|es5|other.ts jsdoc1.js
+jsdoc_ts|-strict -sugg|es5|jsdoc_ts.ts
+typenodes|-strict|es5|other.ts typenodes.ts
+stmts|-strict -o noImplicitReturns=true -o noFallthroughCasesInSwitch=true|es5 es2015.promise|stmts.ts
+helpers|-strict -o importHelpers=true -o target=#1 -o module=#1|es5|other.ts tslib.d.ts helpers.ts
+helpers_missing|-strict -o importHelpers=true -o target=#1 -o module=#1|es5|other.ts helpers.ts
+meta|-strict -o experimentalDecorators=true -o emitDecoratorMetadata=true -o isolatedModules=true -o module=#99 -o target=#2|es5 decorators.legacy|mod_a.ts meta.ts
+ambient|-strict|es5|ambient.d.ts
+jsdecl|-strict -checkjs|es5|jsdecl.js

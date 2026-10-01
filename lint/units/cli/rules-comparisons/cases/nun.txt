@@ -1,0 +1,191 @@
+!a in b
+----
+(!a in b)
+----
+!(a) in b
+----
+!a instanceof b
+----
+(!a instanceof b)
+----
+!(a) instanceof b
+----
+if (!a in b) {}
+----
+if (! a   in b) {}
+----
+if (!a.b.c in d) {}
+----
+if (!f(x) instanceof C) {}
+----
+!a in b in c
+----
+x = !a in b
+----
+foo(!a in b)
+----
+foo(!(a) in b)
+----
+[!a in b]
+----
+!!a in b
+----
+!(!a) in b
+----
+(!a) in b
+----
+!(a in b)
+----
+(!a) instanceof b
+----
+!(a instanceof b)
+----
+((!a)) in b
+----
+( !a ) in b
+----
+(/* c */!a) in b
+----
+(!a /* c */) in b
+----
+( // c
+!a
+// d
+) in b
+----
+(!(a)) in b
+----
+(!f(x)) instanceof C
+----
+(!a)
+in b
+----
+-a in b
+----
+~a in b
+----
+typeof a in b
+----
+void a in b
+----
++a in b
+----
+!a < b
+----
+!a > b
+----
+!a <= b
+----
+!a >= b
+----
+!a == b
+----
+!a + b in c
+----
+a in !b
+----
+a instanceof !b
+----
+(!a, c) in b
+----
+(c, !a) in b
+----
+!a in (b)
+----
+!a in (b in c)
+----
+!a.in in b
+----
+!a["in"] in b
+----
+!")" in b
+----
+(!")") in b
+----
+!"(" in b
+----
+(!"(") in b
+----
+!/\)/ in b
+----
+(!/\)/) in b
+----
+!/[(]/ in b
+----
+(!/[(]/) in b
+----
+!`)` in b
+----
+(!`)`) in b
+----
+!`(${ c })(` in b
+----
+(!`(${ c })(`) in b
+----
+!`${ ")" }` in b
+----
+(!`${ "(" }`) in b
+----
+!f(/* ) */) in b
+----
+(!f(/* ( */)) in b
+----
+!f(// )
+) in b
+----
+(!f(// (
+)) in b
+----
+!a /* ) */ in b
+----
+(!a /* ( */ ) in b
+----
+!a in /* ( */ b
+----
+!x/2/(1) in b
+----
+(!x/2/(1)) in b
+----
+!function(){ return /\(/ }() in b
+----
+(!function(){ return ")" }) in b
+----
+!class { static x = ")" } in b
+----
+(!class { m() { return "(" } }) in b
+----
+(!a++) in b
+----
+!a++ in b
+----
+!a?.b in c
+----
+(!a?.b) in c
+----
+!new C in b
+----
+(!new C()) in b
+----
+!<div>)</div> in b
+----
+(!<div>(</div>) in b
+----
+!<a b=")" /> in c
+----
+(!<a b="(" c='"' />) in c
+----
+(!<a>{"("}</a>) in c
+----
+!a in<b/>
+----
+for (var k = (!a in b);;) {}
+----
+é = !a in b
+----
+"😀" + (!a in b)
+----
+!a
+in b
+----
+!
+a in b

@@ -1,0 +1,65 @@
+# bun: 1.4.3-canary.1+e3566be88  tsc: 6.0.2  corpus: .js .mjs .cjs .jsx under /workspace/wt/parser/test (with node_modules) and src/js
+# lists: 7402 files outside node_modules, 32235 inside
+
+== CFG=parse (corpus-worker.mjs), all files
+unique files 37381 duplicates skipped 2256
+    605 js/jsx acceptance differs
+     16 js/ts TS accepts, JS rejects
+    704 js/ts both reject
+  36661 js/ts same output
+     30 jsx/tsx TS accepts, JS rejects
+     85 jsx/tsx both reject
+  37266 jsx/tsx same output
+
+== CFG=dce (corpus-worker.mjs), all files
+unique files 37381 duplicates skipped 2256
+    605 js/jsx acceptance differs
+     16 js/ts TS accepts, JS rejects
+    704 js/ts both reject
+  36661 js/ts same output
+     30 jsx/tsx TS accepts, JS rejects
+     85 jsx/tsx both reject
+  37266 jsx/tsx same output
+
+== CFG=default (corpus-worker.mjs), all files
+unique files 37381 duplicates skipped 2256
+    605 js/jsx acceptance differs
+     16 js/ts TS accepts, JS rejects
+    704 js/ts both reject
+  36661 js/ts same output
+     30 jsx/tsx TS accepts, JS rejects
+     85 jsx/tsx both reject
+  37266 jsx/tsx same output
+
+== CFG=minify (corpus-worker.mjs), all files
+unique files 37381 duplicates skipped 2256
+    605 js/jsx acceptance differs
+     16 js/ts TS accepts, JS rejects
+    704 js/ts both reject
+  36661 js/ts same output
+     30 jsx/tsx TS accepts, JS rejects
+     85 jsx/tsx both reject
+  37266 jsx/tsx same output
+
+== CFG=parse, files outside node_modules only
+unique files 7256 duplicates skipped 146
+    600 js/jsx acceptance differs
+     13 js/ts TS accepts, JS rejects
+    692 js/ts both reject
+   6551 js/ts same output
+     27 jsx/tsx TS accepts, JS rejects
+     78 jsx/tsx both reject
+   7151 jsx/tsx same output
+
+== bun (own loader) against tsc's parser (corpus-join.mjs)
+    865 .cjs: bun(own loader) accepts, tsc accepts
+  34399 .js: bun(own loader) accepts, tsc accepts
+     35 .js: bun(own loader) rejects, tsc accepts
+     74 .js: bun(own loader) rejects, tsc rejects
+     28 .jsx: bun(own loader) accepts, tsc accepts
+      1 .jsx: bun(own loader) rejects, tsc accepts
+   1974 .mjs: bun(own loader) accepts, tsc accepts
+      4 .mjs: bun(own loader) rejects, tsc rejects
+     28 bun jsx rejects, tsc accepts: bun tsx accepts
+      8 bun jsx rejects, tsc accepts: bun tsx rejects
+      1 tsc crashed or missing

@@ -1,0 +1,85 @@
+class C {\n  m(a: any): asserts a\n  is: string\n}
+class C {\n  m(a: any): asserts a\n  is(): void {}\n}
+declare class C {\n  m(a: any): asserts a\n  is: string\n}
+interface I {\n  m(a: any): asserts a\n  is: string\n}
+interface I {\n  m(a: any): this\n  is: string\n}
+interface I {\n  m(a: any): a\n  is: string\n}
+abstract class C {\n  abstract m(a: any): asserts a\n  is: string\n}
+class C extends B { m() { return a < super.b > (c) } }
+class C { m() { return a < this.b > (c) } }
+let v = a < !b > (c)
+let v = a < import(b) > (c)
+let v = a < import("b") > (c)
+let v = a < -1 > (c)
+let v = a < this > (c)
+let v = a < b ? > (c)
+let v = a < typeof b > (c)
+let v = a < null > (c)
+let v = a < b.c > (d)
+let v = a < b[0] > (d)
+let v = a < b! > (d)
+let v = a < (b) > (d)
+let v = a < [b] > (d)
+let v = a < {} > (d)
+let v = a < "s" > (d)
+let v = a < `s` > (d)
+let v = a < 1 > (d)
+let v = a < true > (d)
+let v = a < void 0 > (d)
+let v = a < new.target > (d)
+let v = a < import.meta > (d)
+let v = x as import("y") < z
+let v = x as import("y") < A > (b)
+let v = x as import("y")<A>
+let v = x as A < z
+let v = x as any < z
+let v = x as A\n< z
+let y = x as\nreturn
+function f() { let y = x as\nreturn }
+let y = x as class
+let y = x as\nif (a) {}
+let v = a < b<> > (c)
+let v = f<>()
+let v = f<A,>()
+let v = f<A | >(x)
+let v = new F<>()
+let f = (a): => a
+let f = (a: ) => a
+let x: (a: ) => void
+let x: () =>
+let x: = 1
+let x:
+let v = x as
+let v = <>x
+function f(): {}
+function f(a: ): void {}
+class C { p: ; }
+class C { @d p: ; }
+type T =
+type T = ;
+type T = A<B extends >
+type T = A extends ? B : C
+type T = A extends B ? : C
+type T = A extends B ? C :
+type T = [,]
+type T = [A,,B]
+type T = A[
+type T = keyof
+type T = `${}`
+let v = f<A extends >(x)
+let v = f<A, >(x)
+let v = f<, A>(x)
+let v = f< >(x)
+let v = f<A[]>(x)
+let v = f<A[>(x)
+let v = f<keyof >(x)
+let v = f<A & >(x)
+let v = f<(A) >(x)
+let v = f<() => >(x)
+let v = f<A.>(x)
+let v = f<typeof >(x)
+let v = f<A extends B ? C : >(x)
+let f = (a): A | => a
+let f = (a): keyof => a
+let f = (a): A extends B ? C : => a
+let f = (a): A[ => a

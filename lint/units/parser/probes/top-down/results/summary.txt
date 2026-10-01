@@ -1,0 +1,242 @@
+bun: /workspace/bun/build/release/bun 1.4.3-canary.1+367d939d9
+tsc: 6.0.2
+
+01-type-forms: 4430 records, 23930 inputs, 233.8s
+  records (whole files, and types as "type X = T;"): A1=69 A2=54 B=94 both-accept=3789 both-accept-checker-grammar=167 both-reject=257
+  inputs, primary mode: A1=249 A2=665 B=1096 both-accept=18690 both-accept-checker-grammar=878 both-reject=2352
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=249 A2=665 B=1096 both-accept=18690 both-accept-checker-grammar=878 both-reject=2352
+  inputs, as .tsx (loader tsx): A1=854 B=1028 both-accept=19125 both-reject=2923
+  inputs, as .d.ts (loader ts): A1=914 B=1096 both-accept=19568 both-reject=2352
+  records whose class depends on the context: 160
+    kw.any.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.unknown.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.never.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.void.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.null.dot: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept-checker-grammar tparam=B prop=B mparam=B mret=B
+    kw.null.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept-checker-grammar tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.undefined.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept-checker-grammar tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.object.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.number.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.string.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.boolean.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.bigint.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.symbol.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    kw.this.dot: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    kw.this.targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.plus: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.negneg: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=A1 tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.neg-str: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.neg-ident: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.neg-true: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.neg-paren: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    lit.regex: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.targ-trailing-comma: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=both-accept-checker-grammar as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    ref.targ-empty: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=both-accept-checker-grammar as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    ref.targ-only-comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.targ-double-comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.targ-missing-close: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.targ-targ: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.newline-before-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    ref.targ-shift-eq: alias=both-reject var=both-accept param=both-accept ret=both-reject arrowp=both-accept arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-reject tparam=both-reject prop=both-accept mparam=both-accept mret=both-reject
+    word.intrinsic.targs: alias=B prop=both-accept
+    query.newline-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.number: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.string: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.paren: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.call: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.typeof-typeof: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.optional-chain: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    query.import-targs: alias=A1 var=A1 param=A1 ret=A1 arrowp=A1 arrowr=A1 as=both-accept satis=both-accept angle=A1 targ=both-accept tparam=A1 prop=A1 mparam=A1 mret=A1
+    import.template: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    import.targs-no-qualifier: alias=A1 var=A1 param=A1 ret=A1 arrowp=A1 arrowr=A1 as=both-accept satis=both-accept angle=A1 targ=both-accept tparam=A1 prop=A1 mparam=A1 mret=A1
+    import.with-trailing-comma: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    import.options-other-key: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    import.options-not-object: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    import.with-number-key: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    import.with-computed-key: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    import.trailing-comma-no-options: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    import.three-arguments: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=A2 tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    import.type-argument: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    import.type-argument-union: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    import.type-argument-number: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    import.meta: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    import.newline-before-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tuple.only-comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tuple.leading-comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tuple.double-comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tuple.named-missing-type: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tuple.rest-missing: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    postfix.index-two: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    postfix.newline-array: alias=both-accept var=both-accept param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-reject tparam=both-reject prop=A2 mparam=both-reject mret=both-reject
+    postfix.newline-index: alias=both-accept var=both-accept param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-accept mparam=both-reject mret=both-reject
+    postfix.bang-prefix: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    postfix.question: alias=A2 var=A2 param=A2 ret=both-reject arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-reject
+    postfix.array-question: alias=A2 var=A2 param=A2 ret=both-reject arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-reject
+    postfix.question-question-prefix: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-reject tparam=both-reject prop=A2 mparam=A2 mret=A2
+    postfix.union-question: alias=A2 var=A2 param=A2 ret=both-reject arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-reject
+    postfix.question-alone: alias=both-reject var=both-reject param=A2 ret=both-reject arrowp=A2 arrowr=both-reject as=both-reject satis=both-reject angle=A2 targ=A2 tparam=A2 prop=both-reject mparam=A2 mret=both-reject
+    postfix.question-postfix-fn-return: alias=A2 var=A2 param=A2 ret=both-reject arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-reject
+    postfix.question-postfix-keyof: alias=A2 var=A2 param=A2 ret=both-reject arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-reject
+    op.keyof-missing: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    op.keyof-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.keyof-dot: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.readonly-missing: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    op.readonly-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.readonly-dot: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.unique-paren: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=A2 targ=both-accept-checker-grammar tparam=A2 prop=A2 mparam=A2 mret=A2
+    op.infer-missing: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.infer-targs: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.infer-targs-only: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    op.infer-dot: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    set.logical-or: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    set.logical-and: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    set.trailing-bar: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    set.trailing-amp: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    set.only-bar: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    set.only-amp: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    cond.true-fn: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=B targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    cond.true-fn-conditional: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=B targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    cond.false-fn: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=B targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    cond.false-fn-union: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=B targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    cond.missing-true: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    cond.missing-extends-type: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    cond.missing-colon-type: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    cond.question-only: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    pred.is: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.is-union: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.is-conditional: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.is-fn: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.is-missing: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    pred.is-newline-after: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.is-keyword-parameter: alias=B var=B param=B ret=both-accept-checker-grammar arrowp=B arrowr=both-accept-checker-grammar as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept-checker-grammar
+    pred.is-array: alias=B var=B param=B ret=both-accept arrowp=B arrowr=both-accept as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=both-accept
+    pred.asserts: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-is: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-is-union: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-is-conditional: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-is-missing: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    pred.asserts-newline: alias=both-accept var=both-accept param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-accept mparam=both-reject mret=both-reject
+    pred.asserts-is-newline: alias=A2 var=A2 param=A2 ret=A1 arrowp=A2 arrowr=A1 as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=A1
+    pred.asserts-keyword: alias=A2 var=A2 param=A2 ret=both-accept-checker-grammar arrowp=A2 arrowr=both-accept-checker-grammar as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept-checker-grammar
+    pred.asserts-keyword-is: alias=A2 var=A2 param=A2 ret=both-accept-checker-grammar arrowp=A2 arrowr=both-accept-checker-grammar as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept-checker-grammar
+    pred.asserts-is-direct: alias=B var=B param=B ret=A2 arrowp=B arrowr=A2 as=B satis=B angle=B targ=B tparam=B prop=B mparam=B mret=A2
+    pred.asserts-is-is: alias=A2 var=A2 param=A2 ret=B arrowp=A2 arrowr=B as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=B
+    pred.asserts-dotted: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    pred.asserts-paren: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    pred.asserts-in-union: alias=A2 var=A2 param=A2 ret=both-accept-checker-grammar arrowp=A2 arrowr=both-accept-checker-grammar as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept-checker-grammar
+    pred.this-is-missing: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    pred.asserts-this: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-this-is: alias=A2 var=A2 param=A2 ret=both-accept arrowp=A2 arrowr=both-accept as=A2 satis=A2 angle=A2 targ=A2 tparam=A2 prop=A2 mparam=A2 mret=both-accept
+    pred.asserts-this-dot: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=both-reject tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    tpl.empty: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tpl.comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tpl.tagged-like: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    tpl.tagged-like-head: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    paren.name: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.keyword: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.this: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.tuple: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.object: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.object-empty: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.empty: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    paren.comma: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    paren.newline-inside: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.dot-after: alias=B var=B param=B ret=B arrowp=B arrowr=B as=B satis=B angle=B targ=both-accept tparam=B prop=B mparam=B mret=B
+    paren.targs-after: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=B satis=B angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    paren.object-pattern-like: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.array-pattern-like: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-accept targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    paren.name-equals-no-arrow: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    paren.modifier-only: alias=both-accept-checker-grammar var=both-accept-checker-grammar param=both-accept-checker-grammar ret=both-accept-checker-grammar arrowp=both-accept-checker-grammar arrowr=both-reject as=both-accept-checker-grammar satis=both-accept-checker-grammar angle=both-accept-checker-grammar targ=both-accept-checker-grammar tparam=both-accept-checker-grammar prop=both-accept-checker-grammar mparam=both-accept-checker-grammar mret=both-accept-checker-grammar
+    broken.empty: alias=both-reject var=both-reject param=both-reject ret=B arrowp=both-reject arrowr=B as=both-reject satis=both-reject angle=both-reject targ=both-accept-checker-grammar tparam=both-reject prop=both-reject mparam=both-reject mret=B
+    broken.comma: alias=both-reject var=both-accept param=both-accept ret=both-reject arrowp=both-accept arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-accept prop=both-reject mparam=both-accept mret=both-reject
+    broken.hash: alias=A1 var=A1 param=A1 ret=A1 arrowp=A1 arrowr=A1 as=A1 satis=A1 angle=A1 targ=A2 tparam=A2 prop=A1 mparam=A1 mret=A1
+    broken.class-expression: alias=both-reject var=both-reject param=both-reject ret=A2 arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.function-expression: alias=both-reject var=both-reject param=both-reject ret=A2 arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.new-expression: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.call: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.string-concat: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.await-name: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept-checker-grammar tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.void-name: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.delete-name: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept-checker-grammar tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.tilde-name: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.plus-plus: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=both-accept tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    broken.super-dot: alias=A1 var=A1 param=A1 ret=A1 arrowp=A1 arrowr=A1 as=A1 satis=A1 angle=A1 targ=A1 tparam=A2 prop=A1 mparam=A1 mret=A1
+    broken.new-target: alias=both-reject var=both-reject param=both-reject ret=both-reject arrowp=both-reject arrowr=both-reject as=both-reject satis=both-reject angle=both-reject targ=B tparam=both-reject prop=both-reject mparam=both-reject mret=both-reject
+    m.shape.pred-is: alias=B prop=B mparam=B mret=both-accept
+    m.shape.pred-is-union: alias=B prop=B mparam=B mret=both-accept
+    m.shape.pred-asserts: alias=A2 prop=A1 mparam=A1 mret=both-accept
+    m.shape.pred-asserts-is: alias=A2 prop=A1 mparam=A1 mret=both-accept
+    m.shape.pred-asserts-this: alias=A2 prop=A1 mparam=A1 mret=both-accept
+    m.shape.pred-asserts-this-is: alias=A2 prop=A1 mparam=A1 mret=both-accept
+02-object-types-interfaces-aliases-mapped: 765 records, 1142 inputs, 13.1s
+  records (whole files, and types as "type X = T;"): A1=22 A2=45 B=47 both-accept=425 both-accept-checker-grammar=80 both-reject=146
+  inputs, primary mode: A1=26 A2=62 B=75 both-accept=654 both-accept-checker-grammar=118 both-reject=207
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=26 A2=62 B=75 both-accept=654 both-accept-checker-grammar=118 both-reject=207
+  inputs, as .tsx (loader tsx): A1=60 A2=28 B=75 both-accept=730 both-accept-checker-grammar=42 both-reject=207
+  inputs, as .d.ts (loader ts): A1=60 A2=28 B=75 both-accept=715 both-accept-checker-grammar=57 both-reject=207
+  records whose class depends on the context: 0
+03-function-and-constructor-types: 1416 records, 2460 inputs, 27.4s
+  records (whole files, and types as "type X = T;"): A1=75 A2=123 B=18 both-accept=689 both-accept-checker-grammar=102 both-reject=409
+  inputs, primary mode: A1=197 A2=188 B=54 both-accept=1207 both-accept-checker-grammar=184 both-reject=630
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=197 A2=188 B=54 both-accept=1207 both-accept-checker-grammar=184 both-reject=630
+  inputs, as .tsx (loader tsx): A1=295 A2=81 B=52 both-accept=1308 both-accept-checker-grammar=56 both-reject=668
+  inputs, as .d.ts (loader ts): A1=279 A2=106 B=54 both-accept=892 both-accept-checker-grammar=499 both-reject=630
+  records whose class depends on the context: 5
+    sigctx.022: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    sigctx.023: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    sigctx.024: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+    sigctx.025: alias=A2 var=A2 param=A2 ret=A2 arrowp=A2 arrowr=A2 as=A2 satis=A2 angle=both-reject targ=A2 tparam=A2 prop=A2 mparam=A2 mret=A2
+    sigctx.026: alias=both-accept var=both-accept param=both-accept ret=both-accept arrowp=both-accept arrowr=both-accept as=both-accept satis=both-accept angle=both-reject targ=both-accept tparam=both-accept prop=both-accept mparam=both-accept mret=both-accept
+04-type-parameters-and-arguments: 5641 records, 5641 inputs, 131.1s
+  records (whole files, and types as "type X = T;"): A1=74 A2=610 B=184 both-accept=2857 both-accept-checker-grammar=249 both-reject=1667
+  inputs, primary mode: A1=74 A2=610 B=184 both-accept=2857 both-accept-checker-grammar=249 both-reject=1667
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=74 A2=608 B=190 both-accept=2857 both-accept-checker-grammar=251 both-reject=1661
+  inputs, as .tsx (loader tsx): A1=72 A2=577 B=168 both-accept=2787 both-accept-checker-grammar=234 both-reject=1803
+  inputs, as .d.ts (loader ts): A1=19 A2=662 B=185 both-accept=775 both-accept-checker-grammar=2298 both-reject=1702
+  records whose class depends on the context: 0
+05-assertions-instantiation-arrows: 2207 records, 2207 inputs, 64.9s
+  records (whole files, and types as "type X = T;"): A1=58 A2=86 B=83 both-accept=1420 both-accept-checker-grammar=147 both-reject=413
+  inputs, primary mode: A1=58 A2=86 B=83 both-accept=1420 both-accept-checker-grammar=147 both-reject=413
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=58 A2=86 B=83 both-accept=1418 both-accept-checker-grammar=149 both-reject=413
+  inputs, as .tsx (loader tsx): A1=37 A2=64 B=61 both-accept=1112 both-accept-checker-grammar=117 both-reject=816
+  inputs, as .d.ts (loader ts): A2=147 B=89 both-accept=9 both-accept-checker-grammar=1607 both-reject=355
+  records whose class depends on the context: 0
+06-class-members-modifiers-overloads: 2158 records, 2158 inputs, 125.0s
+  records (whole files, and types as "type X = T;"): A1=62 A2=201 B=41 both-accept=1176 both-accept-checker-grammar=476 both-reject=202
+  inputs, primary mode: A1=62 A2=201 B=41 both-accept=1176 both-accept-checker-grammar=476 both-reject=202
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=110 A2=215 B=41 both-accept=1128 both-accept-checker-grammar=462 both-reject=202
+  inputs, as .tsx (loader tsx): A1=62 A2=201 B=41 both-accept=1171 both-accept-checker-grammar=472 both-reject=211
+  inputs, as .d.ts (loader ts): A1=1 A2=262 B=41 both-accept=205 both-accept-checker-grammar=1447 both-reject=202
+  records whose class depends on the context: 0
+07-module-syntax: 739 records, 739 inputs, 17.2s
+  records (whole files, and types as "type X = T;"): A1=10 A2=24 B=5 both-accept=383 both-accept-checker-grammar=131 both-reject=186
+  inputs, primary mode: A1=10 A2=24 B=5 both-accept=383 both-accept-checker-grammar=131 both-reject=186
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=10 A2=24 B=5 both-accept=383 both-accept-checker-grammar=131 both-reject=186
+  inputs, as .tsx (loader tsx): A1=10 A2=24 B=5 both-accept=378 both-accept-checker-grammar=129 both-reject=193
+  inputs, as .d.ts (loader ts): A1=10 A2=24 B=5 both-accept=425 both-accept-checker-grammar=89 both-reject=186
+  records whose class depends on the context: 0
+08-declare-namespace-enum-ambient: 950 records, 950 inputs, 31.7s
+  records (whole files, and types as "type X = T;"): A1=32 A2=67 B=8 both-accept=528 both-accept-checker-grammar=141 both-reject=174
+  inputs, primary mode: A1=32 A2=67 B=8 both-accept=528 both-accept-checker-grammar=141 both-reject=174
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=33 A2=67 B=8 both-accept=527 both-accept-checker-grammar=141 both-reject=174
+  inputs, as .tsx (loader tsx): A1=32 A2=67 B=8 both-accept=525 both-accept-checker-grammar=140 both-reject=178
+  inputs, as .d.ts (loader ts): A1=3 A2=96 B=8 both-accept=144 both-accept-checker-grammar=525 both-reject=174
+  records whose class depends on the context: 0
+09-decorators: 956 records, 956 inputs, 35.4s
+  records (whole files, and types as "type X = T;"): A1=5 A2=218 B=9 both-accept=398 both-accept-checker-grammar=165 both-reject=161
+  inputs, primary mode: A1=5 A2=218 B=9 both-accept=398 both-accept-checker-grammar=165 both-reject=161
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=16 A2=68 B=32 both-accept=478 both-accept-checker-grammar=224 both-reject=138
+  inputs, as .tsx (loader tsx): A1=5 A2=218 B=9 both-accept=392 both-accept-checker-grammar=163 both-reject=169
+  inputs, as .d.ts (loader ts): A1=1 A2=222 B=9 both-accept=15 both-accept-checker-grammar=548 both-reject=161
+  records whose class depends on the context: 0
+10-declaration-files: 375 records, 375 inputs, 11.5s
+  records (whole files, and types as "type X = T;"): A1=13 A2=8 B=6 both-accept=264 both-accept-checker-grammar=73 both-reject=11
+  inputs, primary mode: A1=13 A2=8 B=6 both-accept=264 both-accept-checker-grammar=73 both-reject=11
+  inputs, experimentalDecorators + emitDecoratorMetadata on both sides: A1=15 A2=8 B=6 both-accept=262 both-accept-checker-grammar=73 both-reject=11
+  inputs, as .tsx (loader tsx): A1=2 A2=19 B=6 both-accept=310 both-accept-checker-grammar=26 both-reject=12
+  inputs, as .d.ts (loader ts): A1=13 A2=8 B=6 both-accept=217 both-accept-checker-grammar=120 both-reject=11
+  records whose class depends on the context: 0
+
+decorator metadata, verdict of every compared input: DIFF=2710 n/a=1526 same=7945 same-as-loose-only=1085 same-as-strict-only=78
+A1 inputs for which the checker of tsc reports a code outside the grammar ranges that is not about names or types: 218 records, 382 inputs, codes TS2331=1 TS2332=1 TS2357=1 TS2369=76 TS2371=148 TS2452=6 TS2462=14 TS2499=13 TS2500=52 TS2660=6 TS2680=2 TS2730=17 TS2842=6 TS2858=1 TS5086=28 TS5087=14 TS7061=2
+test candidates (every row fails on the probed bun): 01-type-forms=2640 02-object-types-interfaces-aliases-mapped=17 03-function-and-constructor-types=126 04-type-parameters-and-arguments=65 05-assertions-instantiation-arrows=46 06-class-members-modifiers-overloads=44 08-declare-namespace-enum-ambient=2 10-declaration-files=1

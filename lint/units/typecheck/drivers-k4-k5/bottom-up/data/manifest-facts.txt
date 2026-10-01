@@ -1,0 +1,64 @@
+instances 12797 with an error baseline (used > 0) 7027
+distinct lib sets 56
+   10750   19 libs  last=lib.decorators.legacy.d.ts  first=lib.es6.d.ts
+     544   93 libs  last=lib.esnext.full.d.ts  first=lib.es5.d.ts
+     530   63 libs  last=lib.es2022.full.d.ts  first=lib.es5.d.ts
+     315   87 libs  last=lib.decorators.legacy.d.ts  first=lib.es5.d.ts
+     104    3 libs  last=lib.decorators.legacy.d.ts  first=lib.es5.d.ts
+     103   30 libs  last=lib.es2017.full.d.ts  first=lib.es5.d.ts
+      88   13 libs  last=lib.decorators.legacy.d.ts  first=lib.es5.d.ts
+      87    4 libs  last=lib.decorators.legacy.d.ts  first=lib.es5.d.ts
+      66   51 libs  last=lib.es2020.full.d.ts  first=lib.es5.d.ts
+      25   88 libs  last=lib.decorators.legacy.d.ts  first=lib.es5.d.ts
+      22   56 libs  last=lib.es2021.full.d.ts  first=lib.es5.d.ts
+      21   82 libs  last=lib.es2025.full.d.ts  first=lib.es5.d.ts
+no lib file at all 9
+non-lib files per instance: [(0, 2), (1, 10639), (2, 1254), (3, 513), (4, 149), (5, 66), (6, 38), (7, 23), (8, 14), (9, 40), (10, 14), (11, 4)] max 51
+program non-lib files equal the roots in order: 11860; same set in another order: 248; files beyond the roots: 668; roots that are not in the program: 21
+  reordered examples: ['conformance/intersectionsAndEmptyObjects.ts', 'conformance/requireOfESWithPropertyAccess.ts', 'conformance/moduleExportAlias.ts', 'conformance/constructorFunctions2.ts', 'conformance/commonJSImportExportedClassExpression.ts', 'conformance/commonJSImportClassTypeReference.ts', 'conformance/commonJSImportNestedClassTypeReference.ts', 'conformance/declarationFileForJsonImport(resolvejsonmodule=false).ts']
+  extra examples: ['conformance/importTypeNestedNoRef.ts', 'conformance/contextuallyTypedStringLiteralsInJsxAttributes02.tsx', 'conformance/typeFromPropertyAssignment17.ts', 'conformance/varRequireFromTypescript.ts', 'conformance/varRequireFromJavascript.ts', 'conformance/typeFromPropertyAssignment37.ts', 'conformance/typeFromPropertyAssignment19.ts', 'conformance/sourceFileMergeWithFunction.ts']
+instances with a module name to resolve: 1858; with a resolved one: 1858; with an unresolved one: 0; with an external library import: 322; with a package id: 127; modes {99: 2649, 1: 3222}
+implied node format of non-lib files {1: 16540, 99: 849, 0: 66} package.json type {'': 16843, 'module': 499, 'commonjs': 113}
+instances with a file whose package.json type is set 296
+instances with a jsx runtime import 57 with an importHelpers import 73
+script kinds of non-lib files (1 JS, 2 JSX, 3 TS, 4 TSX, 6 JSON) {3: 15512, 1: 1367, 4: 498, 6: 66, 2: 12}
+instances with a JS or JSX file 939 with a JSON file 52
+instances with a file from an external library (node_modules) 173
+  config       instances      6 diagnostics      34
+  program      instances    147 diagnostics     181
+  syntactic    instances    691 diagnostics    3055
+  bind         instances    359 diagnostics    1338
+  semantic     instances   6604 diagnostics   36891
+  include      instances     29 diagnostics      33
+  global       instances     16 diagnostics      87
+  declaration  instances     48 diagnostics     222
+  suggestion   instances      1 diagnostics      36
+instances with an error baseline 7027 of which every diagnostic comes from the parser, the binder or the checker: 6798
+  with program diagnostics 147 config 6 include 29 declaration 48 suggestion 1
+instances without an error baseline 5770
+pre != post count 0 []
+program diagnostic codes [(5055, 35), (5110, 25), (6504, 24), (5102, 23), (2209, 10), (5056, 8), (6054, 7), (5053, 6), (5069, 6), (5052, 5), (5090, 5), (2210, 4), (5095, 4), (5109, 4), (2688, 4), (5067, 2), (5009, 2), (5059, 1), (5096, 1), (6379, 1), (18035, 1), (5091, 1), (5074, 1), (5011, 1)]
+include processor diagnostic codes [(6053, 24), (2688, 6), (1006, 2), (6231, 1)]
+config diagnostic codes [(5023, 28), (6046, 4), (5024, 2)]
+global diagnostic codes [(2318, 86), (2468, 1)]
+declaration diagnostic codes [(9007, 36), (9010, 27), (9038, 25), (9012, 21), (2883, 15), (4094, 14), (9011, 12), (9013, 11), (9023, 10), (9020, 7), (9008, 6), (2527, 5), (4023, 4), (7056, 4), (9009, 3), (9022, 3), (9015, 2), (9017, 2), (4025, 2), (4118, 2)]
+  option target: [('2', 11216), ('99', 706), ('9', 559), ('4', 120), ('7', 80), ('5', 41), ('8', 22), ('12', 22), ('6', 16), ('3', 9), ('10', 4), ('11', 2)]
+  option module: [('5', 9741), ('1', 1468), ('99', 811), ('7', 184), ('199', 158), ('102', 103), ('101', 100), ('100', 100), ('6', 92), ('200', 40)]
+  option moduleResolution: [('100', 12315), ('3', 305), ('99', 177)]
+  option moduleDetection: [('1', 12331), ('3', 460), ('2', 6)]
+  option jsx: [('0', 12386), ('1', 203), ('3', 154), ('4', 33), ('5', 19), ('2', 2)]
+  option noLib: [('0', 12786), ('2', 9), ('1', 2)]
+  option skipLibCheck: [('0', 12673), ('2', 118), ('1', 6)]
+  option skipDefaultLibCheck: [('2', 12789), ('1', 8)]
+  option noCheck: [('0', 12794), ('2', 3)]
+  option declaration: [('false', 11224), ('true', 1573)]
+  option noEmit: [('0', 11806), ('2', 988), ('1', 3)]
+  option isolatedModules: [('false', 12719), ('true', 78)]
+  option checkJs: [('0', 12004), ('2', 782), ('1', 11)]
+  option allowJs: [('false', 11830), ('true', 967)]
+  option pretty: [('0', 12783), ('2', 14)]
+  option importHelpers: [('0', 12723), ('2', 74)]
+  option noResolve: [('0', 12793), ('2', 4)]
+  option incremental: [('0', 12790), ('2', 6), ('1', 1)]
+  option composite: [('0', 12789), ('2', 8)]
+  option lib set: 706 types set: 28

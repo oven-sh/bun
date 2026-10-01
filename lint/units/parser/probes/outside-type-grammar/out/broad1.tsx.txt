@@ -1,0 +1,587 @@
+AA  "export default interface I {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+RR  "export default interface {}"
+     bun: Expected identifier but found "{" @25 | Expected "{" but found "}" @26 | Unexpected end of file @27
+     tsc parse: TS1003@25+1 Identifier expected.
+AA  "export default\ninterface I {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export default interface\nI {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export default abstract class C {}"
+     bun: ok "export default class C {\n}\n"
+     tsc emit: "export default class C {\n}\n"
+AA  "export default abstract\nclass C {}"
+     bun: ok "export default abstract;\n\nclass C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default abstract;\nclass C {\n}\n"
+RR  "export default enum E {}"
+     bun: Unexpected enum @15
+     tsc parse: TS1109@15+4 Expression expected.
+RR  "export default type T = 1;"
+     bun: Expected ";" but found "T" @20 | Unexpected = @22
+     tsc parse: TS1005@20+1 ';' expected.
+RR  "export default namespace N {}"
+     bun: Expected ";" but found "N" @25
+     tsc parse: TS1005@25+1 ';' expected.
+RR  "export default declare class C {}"
+     bun: Expected ";" but found "class" @23 | Expected ";" but found "{" @31 | Unexpected } @32
+     tsc parse: TS1005@23+5 ';' expected.
+RR  "export default declare function f(): void;"
+     bun: Expected ";" but found "function" @23 | Expected ";" but found ":" @35 | Unexpected ; @41
+     tsc parse: TS1005@23+8 ';' expected.
+AAg "export default function f(): void;"
+     bun: ok ""
+     tsc check: TS2391@24+1 Function implementation is missing or not immediately following the declaration.
+     tsc emit: "export {};\n"
+AAg "export default function (): void;"
+     bun: ok ""
+     tsc check: TS2391@0+6 Function implementation is missing or not immediately following the declaration.
+     tsc emit: "export {};\n"
+AAg "export default async function f(): Promise<void>;"
+     bun: ok ""
+     tsc check: TS2391@30+1 Function implementation is missing or not immediately following the declaration. ; (noise 2583)
+     tsc emit: "export {};\n"
+AA  "export default class C<T> {}"
+     bun: ok "export default class C {\n}\n"
+     tsc emit: "export default class C {\n}\n"
+AA  "export default class<T> {}"
+     bun: ok "export default class {\n}\n"
+     tsc emit: "export default class {\n}\n"
+AA  "export default function<T>() {}"
+     bun: ok "export default function input_default() {}\n"
+     tsc emit: "export default function () { }\n"
+RR  "export default <T>(x: T) => x;"
+     bun: Syntax Error @18
+     tsc parse: TS1382@26+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@16+1 JSX element 'T' has no corresponding closing tag. ; TS1005@30+0 '</' expected.
+RR  "export default async <T>(x: T) => x;"
+     bun: Expected ")" but found ":" @26 | Expected ";" but found "T" @28 | Unexpected ) @29
+     tsc parse: TS1005@26+1 ',' expected. ; TS1005@31+2 ';' expected.
+AA  "export default x as any;"
+     bun: ok "export default x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default x;\n"
+AA  "export default x!;"
+     bun: ok "export default x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default x;\n"
+RR  "export default <any>x;"
+     bun: Syntax Error @20
+     tsc parse: TS17008@16+3 JSX element 'any' has no corresponding closing tag. ; TS1005@22+0 '</' expected.
+AA  "export default x satisfies any;"
+     bun: ok "export default x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default x;\n"
+AA  "export default abstract;"
+     bun: ok "export default abstract;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default abstract;\n"
+AA  "export default declare;"
+     bun: ok "export default declare;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default declare;\n"
+AA  "export default type;"
+     bun: ok "export default type;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default type;\n"
+RR  "export default interface;"
+     bun: Expected identifier but found ";" @24 | Expected "{" but found end of file @25
+     tsc parse: TS1003@24+1 Identifier expected.
+AA  "export default namespace;"
+     bun: ok "export default namespace;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default namespace;\n"
+AA  "export default module;"
+     bun: ok "export default module;\n"
+     tsc check: (noise 2591)
+     tsc emit: "export default module;\n"
+AA  "export default global;"
+     bun: ok "export default global;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default global;\n"
+AA  "export default async;"
+     bun: ok "export default async;\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default async;\n"
+RR  "export declare default class C {}"
+     bun: Unexpected default @15
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1005@15+7 'export' expected.
+AA  "export interface I {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export\ninterface I {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+RR  "export interface\nI {}"
+     bun: Unexpected "interface" @7
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1434@17+1 Unexpected keyword or identifier.
+RR  "export type\nT = 1;"
+     bun: Unexpected newline after "type" @11
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+RR  "export namespace\nN {}"
+     bun: Expected ";" but found "{" @19 | Unexpected } @20
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1434@17+1 Unexpected keyword or identifier.
+B  "export abstract\nclass C {}"
+     bun: ok "abstract;\n\nclass C {\n}\n"
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+RR  "export declare\nconst x: number;"
+     bun: The constant "x" must be initialized @21
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+AA  "export declare function f(): void; export declare function f(a: number): void;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AAg "export async function f(): Promise<void>;"
+     bun: ok ""
+     tsc check: TS2391@22+1 Function implementation is missing or not immediately following the declaration. ; (noise 2583)
+     tsc emit: "export {};\n"
+AAg "export function f(): void;"
+     bun: ok ""
+     tsc check: TS2391@16+1 Function implementation is missing or not immediately following the declaration.
+     tsc emit: "export {};\n"
+AA  "export function f(): void; export function f() {}"
+     bun: ok "export function f() {}\n"
+     tsc emit: "export function f() { }\n"
+A2  "export const x: number;"
+     bun: The constant "x" must be initialized @13
+     tsc check: TS1155@13+1 'const' declarations must be initialized.
+     tsc emit: "export const x;\n"
+AA  "export let x: number;"
+     bun: ok "export let x;\n"
+     tsc emit: "export let x;\n"
+AA  "export var x: number;"
+     bun: ok "export var x;\n"
+     tsc emit: "export var x;\n"
+AA  "export const enum E {}"
+     bun: ok "export var E;\n((E) => {})(E ||= {});\n"
+     tsc emit: "export var E;\n(function (E) {\n})(E || (E = {}));\n"
+AA  "export declare const enum E {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export const x = 1 as const;"
+     bun: ok "export const x = 1;\n"
+     tsc emit: "export const x = 1;\n"
+AA  "export enum\nE {}"
+     bun: ok "export var E;\n((E) => {})(E ||= {});\n"
+     tsc emit: "export var E;\n(function (E) {\n})(E || (E = {}));\n"
+AA  "export class C implements I {}"
+     bun: ok "export class C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "export class C {\n}\n"
+A2  "export public class C {}"
+     bun: Unexpected public @7
+     tsc check: TS1044@7+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "export class C {\n}\n"
+A2  "export private class C {}"
+     bun: Unexpected private @7
+     tsc check: TS1044@7+7 'private' modifier cannot appear on a module or namespace element.
+     tsc emit: "export class C {\n}\n"
+A2  "export static class C {}"
+     bun: Unexpected static @7
+     tsc check: TS1044@7+6 'static' modifier cannot appear on a module or namespace element.
+     tsc emit: "export static class C {\n}\n"
+A2  "export readonly class C {}"
+     bun: Unexpected readonly @7
+     tsc check: TS1024@7+8 'readonly' modifier can only appear on a property declaration or index signature.
+     tsc emit: "export class C {\n}\n"
+A2  "export async class C {}"
+     bun: Expected "function" but found "class" @13 | Expected "(" but found "{" @21 | Expected identifier but found "}" @22 | Expected ")" but found end of file @23
+     tsc check: TS1042@7+5 'async' modifier cannot be used here.
+     tsc emit: "export async class C {\n}\n"
+A2  "export accessor class C {}"
+     bun: Unexpected accessor @7
+     tsc check: TS1275@7+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "export accessor class C {\n}\n"
+RR  "export override class C {}"
+     bun: Unexpected override @7
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1434@7+8 Unexpected keyword or identifier.
+A2  "export export class C {}"
+     bun: Unexpected export @7
+     tsc check: TS1030@7+6 'export' modifier already seen.
+     tsc emit: "export export class C {\n}\n"
+RR  "export default default class C {}"
+     bun: Unexpected default @15
+     tsc parse: TS1109@15+7 Expression expected.
+RR  "export in class C {}"
+     bun: Unexpected in @7
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1109@7+2 Expression expected.
+RR  "export out class C {}"
+     bun: Unexpected out @7
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1434@7+3 Unexpected keyword or identifier.
+RR  "export const class C {}"
+     bun: Expected identifier but found "class" @13 | Expected ";" but found "C" @19 | This constant must be initialized @13
+     tsc parse: TS1389@13+5 'class' is not allowed as a variable declaration name.
+A2  "public class C {}"
+     bun: Expected ";" but found "class" @7 | Expected ";" but found "{" @15 | Unexpected } @16
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "private class C {}"
+     bun: Expected ";" but found "class" @8 | Expected ";" but found "{" @16 | Unexpected } @17
+     tsc check: TS1044@0+7 'private' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "protected class C {}"
+     bun: Expected ";" but found "class" @10 | Expected ";" but found "{" @18 | Unexpected } @19
+     tsc check: TS1044@0+9 'protected' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "static class C {}"
+     bun: Expected ";" but found "class" @7 | Expected ";" but found "{" @15 | Unexpected } @16
+     tsc check: TS1044@0+6 'static' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nstatic class C {\n}\n"
+A2  "readonly class C {}"
+     bun: Expected ";" but found "class" @9 | Expected ";" but found "{" @17 | Unexpected } @18
+     tsc check: TS1024@0+8 'readonly' modifier can only appear on a property declaration or index signature.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+RR  "override class C {}"
+     bun: Expected ";" but found "class" @9 | Expected ";" but found "{" @17 | Unexpected } @18
+     tsc parse: TS1434@0+8 Unexpected keyword or identifier.
+A2  "accessor class C {}"
+     bun: Expected ";" but found "class" @9 | Expected ";" but found "{" @17 | Unexpected } @18
+     tsc check: TS1275@0+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "\"use strict\";\naccessor class C {\n}\n"
+A2  "async class C {}"
+     bun: Expected ";" but found "class" @6 | Expected ";" but found "{" @14 | Unexpected } @15
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nasync class C {\n}\n"
+A2  "public function f() {}"
+     bun: Expected ";" but found "function" @7 | Expected ";" but found "{" @20 | Unexpected } @21
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+A2  "public const x = 1;"
+     bun: Expected ";" but found "const" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nconst x = 1;\n"
+A2  "public var x = 1;"
+     bun: Expected ";" but found "var" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nvar x = 1;\n"
+A2  "public let x = 1;"
+     bun: Expected ";" but found "let" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nlet x = 1;\n"
+A2  "public enum E {}"
+     bun: Expected ";" but found "enum" @7 | Expected ";" but found "{" @14 | Unexpected } @15
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n})(E || (E = {}));\n"
+A2  "public interface I {}"
+     bun: Expected ";" but found "interface" @7 | Expected ";" but found "{" @19 | Unexpected } @20
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\n"
+A2  "public type T = 1;"
+     bun: Expected ";" but found "type" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\n"
+A2  "public namespace N {}"
+     bun: Expected ";" but found "namespace" @7 | Expected ";" but found "{" @19 | Unexpected } @20
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\n"
+A2  "public import x = y;"
+     bun: Expected ";" but found "import" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element. ; (noise 2503)
+     tsc emit: "\"use strict\";\nvar x = y;\n"
+A2  "public export const x = 1;"
+     bun: Expected ";" but found "export" @7
+     tsc check: TS1044@0+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "export const x = 1;\n"
+RR  "public x = 1;"
+     bun: Expected ";" but found "x" @7 | Unexpected = @9
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+AAg "public;"
+     bun: ok "public;\n"
+     tsc check: TS1212@0+6 Identifier expected. 'public' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\npublic;\n"
+AAg "public\nclass C {}"
+     bun: ok "public;\n\nclass C {\n}\n"
+     tsc check: TS1212@0+6 Identifier expected. 'public' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\npublic;\nclass C {\n}\n"
+A2  "static function f() {}"
+     bun: Expected ";" but found "function" @7 | Expected ";" but found "{" @20 | Unexpected } @21
+     tsc check: TS1044@0+6 'static' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nstatic function f() { }\n"
+RR  "static x;"
+     bun: Expected ";" but found "x" @7
+     tsc parse: TS1128@0+6 Declaration or statement expected.
+AAg "static;"
+     bun: ok "static;\n"
+     tsc check: TS1212@0+6 Identifier expected. 'static' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\nstatic;\n"
+AAg "static\nclass C {}"
+     bun: ok "static;\n\nclass C {\n}\n"
+     tsc check: TS1044@0+6 'static' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\nstatic class C {\n}\n"
+RR  "readonly x = 1;"
+     bun: Expected ";" but found "x" @9 | Unexpected = @11
+     tsc parse: TS1128@0+8 Declaration or statement expected.
+RR  "accessor x = 1;"
+     bun: Expected ";" but found "x" @9 | Unexpected = @11
+     tsc parse: TS1128@0+8 Declaration or statement expected.
+RR  "override x = 1;"
+     bun: Expected ";" but found "x" @9 | Unexpected = @11
+     tsc parse: TS1434@0+8 Unexpected keyword or identifier.
+A2  "async interface I {}"
+     bun: Expected ";" but found "interface" @6 | Expected ";" but found "{" @18 | Unexpected } @19
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\n"
+A2  "async type T = 1;"
+     bun: Expected ";" but found "type" @6
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\n"
+A2  "async enum E {}"
+     bun: Expected ";" but found "enum" @6 | Expected ";" but found "{" @13 | Unexpected } @14
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nasync var E;\n(function (E) {\n})(E || (E = {}));\n"
+A2  "async namespace N {}"
+     bun: Expected ";" but found "namespace" @6 | Expected ";" but found "{" @18 | Unexpected } @19
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\n"
+A2  "async const x = 1;"
+     bun: Expected ";" but found "const" @6
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nasync const x = 1;\n"
+A2  "async var x = 1;"
+     bun: Expected ";" but found "var" @6
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nasync var x = 1;\n"
+A2  "async class C {}"
+     bun: Expected ";" but found "class" @6 | Expected ";" but found "{" @14 | Unexpected } @15
+     tsc check: TS1042@0+5 'async' modifier cannot be used here.
+     tsc emit: "\"use strict\";\nasync class C {\n}\n"
+A2  "async declare class C {}"
+     bun: Expected ";" but found "declare" @6
+     tsc check: TS1040@6+7 'async' modifier cannot be used in an ambient context.
+     tsc emit: "\"use strict\";\n"
+A2  "declare async class C {}"
+     bun: Expected ";" but found "class" @14 | Unexpected "async" @8
+     tsc check: TS1040@8+5 'async' modifier cannot be used in an ambient context.
+     tsc emit: "\"use strict\";\n"
+A2  "declare public class C {}"
+     bun: Expected ";" but found "class" @15 | Unexpected "public" @8
+     tsc check: TS1044@8+6 'public' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\n"
+A2  "declare static class C {}"
+     bun: Expected ";" but found "class" @15 | Unexpected "static" @8
+     tsc check: TS1044@8+6 'static' modifier cannot appear on a module or namespace element.
+     tsc emit: "\"use strict\";\n"
+RR  "declare readonly x: number;"
+     bun: Expected ";" but found "x" @17 | Unexpected "readonly" @8
+     tsc parse: TS1128@8+8 Declaration or statement expected.
+RR  "declare accessor x: number;"
+     bun: Expected ";" but found "x" @17 | Unexpected "accessor" @8
+     tsc parse: TS1128@8+8 Declaration or statement expected.
+RR  "declare override x: number;"
+     bun: Expected ";" but found "x" @17 | Unexpected "override" @8
+     tsc parse: TS1434@8+8 Unexpected keyword or identifier.
+AAg "declare export class C {}"
+     bun: ok ""
+     tsc check: TS1029@8+6 'export' modifier must precede 'declare' modifier.
+     tsc emit: "export {};\n"
+A2  "declare export default class C {}"
+     bun: Unexpected "export" @8
+     tsc check: TS1029@8+6 'export' modifier must precede 'declare' modifier.
+     tsc emit: "export {};\n"
+A2  "declare export = x;"
+     bun: Unexpected "export" @8
+     tsc check: TS1120@0+7 An export assignment cannot have modifiers. ; (noise 2304)
+     tsc emit: "export {};\n"
+AAg "declare export as namespace X;"
+     bun: ok ""
+     tsc check: TS1184@0+30 Modifiers cannot appear here. ; TS1314@0+30 Global module exports may only appear in module files.
+     tsc emit: "\"use strict\";\n"
+A2  "declare export { a };"
+     bun: Unexpected "export" @8
+     tsc check: TS1193@0+7 An export declaration cannot have modifiers. ; (noise 2304)
+     tsc emit: "export { a };\n"
+A2  "declare export * from \"x\";"
+     bun: Unexpected "export" @8
+     tsc check: TS1193@0+7 An export declaration cannot have modifiers. ; (noise 2307)
+     tsc emit: "declare export * from \"x\";\n"
+AAg "declare import x = y;"
+     bun: ok ""
+     tsc check: TS1079@0+7 A 'declare' modifier cannot be used with an import declaration. ; (noise 2503)
+     tsc emit: "\"use strict\";\nvar x = y;\n"
+RR  "declare default class C {}"
+     bun: Unexpected default @8
+     tsc parse: TS1005@8+7 'export' expected.
+AAg "declare function f() {}"
+     bun: ok ""
+     tsc check: TS1183@21+1 An implementation cannot be declared in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare class C { m() {} }"
+     bun: ok ""
+     tsc check: TS1183@22+1 An implementation cannot be declared in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AA  "declare const x = 1;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare let x = 1;"
+     bun: ok ""
+     tsc check: TS1039@16+1 Initializers are not allowed in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare var x = 1;"
+     bun: ok ""
+     tsc check: TS1039@16+1 Initializers are not allowed in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AA  "declare const x;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare namespace N { const x = 1; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { function f() {} }"
+     bun: ok ""
+     tsc check: TS1183@35+1 An implementation cannot be declared in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { class C { m() {} } }"
+     bun: ok ""
+     tsc check: TS1183@36+1 An implementation cannot be declared in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { export default 1; }"
+     bun: ok ""
+     tsc check: TS1319@22+17 A default export can only be used in an ECMAScript-style module.
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { x; }"
+     bun: ok ""
+     tsc check: TS1036@22+1 Statements are not allowed in ambient contexts. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { if (a) {} }"
+     bun: ok ""
+     tsc check: TS1036@22+2 Statements are not allowed in ambient contexts. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "declare namespace N { return; }"
+     bun: A return statement cannot be used here @22
+     tsc check: TS1036@22+6 Statements are not allowed in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare module \"m\" { x; }"
+     bun: ok ""
+     tsc check: TS1036@21+1 Statements are not allowed in ambient contexts. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AAg "declare module \"m\" { export default 1; }"
+     bun: ok ""
+     tsc check: TS2714@36+1 The expression of an export assignment must be an identifier or qualified name in an ambient context.
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { export = x; }"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { import a from \"b\"; export * from \"c\"; }"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "\"use strict\";\n"
+AAg "declare module \"m\" { function f() {} }"
+     bun: ok ""
+     tsc check: TS1183@34+1 An implementation cannot be declared in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare enum E { A = f() }"
+     bun: ok ""
+     tsc check: TS1066@21+3 In ambient enum declarations member initializer must be constant expression. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "declare abstract class C { abstract m(): void; n(): void; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { static { } }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { constructor(); constructor(a: number); }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { get x(): number; set x(v: number); }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare class C { x = 1; }"
+     bun: ok ""
+     tsc check: TS1039@22+1 Initializers are not allowed in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare class C { x: number = 1; }"
+     bun: ok ""
+     tsc check: TS1039@30+1 Initializers are not allowed in ambient contexts.
+     tsc emit: "\"use strict\";\n"
+AAg "declare class C { async m(): Promise<void>; }"
+     bun: ok ""
+     tsc check: TS1040@18+5 'async' modifier cannot be used in an ambient context. ; (noise 2583)
+     tsc emit: "\"use strict\";\n"
+AAg "declare class C { *m(): void; }"
+     bun: ok ""
+     tsc check: TS1221@18+1 Generators are not allowed in an ambient context.
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { declare x: number; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { accessor x: number; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { #x: number; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { [k: string]: number; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { m?(): void; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C { static m(): void; static n: number; }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C extends B implements I {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C<T> extends B<T> {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f<T>(a: T): T;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(a?: number, ...b: string[]): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare function f(a = 1): void;"
+     bun: ok ""
+     tsc check: TS2371@19+5 A parameter initializer is only allowed in a function or constructor implementation.
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f({ a }: any): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare function f({ a } = {}): void;"
+     bun: ok ""
+     tsc check: TS2371@19+10 A parameter initializer is only allowed in a function or constructor implementation. ; TS2339@21+1 Property 'a' does not exist on type '{}'.
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(this: any): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(a: number, ): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(): asserts this;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(x: any): x is string;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(x: any): asserts x is string;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(x: any): asserts x;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function\nf(): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare function f(): void\ndeclare function g(): void"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let x: number, y: string;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let { a }: any;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let [a]: any;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare const x: unique symbol;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare var x;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"

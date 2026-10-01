@@ -1,0 +1,28 @@
+--- /workspace/ref/typescript-go/internal/testrunner/compiler_runner.go	2026-09-29 15:16:34.744424270 +0000
++++ internal/testrunner/compiler_runner.go	2026-09-29 19:12:27.910586221 +0000
+@@ -213,14 +213,17 @@
+ 	harnessutil.SkipUnsupportedCompilerOptions(t, compilerTest.options)
+ 
+ 	compilerTest.verifyDiagnostics(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifyContentMapper(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifyJavaScriptOutput(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifySourceMapOutput(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifySourceMapRecord(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifyTypesAndSymbols(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifyModuleResolution(t, r.testSuitName, r.isSubmodule)
+-	compilerTest.verifyUnionOrdering(t)
+-	compilerTest.verifyParentPointers(t)
++	compilerTest.probeEmitOrder(t, r.testSuitName)
++	if os.Getenv("OE_PROBE_ALL") != "" {
++		compilerTest.verifyContentMapper(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifyJavaScriptOutput(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifySourceMapOutput(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifySourceMapRecord(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifyTypesAndSymbols(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifyModuleResolution(t, r.testSuitName, r.isSubmodule)
++		compilerTest.verifyUnionOrdering(t)
++		compilerTest.verifyParentPointers(t)
++	}
+ }
+ 
+ type compilerFileBasedTest struct {

@@ -1,0 +1,383 @@
+class A1c  dialect ts  config plain: 853 inputs in 68 clusters
+
+[01-type-forms / core]  bun Unexpected …   (21 inputs, 1 distinct)
+    tsc also: TS2304 x21
+    "if"  [satisfies,cast,method,fnTypeRet,tupleNamed,indexSig,mapped,unionLeft,…]
+
+[01-type-forms / fn]  bun Expected "…" but found "…"   (7 inputs, 2 distinct)
+    tsc also: TS2304 x7, TS7006 x6, TS7031 x1, TS2322 x1, TS2564 x1
+    "([a, , b]) => void"  [callArg]
+    "(a) => asserts a\nis B"  [alias,param,arrowRet,callArg,as,field]
+
+[01-type-forms / fn]  bun Unexpected …   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS7006 x1, TS2322 x1, TS2304 x1, TS2564 x1
+    "([a, , b]) => void"  [alias,param,arrowRet,as,field]
+
+[01-type-forms / import]  bun Expected "…" but found "…"   (26 inputs, 5 distinct)
+    tsc also: TS2307 x26, TS7006 x5, TS2304 x2
+    "import(\"x\")<T>"  [alias,var,param,ret,arrowParam,arrowRet,field,typeArg,…]
+    "import(\"x\", { with: { a: \"b\" } })<T>"  [alias,var,param,ret,arrowParam,arrowRet,field,typeArg,…]
+    "import(\"x\", { with: { a: \"b\" + \"c\" } })"  [arrowRet,fnTypeParam]
+    "import(\"x\").#a"  [arrowRet,fnTypeParam]
+    "import(\"x\").A.<T>"  [arrowRet,fnTypeParam]
+
+[01-type-forms / import]  bun Expected identifier but found "…"   (22 inputs, 2 distinct)
+    tsc also: TS2307 x22, TS2304 x6
+    "import(\"x\").#a"  [alias,var,param,ret,arrowParam,as,callArg,field,…]
+    "import(\"x\").A.<T>"  [alias,var,param,ret,arrowParam,as,callArg,field,…]
+
+[01-type-forms / import]  bun Unexpected …   (12 inputs, 3 distinct)
+    tsc also: TS2307 x12, TS2304 x2
+    "import(\"x\")<T>"  [member]
+    "import(\"x\", { with: { a: \"b\" } })<T>"  [member]
+    "import(\"x\", { with: { a: \"b\" + \"c\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]
+
+[01-type-forms / label]  bun Unexpected …   (32 inputs, 15 distinct)
+    tsc also: TS2304 x32, TS7006 x1
+    "[...const: A[]]"  [alias,param,arrowRet,callArg]
+    "[...in: A[]]"  [alias,param]
+    "[...class: A[]]"  [alias,param]
+    "[...if: A[]]"  [alias,param]
+    "[...var: A[]]"  [alias,param]
+    "[...default: A[]]"  [alias,param]
+    "[...delete: A[]]"  [alias,param]
+    "[...enum: A[]]"  [alias,param]
+    "[...export: A[]]"  [alias,param]
+    "[...extends: A[]]"  [alias,param]
+    "[...super: A[]]"  [alias,param]
+    "[...switch: A[]]"  [alias,param]
+    … 3 more
+
+[01-type-forms / op]  bun Expected "…" but found "…"   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3, TS7006 x1
+    "keyof if"  [arrowRet,callArg,fnTypeParam]
+
+[01-type-forms / op]  bun Unexpected …   (10 inputs, 1 distinct)
+    tsc also: TS2304 x10, TS2564 x1
+    "keyof if"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]
+
+[01-type-forms / paren]  bun Expected "…" but found "…"   (4 inputs, 2 distinct)
+    tsc also: TS2304 x4, TS7006 x2
+    "(if)"  [arrowRet,fnTypeParam]
+    "(class)"  [arrowRet,fnTypeParam]
+
+[01-type-forms / paren]  bun Unexpected …   (16 inputs, 2 distinct)
+    tsc also: TS2304 x16
+    "(if)"  [alias,var,param,ret,arrowParam,as,field,member]
+    "(class)"  [alias,var,param,ret,arrowParam,as,field,member]
+
+[01-type-forms / pred]  bun Expected "…" but found "…"   (3 inputs, 2 distinct)
+    tsc also: TS2304 x3, TS7006 x2, TS2322 x2
+    "asserts a\nis B"  [arrowRet]
+    "asserts this\nis B"  [ret,arrowRet]
+
+[01-type-forms / query]  bun Expected "…" but found "…"   (12 inputs, 2 distinct)
+    tsc also: TS2307 x10, TS2304 x3, TS7006 x2
+    "typeof #a"  [arrowRet,fnTypeParam]
+    "typeof import(\"x\")<C>"  [alias,var,param,ret,arrowParam,arrowRet,field,typeArg,…]
+
+[01-type-forms / query]  bun Expected identifier but found "…"   (10 inputs, 1 distinct)
+    tsc also: TS2304 x10
+    "typeof #a"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]
+
+[01-type-forms / query]  bun Unexpected …   (2 inputs, 2 distinct)
+    tsc also: TS2304 x1, TS2307 x1
+    "typeof #a"  [callArg]
+    "typeof import(\"x\")<C>"  [member]
+
+[01-type-forms / ref]  bun Expected "…" but found "…"   (60 inputs, 29 distinct)
+    tsc also: TS2304 x58, TS7006 x29, TS2503 x2
+    "if"  [arrowRet,fnTypeParam]
+    "class"  [arrowRet,fnTypeParam]
+    "function"  [arrowRet,callArg,fnTypeParam,tupleEl]
+    "delete"  [arrowRet,fnTypeParam]
+    "in"  [arrowRet,fnTypeParam]
+    "var"  [arrowRet,fnTypeParam]
+    "with"  [arrowRet,fnTypeParam]
+    "enum"  [arrowRet,fnTypeParam]
+    "default"  [arrowRet,fnTypeParam]
+    "super"  [arrowRet,fnTypeParam]
+    "instanceof"  [arrowRet,fnTypeParam]
+    "extends"  [arrowRet,fnTypeParam]
+    … 17 more
+
+[01-type-forms / ref]  bun Unexpected …   (233 inputs, 29 distinct)
+    tsc also: TS2304 x226, TS2503 x8
+    "if"  [alias,var,param,ret,arrowParam,as,field,member]
+    "class"  [alias,var,param,ret,arrowParam,as,field,member]
+    "function"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]
+    "delete"  [alias,var,param,ret,arrowParam,as,field,member]
+    "in"  [alias,var,param,ret,arrowParam,as,field,member]
+    "var"  [alias,var,param,ret,arrowParam,as,field,member]
+    "with"  [alias,var,param,ret,arrowParam,as,field,member]
+    "enum"  [alias,var,param,ret,arrowParam,as,field,member]
+    "default"  [alias,var,param,ret,arrowParam,as,field,member]
+    "super"  [alias,var,param,ret,arrowParam,as,field,member]
+    "instanceof"  [alias,var,param,ret,arrowParam,as,field,member]
+    "extends"  [alias,var,param,ret,arrowParam,as,field,member]
+    … 17 more
+
+[01-type-forms / tmpl]  bun Expected "…" but found "…"   (2 inputs, 1 distinct)
+    tsc also: TS2304 x2, TS7006 x1, TS2322 x1
+    "`${if}`"  [arrowRet,fnTypeParam]
+
+[01-type-forms / tmpl]  bun Unexpected …   (11 inputs, 1 distinct)
+    tsc also: TS2304 x11, TS2564 x1
+    "`${if}`"  [alias,var,param,ret,arrowParam,as,callArg,field,…]
+
+[01-type-forms / union]  bun Expected "…" but found "…"   (7 inputs, 3 distinct)
+    tsc also: TS2304 x7, TS7006 x3
+    "| if"  [arrowRet,fnTypeParam]
+    "A | if"  [arrowRet,fnTypeParam]
+    "A & class"  [arrowRet,callArg,fnTypeParam]
+
+[01-type-forms / union]  bun Unexpected …   (32 inputs, 3 distinct)
+    tsc also: TS2304 x32
+    "| if"  [alias,var,param,ret,arrowParam,as,callArg,field,…]
+    "A | if"  [alias,var,param,ret,arrowParam,as,callArg,field,…]
+    "A & class"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]
+
+[02-object-types / aliasName]  bun Expected "…" but found "…"   (2 inputs, 2 distinct)
+    "as"  [aliasGeneric]
+    "satisfies"  [aliasGeneric]
+
+[02-object-types / aliasName]  bun Unexpected …   (4 inputs, 2 distinct)
+    "as"  [alias,declareAlias]
+    "satisfies"  [alias,declareAlias]
+
+[02-object-types / ifaceName]  bun Expected "…" but found "…"   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "as"  [ifaceGeneric]
+    "satisfies"  [ifaceGeneric]
+
+[02-object-types / ifaceName]  bun Expected identifier but found end of file   (8 inputs, 2 distinct)
+    "as"  [iface,exportIface,declareIface,exportDefaultIface]
+    "satisfies"  [iface,exportIface,declareIface,exportDefaultIface]
+
+[02-object-types / member]  bun Unexpected …   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "get #a(): A"  [typeLit,iface,varLit]
+
+[03-signatures / arrowSig]  bun Cannot use "…" here   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x2
+    "{ await }"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+
+[03-signatures / arrowSig]  bun Unexpected …   (20 inputs, 4 distinct)
+    tsc also: TS2304 x11, TS7031 x10, TS7006 x5
+    "[await]"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "{ a: await }"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "await"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "await: A"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+
+[03-signatures / declSig]  bun Expected "…" but found "…"   (4 inputs, 2 distinct)
+    tsc also: TS7019 x2, TS2304 x2
+    "...a,"  [declareMethod,declareCtor]
+    "...a: A[],"  [declareMethod,declareCtor]
+
+[03-signatures / memberSig]  bun Backtrack   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x1
+    "[a, , b]"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"   (2 inputs, 1 distinct)
+    tsc also: TS7031 x2, TS2304 x1, TS2322 x1
+    "[a, , b]"  [fnTypeAsArg,fnTypeArrowRet]
+
+[03-signatures / typeSig]  bun Unexpected …   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x3
+    "[a, , b]"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+
+[04-type-params-args / targsExpr]  bun Unexpected …   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "<A"  [instImport]
+
+[04-type-params-args / tparams]  bun The modifier "…" is not valid here   (48 inputs, 3 distinct)
+    tsc also: TS2304 x22, TS2318 x3
+    "<out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<out = A>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+    "<const out>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,method,staticMethod,…]
+
+[04-type-params-args / tparamsArrow]  bun The modifier "…" is not valid here   (19 inputs, 4 distinct)
+    tsc also: TS2304 x13, TS7006 x3, TS2318 x3
+    "<out>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt,cast,castParen]
+    "<out = A>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]
+    "<const out>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]
+    "<in>"  [cast,castParen]
+
+[04-type-params-args / tparamsArrow]  bun Unexpected …   (6 inputs, 3 distinct)
+    tsc also: TS2304 x6
+    "<if>"  [cast,castParen]
+    "<class>"  [cast,castParen]
+    "<enum>"  [cast,castParen]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"   (6 inputs, 2 distinct)
+    tsc also: TS2304 x6, TS7006 x1
+    "(): if => x"  [init,stmt,arg,condTrue,condFalse]
+    "a ? ((b)) : c => d"  [condTrue]
+
+[05-assertions / arrow]  bun Unexpected …   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5
+    "a ? (await) : b"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / as]  bun Unexpected …   (15 inputs, 3 distinct)
+    tsc also: TS2304 x15
+    "x as if"  [init,stmt,arg,element,return]
+    "x as var"  [init,stmt,arg,element,return]
+    "x as T <= y"  [init,stmt,arg,element,return]
+
+[05-assertions / cast]  bun The modifier "…" is not valid here   (25 inputs, 7 distinct)
+    tsc also: TS2304 x21, TS7006 x9
+    "<out>x"  [init,stmt,arg,operand]
+    "<in>x"  [init,stmt,arg,operand]
+    "<out>(x)"  [init,stmt,arg,operand]
+    "<in>(x)"  [init,stmt,arg,operand]
+    "<out>(x) => x"  [init,stmt,arg]
+    "<out, T>(x) => x"  [init,stmt,arg]
+    "<out = A>(x) => x"  [init,stmt,arg]
+
+[05-assertions / cast]  bun Unexpected …   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "<if>x"  [init,stmt,arg,operand]
+
+[05-assertions / catch]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "try {} catch (e: any = 1) {}"  [-]
+
+[05-assertions / nonNull]  bun Expected identifier but found "…"   (3 inputs, 1 distinct)
+    tsc also: TS7017 x3, TS2304 x1
+    "this.#x!"  [stmt,init,arg]
+
+[06-class-members / classHead]  bun Cannot use "…" as an identifier here   (1 inputs, 1 distinct)
+    "class await {}"  [-]
+
+[06-class-members / classHead]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "abstract declare class C {}"  [-]
+
+[06-class-members / member]  bun Expected "…" but found "…"   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "[k: string]: T, "  [class,abstractClass,declareClass,classExpr]
+
+[06-class-members / member]  bun Unexpected …   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "[await: string]: T;"  [class,abstractClass,declareClass,classExpr]
+
+[07-module-syntax / attributes]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    tsc also: TS2318 x1, TS2307 x1
+    "import A from \"x\"\nwith { type: \"json\" };"  [-]
+
+[07-module-syntax / exportDecl]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "export abstract declare class C {}"  [-]
+
+[07-module-syntax / exportSpec]  bun Expected identifier but found "…"   (18 inputs, 15 distinct)
+    tsc also: TS2304 x16
+    "type default"  [exportLocal]
+    "type default as A"  [exportLocal]
+    "default as A"  [exportLocal,exportType]
+    "default"  [exportLocal]
+    "type \"a\""  [exportLocal]
+    "\"a\""  [exportLocal]
+    "type if"  [exportLocal]
+    "type if as A"  [exportLocal]
+    "if as A"  [exportLocal,exportType]
+    "if"  [exportLocal]
+    "type this"  [exportLocal]
+    "type null"  [exportLocal]
+    … 3 more
+
+[07-module-syntax / exportType]  bun Expected identifier but found "…"   (3 inputs, 3 distinct)
+    tsc also: TS2304 x2
+    "export type { default };"  [-]
+    "export type { \"a\" };"  [-]
+    "export type { if };"  [-]
+
+[07-module-syntax / importEquals]  bun Expected identifier but found "…"   (2 inputs, 2 distinct)
+    tsc also: TS2318 x2, TS2711 x1, TS2307 x1
+    "namespace N { import(\"x\"); }"  [-]
+    "namespace N { import.meta; }"  [-]
+
+[07-module-syntax / importSpec]  bun Cannot use "…" as an identifier here   (8 inputs, 2 distinct)
+    tsc also: TS2307 x8
+    "arguments"  [import,importWithDefault,importType,importTwo]
+    "eval"  [import,importWithDefault,importType,importTwo]
+
+[07-module-syntax / importType]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    tsc also: TS2318 x1, TS2711 x1, TS2307 x1
+    "import.defer(\"x\");"  [-]
+
+[07-module-syntax / importType]  bun Expected "…" but found "…"x"…"   (1 inputs, 1 distinct)
+    tsc also: TS2882 x1
+    "import defer \"x\";"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"   (2 inputs, 2 distinct)
+    tsc also: TS2304 x1
+    "abstract declare class C {}"  [-]
+    "declare global;"  [-]
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found end of file   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "declare global"  [-]
+
+[08-declare-namespace-enum / declare]  bun Unexpected …   (26 inputs, 26 distinct)
+    tsc also: TS2304 x26, TS2318 x3, TS2591 x2, TS2697 x1, TS2711 x1, TS2307 x1
+    "declare abstract\nclass C {}"  [-]
+    "declare namespace;"  [-]
+    "declare module;"  [-]
+    "declare module"  [-]
+    "declare x;"  [-]
+    "declare x: T;"  [-]
+    "declare 1;"  [-]
+    "declare \"s\";"  [-]
+    "declare"  [-]
+    "declare as any"  [-]
+    "declare!"  [-]
+    "declare {}"  [-]
+    … 14 more
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" as an identifier here   (2 inputs, 1 distinct)
+    "await"  [declareClass,abstractClass]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" or "…" here.   (4 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "await"  [declareVar,declareConst,declareLet,varNamed]
+
+[08-declare-namespace-enum / declName]  bun Unexpected …   (10 inputs, 4 distinct)
+    tsc also: TS2304 x4, TS2591 x1
+    "as"  [namespaceDotted,namespaceBody,declareNamespace]
+    "satisfies"  [namespaceDotted,namespaceBody,declareNamespace]
+    "in"  [declareNamespace,declareModule]
+    "await"  [keywordAsStmt,keywordAssign]
+
+[08-declare-namespace-enum / enum]  bun Expected identifier but found "…"   (4 inputs, 4 distinct)
+    "enum E { [\"x\"] }"  [-]
+    "enum E { [\"x\"] = 1 }"  [-]
+    "enum E { ['x'] = 1, B = E.x }"  [-]
+    "enum E { [`x`] = 1 }"  [-]
+
+[09-decorators / classPos]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "export default @d abstract class C {}"  [-]
+
+[09-decorators / expr]  bun Expected "…" but found "…"   (5 inputs, 3 distinct)
+    tsc also: TS2304 x5
+    "@d()!"  [classDecl,classDeclNewline,classExpr]
+    "@d<T>(1)<U>"  [classDeclNewline]
+    "@d()<T>"  [classDeclNewline]
+
+[09-decorators / expr]  bun Expected identifier but found "…"   (8 inputs, 3 distinct)
+    tsc also: TS2304 x8, TS7008 x4
+    "@d()!"  [field,fieldNewline,method,computed,computedField,staticField]
+    "@d<T>(1)<U>"  [fieldNewline]
+    "@d()<T>"  [fieldNewline]
+
+[09-decorators / expr]  bun Private name "…" must be declared in an enclosing class   (18 inputs, 3 distinct)
+    tsc also: TS2304 x18, TS2339 x18, TS7008 x6
+    "@d.#e"  [field,fieldNewline,method,computed,computedField,staticField]
+    "@d.#e()"  [field,fieldNewline,method,computed,computedField,staticField]
+    "@d.e.#f"  [field,fieldNewline,method,computed,computedField,staticField]
+
+[09-decorators / otherPos]  bun Cannot use a declaration in a single-statement context   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "if (a) @d class C {}"  [-]
+    "for (;;) @d class C {}"  [-]
+
+[10-declaration-files / directive]  bun The constant "…" must be initialized   (2 inputs, 2 distinct)
+    "// @ts-ignore\nexport const x: T;"  [-]
+    "// @ts-expect-error\nexport const x: T;"  [-]

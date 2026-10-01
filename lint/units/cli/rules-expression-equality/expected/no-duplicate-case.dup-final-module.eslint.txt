@@ -1,0 +1,2 @@
+"switch (a) { case import.meta: break; case import.meta: break; }"  =>  1:39-1:63 no-duplicate-case "Duplicate case label."
+"switch (a) { case import.meta.url: break; case import.meta.url: break; }"  =>  1:43-1:71 no-duplicate-case "Duplicate case label."

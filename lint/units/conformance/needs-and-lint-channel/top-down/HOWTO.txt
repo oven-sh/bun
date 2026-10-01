@@ -1,0 +1,75 @@
+Research unit "needs-and-lint-channel", top-down pass, second edition (2026-09-30). Research only: no file of a
+worktree was changed, no git command that writes was run, and the notes were not saved with save-notes by this pass.
+
+NEEDS.draft.md   the draft of /workspace/notes/lint/units/conformance/NEEDS.md. To use it:
+                 cp NEEDS.draft.md /workspace/notes/lint/units/conformance/NEEDS.md
+                 The channel is proposal (d): BUN_INTERNAL_LINT_OPTIONS and BUN_INTERNAL_LINT_REPORT beside the operand
+                 form. The first edition chose the batch form (c); the reasons for the change are in section 1 of the draft.
+                 The bottom-up draft (../bottom-up/needs-draft.txt) chooses (d) too; ids and shapes are the same.
+probes/run.sh    recreates every count of the draft that comes from the corpus (about one minute):
+                 ./probes/run.sh /tmp/some-scratch-directory
+                 It reads the reference clones, the vectors of the earlier research units
+                 (enumerator-topdown, enumerator, instance-materialisation, error-baseline-format) and
+                 typecheck/diagnostics-groundtruth/data/msguse.tsv.gz.
+                 New in this edition: which_missing.ts (the run instance that the split vectors lack, so 72 + 1 = 73 with a
+                 configuration file), casedup.ts (2 run instances with unit directories that differ only by case),
+                 comment_variants.ts (comment runs under twelve definitions: 8,131 to 8,387 of 12,445; 8,238 is not among them).
+
+Measurements that run.sh does not repeat, with the commands (W = /workspace/wt/conformance, TS = the TypeScript clone,
+GO = /workspace/ref/typescript-go):
+
+1. Attributes of typecheck's fixtures (VN-1).
+   cd $W && git check-attr text eol -- test/cli/lint/typecheck/fixtures/a.ts        -> text: set, eol: lf   (.symbols, .errors.txt: unspecified)
+   git hash-object $TS/tests/cases/compiler/ExportAssignment7.ts                    -> 9c8b78da (76 bytes)
+   tr -d '\r' < that file | git hash-object --stdin                                 -> 6d7e2a43 (71 bytes): what git add stores there
+   Cases of typecheck's selection (units/typecheck/binder-port-and-fixtures/data/SELECTION.tsv, column 2): 215, with a CR: 158.
+
+2. test/tsconfig.json (RP-1). A tsconfig with the options of the test project and every 62nd .ts case as "files":
+   /workspace/bun/node_modules/.bin/tsc -p tsconfig.json --pretty false
+   195 files: 63 errors, all syntactic, in 14 files. Without those 14: 1,005 errors in 156 of 181 files.
+
+3. oxlint.json (RP-2). A copy of tests/cases/compiler at <scratch>/test/cli/lint/conformance/corpus/compiler, with
+   oxlint.json and scripts/oxlint-plugins/bun.js of $W beside it:
+   /workspace/bun/node_modules/.bin/oxlint --config oxlint.json --fix --quiet     -> "Found 0 warnings and 6966 errors."
+   diff -rq <copy> $TS/tests/cases/compiler | grep -c '^Files'                    -> 106
+
+4. Size and paths of the corpus (RP-6, CI-1), with the sync prototype of corpus-layout-and-sync (two minutes):
+   bash ../../corpus-layout-and-sync/top-down/prototype/validate.sh $W $GO $TS /tmp/some-scratch-directory
+   -> 22186 files, 32485872 bytes; bundle of the commit: 7737689 bytes; fresh clone size-pack 7.97 MiB;
+      ignored 1 (.gitignore:139 *.generated.ts), executable 2.
+   cd <scratch>/with && git ls-files | awk '{ if (length($0) > m) m = length($0) } END { print m }'   -> 200   (in $W: 159)
+
+5. The binaries run the operand: BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 <bun> --lint marker.ts prints what marker.ts prints,
+   with /workspace/bun/build/release/bun and with /workspace/wt/cli/build/debug/bun-debug (1.4.3-debug+e3566be88).
+
+6. The cost of one process of a real checker (section 1). /tmp/e2e/k4real is the command line of typescript-go built from
+   source by the typecheck research (units/typecheck/end-to-end-k4-k5/run.sh). In a directory with min.ts (const x: number = "s";):
+   time -p sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do /tmp/e2e/k4real min.ts --noEmit --skipDefaultLibCheck --noErrorTruncation --target es2015 >/dev/null; done'
+   -> user 0.97 sys 0.28 for ten runs (20 files). With "--target es2015 --lib es5" (4 files): user 0.14 sys 0.17. Without --target (83 files): user 0.95 sys 0.33.
+   The reference's suite in one process: /tmp/k4drv/k5/setup3.log, 12,797 instances between 00:11:36 and 00:12:36 (60 s), load average above 200.
+
+7. The references of the draft into the repository and the reference were read again at e3566be889 and 89d5d5b on 2026-09-30:
+   REVIEW.md:15; .claude/docs/landing-prs.md:48, :66, :67; src/bun_core/env_var.rs:45-50, :181, :277, :295;
+   src/bundler/bytecode_order.rs:63-71; src/jsc/BytecodeOrderRecorder.rs:67; scripts/runner.node.ts:2201-2206, :2492-2494,
+   :1316, :2818, :3018; scripts/buildkite.ts:436-465; .buildkite/ci.ts:1941-1943; scripts/rust-miri.ts:40-58;
+   .github/workflows/rust-lints.yml:76-96, :98-123; comment-cop.yml:38-47, :99; format.yml:30; test/harness.ts:66-95;
+   test/tsconfig.json:26-47; oxlint.json:40-74; .github/CODEOWNERS:2, :8, :9; .gitignore:36, :139; .gitattributes:1-20;
+   internal/testutil/harnessutil/harnessutil.go:41, :81-113, :144, :215, :239, :267-290, :292-317, :319-339, :493-530, :627-691, :698-699;
+   internal/execute/tsc.go:180-188, :269-281; internal/tsoptions/declscompiler.go:319; internal/tsoptions/parsinghelpers.go:268-282;
+   internal/compiler/program.go:1597-1634, :1939-1991; internal/ast/diagnostic.go:458-503; internal/diagnostics/diagnostics.go:152-159;
+   internal/testutil/tsbaseline/error_baseline.go:36-49; internal/bundled/generate.go:53-70.
+
+8. The prototype of the batch form of the first edition (bun test ./manifest.test.ts ./plain.test.ts in
+   check-contract-default-spawn/top-down: 23 pass) stays on disk. Its reader of D and its plain parser are what the
+   report file of (d) needs; its manifest writer and its resend logic are not used by (d).
+
+9. The runner side of (d) with a stand-in binary (probes/fake_report_lint.ts run by the release bun):
+   cd probes && bun report_roundtrip.ts /workspace/bun/build/release/bun 200 8
+   -> the options (881 bytes of JSON with a quote, a back slash, a space and non-ASCII letters in a path) come back equal
+      through the variable and the report file; an unknown option gives exit code 1 and its name on stderr;
+      200 instances: 49.5 ms each with 8 at a time, 432 ms each with 1 at a time (load average 350 to 550; the stand-in
+      starts a JavaScript machine, which a lint run does not).
+
+Not measured: anything on Windows or macOS (both Windows machines: "not available in this session"; no macOS machine);
+a real `bun --lint`; LeakSanitizer on the lint path; oxlint --fix on the conformance directory (only compiler was copied);
+the order and the limit of GitHub's file list of a pull request.

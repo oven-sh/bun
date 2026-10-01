@@ -1,0 +1,9353 @@
+{
+ "reference": "typescript-go 89d5d5b internal/parser",
+ "rows": {
+  "g01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g02": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g03": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g04": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g05": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g07": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1109@12+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1109@12+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g09": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g10": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g11": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@8+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@8+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g12": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g14": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g15": {
+   "a.js": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@3+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g16": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g17": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g19": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g21": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g22": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g24": {
+   "a.js": {
+    "parse": [
+     "TS1109@4+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1109@4+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1109@4+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1109@4+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g27": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g29": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g30": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g31": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g32": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g33": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g33b": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g34": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g36": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g37": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g39": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g42": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g43": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g44": {
+   "a.js": {
+    "parse": [
+     "TS1003@3+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1003@3+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1003@3+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1003@3+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g45": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g46": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g47": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g48": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g49": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "g50": {
+   "a.js": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1477@1+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1477@1+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c02": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c03": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c04": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c05": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c07": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c09": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c10": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c11": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c12": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c13": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c15": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c16": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c17": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c19": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c20": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c21": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c22": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c23": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c24": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "c25": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s03": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s04": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s05": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s07": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s09": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s10": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s11": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s12": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s13": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s14": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s18": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s19": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s20": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s21": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s22": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s24": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s25": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s29": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s32": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s33": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s34": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s35": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s36": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s37": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s38": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s39": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s40": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s41": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s42": {
+   "a.js": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [
+     "TS8006@5+-1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [
+     "TS8006@5+-1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [
+     "TS8006@5+-1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [
+     "TS8006@5+-1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1003@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s43": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "s44": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a02": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a03": {
+   "a.js": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@24+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a04": {
+   "a.js": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@29+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a05": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a07": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a10": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a12": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a14": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@10+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@10+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@10+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@10+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a15": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a16": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a19": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a21": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a23": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a24": {
+   "a.js": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [
+     "TS8010@14+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@26+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a25": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a26": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a27": {
+   "a.js": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [
+     "TS8010@23+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [
+     "TS8010@23+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [
+     "TS8010@23+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [
+     "TS8010@23+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@33+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a28": {
+   "a.js": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [
+     "TS8010@20+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [
+     "TS8010@20+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [
+     "TS8010@20+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [
+     "TS8010@20+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@30+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a30": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a31": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a32": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a33": {
+   "a.js": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [
+     "TS8010@16+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [
+     "TS8010@16+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [
+     "TS8010@16+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [
+     "TS8010@16+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@22+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a34": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a35": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a36": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a37": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a40": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a41": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a42": {
+   "a.js": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@36+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a43": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a44": {
+   "a.js": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [
+     "TS8010@28+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [
+     "TS8010@28+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [
+     "TS8010@28+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [
+     "TS8010@28+1 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@34+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a45": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "a46": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@14+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j02": {
+   "a.js": {
+    "parse": [
+     "TS1005@23+1",
+     "TS1005@24+2",
+     "TS1005@27+1",
+     "TS1109@28+0"
+    ],
+    "js": [
+     "TS8004@11+11 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@23+1",
+     "TS1005@24+2",
+     "TS1005@27+1",
+     "TS1109@28+0"
+    ],
+    "js": [
+     "TS8004@11+11 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@23+1",
+     "TS1005@24+2",
+     "TS1005@27+1",
+     "TS1109@28+0"
+    ],
+    "js": [
+     "TS8004@11+11 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@23+1",
+     "TS1005@24+2",
+     "TS1005@27+1",
+     "TS1109@28+0"
+    ],
+    "js": [
+     "TS8004@11+11 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@22+1",
+     "TS1161@25+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@23+1",
+     "TS1005@24+2",
+     "TS1005@27+1",
+     "TS1109@28+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j03": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1110@20+1",
+     "TS1161@23+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j04": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1110@20+1",
+     "TS1005@23+1",
+     "TS1005@24+1",
+     "TS1161@27+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j05": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@11+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@11+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@11+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@11+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@13+1",
+     "TS1005@14+1",
+     "TS1134@15+3",
+     "TS1161@29+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1161@25+5"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j11": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1161@15+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j12": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+1",
+     "TS1134@29+3",
+     "TS1109@46+1",
+     "TS1109@47+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j14": {
+   "a.js": {
+    "parse": [
+     "TS1003@12+1",
+     "TS1382@23+1",
+     "TS17008@13+1",
+     "TS1005@24+0",
+     "TS2657@10+14"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1003@12+1",
+     "TS1382@23+1",
+     "TS17008@13+1",
+     "TS1005@24+0",
+     "TS2657@10+14"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1003@12+1",
+     "TS1382@23+1",
+     "TS17008@13+1",
+     "TS1005@24+0",
+     "TS2657@10+14"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1003@12+1",
+     "TS1382@23+1",
+     "TS17008@13+1",
+     "TS1005@24+0",
+     "TS2657@10+14"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@16+1",
+     "TS1005@17+1",
+     "TS1134@18+3",
+     "TS1109@23+1",
+     "TS1109@24+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j15": {
+   "a.js": {
+    "parse": [
+     "TS1382@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1382@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1382@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1382@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1161@13+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1382@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j16": {
+   "a.js": {
+    "parse": [
+     "TS17008@11+1",
+     "TS1005@14+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS17008@11+1",
+     "TS1005@14+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS17008@11+1",
+     "TS1005@14+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS17008@11+1",
+     "TS1005@14+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS17008@11+1",
+     "TS1005@14+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j17": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@13+5",
+     "TS1134@18+1",
+     "TS1161@21+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j18": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1161@19+7"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "j19": {
+   "a.js": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+2",
+     "TS1005@31+1",
+     "TS1109@32+0"
+    ],
+    "js": [
+     "TS8004@11+15 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+2",
+     "TS1005@31+1",
+     "TS1109@32+0"
+    ],
+    "js": [
+     "TS8004@11+15 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+2",
+     "TS1005@31+1",
+     "TS1109@32+0"
+    ],
+    "js": [
+     "TS8004@11+15 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+2",
+     "TS1005@31+1",
+     "TS1109@32+0"
+    ],
+    "js": [
+     "TS8004@11+15 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@22+1",
+     "TS1134@23+3",
+     "TS1161@29+3"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1005@27+1",
+     "TS1005@28+2",
+     "TS1005@31+1",
+     "TS1109@32+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x01": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x02": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@15+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@24+4 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@15+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@24+4 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@15+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@24+4 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@15+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@24+4 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x03": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x04": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x05": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x06": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x06b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@7+1 'module' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@7+1 'module' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@7+1 'module' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@7+1 'module' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x07": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x08": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8013@0+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8013@0+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8013@0+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8013@0+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x08b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8016@5+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8016@5+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8016@5+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8016@5+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x08c": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8037@12+1 Type satisfaction expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8037@12+1 Type satisfaction expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8037@12+1 Type satisfaction expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8037@12+1 Type satisfaction expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x09": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8005@8+12 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8005@8+12 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8005@8+12 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8005@8+12 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x10": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@8+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@8+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@8+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@8+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x10b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@11+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@11+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@11+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@11+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x10c": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@5+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@5+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@5+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@5+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x11": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files.",
+     "TS8009@20+7 The 'private' modifier can only be used in TypeScript files.",
+     "TS8009@36+8 The 'readonly' modifier can only be used in TypeScript files.",
+     "TS8009@48+8 The 'override' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files.",
+     "TS8009@20+7 The 'private' modifier can only be used in TypeScript files.",
+     "TS8009@36+8 The 'readonly' modifier can only be used in TypeScript files.",
+     "TS8009@48+8 The 'override' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files.",
+     "TS8009@20+7 The 'private' modifier can only be used in TypeScript files.",
+     "TS8009@36+8 The 'readonly' modifier can only be used in TypeScript files.",
+     "TS8009@48+8 The 'override' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+6 The 'public' modifier can only be used in TypeScript files.",
+     "TS8009@20+7 The 'private' modifier can only be used in TypeScript files.",
+     "TS8009@36+8 The 'readonly' modifier can only be used in TypeScript files.",
+     "TS8009@48+8 The 'override' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x11b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@10+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@22+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@10+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@22+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@22+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@22+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x12": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8012@22+6 Parameter modifiers can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8012@22+6 Parameter modifiers can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8012@22+6 Parameter modifiers can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8012@22+6 Parameter modifiers can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x13": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@0+26 'import type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@0+26 'import type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+26 'import type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+26 'import type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x13b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@0+17 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@0+17 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+17 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+17 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x13c": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@9+6 'import...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@9+6 'import...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@9+6 'import...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@9+6 'import...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x13d": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@16+6 'export...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@16+6 'export...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@16+6 'export...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@16+6 'export...type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x14": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8002@0+23 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8002@0+23 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+23 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+23 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x14b": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8003@0+10 'export =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8003@0+10 'export =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8003@0+10 'export =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8003@0+10 'export =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x14c": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x15": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8017@0+13 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8017@0+13 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8017@0+13 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8017@0+13 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x16": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8017@10+4 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8017@10+4 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+4 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+4 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x18": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8011@18+1 Type arguments can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x19": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21b": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21c": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21d": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21e": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8038@12+5 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8038@12+5 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8038@12+5 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8038@12+5 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x21f": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x22": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@19+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@19+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@19+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@19+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x23": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@17+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x25": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x27": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@11+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@26+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@35+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@11+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@26+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@35+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@11+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@26+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@35+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@11+1 The '?' modifier can only be used in TypeScript files.",
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@26+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@35+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x28": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@11+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@11+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@11+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@11+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x28b": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x28c": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x29": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@25+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@25+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@25+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@25+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x31": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@32+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@32+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@32+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@14+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@32+5 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x32": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@21+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@21+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@21+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@21+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x33": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@22+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@15+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@22+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@15+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@22+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@15+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@22+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@15+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x34": {
+   "a.js": {
+    "parse": [
+     "TS17008@9+1",
+     "TS1005@12+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS17008@9+1",
+     "TS1005@12+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS17008@9+1",
+     "TS1005@12+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS17008@9+1",
+     "TS1005@12+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS17008@9+1",
+     "TS1005@12+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x35": {
+   "a.js": {
+    "parse": [
+     "TS1109@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1109@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1109@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1109@9+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x36": {
+   "a.js": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1109@5+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x37": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8016@13+5 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8016@13+5 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8016@13+5 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8016@13+5 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x38": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8017@10+19 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8017@10+19 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+19 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+19 Signature declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x39": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x40": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@7+18 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@7+18 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+18 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+18 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x50": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@8+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@8+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@8+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@8+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x51": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@10+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@10+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@10+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x52": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@22+6 Type annotations can only be used in TypeScript files.",
+     "TS8017@0+35 Signature declarations can only be used in TypeScript files.",
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@22+6 Type annotations can only be used in TypeScript files.",
+     "TS8017@0+35 Signature declarations can only be used in TypeScript files.",
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@22+6 Type annotations can only be used in TypeScript files.",
+     "TS8017@0+35 Signature declarations can only be used in TypeScript files.",
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@22+6 Type annotations can only be used in TypeScript files.",
+     "TS8017@0+35 Signature declarations can only be used in TypeScript files.",
+     "TS8009@0+7 The 'declare' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x53": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8009@12+1 The '?' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x54": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@24+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@24+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@24+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@24+3 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x55": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@19+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@48+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@19+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@48+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@19+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@48+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@19+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@48+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x56": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8017@10+14 Signature declarations can only be used in TypeScript files.",
+     "TS8010@40+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8017@10+14 Signature declarations can only be used in TypeScript files.",
+     "TS8010@40+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+14 Signature declarations can only be used in TypeScript files.",
+     "TS8010@40+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8017@10+14 Signature declarations can only be used in TypeScript files.",
+     "TS8010@40+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x57": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@21+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@21+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@21+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@21+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x58": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8010@30+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8010@30+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8010@30+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8010@30+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x59": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8013@10+2 Non-null assertions can only be used in TypeScript files.",
+     "TS8013@10+5 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8013@10+2 Non-null assertions can only be used in TypeScript files.",
+     "TS8013@10+5 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8013@10+2 Non-null assertions can only be used in TypeScript files.",
+     "TS8013@10+5 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8013@10+2 Non-null assertions can only be used in TypeScript files.",
+     "TS8013@10+5 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x61": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@0+23 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@24+28 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@53+23 'export type' declarations can only be used in TypeScript files.",
+     "TS8006@77+28 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@0+23 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@24+28 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@53+23 'export type' declarations can only be used in TypeScript files.",
+     "TS8006@77+28 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+23 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@24+28 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@53+23 'export type' declarations can only be used in TypeScript files.",
+     "TS8006@77+28 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@0+23 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@24+28 'import type' declarations can only be used in TypeScript files.",
+     "TS8006@53+23 'export type' declarations can only be used in TypeScript files.",
+     "TS8006@77+28 'export type' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x62": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8002@0+21 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8002@0+21 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+21 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+21 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x63": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8002@0+14 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8002@0+14 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+14 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8002@0+14 'import ... =' can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x64": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@24+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@7+7 The 'declare' modifier can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@24+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@7+7 The 'declare' modifier can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@24+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@7+7 The 'declare' modifier can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@24+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@7+7 The 'declare' modifier can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x65": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@14+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@12+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@14+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@12+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@14+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@12+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@14+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@12+1 'namespace' declarations can only be used in TypeScript files.",
+     "TS8006@10+1 'namespace' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x66": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@18+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@18+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@18+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@7+6 Type annotations can only be used in TypeScript files.",
+     "TS8010@18+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x67": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@12+6 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x69": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@8+8 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@8+8 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@8+8 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@8+8 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x70": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@15+11 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@15+11 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@15+11 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@15+11 Type annotations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x71": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x72": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS1206@0+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x73": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS1206@7+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS1206@7+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS1206@7+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS1206@7+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x74": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS1206@10+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS1206@10+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS1206@10+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS1206@10+4 Decorators are not valid here."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x75": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8037@16+1 Type satisfaction expressions can only be used in TypeScript files.",
+     "TS8016@21+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8037@16+1 Type satisfaction expressions can only be used in TypeScript files.",
+     "TS8016@21+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8037@16+1 Type satisfaction expressions can only be used in TypeScript files.",
+     "TS8016@21+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8037@16+1 Type satisfaction expressions can only be used in TypeScript files.",
+     "TS8016@21+1 Type assertion expressions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x76": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@34+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@51+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@34+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@51+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@34+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@51+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@5+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@34+1 'enum' declarations can only be used in TypeScript files.",
+     "TS8006@51+1 'enum' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x80": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8017@19+19 Signature declarations can only be used in TypeScript files.",
+     "TS8009@19+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8010@51+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8017@19+19 Signature declarations can only be used in TypeScript files.",
+     "TS8009@19+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8010@51+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8017@19+19 Signature declarations can only be used in TypeScript files.",
+     "TS8009@19+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8010@51+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8017@19+19 Signature declarations can only be used in TypeScript files.",
+     "TS8009@19+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8010@51+6 Type annotations can only be used in TypeScript files.",
+     "TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files.",
+     "TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x82": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8008@5+1 Type aliases can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x83": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8006@10+1 'interface' declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x84": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@11+7 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@11+7 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@11+7 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@23+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@11+7 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x85": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files.",
+     "TS8010@30+3 Type annotations can only be used in TypeScript files.",
+     "TS8010@36+8 Type annotations can only be used in TypeScript files.",
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files.",
+     "TS8010@30+3 Type annotations can only be used in TypeScript files.",
+     "TS8010@36+8 Type annotations can only be used in TypeScript files.",
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files.",
+     "TS8010@30+3 Type annotations can only be used in TypeScript files.",
+     "TS8010@36+8 Type annotations can only be used in TypeScript files.",
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@21+1 Type annotations can only be used in TypeScript files.",
+     "TS8010@30+3 Type annotations can only be used in TypeScript files.",
+     "TS8010@36+8 Type annotations can only be used in TypeScript files.",
+     "TS8004@12+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x86": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x87": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x88": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x89": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x90": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8010@31+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@25+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8010@31+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@25+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8010@31+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@25+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8010@31+1 Type annotations can only be used in TypeScript files.",
+     "TS8004@25+1 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x91": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8005@18+15 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8005@18+15 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8005@18+15 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8005@18+15 'implements' clauses can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x92": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8004@15+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@44+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@64+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8004@15+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@44+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@64+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8004@15+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@44+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@64+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8004@15+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@44+1 Type parameter declarations can only be used in TypeScript files.",
+     "TS8004@64+2 Type parameter declarations can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x93": {
+   "a.js": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@16+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@16+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@16+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@16+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1146@2+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@16+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x94": {
+   "a.js": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@18+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@18+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@18+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1146@2+0",
+     "TS17008@3+1",
+     "TS1005@18+0"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x95": {
+   "a.js": {
+    "parse": [],
+    "js": [
+     "TS8013@1+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [
+     "TS8013@1+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [
+     "TS8013@1+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [
+     "TS8013@1+2 Non-null assertions can only be used in TypeScript files."
+    ],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x96": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x97": {
+   "a.js": {
+    "parse": [
+     "TS1003@11+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1003@11+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1003@11+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1003@11+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "x98": {
+   "a.js": {
+    "parse": [
+     "TS1003@10+1",
+     "TS1382@15+1",
+     "TS17008@11+1",
+     "TS1005@16+0",
+     "TS2657@8+8"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [
+     "TS1003@10+1",
+     "TS1382@15+1",
+     "TS17008@11+1",
+     "TS1005@16+0",
+     "TS2657@8+8"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [
+     "TS1003@10+1",
+     "TS1382@15+1",
+     "TS17008@11+1",
+     "TS1005@16+0",
+     "TS2657@8+8"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [
+     "TS1003@10+1",
+     "TS1382@15+1",
+     "TS17008@11+1",
+     "TS1005@16+0",
+     "TS2657@8+8"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [
+     "TS1005@14+1"
+    ],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p01": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p02": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p03": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p04": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p05": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p06": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p07": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  },
+  "p08": {
+   "a.js": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.jsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.mjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.cjs": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.ts": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   },
+   "a.tsx": {
+    "parse": [],
+    "js": [],
+    "jsdoc": []
+   }
+  }
+ }
+}

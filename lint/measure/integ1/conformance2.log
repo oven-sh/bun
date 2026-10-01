@@ -1,0 +1,623 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/lint/conformance.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1129 |   });
+1130 | });
+1131 | 
+1132 | describe("expectations.json", () => {
+1133 |   const { formatExpectations, parseExpectations, sampleListed } = runner;
+1134 |   const text = readFileSync(join(home, "expectations.json"), "utf8");
+                      ^
+error: ENOENT: no such file or directory, open '/workspace/bun/test/cli/lint/conformance/expectations.json'
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1134:16)
+-------------------------------
+
+(pass) reference > the pinned answers are those of the commits that UPSTREAM names [26.34ms]
+(pass) reference > the corpus holds the cases, the baselines and the lists of the pinned commits [420.54ms]
+(pass) reference > the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped [2944.85ms]
+(pass) reference > the case and space tables are those of Go [1278.56ms]
+(pass) directives > the vectors of the reference parser [780.28ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:373:61)
+(fail) variations > 72 of the 126 declared options vary [6.02ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > no setting [4.44ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > one value [4.49ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > two values [2.11ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a value twice [1.78ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > one value by two names keeps the first name [1.50ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > the cross product, keys sorted in the name [1.74ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > the last occurrence wins [1.73ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value [1.49ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value but one [1.91ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > every value but one leaves nothing to vary [1.58ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a value that is taken out again [1.57ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > a name in upper case [6.79ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:400:12)
+(fail) variations > an option that does not vary [3.59ms]
+399 |   ] as [string, string, string[]][])("%s", (_label, text, want) => {
+400 |     expect(names(text).sort()).toEqual(want.slice().sort());
+401 |   });
+402 | 
+403 |   test("a set of variations that is empty stops the case", () => {
+404 |     expect(() => names("// @strict: -true, -false, *\n")).toThrow("resulted in an empty set");
+                                                                ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "resulted in an empty set"
+Received message: "getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)"
+
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:404:59)
+(fail) variations > a set of variations that is empty stops the case [13.61ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: getCompilerVaryByMap is not a function. (In 'getCompilerVaryByMap()', 'getCompilerVaryByMap' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at names (/workspace/bun/test/cli/lint/conformance.test.ts:370:67)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:409:18)
+(fail) variations > 25 variations are the most [9.85ms]
+(pass) enumerator > the sample holds cases of both suites [47.25ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [26.88ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [5.31ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [1.76ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [5.54ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [3.96ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [2.58ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [3.46ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [2.50ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:41)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:436:25)
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [3.53ms]
+439 |     },
+440 |   );
+441 | 
+442 |   test("45 cases are left out by name and 8 are run for their diagnostics alone", () => {
+443 |     const emitOnly = [...skippedEmitTests.keys()];
+444 |     expect({ leftOut: skippedTests.length, emitOnly: emitOnly.length }).toEqual({ leftOut: 45, emitOnly: 8 });
+                            ^
+TypeError: undefined is not an object (evaluating 'skippedTests.length')
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:444:23)
+(fail) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [11.96ms]
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+(pass) error baselines > the sample is 200 files of both tools, and holds the files in the pretty form [44.24ms]
+(pass) error baselines > read and written again, the bytes are the same: group 1 [1917.08ms]
+(pass) error baselines > read and written again, the bytes are the same: group 2 [158.37ms]
+(pass) error baselines > read and written again, the bytes are the same: group 3 [451.51ms]
+(pass) error baselines > read and written again, the bytes are the same: group 4 [1316.10ms]
+(pass) error baselines > read and written again, the bytes are the same: group 5 [471.03ms]
+(pass) error baselines > read and written again, the bytes are the same: group 6 [879.54ms]
+(pass) error baselines > read and written again, the bytes are the same: group 7 [635.11ms]
+(pass) error baselines > read and written again, the bytes are the same: group 8 [670.60ms]
+(pass) error baselines > read and written again, the bytes are the same: group 9 [741.50ms]
+(pass) error baselines > read and written again, the bytes are the same: group 10 [1843.63ms]
+(pass) error baselines > read and written again, the bytes are the same: group 11 [810.95ms]
+(pass) error baselines > read and written again, the bytes are the same: group 12 [391.77ms]
+(pass) run > the bytes of the baseline are the bytes of the oracle, or it is no pass [151.39ms]
+(pass) run > a check that reports nothing passes no instance with errors, and a diagnostic fails an instance without [17.19ms]
+(pass) run > the first section alone, which is all that the plain format holds, is reported apart and is never a pass [41.84ms]
+(pass) run > what is no list of diagnostics of the instance is no pass [25.55ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [13.76ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2 [2.20ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 3 [1.98ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4 [1.79ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5 [1.79ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6 [1.88ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:47)
+      at flatIntoArrayWithCallback (7:41)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:672:31)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:689:3)
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7 [2.21ms]
+687 |       for (const r of laid) seen[r.instance.oracle.class]++;
+688 |     },
+689 |   );
+690 | 
+691 |   test("the sample had instances with errors and without", () => {
+692 |     expect({ E: seen.E > 10, C: seen.C > 10 }).toEqual({ E: true, C: true });
+                                                     ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "C": true,
+-   "E": true,
++   "C": false,
++   "E": false,
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:692:48)
+(fail) run > the sample had instances with errors and without [4.41ms]
+(pass) expectations > the file has one form [21.66ms]
+(pass) expectations > a listed name that does not pass is a failure, and a name that passes enters and never leaves [36.49ms]
+(pass) expectations > the names that pass and are not listed are printed with the one command that adds them [5.51ms]
+(pass) expectations > a check that reports nothing adds no name: list C takes no more names of a directory than list E has [3.98ms]
+(pass) plain format > one located diagnostic [11.57ms]
+(pass) plain format > empty text is an empty list [1.79ms]
+(pass) plain format > a chain: two spaces per level, siblings and a way back up [13.25ms]
+(pass) plain format > a line that is deeper than one level below the line before keeps its spaces [5.80ms]
+(pass) plain format > names: spaces, parentheses, a drive, a line break of Windows [4.35ms]
+(pass) plain format > a line that starts with a category has no file [2.19ms]
+(pass) plain format > the code of a rule [2.82ms]
+(pass) plain format > a text with a crash report is refused whole [2.03ms]
+(pass) plain format > a text with a code frame is refused whole [0.61ms]
+(pass) plain format > a text with an empty line is refused whole [0.40ms]
+(pass) plain format > a text with a chain line first is refused whole [0.39ms]
+(pass) plain format > a text with one space is refused whole [0.39ms]
+(pass) plain format > a text with spaces only is refused whole [0.64ms]
+(pass) plain format > a text with no line break at the end is refused whole [0.26ms]
+(pass) plain format > a text with no code is refused whole [0.26ms]
+(pass) plain format > a text with a summary is refused whole [0.36ms]
+(pass) plain format > a text with line zero is refused whole [0.35ms]
+(pass) plain format > a text with an unknown category is refused whole [0.25ms]
+(pass) plain format > a text with a debug log is refused whole [0.32ms]
+69 |   return out;
+70 | }
+71 | 
+72 | function lazy<T>(make: () => T): () => T {
+73 |   let made: { value: T } | undefined;
+74 |   return () => (made ??= { value: make() }).value;
+                                       ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:893:30)
+(fail) plain format > the first section of the baselines of one of 250 cases is the plain format [76.57ms]
+(pass) default check > the probe: a command that is no file [240.57ms]
+(pass) default check > the probe: a command that dies [641.49ms]
+(pass) default check > the probe: a command that takes the flag and does nothing [1273.15ms]
+(pass) default check > the probe: a command that runs its operand [2489.13ms]
+(pass) default check > the probe: a command that lints [3361.72ms]
+(pass) default check > a command that runs its operand gets no instance [1875.83ms]
+(pass) default check > a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors [4498.20ms]
+(pass) default check > stderr is read in the plain format, chain lines too: the first section is the oracle's, and that is no pass [4292.16ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: the exit code of a refusal [2040.21ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a line of no form [1969.80ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an exit code that is none of 0, 1 and 2 [2771.24ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: no error and the exit code 2 [1318.34ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error and the exit code 0 [1648.07ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: an error of the command [1392.45ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a file that is not of the instance [1523.06ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: text on stdout [1732.56ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a signal [646.73ms]
+(pass) default check > never equal to an oracle without errors: a stand-in [1588.76ms]
+(pass) default check > never equal to an oracle without errors: the code -1 [1503.47ms]
+(pass) default check > a run that breaks the rules is a crash and never an empty list of diagnostics: a diagnostic of a rule [1860.79ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at instanceOf (/workspace/bun/test/cli/lint/conformance.test.ts:107:47)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:173:22)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:197:10)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1111:18)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1114:4)
+(fail) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [27.63ms]
+94 |   const m = /^(.*)\(([^()]*)\)(\.tsx?)$/s.exec(instanceName);
+95 |   return m === null ? instanceName : m[1] + m[3];
+96 | };
+97 | 
+98 | // The enumerator, the oracle and the files of an instance, bound to the corpus.
+99 | const corpus = lazy(() => runner.openCorpus(corpusRoot));
+                                      ^
+TypeError: runner.openCorpus is not a function. (In 'runner.openCorpus(corpusRoot)', 'runner.openCorpus' is undefined)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:99:34)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:74:35)
+      at instanceOf (/workspace/bun/test/cli/lint/conformance.test.ts:107:47)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:173:22)
+      at failuresOf (/workspace/bun/test/cli/lint/conformance.test.ts:197:10)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1123:28)
+      at <anonymous> (/workspace/bun/test/cli/lint/conformance.test.ts:1129:4)
+(fail) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [11.36ms]
+
+1 tests skipped:
+(skip) enumerator > every instance is its line of the list, and the counts are those of the reference
+
+
+37 tests failed:
+(fail) variations > 72 of the 126 declared options vary [6.02ms]
+(fail) variations > no setting [4.44ms]
+(fail) variations > one value [4.49ms]
+(fail) variations > two values [2.11ms]
+(fail) variations > a value twice [1.78ms]
+(fail) variations > one value by two names keeps the first name [1.50ms]
+(fail) variations > the cross product, keys sorted in the name [1.74ms]
+(fail) variations > the last occurrence wins [1.73ms]
+(fail) variations > every value [1.49ms]
+(fail) variations > every value but one [1.91ms]
+(fail) variations > every value but one leaves nothing to vary [1.58ms]
+(fail) variations > a value that is taken out again [1.57ms]
+(fail) variations > a name in upper case [6.79ms]
+(fail) variations > an option that does not vary [3.59ms]
+(fail) variations > a set of variations that is empty stops the case [13.61ms]
+(fail) variations > 25 variations are the most [9.85ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 1 [26.88ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 2 [5.31ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 3 [1.76ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 4 [5.54ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 5 [3.96ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 6 [2.58ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 7 [3.46ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 8 [2.50ms]
+(fail) enumerator > the instances of one of 40 cases are their lines of the list: group 9 [3.53ms]
+(fail) enumerator > 45 cases are left out by name and 8 are run for their diagnostics alone [11.96ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 1 [13.76ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 2 [2.20ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 3 [1.98ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 4 [1.79ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 5 [1.79ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 6 [1.88ms]
+(fail) run > replayed oracles pass and a check that reports nothing passes no instance with errors: group 7 [2.21ms]
+(fail) run > the sample had instances with errors and without [4.41ms]
+(fail) plain format > the first section of the baselines of one of 250 cases is the plain format [76.57ms]
+(fail) listed instances > a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported [27.63ms]
+(fail) listed instances > a name in the list of the other class, a skipped instance and a name of no instance are failures [11.36ms]
+
+ 66 pass
+ 1 skip
+ 37 fail
+ 1 error
+ 113 expect() calls
+Ran 104 tests across 1 file. [32.08s]

@@ -1,0 +1,29 @@
+site	function	layer	upstream	port: fault kind, then what the function does
+checker.go:7680	checkConstEnumAccess	E-CORE	debug.Assert(t.symbol.Flags&ast.SymbolFlagsConstEnum != 0)	Assert; go on with the declaration of the symbol
+checker.go:7922	checkExpressionWorker	E-CORE	panic("Should never directly check a JsxOpeningElement")	Panic; return error_type
+checker.go:8558	resolveSignature	E-CALL	panic("Unhandled case in resolveSignature")	Panic with detail = kind; return unknown_signature, getResolvedSignature stores it as for any other result
+checker.go:8887	getDiagnosticHeadMessageForDecoratorResolution	E-CALL	panic("Unhandled case in getDiagnosticHeadMessageForDecoratorResolution")	Panic with detail = kind of the parent; return no message; the chain of 8853 is skipped when there is no head message
+checker.go:9301	getLegacyDecoratorArgumentCount	E-CALL	panic("Unhandled case in getLegacyDecoratorArgumentCount")	Panic with detail = kind of the parent; return 0
+checker.go:9318	checkTypeArguments	E-CALL	debug.Assert(typeParameters[i] != nil, ...) and the index typeParameters[i]	Assert when i is past the type parameters; stop the loop and return type_argument_types
+checker.go:10850	checkMetaProperty	E-CORE	debug.Assert(!ast.IsCallExpression(node.Parent) || node.Parent.Expression() != node, ...)	Assert; go on, the function returns error_type on the next line
+checker.go:10855	checkMetaProperty	E-CORE	panic("Unhandled case in checkMetaProperty")	Panic with detail = keyword token; return error_type
+checker.go:10882	checkImportMetaProperty	E-CORE	debug.Assert(file.Flags&ast.NodeFlagsPossiblyContainsImportMeta != 0, ...)	Assert; go on. The node table has to carry NodeFlagsPossiblyContainsImportMeta on the source file
+checker.go:12284	getThisContainer	E-ACCESS	panic("No parent in getThisContainer")	Panic; return the last node of the parent chain (the source file of a complete tree)
+checker.go:12640	checkBinaryLikeExpression	E-OPER	panic("Unhandled case in checkBinaryLikeExpression")	Panic with detail = operator kind; return error_type
+checker.go:13403	checkObjectLiteral	E-LITERAL	debug.Assert(memberDecl.Kind == ast.KindGetAccessor || memberDecl.Kind == ast.KindSetAccessor)	Assert; go on with checkNodeDeferred(memberDecl) and the rest of the loop body
+flow.go:2241	getInitialType	F-NARROW	panic("Unhandled case in getInitialType")	Panic with detail = kind; return error_type
+checker.go:8085	checkTemplateExpression	E-LITERAL	evaluated.(string) on the evaluator result	BadCast; when the value is no string take the path of evaluated == nil
+checker.go:11125	checkSyntheticExpression	E-CORE	node.AsSyntheticExpression().Type.(*Type)	no fault possible when the synthetic node stores a TypeId; a NIL id is a Panic (nil of the runtime); return error_type
+checker.go:29632,29654	getSpreadArgumentType	E-CTX	arg.AsSyntheticExpression().Type.(*Type)	as above
+checker.go:31003-31007	popContextualType	E-CTX	index len-1 of an empty contextualInfos	Panic (index of the runtime); nothing to pop, return
+checker.go:31082-31086	popInferenceContext	E-CTX	index len-1 of an empty inferenceContextInfos	Panic (index of the runtime); nothing to pop, return
+checker.go:10115-10122	skippedGenericFunction	E-CALL	context.flags |= ... with the nil result of getInferenceContext	Panic (nil of the runtime); return without a write
+checker.go:12260-12262	tryGetThisTypeAtEx	E-ACCESS	getDeclaredTypeOfSymbol(symbol).AsInterfaceType().thisType on a type that is no interface type	Panic (nil of the runtime); t = error_type, then getFlowTypeOfReference(node, t) as written
+flow.go:2228	getExplicitThisType	F-NARROW	getDeclaredTypeOfSymbol(symbol).AsInterfaceType().thisType	Panic (nil of the runtime); return TypeId::NIL
+checker.go:13934	isReadonlyAssignmentDeclaration	E-ACCESS	node.Arguments()[2]	Panic (index of the runtime); return false
+checker.go:9803-9893	getArgumentArityError	E-CALL	args[maxCount] when no signature was given (maxCount stays math.MinInt)	Panic (index of the runtime); use the node of getErrorNodeForCallNode for the span
+flow.go:1590-1595	reportFlowControlError	F-NARROW	block.StatementList() on the nil result of FindAncestor	Panic (nil of the runtime); report the diagnostic at the reference node
+flow.go:189	getTypeAtFlowNode	F-NARROW	container.FlowNodeData().FlowNode of a container without flow data, then flow.Flags of nil	Panic (nil of the runtime); t = FlowType{initial_type} as at the top of the flow
+flow.go:2641	isPostSuperFlowNodeWorker	F-REACH	flow.Antecedents.Flow of a loop label without antecedents (isReachableFlowNodeWorker tests this at 2563)	Panic (nil of the runtime); return true, the answer for unreachable nodes
+checker.go:2472	isSourceElementUnreachable	F-UNREACH	node.FlowNodeData().FlowNode of a node without flow data	Panic (nil of the runtime); return false
+checker.go:7647-7661 and the 53 other entries of recursion.txt	checkExpressionEx ...	all	none: Go grows its stack	StackLimit; stack_limit() with the fallback of the return type (error_type, FlowType{error_type}, NIL), but true for isReachableFlowNodeWorker and isPostSuperFlowNodeWorker and false for isContextSensitive and markNodeAssignmentsWorker

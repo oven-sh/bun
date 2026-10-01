@@ -1,0 +1,62 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /empty.ts
+SINCE type=85 signature=4
+DRIVE lit
+LIT "a" T86
+LIT "a" again T86
+LIT "b" T87
+LIT 1 T88
+LIT 0 T52
+LIT -0 T52
+LIT 12n T89
+LIT fresh "a" T90
+LIT regular of fresh "a" T86
+LIT string | number T29
+LIT number | string T29
+LIT "b" | "a" T91
+LIT "a" | "b" | string T14
+LIT ("b" | "a") | 1 | undefined | null T92
+LIT fresh "a" | "b" T93
+LIT true | false T94
+LIT never | string T14
+LIT any | string T1
+LIT unknown | string T9
+LIT "a" | "b" | string, no reduction T95
+LIT string & number T24
+LIT string & "a" T86
+LIT (string | number) & string T14
+LIT ("b" | "a") & ("b" | 1) T87
+LIT {} & string T14
+LIT unknown & string T14
+LIT object & {} T28
+LIT `id-${number}` T97
+LIT `id-${"a" | "b"}` T100
+STATE
+COUNTS TypeCount=100 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=118
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=100 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=100
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T90 regular=T86
+TYPE 87 flags=0x400 objectFlags=0x0 data=Literal value=s"b" fresh=nil regular=T87
+TYPE 88 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=nil regular=T88
+TYPE 89 flags=0x1000 objectFlags=0x0 data=Literal value=b12 fresh=nil regular=T89
+TYPE 90 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T90 regular=T86
+TYPE 91 flags=0x8000000 objectFlags=0x8000 data=Union types=[T86 T87] regular=T91
+TYPE 92 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T13 T86 T87 T88]
+TYPE 93 flags=0x8000000 objectFlags=0x8000 data=Union types=[T90 T87]
+TYPE 94 flags=0x8000100 objectFlags=0x8000 data=Union types=[T18 T20]
+TYPE 95 flags=0x8000000 objectFlags=0x8000 data=Union types=[T14 T86 T87]
+TYPE 96 flags=0x8000000 objectFlags=0x8000 data=Union types=[T87 T88] regular=T96
+TYPE 97 flags=0x400000 objectFlags=0x0 data=TemplateLiteral texts=["id-" ""] types=[T15]
+TYPE 98 flags=0x400 objectFlags=0x0 data=Literal value=s"id-a" fresh=nil regular=T98
+TYPE 99 flags=0x400 objectFlags=0x0 data=Literal value=s"id-b" fresh=nil regular=T99
+TYPE 100 flags=0x8000000 objectFlags=0x8000 data=Union types=[T98 T99]
+GLOBALS count=118 transient=2
+SYMBOLS named=0 unnamed=6

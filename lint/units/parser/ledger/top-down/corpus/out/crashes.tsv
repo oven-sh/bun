@@ -1,0 +1,5 @@
+build	id	crash	source	origins
+base	60485	SIGABRT	"const c = class { @d declare x: T; };"	bu/09/memberPos@classExpr
+base	60487	SIGABRT	"const c = class { @d abstract x: T; };"	bu/09/memberPos@classExpr
+installed	60485	SIGABRT	"const c = class { @d declare x: T; };"	bu/09/memberPos@classExpr
+installed	60487	SIGABRT	"const c = class { @d abstract x: T; };"	bu/09/memberPos@classExpr

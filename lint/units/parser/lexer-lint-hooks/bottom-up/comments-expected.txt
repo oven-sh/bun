@@ -1,0 +1,174 @@
+--- leading [ts]
+0..4 line "// a"
+5..12 block "/* b */"
+13..21 jsdoc "/** c */"
+--- leading-after-hashbang [ts]
+19..23 line "// a"
+24..31 block "/* b */"
+--- only-comments [ts]
+0..4 line "// a"
+5..12 block "/* b */"
+--- eof-line-no-newline [ts]
+11..18 line "// tail"
+--- eof-block-no-newline [ts]
+11..21 block "/* tail */"
+--- kinds [ts]
+0..4 block "/**/"
+5..10 jsdoc "/***/"
+11..19 jsdoc "/** d */"
+20..27 block "/* b */"
+28..32 line "// l"
+33..45 block "/*! legal */"
+46..55 line "//! legal"
+--- crlf-and-ls [ts]
+0..4 line "// a"
+13..17 line "// b"
+27..31 line "// c"
+--- pragmas-inside [ts]
+0..13 line "// @ts-ignore"
+35..50 block "/* @__PURE__ */"
+56..82 line "//# sourceMappingURL=x.map"
+--- not-comments [ts]
+35..44 block "/* yes */"
+87..96 block "/* yes */"
+--- types [ts]
+7..12 block "/*1*/"
+15..20 block "/*2*/"
+23..28 block "/*3*/"
+33..38 block "/*4*/"
+41..46 block "/*5*/"
+51..56 block "/*6*/"
+62..67 block "/*7*/"
+85..90 block "/*8*/"
+94..99 block "/*9*/"
+108..113 line "// 10"
+125..131 block "/*11*/"
+140..146 block "/*12*/"
+--- jsx-tag [tsx]
+10..15 block "/*1*/"
+20..25 block "/*2*/"
+28..33 block "/*3*/"
+36..41 block "/*4*/"
+46..50 line "// 5"
+57..62 block "/*6*/"
+67..72 block "/*7*/"
+79..84 block "/*8*/"
+87..92 block "/*9*/"
+--- jsx-open-close [tsx]
+13..18 block "/*1*/"
+45..50 block "/*2*/"
+54..59 block "/*3*/"
+62..67 block "/*4*/"
+72..77 block "/*5*/"
+82..87 block "/*6*/"
+--- jsx-nested [tsx]
+11..16 block "/*1*/"
+21..26 block "/*2*/"
+33..38 block "/*3*/"
+43..48 block "/*4*/"
+55..60 block "/*5*/"
+63..68 block "/*6*/"
+--- jsx-attr-element-bun-rejects-today [tsx]
+11..16 block "/*1*/"
+21..26 block "/*2*/"
+32..37 block "/*3*/"
+41..46 block "/*4*/"
+53..58 block "/*5*/"
+61..66 block "/*6*/"
+--- jsx-member-ns [tsx]
+11..16 block "/*1*/"
+19..24 block "/*2*/"
+27..32 block "/*3*/"
+50..55 block "/*4*/"
+60..65 block "/*5*/"
+--- jsx-fragment [tsx]
+10..15 block "/*1*/"
+21..26 block "/*2*/"
+--- jsx-type-args [tsx]
+13..18 block "/*1*/"
+21..26 block "/*2*/"
+34..39 block "/*3*/"
+42..47 block "/*4*/"
+54..59 block "/*5*/"
+--- jsx-line-comment-in-tag [tsx]
+13..17 line "// 1"
+26..30 line "// 2"
+--- bt-type-args-fail [ts]
+12..17 block "/*1*/"
+22..27 block "/*2*/"
+--- bt-type-args-ok [ts]
+11..16 block "/*1*/"
+19..24 block "/*2*/"
+28..33 block "/*3*/"
+--- bt-type-args-shift [ts]
+14..19 block "/*1*/"
+23..28 block "/*2*/"
+51..56 block "/*3*/"
+--- bt-arrow-return-ok [ts]
+12..17 block "/*1*/"
+20..25 block "/*2*/"
+28..33 block "/*3*/"
+37..42 block "/*4*/"
+--- bt-arrow-return-cond-arrow [ts]
+16..21 block "/*1*/"
+24..29 block "/*2*/"
+32..37 block "/*3*/"
+41..46 block "/*4*/"
+49..54 block "/*5*/"
+57..62 block "/*6*/"
+--- bt-arrow-return-cond-plain [ts]
+16..21 block "/*1*/"
+24..29 block "/*2*/"
+32..37 block "/*3*/"
+--- bt-arrow-return-cond-jsx [tsx]
+26..31 block "/*1*/"
+38..43 block "/*2*/"
+--- bt-arrow-args-type [ts]
+9..14 block "/*1*/"
+17..22 block "/*2*/"
+51..56 block "/*3*/"
+64..69 block "/*4*/"
+--- bt-infer-extends [ts]
+39..44 block "/*1*/"
+52..57 block "/*2*/"
+115..120 block "/*3*/"
+--- bt-type-params-paren [ts]
+10..15 block "/*1*/"
+18..23 block "/*2*/"
+27..32 block "/*3*/"
+58..63 block "/*4*/"
+68..73 block "/*5*/"
+--- bt-tsx-generic-arrow [tsx]
+13..18 block "/*1*/"
+21..26 block "/*2*/"
+54..59 block "/*3*/"
+68..73 block "/*4*/"
+--- bt-tsx-element-not-arrow [tsx]
+13..18 block "/*1*/"
+25..30 block "/*2*/"
+48..53 block "/*3*/"
+--- bt-async-arrow-lookahead [ts]
+14..19 block "/*1*/"
+22..27 block "/*2*/"
+48..53 block "/*3*/"
+78..83 block "/*4*/"
+--- bt-import-lookahead [ts]
+20..25 block "/*1*/"
+57..62 block "/*2*/"
+--- bt-nested [ts]
+26..31 block "/*1*/"
+36..41 block "/*2*/"
+--- expect-greater-split [ts]
+13..18 block "/*1*/"
+22..27 block "/*2*/"
+30..35 block "/*3*/"
+55..60 block "/*4*/"
+--- class-members [ts]
+10..15 block "/*1*/"
+23..28 block "/*2*/"
+38..43 block "/*3*/"
+46..51 block "/*4*/"
+54..59 block "/*5*/"
+68..73 block "/*6*/"
+93..97 line "// 7"
+99..107 jsdoc "/** 8 */"

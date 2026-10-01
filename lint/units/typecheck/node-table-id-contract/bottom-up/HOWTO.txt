@@ -1,0 +1,26 @@
+Node table prototype of the research pass "node-table-id-contract" (bottom-up). Nothing here is part of the repository.
+The other pass of the same unit keeps its own prototype in ../top-down; the two were written independently.
+
+gen/        generator (bun): names.ts (name rules), model.ts (one node definition of _scripts/ast.json as slots,
+            late fields and constructor parameters), gen-kind.ts, gen-flags.ts, gen-ast.ts, gen-methods.ts (the
+            hand-written methods of Node in internal/ast/ast.go), generate.ts (writes crate/src/ast/*_generated.rs,
+            --check compares), collisions.ts (Go names that meet in snake_case), keywords.ts, modelstats.ts, explore.ts.
+            It imports /workspace/ref/typescript-go/_scripts/schema.ts and reads _scripts/ast.json through it.
+crate/      scratch cargo package with path dependencies into /workspace/wt/typecheck (bun_collections, bun_wyhash,
+            bun_core) and the workspace lint tables copied into Cargo.toml.
+            src/tscore   ids, text range, flags macro, Go slices and maps, fault sink, the append-only stores
+            src/ast      layout.rs, file.rs (File, Bound, IdAllocator), builder.rs (FileBuilder, finish),
+                         open.rs (Open store), reader.rs (Frozen, Ast), factory.rs, publish.rs (bind_once),
+                         program.rs, and the four generated files
+            src/testimport  JSON reader and importer of dump version 1
+            src/bindprobe.rs  a stand-in for the binder that writes every kind of field the binder writes
+            src/tests.rs, src/native_test_shims.rs, examples/measure.rs, testdata/
+            tscore/deps.rs has stand-ins behind --cfg ntc_shim for a compile with rustc alone (scratch only).
+data/       run.log (last full run of run.sh), measurements.txt, compile-times.txt, miri.log, core-module-name/,
+            link-probe/ (what links into a cargo test binary), node-methods.txt (the 75 methods of Node and where each is),
+            snake-collisions.txt (92 pairs).
+run.sh      generator check, cargo check, cargo clippy --all-targets with the worktree's clippy.toml, cargo fmt --check,
+            cargo test, release build of the measurement tool. Heavy steps take /workspace/tools/lk.
+dump.sh     makes the dumps for the measurements under /tmp/ntc/dumps with typescript 6.0.2.
+            Then: /tmp/ntc/target/release/examples/measure /tmp/ntc/dumps/esnext.dumps 5
+Miri:       MIRIFLAGS=-Zmiri-tree-borrows cargo miri test --offline --manifest-path crate/Cargo.toml --target-dir /tmp/ntc/miri-target

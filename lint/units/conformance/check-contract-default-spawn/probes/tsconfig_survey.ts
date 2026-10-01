@@ -1,0 +1,31 @@
+const P = new URL("../../enumerator/prototype/", import.meta.url).pathname;
+const { enumerateInstances } = await import(P + "compiler_runner.ts");
+const { makeUnitsFromTest } = await import(P + "test_case_parser.ts");
+const { parseJsonc } = await import(P + "tsconfig.ts");
+const { readFile } = await import(P + "vfs.ts");
+const casesRoot = "/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases";
+const e = enumerateInstances({ casesRoot });
+const seen = new Set<string>();
+const tally: Record<string, number> = {};
+const rows: string[] = [];
+let inst = 0;
+for (const i of e.instances) {
+  if (i.status !== "run") continue;
+  const file = casesRoot + "/" + i.casePath;
+  const made = makeUnitsFromTest(readFile(file).contents, file);
+  if (!made.ok || made.value.tsConfigFileUnitData === undefined) continue;
+  inst++;
+  if (seen.has(i.casePath)) continue;
+  seen.add(i.casePath);
+  const text = made.value.tsConfigFileUnitData.content as string;
+  let keys = "";
+  const has = (k: string) => new RegExp('"' + k + '"\\s*:').test(text);
+  const f = ["files", "include", "exclude", "extends", "references"].filter(has);
+  keys = f.join("+") || "(none)";
+  tally[keys] = (tally[keys] ?? 0) + 1;
+  const m = (k: string) => { const r = new RegExp('"' + k + '"\\s*:\\s*(\\[[^\\]]*\\])').exec(text); return r ? r[1].replace(/\s+/g, " ") : ""; };
+  rows.push([i.casePath, made.value.tsConfigFileUnitData.name, keys, "files=" + m("files"), "include=" + m("include"), "exclude=" + m("exclude"), "units=" + made.value.testUnitData.map((u: any) => u.name).join("|")].join("\t"));
+}
+console.log("run instances with a configuration unit:", inst, "cases:", seen.size);
+console.log(JSON.stringify(tally));
+console.log(rows.join("\n"));

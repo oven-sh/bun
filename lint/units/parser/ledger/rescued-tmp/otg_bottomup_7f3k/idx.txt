@@ -1,0 +1,15 @@
+class C { [await: string]: T; }
+export {}; class C { [await: string]: T; }
+async function f() { class C { [await: string]: T; } }
+function* g() { class C { [yield: string]: T; } }
+class C { [yield: string]: T; }
+interface I { [await: string]: T }
+type X = { [await: string]: T }
+export {}; interface I { [await: string]: T }
+class C { [async: string]: T }
+class C { [type: string]: T }
+class C { [of: string]: T }
+class C { [k: string]: T; [await]: T }
+class C { [await x]: T }
+class C { static [await: string]: T }
+declare class C { [await: string]: T }

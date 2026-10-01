@@ -1,0 +1,41 @@
+cache	upstream type	key	written at	miss test	layer	notes
+c.stringLiteralTypes	map[string]*Type	text bytes	25429-25432	t == nil	K-LIT	made at 938
+c.numberLiteralTypes	map[jsnum.Number]*Type	float64 with Go map equality: +0 and -0 are one key, the first value stored stays in the type	25446-25449	t == nil	K-LIT	NaN never reaches the map: c.nanType 25440-25444
+c.bigintLiteralTypes	map[jsnum.PseudoBigInt]*Type	(Negative, Base10Value)	25455-25458	t == nil	K-LIT	
+c.enumLiteralTypes	map[EnumLiteralKey]*Type	(enumSymbol, value any): string or number, number with the same rule for zero	25506-25511	t == nil	K-LIT	two members with the same value share one type, its symbol is the first member; NaN goes to c.enumNaNLiteralTypes[enumSymbol] 25495-25499
+c.cachedTypes[LiteralUnionBaseType]	map[CachedTypeKey]*Type	(kind, typeId)	25601-25606	comma ok	K-LIT	
+c.cachedTypes[PermissiveInstantiation]	-	(kind, typeId)	24606-24611	cached != nil	T-INSTANTIATE	
+c.cachedTypes[RestrictiveInstantiation]	-	(kind, typeId)	24619-24630	cached != nil	T-INSTANTIATE	second write under the id of the result (24630); read as a marker at 17392
+c.cachedTypes[RestrictiveTypeParameter]	-	(kind, typeId)	24638-24644	cached != nil	T-INSTANTIATE	
+c.cachedTypes[IndexType, StringIndexType]	-	(kind, typeId)	26977-26985	indexType != nil	K-KEYOF	
+c.cachedTypes[IndexedAccessForReading, IndexedAccessForWriting]	-	(kind, typeId)	28039-28048	cached != nil	K-INDEXED	t is stored first as the marker of a running simplification
+c.cachedTypes[Widened]	-	(kind, typeId)	18476-18507	cached != nil	T-WIDEN	only with context == nil
+c.cachedTypes[RegularObjectLiteral]	-	(kind, typeId)	28286-28295	cached != nil	T-WIDEN	
+c.cachedTypes[ApparentType]	-	(kind, thisArgument.id)	21918-21922	result == nil	T-APPARENT	keyed by the this argument, not by the intersection
+c.unionTypes	map[CacheHashKey]*Type	getUnionKey(types, origin, alias) 17618	25866-25875	t == nil	K-UNION	
+c.unionOfUnionTypes	map[UnionOfUnionKey]*Type	(min id, max id, reduction, getAliasKey(alias))	25765-25769	t == nil	K-UNION	only for two inputs with origin == nil and at least one union
+c.subtypeReductionCache	map[CacheHashKey][]*Type	getTypeListKey(types) before the reduction	26062-26143	cached != nil	K-UNION	the stored list is the reduced input list itself; the nil result of the limit is not stored
+c.intersectionTypes	map[CacheHashKey]*Type	getIntersectionKey(typeSet, flags, alias) 17642, computed before intersectUnionsOfPrimitiveTypes	26289-26343	result == nil	K-INTERSECT	the errorType of the cross product limit returns before the store
+c.tupleTypes	map[CacheHashKey]*Type	getTupleKey(elementInfos, readonly) 17653	24882-24886	t == nil	T-TUPLE	
+c.indexedAccessTypes	map[CacheHashKey]*Type	getIndexedAccessKey(objectType, indexType, accessFlags, alias) with all access flags	27085-27090	t == nil	K-INDEXED	the type stores only accessFlags & Persistent
+c.templateLiteralTypes	map[CacheHashKey]*Type	getTemplateTypeKey(newTexts, newTypes) 17699	29327-29331	t == nil	K-TEMPLATE	
+c.stringMappingTypes	map[StringMappingKey]*Type	(symbol, type)	29400-29404	result == nil	K-TEMPLATE	
+c.substitutionTypes	map[SubstitutionTypeKey]*Type	(baseId, constraintId)	27542-27547	cached != nil	K-SUBST	
+c.propertiesTypes	map[PropertiesTypesKey]*Type	(typeId, include, includeOrigin, unresolvedMembers flag of the type)	26841-26865	comma ok	K-KEYOF	
+c.errorTypes	map[CacheHashKey]*Type	getAliasKey(alias)	23698-23703	errorType == nil	T-TYPENODE	
+c.unresolvedSymbols	map[string]*ast.Symbol	dotted path	23241-23246	result == nil	T-TYPENODE	
+c.uniqueESSymbolTypes	map[*ast.Symbol]*Type	symbol	23100-23109	uniqueType == nil	T-TYPENODE	the name holds ast.GetSymbolId(symbol)
+c.cachedSignatures	map[CachedSignatureKey]*Signature	(signature, getTypeListKey(typeArguments) or SignatureKeyErased, Canonical, Base)	19433-19437 19514-19518 19527-19531 19557-19575	== nil	T-SIGINST	
+c.undefinedProperties	map[string]*ast.Symbol	property name	18608-18613	cached != nil	T-WIDEN	
+c.thisExpandoKinds, c.thisExpandoLocations	map[*ast.Symbol]	symbol	18305-18342	comma ok	T-SYMTYPE	
+c.patternForType	map[*Type]*ast.Node	type	18060 18107	-	T-SYMTYPE	
+InterfaceType.instantiations	map[CacheHashKey]*Type	getTypeListKey(typeArguments)	17435-17436 24939-24940, read and written by createTypeReferenceEx 25231-25240 (K-OBJ)	comma ok	T-DECLARED, T-TUPLE	made with the identity instantiation as first entry
+ObjectType.instantiations	map[CacheHashKey]*Type	getTypeInstantiationKey(typeArguments, alias, singleSignature) 17680	22480-22498	result == nil	T-INSTANTIATE	made lazily with the identity instantiation under getTypeInstantiationKey(typeParameters, target.alias, false)
+TypeAliasLinks.instantiations	map[CacheHashKey]*Type	getTypeAliasInstantiationKey(typeArguments, alias) 17676	23977-23978 23770-23774	instantiation == nil	T-DECLARED, T-TYPENODE	made only for a generic alias after a successful pop
+ConditionalRoot.instantiations	map[CacheHashKey]*Type	getConditionalTypeKey(typeArguments, alias, forConstraint) 17713	24416-24417 22607-22625	result == nil	K-COND	made after the first getConditionalType of the root, only when outerTypeParameters != nil
+UnionOrIntersectionType.propertyCache, propertyCacheWithoutFunctionPropertyAugment	ast.SymbolTable	property name	21545-21560	prop != nil	T-UIMEMBERS	made by ast.GetSymbolTable on first use; a non partial entry of the second cache is copied to the first
+UnionOrIntersectionType.resolvedProperties	[]*ast.Symbol	-	18977-18996	== nil, the computed list is never nil	T-LOOKUP	
+TypeNodeLinks.outerTypeParameters	[]*Type	-	22439-22462	== nil, the computed list is never nil	T-INSTANTIATE	
+c.activeMappers, c.activeTypeMappersCaches	[]*TypeMapper, []map[CacheHashKey]*Type	writeType(t) then writeAlias(alias)	22235-22254, 22260-22293	comma ok	T-INSTANTIATE	a result is stored only when the mapper was already active (index != -1); the cache of a pushed mapper is cleared at the pop; clearActiveMapperCaches is called by the inference layer
+c.lastGetCombinedNodeFlagsNode/Result, c.lastGetCombinedModifierFlagsNode/Result	one entry	node	18802-18859	-	T-SYMTYPE	
+WideningContext.childContexts, widenedTypes, siblings, resolvedProperties	maps and slices of one widening	property name, type	18516-18603	!= nil; siblings is made non nil even when empty, resolvedProperties stays nil when empty and is computed again	T-WIDEN	widenedTypes is written only in child contexts (18537)

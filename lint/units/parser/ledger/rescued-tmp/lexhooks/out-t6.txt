@@ -1,0 +1,322 @@
+--- skipts:668 type default [ts] "let x: ;"
+   bun: @7+1 Unexpected ;
+   tsc: @7+1 TS1110 Type expected.
+--- skipts:668 type default ) [ts] "let x: );"
+   bun: @7+1 Unexpected )
+   tsc: @7+1 TS1110 Type expected.
+--- skipts:668 type EOF [ts] "let x: "
+   bun: @7+0 Unexpected end of file
+   tsc: @6+0 TS1110 Type expected.
+--- skipts:668 union rhs missing [ts] "let x: A | ;"
+   bun: @11+1 Unexpected ;
+   tsc: @11+1 TS1110 Type expected.
+--- skipts:668 intersection rhs missing [ts] "let x: A & ;"
+   bun: @11+1 Unexpected ;
+   tsc: @11+1 TS1110 Type expected.
+--- skipts:668 array elem missing [ts] "let x: [A, ];"
+--- skipts:668 tuple elem garbage [ts] "let x: [A, +];"
+   bun: @11+1 Unexpected +
+   bun: @12+1 Expected ";" but found "]"
+   tsc: @11+1 TS1110 Type expected.
+   tsc: @12+1 TS1109 Expression expected.
+--- skipts:668 type args missing [ts] "let x: A<>;"
+   bun: @9+1 Unexpected >
+   chk: @8+2 TS1099 Type argument list cannot be empty.
+--- skipts:668 type args garbage [ts] "let x: A<+>;"
+   bun: @9+1 Unexpected +
+   bun: @10+1 Unexpected >
+   tsc: @9+1 TS1005 '>' expected.
+   tsc: @10+1 TS1109 Expression expected.
+   tsc: @11+1 TS1109 Expression expected.
+--- skipts:668 cond missing true [ts] "type X = A extends B ? : C;"
+   bun: @23+1 Unexpected :
+   tsc: @23+1 TS1005 '?' expected.
+--- skipts:668 cond missing colon [ts] "type X = A extends B ? C;"
+   bun: @24+1 Expected ":" but found ";"
+   bun: @25+0 Unexpected end of file
+   tsc: @24+1 TS1005 ':' expected.
+--- skipts:668 keyof missing [ts] "type X = keyof ;"
+   bun: @15+1 Unexpected ;
+   tsc: @15+1 TS1110 Type expected.
+--- skipts:668 typeof missing [ts] "type X = typeof ;"
+   bun: @16+1 Expected identifier but found ";"
+   tsc: @16+1 TS1003 Identifier expected.
+--- skipts:668 typeof number [ts] "type X = typeof 5;"
+   bun: @16+1 Expected identifier but found "5"
+   tsc: @16+1 TS1003 Identifier expected.
+--- skipts:668 infer missing [ts] "type X = A extends infer ? 1 : 2;"
+   bun: @25+1 Expected identifier but found "?"
+   bun: @27+1 Expected "?" but found "1"
+   bun: @29+1 Unexpected :
+   tsc: @25+1 TS1003 Identifier expected.
+--- skipts:668 indexed missing [ts] "type X = A[;"
+   bun: @11+1 Unexpected ;
+   tsc: @11+1 TS1005 ']' expected.
+--- skipts:668 paren missing [ts] "type X = ();"
+   bun: @10+1 Unexpected )
+   tsc: @11+1 TS1005 '=>' expected.
+--- skipts:668 fn type missing ret [ts] "type X = () => ;"
+   bun: @15+1 Unexpected ;
+   tsc: @15+1 TS1110 Type expected.
+--- skipts:668 fn type missing arrow [ts] "type X = (a: string);"
+   bun: @11+1 Expected ")" but found ":"
+   bun: @13+6 Expected ";" but found "string"
+   bun: @19+1 Unexpected )
+   tsc: @20+1 TS1005 '=>' expected.
+--- skipts:668 new type missing [ts] "type X = new ;"
+   bun: @13+1 Expected "(" but found ";"
+   bun: @14+0 Unexpected end of file
+   tsc: @13+1 TS1005 '(' expected.
+--- skipts:668 import type no paren [ts] "type X = import;"
+   bun: @15+1 Expected "(" but found ";"
+   bun: @16+0 Expected string but found end of file
+   tsc: @15+1 TS1005 '(' expected.
+   chk: @15+0 TS1141 String literal expected.
+--- skipts:668 import type non-string [ts] "type X = import(5);"
+   bun: @16+1 Expected string but found "5"
+   chk: @16+1 TS1141 String literal expected.
+--- skipts:668 template type bad [ts] "type X = `a${}`;"
+   bun: @13+1 Unexpected }
+   tsc: @13+1 TS1110 Type expected.
+--- skipts:668 qualified missing [ts] "type X = A.;"
+   bun: @11+1 Expected identifier but found ";"
+   tsc: @11+1 TS1003 Identifier expected.
+--- skipts:668 asserts missing [ts] "function f(x): asserts {}"
+--- skipts:668 is missing [ts] "function f(x): x is {}"
+   chk: @9+1 TS2391 Function implementation is missing or not immediately following the declaration.
+--- skipts:293 Unexpected const [ts] "let x: const;"
+--- skipts:1039 modifier not valid [ts] "function f<in T>() {}"
+   bun: @11+2 The modifier "in" is not valid here
+   chk: @11+2 TS1274 'in' modifier can only appear on a type parameter of a class, interface or type alias
+--- skipts:1039 modifier out on fn [ts] "function f<out T>() {}"
+   bun: @11+3 The modifier "out" is not valid here
+   chk: @11+3 TS1274 'out' modifier can only appear on a type parameter of a class, interface or type alias
+--- skipts:580 mapped/label expected ident [ts] "type X = { [5]: string }"
+--- skipts:592 abstract new [ts] "type X = abstract 5;"
+   bun: @18+1 Expected ";" but found "5"
+   tsc: @18+1 TS1005 ';' expected.
+--- skipts:909 object type garbage member [ts] "type X = { + }"
+   bun: @13+1 Unexpected }
+   tsc: @11+1 TS1131 Property or signature expected.
+   tsc: @13+1 TS1109 Expression expected.
+--- skipts:921 object type members no sep [ts] "type X = { a: string b: number }"
+   bun: @21+1 Unexpected b
+   tsc: @21+1 TS1005 ';' expected.
+--- skipts:657 tuple label keyword [ts] "type X = [if: string]"
+   bun: @10+2 Unexpected if
+   tsc: @10+2 TS1110 Type expected.
+   tsc: @12+1 TS1005 '(' expected.
+   tsc: @14+6 TS1434 Unexpected keyword or identifier.
+   tsc: @20+1 TS1128 Declaration or statement expected.
+--- skipts:119 binding rest non-ident [ts] "type X = ({...5}) => void"
+   tsc: @11+3 TS1131 Property or signature expected.
+   tsc: @18+2 TS1005 ';' expected.
+   tsc: @25+0 TS1109 Expression expected.
+--- skipts:137 binding garbage [ts] "type X = ({+}) => void"
+   bun: @12+1 Unexpected }
+   tsc: @11+1 TS1131 Property or signature expected.
+   tsc: @12+1 TS1109 Expression expected.
+   tsc: @13+1 TS1128 Declaration or statement expected.
+   tsc: @15+2 TS1128 Declaration or statement expected.
+   tsc: @22+0 TS1109 Expression expected.
+--- skipts:157 binding default [ts] "type X = (+) => void"
+   bun: @10+1 Unexpected +
+   bun: @11+1 Expected ";" but found ")"
+   bun: @13+2 Unexpected =>
+   tsc: @10+1 TS1110 Type expected.
+   tsc: @11+1 TS1109 Expression expected.
+   tsc: @13+2 TS1128 Declaration or statement expected.
+   tsc: @20+0 TS1109 Expression expected.
+--- skipts: type param missing name [ts] "type X<> = 1"
+--- skipts: type param garbage [ts] "type X<+> = 1"
+   bun: @7+1 Expected identifier but found "+"
+   tsc: @7+1 TS1139 Type parameter declaration expected.
+   tsc: @8+1 TS1109 Expression expected.
+   tsc: @10+1 TS1109 Expression expected.
+--- skipts: type param extends missing [ts] "type X<T extends > = 1"
+   bun: @17+1 Unexpected >
+   tsc: @17+1 TS1109 Expression expected.
+--- skipts: type param default missing [ts] "type X<T = > = 1"
+   bun: @11+1 Unexpected >
+   tsc: @11+1 TS1110 Type expected.
+--- skipts: type params unclosed [ts] "type X<T = 1"
+   bun: @12+0 Expected ">" but found end of file
+   tsc: @12+0 TS1005 '>' expected.
+--- skipts: type args unclosed [ts] "let x: A<B;"
+   bun: @10+1 Expected ">" but found ";"
+   tsc: @10+1 TS1005 '>' expected.
+--- skipts: readonly non-array [ts] "let x: readonly ;"
+   bun: @16+1 Unexpected ;
+   tsc: @16+1 TS1110 Type expected.
+--- skipts: unique non-symbol [ts] "let x: unique ;"
+   tsc: @14+1 TS1110 Type expected.
+--- skipts: mapped missing in [ts] "type X = { [K]: string }"
+--- skipts: mapped missing constraint [ts] "type X = { [K in ]: string }"
+   bun: @17+1 Unexpected ]
+   tsc: @17+1 TS1110 Type expected.
+--- skipts: index sig missing type [ts] "type X = { [k: ]: string }"
+   bun: @15+1 Unexpected ]
+   tsc: @15+1 TS1110 Type expected.
+--- skipts: method sig missing paren [ts] "type X = { m( }"
+   bun: @0+0 Backtrack
+   tsc: @14+1 TS1138 Parameter declaration expected.
+--- skipts: getter sig [ts] "type X = { get x(): string; set x(v: string) }"
+--- skipts: optional tuple [ts] "type X = [a?: string, ...b: number[]]"
+--- skipts: fn type default param [ts] "let g: (a = 1) => void"
+   bun: @10+1 Expected ")" but found "="
+   bun: @12+1 Expected ";" but found "1"
+   bun: @13+1 Unexpected )
+   chk: @8+5 TS2371 A parameter initializer is only allowed in a function or constructor implementation.
+--- skipts: fn type in union no parens [ts] "type X = string | () => void"
+   tsc: @17+11 TS1385 Function type notation must be parenthesized when used in a union type.
+--- skipts: ctor type in union no parens [ts] "type X = string | new () => void"
+   tsc: @17+15 TS1386 Constructor type notation must be parenthesized when used in a union type.
+--- skipts: fn type in intersection [ts] "type X = string & () => void"
+   tsc: @17+11 TS1387 Function type notation must be parenthesized when used in an intersection type.
+--- skipts: arrow missing param type [ts] "let x: (a: ) => void"
+   tsc: @11+1 TS1110 Type expected.
+--- skipts: this type [ts] "let x: this;"
+   chk: @7+4 TS2526 A 'this' type is available only in a non-static member of a class or interface.
+--- skipts: trailing dot type [ts] "let x: A.B.;"
+   bun: @11+1 Expected identifier but found ";"
+   tsc: @11+1 TS1003 Identifier expected.
+--- skipts: jsdoc ? type [ts] "let x: ?string;"
+   bun: @7+1 Unexpected ?
+   chk: @7+7 TS17020 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'string | null | undefined'?
+--- skipts: jsdoc ! type [ts] "let x: !string;"
+   bun: @7+1 Unexpected !
+   bun: @8+6 Expected ";" but found "string"
+   chk: @7+7 TS17020 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'string'?
+--- skipts: jsdoc * type [ts] "let x: *;"
+   bun: @7+1 Unexpected *
+   chk: @7+1 TS8020 JSDoc types can only be used inside documentation comments.
+--- skipts: number literal neg [ts] "let x: -;"
+   bun: @8+1 Expected number but found ";"
+   tsc: @7+1 TS1110 Type expected.
+   tsc: @8+1 TS1109 Expression expected.
+--- skipts: heritage garbage [ts] "interface A extends 5 {}"
+   chk: @20+1 TS2499 An interface can only extend an identifier/qualified-name with optional type arguments.
+--- skipts: implements garbage [ts] "class A implements 5 {}"
+   chk: @19+1 TS2500 A class can only implement an identifier/qualified-name with optional type arguments.
+--- skipts: heritage call [ts] "interface A extends B() {}"
+   bun: @21+1 Expected "{" but found "("
+   bun: @22+1 Unexpected )
+   chk: @20+3 TS2499 An interface can only extend an identifier/qualified-name with optional type arguments.
+--- p:declare dup let [ts] "let a; let a;"
+   bun: @11+1 "a" has already been declared
+   chk: @4+1 TS2451 Cannot redeclare block-scoped variable 'a'.
+   chk: @11+1 TS2451 Cannot redeclare block-scoped variable 'a'.
+--- p:declare dup class fn [ts] "class a {} function a() {}"
+   bun: @20+1 "a" has already been declared
+   chk: @6+1 TS2813 Class declaration cannot implement overload list for 'a'.
+   chk: @20+1 TS2814 Function with bodies can only merge with classes that are ambient.
+--- p:declare dup param [ts] "function f(a) { let a; }"
+   bun: @20+1 "a" has already been declared
+--- p:declare dup import [ts] "import a from 'x'; let a;"
+   bun: @23+1 "a" has already been declared
+--- p:4136 rest default [ts] "[...a = 1] = b;"
+   bun: @4+0 Invalid assignment target
+   chk: @6+1 TS1186 A rest element cannot have an initializer.
+--- p:4136 rest default arrow [ts] "x = (...a = 1) => 1"
+   bun: @10+1 A rest argument cannot have a default initializer
+   chk: @5+8 TS2370 A rest parameter must be of an array type.
+   chk: @8+1 TS1048 A rest parameter cannot have an initializer.
+--- p:4175 Unexpected = (log_expr_errors) [ts] "x = {a = 1};"
+   bun: @7+1 Unexpected "="
+   chk: @7+1 TS1312 Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.
+--- p:4179 invalid ? [ts] "x = (a?);"
+   bun: @7+1 Unexpected )
+   tsc: @8+1 TS1005 '=>' expected.
+--- p:2164 arrow arg await [ts] "async function f() { x = (a = await b) => 1 }"
+   chk: @30+5 TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.
+   chk: @30+7 TS2524 'await' expressions cannot be used in a parameter initializer.
+--- p:2173 arrow arg yield [ts] "function* f() { x = (a = yield b) => 1 }"
+   chk: @25+5 TS1163 A 'yield' expression is only allowed in a generator body.
+   chk: @25+5 TS2523 'yield' expressions cannot be used in a parameter initializer.
+--- p:5255 async fn named await [ts] "x = async function await() {}"
+   bun: @19+5 An async function cannot be named "await"
+   chk: @19+5 TS1359 Identifier expected. 'await' is a reserved word that cannot be used here.
+--- p:4979 strict with [ts] "'use strict'; with (a) {}"
+   chk: @14+4 TS1101 'with' statements are not allowed in strict mode.
+   chk: @14+8 TS2410 The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.
+--- p:4979 strict delete ident [ts] "export {}; delete a;"
+   chk: @18+1 TS1102 'delete' cannot be called on an identifier in strict mode.
+   chk: @18+1 TS2703 The operand of a 'delete' operator must be a property reference.
+--- p:4979 strict octal [ts] "export {}; x = 017;"
+   tsc: @15+3 TS1121 Octal literals are not allowed. Use the syntax '0o17'.
+--- p:4979 strict eval assign [ts] "export {}; eval = 1;"
+   bun: @11+0 Invalid assignment target
+   chk: @11+4 TS1215 Invalid use of 'eval'. Modules are automatically in strict mode.
+--- p:4979 class body with [ts] "class A { m() { with (a) {} } }"
+   chk: @16+4 TS1101 'with' statements are not allowed in strict mode.
+   chk: @16+8 TS2410 The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.
+--- p:4979 strict reserved word ident [ts] "export {}; let static = 1;"
+   chk: @15+6 TS1214 Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode.
+--- p:4979 strict arguments assign [ts] "export {}; arguments = 1;"
+   bun: @11+0 Invalid assignment target
+   chk: @11+9 TS1215 Invalid use of 'arguments'. Modules are automatically in strict mode.
+--- p: invalid assign target [ts] "1 = 2;"
+   bun: @0+0 Invalid assignment target
+   chk: @0+1 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- p: invalid assign target call [ts] "f() = 2;"
+   bun: @0+0 Invalid assignment target
+   chk: @0+3 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- p: invalid update target [ts] "1++;"
+   bun: @0+0 Invalid assignment target
+   chk: @0+1 TS2357 The operand of an increment or decrement operator must be a variable or a property access.
+--- p: invalid for-in target [ts] "for (1 in a) {}"
+   bun: @5+0 Invalid assignment target
+   chk: @5+1 TS2405 The left-hand side of a 'for...in' statement must be of type 'string' or 'any'.
+--- p: invalid destructuring [ts] "[a + b] = c;"
+   bun: @1+0 Invalid assignment target
+   chk: @1+5 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- p: invalid arrow param [ts] "x = (a + b) => 1"
+   bun: @5+0 Invalid binding pattern
+   tsc: @12+2 TS1005 ';' expected.
+--- p: invalid arrow param number [ts] "x = (1) => 1"
+   bun: @5+0 Invalid binding pattern
+   tsc: @8+2 TS1005 ';' expected.
+--- p: dup proto [ts] "x = { __proto__: 1, __proto__: 2 }"
+   bun: @20+9 Cannot specify the "__proto__" property more than once per object
+   chk: @20+9 TS1117 An object literal cannot have multiple properties with the same name.
+--- p: new.target outside fn [ts] "new.target"
+   chk: @0+10 TS17013 Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.
+--- p: await top-level in cjs-like [ts] "function f() { await x }"
+   bun: @21+1 "await" can only be used inside an "async" function
+   chk: @15+5 TS1308 'await' expressions are only allowed within async functions and at the top levels of modules.
+--- p: yield outside generator [ts] "function f() { yield x }"
+   bun: @15+5 Cannot use "yield" outside a generator function
+   bun: @21+1 Expected ";" but found "x"
+   chk: @15+5 TS1163 A 'yield' expression is only allowed in a generator body.
+--- p: break outside loop [ts] "break;"
+   bun: @0+5 Cannot use "break" here
+   chk: @0+6 TS1105 A 'break' statement can only be used within an enclosing iteration or switch statement.
+--- p: continue outside loop [ts] "continue;"
+   bun: @0+8 Cannot use "continue" here
+   chk: @0+9 TS1104 A 'continue' statement can only be used within an enclosing iteration statement.
+--- p: private name undeclared [ts] "class A { m() { this.#x } }"
+   bun: @21+2 Private name "#x" must be declared in an enclosing class
+--- p: dup private name [ts] "class A { #x; #x; }"
+   bun: @14+2 "#x" has already been declared
+--- p: dup label [ts] "a: a: ;"
+   chk: @3+1 TS1114 Duplicate label 'a'.
+--- p: dup ctor [ts] "class A { constructor() {} constructor() {} }"
+   chk: @10+11 TS2392 Multiple constructor implementations are not allowed.
+   chk: @27+11 TS2392 Multiple constructor implementations are not allowed.
+--- p: super call outside ctor [ts] "class A { m() { super() } }"
+   bun: @16+5 Unexpected "super"
+   chk: @16+5 TS2337 Super calls are not permitted outside constructors or in nested functions inside constructors.
+--- p: dup export [ts] "export const a = 1; export { a };"
+   bun: @29+1 Multiple exports with the same name "a"
+   chk: @13+1 TS2323 Cannot redeclare exported variable 'a'.
+   chk: @29+1 TS2323 Cannot redeclare exported variable 'a'.
+   chk: @29+1 TS2484 Export declaration conflicts with exported declaration of 'a'.
+--- p: import.meta in script [ts] "import.meta"
+--- p: let in loose for [ts] "for (let let of x) {}"
+   bun: @9+3 Cannot use "let" as an identifier here
+   chk: @9+3 TS1212 Identifier expected. 'let' is a reserved word in strict mode.
+   chk: @9+3 TS2480 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+--- p: using init missing [ts] "using x;"
+   bun: @6+1 The declaration "x" must be initialized
+   chk: @6+1 TS1155 'using' declarations must be initialized.
+--- p: const no init for-of ok [ts] "for (const x of y) {}"

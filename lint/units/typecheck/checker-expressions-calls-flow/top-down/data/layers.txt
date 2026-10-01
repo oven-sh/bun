@@ -1,0 +1,1033 @@
+== E-CORE functions 42 lines 799
+file checker/c14_expressions.rs
+   7419-7423 c.checkExpressionStatement
+   7427-7447 c.getTypeOfExpression
+   7451-7475 c.getQuickTypeOfExpression
+   7477-7483 c.getReturnTypeOfSingleNonGenericSignature
+   7485-7493 c.getReturnTypeOfSingleNonGenericSignatureOfCallChain
+   7495-7497 c.checkNonNullExpression
+   7499-7501 c.checkNonNullType
+   7503-7525 c.checkNonNullTypeWithReporter codes=2571,18046
+   7527-7544 c.checkNonNullNonVoidType codes=2532,18048,18050
+   7546-7572 c.reportObjectPossiblyNullOrUndefinedError codes=2531,2532,2533,18047,18048,18049,18050
+   7574-7593 c.checkExpressionWithContextualType
+   7595-7601 c.getContextNode
+   7603-7605 c.checkExpressionCached
+   7607-7625 c.checkExpressionCachedEx
+   7632-7641 c.getContextFreeTypeOfExpression
+   7643-7645 c.checkExpression
+   7647-7661 c.checkExpressionEx
+   7663-7687 c.checkConstEnumAccess codes=2475,2748 ASSERT@7680 PROGRAM=GetProjectReferenceFromOutputDts
+   7689-7759 c.instantiateTypeWithSingleGenericCallSignature closures=3
+   7761-7772 c.getOuterInferenceTypeParameters
+   7774-7799 c.getUniqueTypeParameters
+   7801-7805 hasTypeParameterByName closures=1
+   7807-7819 getUniqueTypeParameterName
+   7821-7925 c.checkExpressionWorker PANIC@7922
+file checker/c16_function_expressions_collisions.rs
+   10133-10135 c.checkParenthesizedExpression
+file checker/c17_unary_meta_yield.rs
+   10707-10710 c.checkTypeOfExpression
+   10712-10719 c.checkNonNullAssertion
+   10721-10725 c.checkNonNullChain
+   10727-10748 c.checkExpressionWithTypeArguments codes=2848
+   10750-10829 c.getInstantiationExpressionType codes=2635 closures=5
+   10831-10841 c.checkSatisfiesExpression codes=1360
+   10843-10856 c.checkMetaProperty PANIC@10855 ASSERT@10850
+   10858-10870 c.checkNewTargetMetaProperty codes=17013
+   10872-10887 c.checkImportMetaProperty codes=1343,1470 ASSERT@10882 PROGRAM=GetSourceFileMetaData
+   10889-10892 c.checkMetaPropertyKeyword
+   11037-11040 c.checkSpreadExpression
+   11042-11106 c.checkYieldExpression codes=7057 closures=1
+   11108-11122 c.getYieldedTypeOfYieldExpression codes=1321,1322
+   11124-11130 c.checkSyntheticExpression
+file checker/c19_assertions_binary_operators.rs
+   12378-12404 c.checkAssertion codes=1294,1355,7059
+   12406-12420 c.checkAssertionDeferred codes=2352
+file checker/c20_object_literals_spread.rs
+   13979-13989 c.checkExpressionForMutableLocation
+codes 24: TS1294 TS1321 TS1322 TS1343 TS1355 TS1360 TS1470 TS2352 TS2475 TS2531 TS2532 TS2533 TS2571 TS2635 TS2748 TS2848 TS7057 TS7059 TS17013 TS18046 TS18047 TS18048 TS18049 TS18050
+calls earlier TYPES (5): StructuredType.CallSignatures StructuredType.ConstructSignatures Type.AsInstantiationExpressionType Type.AsIntersectionType Type.AsTypeParameter
+calls earlier MAPPER (1): newTypeMapper
+calls earlier UTIL (8): IsTypeAny entityNameToString expressionResultIsUnused isCallChain isConstTypeReference isInRightSideOfImportOrExportAssignment isNodeDescendantOf isTypeAssertion
+calls earlier K-OBJ (3): c.newObjectType c.newTypeParameter c.setStructuredTypeMembers
+calls earlier D-SINK (2): c.addDiagnostic c.error
+calls earlier S-MERGE (2): c.getSymbolOfDeclaration c.newSymbol
+calls earlier TRACER (1): Tracer.Push
+calls earlier K-LIT (8): c.getBaseTypeOfLiteralType c.getBigIntLiteralType c.getFreshTypeOfLiteralType c.getNumberLiteralType c.getRegularTypeOfLiteralType c.getStringLiteralType c.getWidenedLiteralLikeTypeForContextualType c.isLiteralOfContextualType
+calls earlier K-PRED (4): c.filterType c.isErrorType c.maybeTypeOfKind isConstEnumObjectType
+calls earlier K-UNION (1): c.mapType
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TYPENODE (1): c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT (1): c.getBaseConstraintOfType
+calls earlier T-MEMBERS (1): c.resolveStructuredTypeMembers
+calls earlier T-SIGDECL (2): c.getReturnTypeFromAnnotation c.getReturnTypeOfSignature
+calls earlier T-SIGINST (6): c.getOrCreateTypeFromSignature c.getSignatureInstantiation c.getSignatureInstantiationWithoutFillingInTypeArguments c.getSingleCallOrConstructSignature c.getSingleSignature c.instantiateSignatureInContextOf
+calls earlier T-SYMTYPE (3): c.GetNonNullableType c.getTypeOfSymbol c.propagateOptionalTypeMarker
+calls earlier T-WIDEN (2): c.getRegularTypeOfObjectLiteral c.getWidenedType
+calls earlier PRINTER (1): c.TypeToString
+calls earlier R-REL (2): c.checkTypeComparableTo c.isTypeComparableTo
+calls earlier R-ELAB (1): c.checkTypeAssignableToAndOptionallyElaborate
+calls forward E-LITERAL (6): c.checkArrayLiteral c.checkObjectLiteral c.checkRegularExpressionLiteral c.checkTemplateExpression c.isConstContext c.isValidConstAssertionArgument
+calls forward E-OPER (7): c.checkAwaitExpression c.checkBinaryExpression c.checkConditionalExpression c.checkDeleteExpression c.checkPostfixUnaryExpression c.checkPrefixUnaryExpression c.checkVoidExpression
+calls forward E-ACCESS (8): c.checkIdentifier c.checkIndexedAccess c.checkPrivateIdentifierExpression c.checkPropertyAccessExpression c.checkQualifiedName c.checkSuperExpression c.checkThisExpression c.getOptionalExpressionType
+calls forward E-FACTS (1): c.getTypeFacts
+calls forward E-FUNC (2): c.checkClassExpression c.checkFunctionExpressionOrObjectLiteralMethod
+calls forward E-CALL (7): c.checkCallExpression c.checkImportCallExpression c.checkTaggedTemplateExpression c.checkTypeArguments c.hasCorrectTypeArgumentArity c.isSymbolOrSymbolForCall c.skippedGenericFunction
+calls forward I-INFER (8): c.applyToParameterTypes c.applyToReturnTypes c.inferTypes c.isSkipDirectInferenceNode c.mergeInferences hasInferenceCandidates hasOverlappingInferences newInferenceInfo
+calls forward E-CTX (10): c.checkGeneratorInstantiationAssignabilityToReturnType c.getApparentTypeOfContextualType c.getContextualIterationType c.getContextualType c.getInferenceContext c.instantiateContextualType c.popContextualType c.popInferenceContext c.pushContextualType c.pushInferenceContext
+calls forward K-INDEXED (1): c.getIndexedAccessType
+calls forward X-ITER (4): c.checkIteratedTypeOrElementType c.getIterationTypeOfGeneratorFunctionReturnType c.getIterationTypeOfIterable c.getIterationTypesOfGeneratorFunctionReturnType
+calls forward X-ASYNC (2): c.getAwaitedType c.getAwaitedTypeEx
+calls forward X-JSX (5): c.checkJsxAttributes c.checkJsxElement c.checkJsxExpression c.checkJsxFragment c.checkJsxSelfClosingElement
+calls forward X-SOURCE (2): c.checkSourceElement c.checkSourceElements
+calls forward X-DEFERRED (2): c.checkNodeDeferred c.shouldCheckErasableSyntax
+calls forward X-ENUM-MODULE (1): c.getIsolatedModulesLikeFlagName
+calls forward X-MARKREF (1): c.checkExternalEmitHelpers
+calls forward X-GRAMMAR (7): c.checkGrammarBigIntLiteral c.checkGrammarExpressionWithTypeArguments c.checkGrammarMetaProperty c.checkGrammarNumericLiteral c.checkGrammarStatementInAmbientContext c.checkGrammarYieldExpression c.grammarErrorOnNode
+called from earlier c.checkExpression <- T-ENUMVAL,T-TYPENODE,T-BASE,T-SYMTYPE,PRINTER
+called from earlier c.checkExpressionCached <- A-ALIAS,M-MODULE,T-TYPENODE,T-MEMBERS,T-SIGDECL,T-SYMTYPE,PRINTER
+called from earlier c.checkExpressionCachedEx <- T-SYMTYPE
+called from earlier c.checkExpressionEx <- T-SYMTYPE
+called from earlier c.checkExpressionForMutableLocation <- T-SYMTYPE,R-ELAB
+called from earlier c.checkExpressionWithContextualType <- T-SYMTYPE
+called from earlier c.checkExpressionWithTypeArguments <- T-TYPENODE
+called from earlier c.checkNonNullExpression <- T-SYMTYPE
+called from earlier c.getQuickTypeOfExpression <- T-SYMTYPE
+called from earlier c.getTypeOfExpression <- T-SYMTYPE,PRINTER
+called from later only: c.checkAssertionDeferred c.checkExpressionStatement c.checkMetaPropertyKeyword c.checkNewTargetMetaProperty c.checkNonNullNonVoidType c.checkNonNullType c.checkNonNullTypeWithReporter c.getContextFreeTypeOfExpression c.getInstantiationExpressionType c.getYieldedTypeOfYieldExpression c.instantiateTypeWithSingleGenericCallSignature
+called only inside the layer: c.checkAssertion c.checkConstEnumAccess c.checkExpressionWorker c.checkImportMetaProperty c.checkMetaProperty c.checkNonNullAssertion c.checkNonNullChain c.checkParenthesizedExpression c.checkSatisfiesExpression c.checkSpreadExpression c.checkSyntheticExpression c.checkTypeOfExpression c.checkYieldExpression c.getContextNode c.getReturnTypeOfSingleNonGenericSignature c.getReturnTypeOfSingleNonGenericSignatureOfCallChain c.getUniqueTypeParameters c.reportObjectPossiblyNullOrUndefinedError getUniqueTypeParameterName hasTypeParameterByName
+not called in checker or binder: c.getOuterInferenceTypeParameters
+== E-LITERAL functions 27 lines 699
+file checker/c14_expressions.rs
+   8066-8091 c.checkTemplateExpression codes=2731
+   8093-8096 c.isTemplateLiteralContext
+   8098-8100 c.isTemplateLiteralContextualType
+   8102-8109 c.checkRegularExpressionLiteral
+   8111-8191 c.checkArrayLiteral closures=1
+   8193-8205 c.createArrayLiteralType
+   8207-8210 isSpreadIntoCallOrNew
+file checker/c20_object_literals_spread.rs
+   13235-13445 c.checkObjectLiteral codes=2353,2698 ASSERT@13403 closures=2
+   13447-13457 c.checkContextualDeprecations
+   13459-13470 c.checkDeprecatedProperty
+   13472-13481 c.checkSpreadPropOverrides codes=2783,2785
+   13488-13596 c.getSpreadType closures=3
+   13598-13603 c.getIndexInfoWithReadonly
+   13605-13609 c.isValidSpreadType
+   13627-13629 c.isNonGenericObjectType
+   13631-13678 c.tryMergeUnionOfObjectTypeAndEmptyObject closures=2
+   13681-13684 c.isSpreadableProperty closures=1
+   13686-13703 c.getSpreadSymbol
+   13705-13707 c.isEmptyObjectTypeOrSpreadsIntoEmptyObject
+   13709-13714 c.hasDefaultValue
+   13716-13722 c.isConstContext
+   13724-13744 c.isValidConstAssertionArgument
+   13746-13772 c.isConstTypeVariable closures=2
+   13774-13788 c.checkPropertyAssignment
+   13790-13805 c.checkShorthandPropertyAssignment
+   13807-13822 c.isInPropertyInitializerOrClassStaticBlock closures=1
+   13966-13977 c.checkObjectLiteralMethod
+codes 5: TS2353 TS2698 TS2731 TS2783 TS2785
+calls earlier TYPES (5): Type.AsIndexedAccessType Type.AsMappedType Type.AsSubstitutionType Type.TargetTupleType Type.Types
+calls earlier LINKS (1): symbolArenaLinkStore.Get
+calls earlier UTIL (5): NewDiagnosticForNode c.isCanceled getDeclarationModifierFlagsFromSymbol getPropertyNameFromType isTypeUsableAsPropertyName
+calls earlier K-OBJ (3): c.cloneTypeReference c.newAnonymousType c.newIndexInfo
+calls earlier D-SINK (3): c.addDeprecatedSuggestion c.error c.isDeprecatedSymbol
+calls earlier S-MERGE (3): c.getSymbolOfDeclaration c.newSymbol c.newSymbolEx
+calls earlier Q-ENTITY (1): c.resolveEntityName
+calls earlier K-LIT (2): c.getFreshTypeOfLiteralType c.getStringLiteralType
+calls earlier K-PRED (5): c.isEmptyObjectType c.isErrorType c.maybeTypeOfKind c.maybeTypeOfKindConsideringBaseConstraint someType
+calls earlier K-GENERIC (3): c.isGenericMappedType c.isGenericObjectType c.isGenericTupleType
+calls earlier K-UNION (3): c.checkCrossProductUnion c.getUnionTypeEx c.mapType
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TUPLE (6): c.createArrayTypeEx c.createTupleTypeEx c.getElementTypes c.isArrayLikeType c.isMutableArrayLikeType c.isTupleLikeType
+calls earlier T-TYPENODE (1): c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT (3): c.getBaseConstraintOfType c.getBaseConstraintOrType c.getConstraintOfConditionalType
+calls earlier T-MEMBERS (1): c.getObjectLiteralIndexInfo
+calls earlier T-UIMEMBERS (1): c.getUnionIndexInfos
+calls earlier T-LOOKUP (5): c.getIndexInfoOfType c.getIndexInfosOfType c.getIndexTypeOfType c.getPropertiesOfType c.getPropertyOfType
+calls earlier T-APPARENT (1): c.getReducedType
+calls earlier T-SYMTYPE (3): c.addOptionalityEx c.getTypeOfSymbol c.removeMissingOrUndefinedType
+calls earlier PRINTER (2): c.TypeToString c.symbolToString
+calls earlier R-REL (1): c.isTypeAssignableTo
+calls earlier R-ELAB (1): c.checkTypeAssignableToAndOptionallyElaborate
+calls earlier E-CORE (4): c.checkExpression c.checkExpressionEx c.checkExpressionForMutableLocation c.instantiateTypeWithSingleGenericCallSignature
+calls forward E-ACCESS (1): c.isReadonlySymbol
+calls forward E-FACTS (1): c.removeDefinitelyFalsyTypes
+calls forward E-FUNC (1): c.checkFunctionExpressionOrObjectLiteralMethod
+calls forward I-INFER (1): c.addIntraExpressionInferenceSite
+calls forward E-CTX (6): c.getApparentTypeOfContextualType c.getContextualType c.getInferenceContext c.isContextSensitive c.popContextualType c.pushCachedContextualType
+calls forward K-KEYOF (1): c.checkComputedPropertyName
+calls forward K-INDEXED (1): c.getIndexedAccessTypeOrUndefined
+calls forward T-MAPPED (1): c.getHomomorphicTypeVariable
+calls forward K-TEMPLATE (1): c.getTemplateLiteralType
+calls forward X-ITER (2): c.checkIteratedTypeOrElementType c.getIteratedTypeOrElementType
+calls forward X-DEFERRED (1): c.checkNodeDeferred
+calls forward X-GRAMMAR (3): c.checkGrammarMethod c.checkGrammarObjectLiteralExpression c.checkGrammarRegularExpressionLiteral
+called from earlier c.checkArrayLiteral <- R-ELAB,E-CORE
+called from earlier c.checkObjectLiteral <- E-CORE
+called from earlier c.checkObjectLiteralMethod <- T-SYMTYPE
+called from earlier c.checkPropertyAssignment <- T-SYMTYPE
+called from earlier c.checkRegularExpressionLiteral <- E-CORE
+called from earlier c.checkShorthandPropertyAssignment <- T-SYMTYPE
+called from earlier c.checkTemplateExpression <- E-CORE
+called from earlier c.getSpreadSymbol <- T-SYMTYPE
+called from earlier c.getSpreadType <- M-MODULE
+called from earlier c.hasDefaultValue <- T-SYMTYPE
+called from earlier c.isConstContext <- PRINTER,E-CORE
+called from earlier c.isNonGenericObjectType <- R-REL
+called from earlier c.isSpreadableProperty <- T-SYMTYPE
+called from earlier c.isValidConstAssertionArgument <- E-CORE
+called from earlier c.isValidSpreadType <- M-MODULE,T-SYMTYPE
+called from later only: c.checkContextualDeprecations c.checkSpreadPropOverrides c.isConstTypeVariable c.isInPropertyInitializerOrClassStaticBlock
+called only inside the layer: c.checkDeprecatedProperty c.createArrayLiteralType c.getIndexInfoWithReadonly c.isEmptyObjectTypeOrSpreadsIntoEmptyObject c.isTemplateLiteralContext c.isTemplateLiteralContextualType c.tryMergeUnionOfObjectTypeAndEmptyObject isSpreadIntoCallOrNew
+not called in checker or binder: 
+== E-OPER functions 41 lines 895
+file checker/c17_unary_meta_yield.rs
+   10894-10913 c.checkDeleteExpression codes=2703,2704,18011
+   10915-10928 c.checkDeleteExpressionMustBeOptional codes=2790
+   10930-10933 c.checkVoidExpression
+   10935-10943 c.checkAwaitExpression codes=1320,80007
+   10945-10997 c.checkPrefixUnaryExpression codes=2356,2357,2469,2736,2777
+   10999-11011 c.checkPostfixUnaryExpression codes=2356,2357,2777
+   11013-11022 c.getUnaryResultType
+   11024-11031 c.checkConditionalExpression
+   11033-11035 c.checkTruthinessExpression
+file checker/c19_assertions_binary_operators.rs
+   12422-12425 c.checkBinaryExpression
+   12427-12641 c.checkBinaryLikeExpression codes=2362,2363,2447,2657,2695,2791,2839,6807 PANIC@12640 closures=4
+   12643-12674 c.checkDestructuringAssignment
+   12676-12685 c.checkObjectLiteralAssignment
+   12688-12732 c.checkObjectLiteralDestructuringPropertyAssignment codes=1013,1136,2462
+   12734-12752 c.checkArrayLiteralAssignment
+   12754-12793 c.checkArrayLiteralDestructuringElementAssignment codes=1013,1186,2462 closures=1
+   12795-12807 c.checkReferenceAssignment codes=2364,2701,2778,2779
+   12809-12828 c.reportOperatorError codes=2365,2367
+   12830-12834 c.reportOperatorErrorUnless
+   12836-12846 c.getBaseTypesIfUnrelated
+   12848-12872 c.checkAssignmentOperator codes=2364,2412,2779
+   12874-12876 c.bothAreBigIntLike
+   12878-12888 c.getSuggestedBooleanOperator
+   12890-12900 c.checkArithmeticOperandType
+   12903-12916 c.checkForDisallowedESSymbolOperand codes=2469
+   12918-12942 c.checkNaNEquality codes=1369,2845
+   12944-12950 c.isGlobalNaN
+   12952-12954 c.isTypeEqualityComparableTo
+   12956-12966 c.checkTruthinessOfType codes=1345,2872,2873
+   12977-13004 c.getSyntacticTruthySemantics
+   13006-13025 c.checkNullishCoalesceOperands codes=5076
+   13027-13037 c.checkNullishCoalesceOperandLeft codes=2869,2871
+   13039-13092 c.getSyntacticNullishnessSemantics
+   13102-13127 c.isSideEffectFree
+   13130-13136 c.isIndirectCall
+   13138-13166 c.checkInstanceOfExpression codes=2358,2861
+   13168-13200 c.checkInExpression codes=2638
+   13202-13206 c.hasEmptyObjectIntersection closures=1
+   13208-13215 c.getExactOptionalUnassignableProperties closures=1
+   13217-13219 c.isExactOptionalPropertyMismatch
+   13221-13233 c.checkReferenceExpression
+codes 41: TS1013 TS1136 TS1186 TS1320 TS1345 TS1369(Message) TS2356 TS2357 TS2358 TS2362 TS2363 TS2364 TS2365 TS2367 TS2412 TS2447 TS2462 TS2469 TS2638 TS2657 TS2695 TS2701 TS2703 TS2704 TS2736 TS2777 TS2778 TS2779 TS2790 TS2791 TS2839 TS2845 TS2861 TS2869 TS2871 TS2872 TS2873 TS5076 TS6807 TS18011 TS80007(Suggestion)
+calls earlier LINKS (1): nodeLinkStore.Get
+calls earlier UTIL (6): IsTypeAny c.isUncheckedJSSuggestion entityNameToString getPropertyNameFromType isLiteralExpressionOfObject isTypeUsableAsPropertyName
+calls earlier D-SINK (4): c.addErrorOrSuggestion c.error c.errorAndMaybeSuggestAwait c.errorOrSuggestion
+calls earlier S-MERGE (2): c.getExportSymbolOfValueSymbolIfExported createDiagnosticForNode
+calls earlier N-RESOLVE (2): c.getResolvedSymbol c.getResolvedSymbolOrNil
+calls earlier K-LIT (5): c.getBaseTypeOfLiteralType c.getBaseTypeOfLiteralTypeForComparison c.getBigIntLiteralType c.getFreshTypeOfLiteralType c.getNumberLiteralType
+calls earlier K-PRED (9): c.IsEmptyAnonymousObjectType c.allTypesAssignableToKind c.isErrorType c.isTypeAssignableToKind c.isTypeAssignableToKindEx c.maybeTypeOfKind c.maybeTypeOfKindConsideringBaseConstraint everyType someType
+calls earlier K-UNION (3): c.getUnionType c.getUnionTypeEx c.mapType
+calls earlier T-TUPLE (4): c.createArrayType c.isArrayLikeType c.sliceTupleType isTupleType
+calls earlier T-CONSTRAINT (1): c.getBaseConstraintOrType
+calls earlier T-LOOKUP (3): c.getPropertiesOfType c.getPropertyOfType c.getTypeOfPropertyOfType
+calls earlier T-SIGDECL (1): c.getReturnTypeOfSignature
+calls earlier T-SYMTYPE (4): c.GetNonNullableType c.getFlowTypeOfDestructuring c.getRestType c.getTypeOfSymbol
+calls earlier PRINTER (1): c.TypeToString
+calls earlier R-REL (5): c.areTypesComparable c.checkTypeAssignableTo c.getTypeNamesForErrorDisplay c.isTypeAssignableTo c.isTypeComparableTo
+calls earlier R-ELAB (1): c.checkTypeAssignableToAndOptionallyElaborate
+calls earlier E-CORE (4): c.checkExpression c.checkExpressionEx c.checkNonNullType c.getTypeOfExpression
+calls earlier E-LITERAL (1): c.hasDefaultValue
+calls forward E-ACCESS (5): c.checkPropertyAccessExpression c.checkPropertyAccessibility c.isReadonlySymbol c.markPropertyAsReferenced c.reportNonexistentProperty
+calls forward E-FACTS (5): c.extractDefinitelyFalsyTypes c.getTypeFacts c.getTypeWithFacts c.hasTypeFacts c.removeDefinitelyFalsyTypes
+calls forward E-CALL (2): c.createSyntheticExpression c.getResolvedSignature
+calls forward K-KEYOF (1): c.getLiteralTypeFromPropertyName
+calls forward K-INDEXED (2): c.getIndexedAccessTypeEx c.getIndexedAccessTypeOrUndefined
+calls forward X-ITER (1): c.checkIteratedTypeOrElementType
+calls forward X-ASYNC (3): c.checkAwaitedType c.getAwaitedTypeNoAlias c.getAwaitedTypeOfPromise
+calls forward X-DEFERRED (1): c.checkNodeDeferred
+calls forward X-STMT (1): c.checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType
+calls forward X-MARKREF (1): c.checkExternalEmitHelpers
+calls forward X-GRAMMAR (3): c.checkGrammarAwaitOrAwaitUsing c.checkGrammarForDisallowedTrailingComma c.grammarErrorOnNode
+called from earlier c.checkAwaitExpression <- E-CORE
+called from earlier c.checkBinaryExpression <- E-CORE
+called from earlier c.checkConditionalExpression <- E-CORE
+called from earlier c.checkDeleteExpression <- E-CORE
+called from earlier c.checkPostfixUnaryExpression <- E-CORE
+called from earlier c.checkPrefixUnaryExpression <- E-CORE
+called from earlier c.checkVoidExpression <- E-CORE
+called from earlier c.getExactOptionalUnassignableProperties <- R-REL
+called from earlier c.isExactOptionalPropertyMismatch <- R-ELAB
+called from later only: c.checkArrayLiteralDestructuringElementAssignment c.checkDestructuringAssignment c.checkObjectLiteralDestructuringPropertyAssignment c.checkReferenceExpression c.checkTruthinessExpression c.isTypeEqualityComparableTo
+called only inside the layer: c.bothAreBigIntLike c.checkArithmeticOperandType c.checkArrayLiteralAssignment c.checkAssignmentOperator c.checkBinaryLikeExpression c.checkDeleteExpressionMustBeOptional c.checkForDisallowedESSymbolOperand c.checkInExpression c.checkInstanceOfExpression c.checkNaNEquality c.checkNullishCoalesceOperandLeft c.checkNullishCoalesceOperands c.checkObjectLiteralAssignment c.checkReferenceAssignment c.checkTruthinessOfType c.getBaseTypesIfUnrelated c.getSuggestedBooleanOperator c.getSyntacticNullishnessSemantics c.getSyntacticTruthySemantics c.getUnaryResultType c.hasEmptyObjectIntersection c.isGlobalNaN c.isIndirectCall c.isSideEffectFree c.reportOperatorError c.reportOperatorErrorUnless
+not called in checker or binder: 
+== E-ACCESS functions 71 lines 1581
+file checker/c14_expressions.rs
+   7927-7934 c.checkPrivateIdentifierExpression
+   7936-7942 c.getSymbolForPrivateIdentifierExpression
+   7944-8052 c.checkSuperExpression codes=2335,2336,2337,2338,2466,2660,17011 closures=2
+   8054-8064 c.isInConstructorArgumentInitializer closures=1
+   8212-8221 c.checkQualifiedName
+   8223-8228 c.checkIndexedAccess
+   8230-8234 c.checkElementAccessChain
+   8236-8265 c.checkElementAccessExpression codes=2476
+   8269-8286 c.isForInVariableForNumericPropertyNames
+   8289-8303 c.getForInVariableSymbol
+   8306-8308 c.hasNumericPropertyNames
+   8310-8345 c.checkIndexedAccessIndexType codes=2536,2542,4105 closures=1
+   8347-8355 c.getConstituentProperty
+file checker/c18_identifiers_property_access_this.rs
+   11132-11290 c.checkIdentifier codes=2454,2539,2540,2588,2628,2629,2630,2631,2632,2815,7005,7034 closures=1
+   11292-11298 c.isSameScopedBindingElement
+   11301-11307 c.removeOptionalityFromDeclaredType
+   11309-11326 c.parameterInitializerContainsUndefined
+   11328-11332 c.isInAmbientOrTypeNode closures=1
+   11334-11340 c.checkPropertyAccessExpression
+   11342-11346 c.checkPropertyAccessChain
+   11348-11480 c.checkPropertyAccessExpressionOrQualifiedName codes=1111,2339,2540,2542,2803,2806,4111,7017,18016 closures=1
+   11482-11526 c.getFlowTypeOfAccessExpression codes=2565
+   11528-11532 c.getControlFlowContainer closures=1
+   11534-11542 c.getFlowTypeOfProperty
+   11545-11554 c.getTypeOfPropertyInBaseClass
+   11556-11561 c.isMethodAccessForCall
+   11564-11578 c.lookupSymbolForPrivateIdentifierDeclaration
+   11580-11582 c.getPrivateIdentifierPropertyOfType
+   11584-11618 c.checkPrivateIdentifierPropertyAccess codes=18013,18014,18017,18018 closures=1
+   11620-11681 c.reportNonexistentProperty codes=2339,2550,2551,2568,2576,2728,2773,2812
+   11683-11696 c.getSuggestedLibForNonExistentProperty
+   11698-11707 c.getSuggestedSymbolForNonexistentProperty closures=1
+   11717-11720 c.isValidPropertyAccessForCompletions
+   11730-11742 c.isPropertyAccessible
+   11744-11746 c.containerSeemsToBeEmptyDomElement
+   11748-11754 hasCommonDomTypeName
+   11756-11763 c.checkAndReportErrorForExtendingInterface codes=2689
+   11768-11782 c.getEntityNameForExtendingInterface
+   11784-11798 c.isUncalledFunctionReference closures=2
+   11800-11820 c.checkPropertyNotUsedBeforeDeclaration codes=2449,2728,2729
+   11822-11824 c.isOptionalPropertyDeclaration
+   11826-11834 c.isPropertyDeclaredInAncestorClass
+   11844-11846 c.checkPropertyAccessibility
+   11848-11865 c.checkPropertyAccessibilityEx
+   11877-11989 c.checkPropertyAccessibilityAtLocation codes=2341,2445,2446,2513,2715,2855
+   11991-11993 c.symbolHasNonMethodDeclaration closures=1
+   11997-12008 c.forEachProperty
+   12011-12016 c.getDeclaringClass
+   12019-12026 c.isValidOverrideOf closures=1
+   12030-12038 c.isPropertyInClassDerivedFrom closures=1
+   12040-12049 c.isNodeUsedDuringClassInitialization closures=1
+   12051-12053 c.isNodeWithinClass closures=1
+   12055-12065 c.forEachEnclosingClass
+   12069-12076 c.isClassDerivedFromDeclaringClasses closures=1
+   12078-12102 c.getEnclosingClassFromThisParameter
+   12104-12110 getThisParameterFromNodeContext
+   12112-12166 c.getContextualThisParameterType
+   12168-12223 c.checkThisExpression codes=2331,2332,2465,2683,2738,7041,17009
+   12225-12227 c.tryGetThisTypeAt
+   12229-12235 c.TryGetThisTypeAtEx
+   12237-12277 c.tryGetThisTypeAtEx
+   12279-12324 c.getThisContainer PANIC@12284
+   12326-12343 c.isInParameterInitializerBeforeContainingFunction
+   12345-12352 c.checkThisInStaticClassFieldInitializerInDecoratedClass codes=2816
+   12354-12364 c.checkThisBeforeSuper
+   12371-12376 c.classDeclarationExtendsNull
+file checker/c20_object_literals_spread.rs
+   13824-13928 c.getNarrowedTypeOfSymbol
+   13930-13948 c.isReadonlyAssignmentDeclaration
+   13950-13964 c.isReadonlySymbol
+file checker/c45_base_constraints_normalization.rs
+   27829-27853 c.markPropertyAsReferenced
+file checker/c47_promised_mapped_template.rs
+   29187-29196 c.getOptionalExpressionType
+codes 59: TS1111 TS2331 TS2332 TS2335 TS2336 TS2337 TS2338 TS2339 TS2341 TS2445 TS2446 TS2449 TS2454 TS2465 TS2466 TS2476 TS2513 TS2536 TS2539 TS2540 TS2542 TS2550 TS2551 TS2565 TS2568 TS2576 TS2588 TS2628 TS2629 TS2630 TS2631 TS2632 TS2660 TS2683 TS2689 TS2715 TS2728(Message) TS2729 TS2738(Message) TS2773 TS2803 TS2806 TS2812 TS2815 TS2816 TS2855 TS4105 TS4111 TS7005 TS7017 TS7034 TS7041 TS17009 TS17011 TS18013 TS18014 TS18016 TS18017 TS18018
+calls earlier TYPES (5): Type.AsIndexedAccessType Type.AsInterfaceType Type.AsTypeParameter Type.Distributed Type.Types
+calls earlier LINKS (2): nodeLinkStore.Get symbolArenaLinkStore.Get
+calls earlier UTIL (24): IsInTypeQuery IsTypeAny NewDiagnosticChainForNode NewDiagnosticForNode c.isConstantVariable c.isJSLiteralType c.isMutableLocalVariableDeclaration c.isParameterOrMutableLocalVariable c.isUncheckedJSSuggestion getAssignmentTargetKind getBindingElementPropertyName getContainingClassExcludingClassDecorators getContainingObjectLiteral getDeclarationModifierFlagsFromSymbol getDeclarationModifierFlagsFromSymbolEx getSuperContainer hasDotDotDotToken isClassInstanceProperty isDeleteTarget isInCompoundLikeAssignment isThisInitializedDeclaration isThisInitializedObjectBindingExpression isThisProperty isThisTypeParameter
+calls earlier T-RSTACK (3): c.popTypeResolution c.pushTypeResolution c.reportCircularityError
+calls earlier D-SINK (6): c.IsDeprecatedDeclaration c.addDeferredDiagnostic c.addDeprecatedSuggestion c.addErrorOrSuggestion c.error c.isDeprecatedSymbol
+calls earlier S-MERGE (4): c.getExportSymbolOfValueSymbolIfExported c.getParentOfSymbol c.getSymbolOfDeclaration createDiagnosticForNode
+calls earlier N-RESOLVE (2): c.getResolvedSymbol c.getResolvedSymbolOrNil
+calls earlier N-DIAG (2): c.getSpellingSuggestionForName c.isBlockScopedNameDeclaredBeforeUse
+calls earlier A-ALIAS (2): c.getDeclarationOfAliasSymbol c.resolveAliasWithDeprecationCheck
+calls earlier Q-ENTITY (1): c.resolveEntityName
+calls earlier BINDER (1): GetSymbolNameForPrivateIdentifier
+calls earlier K-LIT (3): c.getBaseTypeOfLiteralType c.getNumberLiteralType getBooleanLiteralValue
+calls earlier K-PRED (6): c.containsUndefinedType c.isEmptyObjectType c.isErrorType everyContainedType everyType isConstEnumObjectType
+calls earlier K-GENERIC (2): c.isGenericMappedType c.isGenericObjectType
+calls earlier K-UNION (2): c.getUnionType c.mapType
+calls earlier T-TUPLE (1): isTupleType
+calls earlier T-DECLARED (1): c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE (1): c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT (3): c.getBaseConstraintOfType c.getBaseConstraintOrType c.getConstraintOfTypeParameter
+calls earlier T-BASE (5): c.getBaseConstructorTypeOfClass c.getBaseTypes c.getTypeWithThisArgument c.hasBaseType getTargetType
+calls earlier T-LOOKUP (8): c.getApplicableIndexInfoForName c.getIndexInfoOfType c.getIndexInfosOfType c.getPropertiesOfType c.getPropertyOfType c.getPropertyOfTypeEx c.getTypeOfPropertyOfType c.isApplicableIndexType
+calls earlier T-APPARENT (3): c.elaborateNeverIntersection c.getApparentType c.getReducedApparentType
+calls earlier T-SIGDECL (2): c.getSignatureFromDeclaration c.getSignatureOfFullSignatureType
+calls earlier T-SIGSHAPE (2): c.getThisTypeOfSignature signatureHasRestParameter
+calls earlier T-INSTANTIATE (1): c.instantiateType
+calls earlier T-SYMTYPE (14): c.GetNonNullableType c.addOptionalityEx c.checkDeclarationInitializer c.getBindingElementTypeFromParentType c.getCombinedModifierFlagsCached c.getCombinedNodeFlagsCached c.getDeclarationNodeFlagsFromSymbol c.getOptionalType c.getTypeForBindingElementParent c.getTypeOfSymbol c.getWriteTypeOfSymbol c.propagateOptionalTypeMarker c.removeMissingType c.removeOptionalTypeMarker
+calls earlier T-WIDEN (1): c.getWidenedType
+calls earlier PRINTER (3): c.SymbolToString c.TypeToString c.symbolToString
+calls earlier R-REL (1): c.isTypeAssignableTo
+calls earlier E-CORE (5): c.checkExpression c.checkExpressionCached c.checkNonNullExpression c.checkNonNullType c.getTypeOfExpression
+calls earlier E-LITERAL (1): c.isInPropertyInitializerOrClassStaticBlock
+calls forward E-FACTS (3): c.convertAutoToAny c.getTypeWithFacts c.hasTypeFacts
+calls forward E-FUNC (1): c.getContextualSignature
+calls forward I-INFER (1): c.getMapperFromContext
+calls forward E-CTX (3): c.getApparentTypeOfContextualType c.getInferenceContext c.isContextSensitiveFunctionOrObjectLiteralMethod
+calls forward F-NARROW (10): c.getFlowTypeOfReference c.getFlowTypeOfReferenceEx c.getNarrowableTypeForReference c.hasMatchingArgument c.isDestructuringAssignmentTarget c.isEvolvingArrayOperationTarget c.isPastLastAssignment c.isSomeSymbolAssigned c.isSymbolAssignedDefinitely getFlowNodeOfNode
+calls forward F-REACH (1): c.isPostSuperFlowNode
+calls forward K-KEYOF (3): c.getIndexTypeEx c.getIndexTypeForMappedType c.getMappedTypeNameTypeKind
+calls forward K-INDEXED (8): c.getIndexedAccessType c.getIndexedAccessTypeOrUndefined c.getPropertyNameFromIndex c.isAssignmentToReadonlyEntity c.isAutoTypedProperty c.isSelfTypeAccess c.isThisPropertyAccessInConstructor c.typeHasStaticProperty
+calls forward T-MAPPED (1): getMappedTypeModifiers
+calls forward X-ASYNC (1): c.GetPromisedTypeOfPromise
+calls forward X-CLASS (1): c.isPropertyWithoutInitializer
+calls forward X-MARKREF (3): c.checkExternalEmitHelpers c.markLinkedReferences shouldMarkIdentifierAliasReferenced
+calls forward X-GRAMMAR (2): c.checkGrammarPrivateIdentifierExpression c.grammarErrorOnNode
+calls forward API-SYMLOC (1): c.getThisTypeOfObjectLiteralFromContextualType
+called from earlier c.checkAndReportErrorForExtendingInterface <- N-DIAG
+called from earlier c.checkIdentifier <- E-CORE
+called from earlier c.checkIndexedAccess <- E-CORE
+called from earlier c.checkPrivateIdentifierExpression <- E-CORE
+called from earlier c.checkPropertyAccessExpression <- T-SYMTYPE,E-CORE,E-OPER
+called from earlier c.checkPropertyAccessibility <- E-OPER
+called from earlier c.checkQualifiedName <- E-CORE
+called from earlier c.checkSuperExpression <- E-CORE
+called from earlier c.checkThisExpression <- E-CORE
+called from earlier c.getContextualThisParameterType <- T-SYMTYPE
+called from earlier c.getDeclaringClass <- R-REL
+called from earlier c.getOptionalExpressionType <- E-CORE
+called from earlier c.getThisContainer <- N-DIAG,PRINTER
+called from earlier c.getTypeOfPropertyInBaseClass <- T-SYMTYPE
+called from earlier c.isInAmbientOrTypeNode <- N-DIAG
+called from earlier c.isReadonlySymbol <- T-UIMEMBERS,PRINTER,R-REL,E-LITERAL,E-OPER
+called from earlier c.isValidOverrideOf <- R-REL
+called from earlier c.markPropertyAsReferenced <- E-OPER
+called from earlier c.reportNonexistentProperty <- E-OPER
+called from later only: c.checkIndexedAccessIndexType c.classDeclarationExtendsNull c.getControlFlowContainer c.getFlowTypeOfProperty c.getPrivateIdentifierPropertyOfType c.getSymbolForPrivateIdentifierExpression c.isInParameterInitializerBeforeContainingFunction c.isMethodAccessForCall c.isNodeWithinClass c.isPropertyAccessible c.isUncalledFunctionReference c.lookupSymbolForPrivateIdentifierDeclaration
+called only inside the layer: c.checkElementAccessChain c.checkElementAccessExpression c.checkPrivateIdentifierPropertyAccess c.checkPropertyAccessChain c.checkPropertyAccessExpressionOrQualifiedName c.checkPropertyAccessibilityAtLocation c.checkPropertyAccessibilityEx c.checkPropertyNotUsedBeforeDeclaration c.checkThisBeforeSuper c.checkThisInStaticClassFieldInitializerInDecoratedClass c.containerSeemsToBeEmptyDomElement c.forEachEnclosingClass c.forEachProperty c.getConstituentProperty c.getEnclosingClassFromThisParameter c.getEntityNameForExtendingInterface c.getFlowTypeOfAccessExpression c.getForInVariableSymbol c.getNarrowedTypeOfSymbol c.getSuggestedLibForNonExistentProperty c.getSuggestedSymbolForNonexistentProperty c.hasNumericPropertyNames c.isClassDerivedFromDeclaringClasses c.isForInVariableForNumericPropertyNames c.isInConstructorArgumentInitializer c.isNodeUsedDuringClassInitialization c.isOptionalPropertyDeclaration c.isPropertyDeclaredInAncestorClass c.isPropertyInClassDerivedFrom c.isReadonlyAssignmentDeclaration c.isSameScopedBindingElement c.isValidPropertyAccessForCompletions c.parameterInitializerContainsUndefined c.removeOptionalityFromDeclaredType c.symbolHasNonMethodDeclaration c.tryGetThisTypeAt c.tryGetThisTypeAtEx getThisParameterFromNodeContext hasCommonDomTypeName
+not called in checker or binder: c.TryGetThisTypeAtEx
+== E-FACTS functions 15 lines 260
+file checker/c47_promised_mapped_template.rs
+   29229-29231 c.removeDefinitelyFalsyTypes closures=1
+   29233-29235 c.extractDefinitelyFalsyTypes
+   29237-29253 c.getDefinitelyFalsyPartOfType
+file checker/c51_type_facts_awaited.rs
+   31097-31099 c.getTypeFacts
+   31101-31103 c.hasTypeFacts
+   31105-31239 c.getTypeFactsWorker
+   31241-31257 c.getIntersectionTypeFacts
+   31259-31261 isZeroBigInt
+   31263-31271 c.isFunctionObjectType
+   31273-31277 c.getTypeWithFacts closures=1
+   31282-31300 c.getAdjustedTypeWithFacts closures=1
+   31302-31322 c.removeNullableByIntersection closures=1
+   31324-31329 c.recombineUnknownType
+   31331-31337 c.getGlobalNonNullableTypeInstantiation
+   31339-31347 c.convertAutoToAny
+codes 0: 
+calls earlier TYPES (1): Type.Types
+calls earlier K-LIT (3): getBigIntLiteralValue getNumberLiteralValue getStringLiteralValue
+calls earlier K-PRED (3): c.filterType c.isEmptyObjectType c.maybeTypeOfKind
+calls earlier K-UNION (2): c.getUnionType c.mapType
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TYPENODE (1): c.getTypeAliasInstantiation
+calls earlier T-CONSTRAINT (1): c.getBaseConstraintOfType
+calls earlier T-MEMBERS (1): c.resolveStructuredTypeMembers
+calls earlier R-REL (1): c.isTypeSubtypeOf
+called from earlier c.convertAutoToAny <- E-ACCESS
+called from earlier c.extractDefinitelyFalsyTypes <- E-OPER
+called from earlier c.getAdjustedTypeWithFacts <- T-SYMTYPE
+called from earlier c.getTypeFacts <- R-SIGREL,E-CORE,E-OPER
+called from earlier c.getTypeWithFacts <- T-SYMTYPE,PRINTER,R-REL,E-OPER,E-ACCESS
+called from earlier c.hasTypeFacts <- T-SYMTYPE,E-OPER,E-ACCESS
+called from earlier c.isFunctionObjectType <- R-REL
+called from earlier c.removeDefinitelyFalsyTypes <- E-LITERAL,E-OPER
+called from later only: c.recombineUnknownType
+called only inside the layer: c.getDefinitelyFalsyPartOfType c.getGlobalNonNullableTypeInstantiation c.getIntersectionTypeFacts c.getTypeFactsWorker c.removeNullableByIntersection isZeroBigInt
+not called in checker or binder: 
+== E-FUNC functions 17 lines 370
+file checker/c16_function_expressions_collisions.rs
+   10137-10142 c.checkClassExpression
+   10144-10169 c.getFirstTransformableStaticClassElement
+   10171-10197 c.checkClassExpressionExternalHelpers
+   10199-10202 c.checkClassExpressionDeferred
+   10204-10240 c.checkFunctionExpressionOrObjectLiteralMethod codes=8030
+   10242-10294 c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+   10296-10327 c.checkFunctionExpressionOrObjectLiteralMethodDeferred
+   10329-10347 c.inferFromAnnotatedParametersAndReturn
+   10354-10383 c.getContextualSignature
+   10385-10391 c.createUnionSignature
+   10395-10402 c.getContextualCallSignature closures=1
+   10404-10420 c.getIntersectedSignatures
+   10423-10437 c.isAritySmaller
+   10439-10483 c.assignContextualParameterTypes
+   10485-10492 c.assignNonContextualParameterTypes
+   10494-10516 c.assignParameterType
+   10520-10532 c.assignBindingElementTypes
+codes 1: TS8030
+calls earlier TYPES (2): Signature.Declaration Type.Types
+calls earlier LINKS (1): symbolArenaLinkStore.Get
+calls earlier UTIL (3): hasDotDotDotToken isOptionalDeclaration walkUpOuterExpressions
+calls earlier K-OBJ (2): c.newAnonymousType c.newSignature
+calls earlier D-SINK (1): c.error
+calls earlier S-MERGE (1): c.getSymbolOfDeclaration
+calls earlier T-TYPENODE (1): c.getTypeFromTypeNode
+calls earlier T-UIMEMBERS (2): c.combineUnionOrIntersectionMemberSignatures c.createSymbolWithType
+calls earlier T-LOOKUP (1): c.getSignaturesOfType
+calls earlier T-SIGDECL (3): c.getReturnTypeFromAnnotation c.getReturnTypeOfSignature c.getSignatureFromDeclaration
+calls earlier T-SIGSHAPE (7): c.getEffectiveRestType c.getParameterCount c.getRestTypeAtPosition c.getTypeAtPosition c.hasEffectiveRestParameter c.tryGetTypeAtPosition signatureHasRestParameter
+calls earlier T-SIGINST (2): c.cloneSignature c.instantiateSignature
+calls earlier T-SYMTYPE (7): c.addOptionalityEx c.checkDeclarationInitializer c.getBindingElementTypeFromParentType c.getTypeFromBindingPattern c.getTypeOfSymbol c.getWidenedTypeForVariableLikeDeclaration c.widenTypeInferredFromInitializer
+calls earlier R-REL (2): c.compareTypesIdentical c.isTypeAssignableTo
+calls earlier R-SIGREL (2): c.compareSignaturesIdentical c.compareTypeParametersIdentical
+calls earlier E-CORE (1): c.checkExpression
+calls forward T-RETINFER (2): c.getReturnTypeFromBody c.unwrapReturnType
+calls forward I-INFER (1): c.inferTypes
+calls forward E-CTX (3): c.getApparentTypeOfContextualType c.getInferenceContext c.isContextSensitive
+calls forward X-SOURCE (2): c.checkSourceElement c.checkSourceElements
+calls forward X-DEFERRED (1): c.checkNodeDeferred
+calls forward X-MEMBERS (1): c.checkSignatureDeclaration
+calls forward X-FUNCDECL (1): c.checkAllCodePathsInNonVoidFunctionReturnOrThrow
+calls forward X-STMT (1): c.checkReturnExpression
+calls forward X-CLASS (1): c.checkClassLikeDeclaration
+calls forward X-ALIAS-UNUSED (1): c.registerForUnusedIdentifiersCheck
+calls forward X-COLLISION (1): c.checkCollisionsForDeclarationName
+calls forward X-MARKREF (1): c.checkExternalEmitHelpers
+calls forward X-GRAMMAR (2): c.checkGrammarForGenerator c.checkGrammarFunctionLikeDeclaration
+called from earlier c.checkClassExpression <- E-CORE
+called from earlier c.checkFunctionExpressionOrObjectLiteralMethod <- E-CORE,E-LITERAL
+called from earlier c.createUnionSignature <- T-UIMEMBERS
+called from earlier c.getContextualSignature <- E-ACCESS
+called from later only: c.checkClassExpressionDeferred c.checkFunctionExpressionOrObjectLiteralMethodDeferred c.getContextualCallSignature c.getFirstTransformableStaticClassElement
+called only inside the layer: c.assignBindingElementTypes c.assignContextualParameterTypes c.assignNonContextualParameterTypes c.assignParameterType c.checkClassExpressionExternalHelpers c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod c.getIntersectedSignatures c.inferFromAnnotatedParametersAndReturn c.isAritySmaller
+not called in checker or binder: 
+== T-RETINFER functions 15 lines 383
+file checker/c34_return_types.rs
+   20240-20370 c.getReturnTypeFromBody codes=1058 closures=1
+   20373-20419 c.checkAndAggregateReturnExpressionTypes codes=1058 closures=1
+   20421-20424 c.functionHasImplicitReturn
+   20426-20434 mayReturnNever
+   20436-20460 c.checkAndAggregateYieldOperandTypes closures=1
+   20462-20472 c.createPromiseType
+   20474-20484 c.createPromiseLikeType
+   20486-20500 c.createPromiseReturnType codes=2697,2705,2711,2712
+   20502-20519 c.unwrapReturnType
+   20521-20535 c.getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded
+   20537-20546 c.getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded
+   20548-20564 c.createGeneratorType
+   20649-20677 c.getTypePredicateFromBody closures=1
+   20679-20697 c.checkIfExpressionRefinesAnyParameter
+   20699-20720 c.checkIfExpressionRefinesParameter
+codes 5: TS1058 TS2697 TS2705 TS2711 TS2712
+calls earlier UTIL (1): forEachYieldExpression
+calls earlier K-OBJ (1): c.createTypeReference
+calls earlier D-SINK (1): c.error
+calls earlier S-MERGE (1): c.getMergedSymbol
+calls earlier K-LIT (3): c.getRegularTypeOfLiteralType c.getWidenedLiteralLikeTypeForContextualType isUnitType
+calls earlier K-PRED (1): someType
+calls earlier K-UNION (1): c.getUnionTypeEx
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TUPLE (1): c.createTypeFromGenericGlobalType
+calls earlier T-APPARENT (1): c.getReducedType
+calls earlier T-SIGDECL (2): c.getReturnTypeOfSignature c.getSignatureFromDeclaration
+calls earlier T-SIGSHAPE (2): c.newTypePredicate isRestParameter
+calls earlier T-SYMTYPE (1): c.getTypeOfSymbol
+calls earlier T-WIDEN (2): c.getWidenedType c.reportErrorsFromWidening
+calls earlier E-CORE (4): c.checkExpressionCached c.checkExpressionCachedEx c.checkExpressionEx c.getYieldedTypeOfYieldExpression
+calls earlier E-LITERAL (1): c.isConstContext
+calls forward E-CTX (5): c.getContextualIterationType c.getContextualReturnType c.getContextualSignatureForFunctionLikeDeclaration c.getContextualType c.instantiateContextualType
+calls forward F-NARROW (4): c.getFlowTypeOfReferenceEx c.isConstantReference c.isSymbolAssigned getFlowNodeOfNode
+calls forward F-REACH (1): c.isReachableFlowNode
+calls forward X-ITER (2): c.getIterationTypeOfGeneratorFunctionReturnType c.getIterationTypesOfIterable
+calls forward X-ASYNC (4): c.GetPromisedTypeOfPromise c.checkAwaitedType c.getAwaitedTypeNoAlias c.unwrapAwaitedType
+called from earlier c.createPromiseType <- T-TYPENODE,R-ELAB
+called from earlier c.getReturnTypeFromBody <- T-SIGDECL,T-SYMTYPE,E-FUNC
+called from earlier c.getTypePredicateFromBody <- T-SIGSHAPE
+called from earlier c.unwrapReturnType <- E-FUNC
+called from later only: c.createGeneratorType c.createPromiseLikeType c.createPromiseReturnType c.functionHasImplicitReturn
+called only inside the layer: c.checkAndAggregateReturnExpressionTypes c.checkAndAggregateYieldOperandTypes c.checkIfExpressionRefinesAnyParameter c.checkIfExpressionRefinesParameter c.getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded c.getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded mayReturnNever
+not called in checker or binder: 
+== E-CALL functions 63 lines 1755
+file checker/c14_expressions.rs
+   8357-8405 c.checkImportCallExpression codes=2880,7036
+file checker/c15_calls.rs
+   8412-8452 c.checkCallExpression codes=2775,2776,7009
+   8454-8463 c.checkDeprecatedSignature
+   8465-8469 c.addDeprecatedSuggestionWithSignature codes=6385,6387
+   8471-8488 c.isSymbolOrSymbolForCall
+   8497-8541 c.getResolvedSignature
+   8543-8559 c.resolveSignature PANIC@8558
+   8561-8663 c.resolveCallExpression codes=2347,2348,2734
+   8665-8736 c.resolveNewExpression codes=2347,2350,2511,2679 closures=1
+   8738-8768 c.isConstructorAccessible codes=2673,2674
+   8770-8798 c.typeHasProtectedAccessibleBase
+   8800-8807 someSignature
+   8809-8831 c.resolveTaggedTemplateExpression codes=2796
+   8833-8864 c.resolveDecorator codes=1329
+   8869-8873 c.isPotentiallyUncalledDecorator closures=1
+   8876-8888 c.getDiagnosticHeadMessageForDecoratorResolution codes=1238,1239,1240,1241 PANIC@8887
+   8890-8918 c.resolveInstanceofExpression codes=2359
+   8933-9045 c.resolveCall codes=2860
+   9047-9095 c.reorderCandidates
+   9097-9099 signatureHasLiteralTypes
+   9101-9113 c.getOptionalCallSignature
+   9115-9195 c.chooseOverload
+   9197-9267 c.hasCorrectArity
+   9269-9271 acceptsVoid
+   9273-9278 c.getDecoratorArgumentCount
+   9283-9302 c.getLegacyDecoratorArgumentCount PANIC@9301
+   9304-9310 c.hasCorrectTypeArgumentArity
+   9312-9344 c.checkTypeArguments codes=2344 ASSERT@9318
+   9346-9419 c.isSignatureApplicable codes=2345,2684
+   9421-9432 c.maybeAddMissingAwaitInfo codes=2773
+   9435-9455 c.getThisArgumentOfCall
+   9457-9469 c.getThisArgumentType
+   9471-9478 c.getEffectiveCheckNode
+   9480-9585 c.inferTypeArguments closures=2
+   9588-9598 c.getCandidateForOverloadFailure closures=1
+   9600-9629 c.pickLongestCandidateSignature
+   9631-9645 c.getLongestCandidateIndex
+   9647-9663 c.getTypeArgumentsFromNodes
+   9665-9669 c.inferSignatureInstantiationForOverloadFailure
+   9671-9710 c.createUnionOfSignaturesForOverloadFailure closures=4
+   9712-9714 c.createCombinedSymbolFromTypes
+   9716-9719 c.createCombinedSymbolForOverloadFailure
+   9739-9773 c.reportCallResolutionErrors codes=2769,2770,2771 closures=1
+   9775-9793 c.addImplementationSuccessElaboration codes=2793 closures=1
+   9795-9911 c.getArgumentArityError codes=1278,1279,2554,2555,2556,2575,2794,2810,6210,6211,6236
+   9913-9931 c.isPromiseResolveArityError
+   9933-9941 getErrorNodeForCallNode
+   9943-9982 c.getTypeArgumentArityError codes=2558,2743
+   9984-9990 c.reportCannotInvokePossiblyNullOrUndefinedError codes=2721,2722,2723
+   9992-10011 c.resolveUntypedCall
+   10013-10016 c.resolveErrorCall
+   10023-10028 c.isUntypedFunctionCall
+   10030-10084 c.invocationErrorDetails codes=2349,2351,2755,2756,2757,2758,2759,2760,2761,2762,2773,6234
+   10086-10093 c.invocationError
+   10095-10109 c.invocationErrorRecovery codes=7038
+   10111-10113 c.isGenericFunctionReturningFunction
+   10115-10122 c.skippedGenericFunction
+   10124-10131 c.checkTaggedTemplateExpression
+file checker/c49_call_arguments_decorator_signatures.rs
+   30165-30229 c.getEffectiveCallArguments
+   30231-30233 c.getSpreadArgumentIndex
+   30235-30237 isSpreadArgument
+   30239-30244 c.createSyntheticExpression
+   30246-30262 c.getSpreadIndices
+codes 59: TS1238 TS1239 TS1240 TS1241 TS1278 TS1279 TS1329 TS2344 TS2345 TS2347 TS2348 TS2349 TS2350 TS2351 TS2359 TS2511 TS2554 TS2555 TS2556 TS2558 TS2575 TS2673 TS2674 TS2679 TS2684 TS2721 TS2722 TS2723 TS2734 TS2743 TS2755 TS2756 TS2757 TS2758 TS2759 TS2760 TS2761 TS2762 TS2769 TS2770 TS2771 TS2773 TS2775 TS2776 TS2793 TS2794 TS2796 TS2810 TS2860 TS2880 TS6210(Message) TS6211(Message) TS6234 TS6236 TS6385(Suggestion) TS6387(Suggestion) TS7009 TS7036 TS7038(Message)
+calls earlier TYPES (3): Type.AsIntersectionType Type.TargetTupleType Type.Types
+calls earlier MAPPER (1): newTypeMapper
+calls earlier UTIL (10): IsTypeAny NewDiagnosticChainForNode NewDiagnosticForNode c.callLikeExpressionMayHaveTypeArguments getNonRestParameterCount getSelectedModifierFlags isCallChain isSuperCall minAndMax tryGetPropertyAccessOrIdentifierToString
+calls earlier K-OBJ (1): c.newSignature
+calls earlier D-SINK (4): c.IsDeprecatedDeclaration c.addDeprecatedSuggestionWorker c.addDiagnostic c.error
+calls earlier S-MERGE (2): c.getSymbolOfDeclaration createDiagnosticForNode
+calls earlier N-RESOLVE (2): c.getResolvedSymbol c.getResolvedSymbolOrNil
+calls earlier A-ALIAS (1): c.resolveExternalModuleTypeByLiteral
+calls earlier M-MODULE (5): c.getTypeWithSyntheticDefaultImportType c.getTypeWithSyntheticDefaultOnly c.isCommonJSRequire c.resolveExternalModuleName c.resolveExternalModuleSymbol
+calls earlier K-PRED (4): c.filterType c.getTargetType c.isErrorType c.typeHasCallOrConstructSignatures
+calls earlier K-UNION (1): c.getUnionTypeEx
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TUPLE (3): c.createArrayType c.getElementTypes isTupleType
+calls earlier T-DECLARED (1): c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE (2): c.getESSymbolLikeTypeForNode c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT (4): c.fillMissingTypeArguments c.getConstraintOfTypeParameter c.getDefaultFromTypeParameter c.getMinTypeArgumentCount
+calls earlier T-BASE (4): c.getBaseTypes c.getInstantiatedConstructorsForTypeArguments c.getTypeWithThisArgument c.isFunctionType
+calls earlier T-UIMEMBERS (2): c.createSymbolWithType c.findMixins
+calls earlier T-LOOKUP (1): c.getSignaturesOfType
+calls earlier T-APPARENT (2): c.getApparentType c.getReducedType
+calls earlier T-SIGDECL (2): c.getReturnTypeOfSignature c.getSignatureFromDeclaration
+calls earlier T-SIGSHAPE (12): c.getMinArgumentCount c.getNonArrayRestType c.getParameterCount c.getThisTypeOfSignature c.getTypeAtPosition c.getTypeOfParameter c.getTypePredicateOfSignature c.hasEffectiveRestParameter c.tryGetRestTypeOfSignature c.tryGetTypeAtPosition isRestParameter signatureHasRestParameter
+calls earlier T-SIGINST (6): c.cloneSignature c.createSignatureInstantiation c.getOrCreateTypeFromSignature c.getSignatureInstantiation c.getSignatureInstantiationWithoutFillingInTypeArguments c.getSingleCallSignature
+calls earlier T-INSTANTIATE (1): c.instantiateType
+calls earlier T-SYMTYPE (4): c.GetNonNullableType c.getNullableType c.getTypeOfSymbol c.removeOptionalTypeMarker
+calls earlier T-WIDEN (1): c.getRegularTypeOfObjectLiteral
+calls earlier PRINTER (2): c.TypeToString c.signatureToString
+calls earlier R-REL (6): c.checkTypeAssignableTo c.checkTypeAssignableToEx c.checkTypeRelatedToEx c.isTypeAssignableTo c.isTypeRelatedTo c.isTypeSubtypeOf
+calls earlier R-ELAB (1): c.checkTypeRelatedToAndOptionallyElaborate
+calls earlier E-CORE (5): c.checkExpression c.checkExpressionCached c.checkExpressionWithContextualType c.checkNonNullExpression c.checkNonNullTypeWithReporter
+calls earlier E-ACCESS (3): c.checkSuperExpression c.getOptionalExpressionType c.isNodeWithinClass
+calls earlier T-RETINFER (1): c.createPromiseReturnType
+calls forward I-INFER (8): c.cloneInferenceContext c.cloneInferredPartOfContext c.createOuterReturnMapper c.getInferredTypes c.getMapperFromContext c.inferTypes c.newInferenceContext hasInferenceCandidates
+calls forward E-CTX (4): c.getContextualType c.getInferenceContext c.getSpreadArgumentType c.isContextSensitive
+calls forward F-NARROW (3): c.getEffectsSignature c.getSymbolHasInstanceMethodOfObjectType c.getTypeOfDottedName
+calls forward X-ASYNC (2): c.getAwaitedType c.getAwaitedTypeOfPromise
+calls forward X-JSX (3): c.checkApplicableSignatureForJsxCallLikeElement c.inferJsxTypeArguments c.resolveJsxOpeningLikeElement
+calls forward X-DECORATOR (2): c.getDecoratorCallSignature c.getEffectiveDecoratorArguments
+calls forward X-SOURCE (1): c.checkSourceElements
+calls forward X-DEFERRED (1): c.checkNodeDeferred
+calls forward X-MEMBERS (1): c.getDeprecatedSuggestionNode
+calls forward X-GRAMMAR (3): c.checkGrammarImportCallExpression c.checkGrammarTaggedTemplateChain c.checkGrammarTypeArguments
+called from earlier c.checkCallExpression <- E-CORE
+called from earlier c.checkImportCallExpression <- E-CORE
+called from earlier c.checkTaggedTemplateExpression <- E-CORE
+called from earlier c.checkTypeArguments <- E-CORE
+called from earlier c.createSyntheticExpression <- E-OPER
+called from earlier c.getEffectiveCallArguments <- UTIL
+called from earlier c.getEffectiveCheckNode <- R-ELAB
+called from earlier c.getResolvedSignature <- E-OPER
+called from earlier c.hasCorrectTypeArgumentArity <- E-CORE
+called from earlier c.isSymbolOrSymbolForCall <- E-CORE
+called from earlier c.skippedGenericFunction <- E-CORE
+called from later only: c.checkDeprecatedSignature c.getSpreadIndices c.isUntypedFunctionCall c.resolveCall c.resolveErrorCall c.resolveUntypedCall isSpreadArgument
+called only inside the layer: acceptsVoid c.addDeprecatedSuggestionWithSignature c.addImplementationSuccessElaboration c.chooseOverload c.createCombinedSymbolForOverloadFailure c.createCombinedSymbolFromTypes c.createUnionOfSignaturesForOverloadFailure c.getArgumentArityError c.getCandidateForOverloadFailure c.getDecoratorArgumentCount c.getDiagnosticHeadMessageForDecoratorResolution c.getLegacyDecoratorArgumentCount c.getLongestCandidateIndex c.getOptionalCallSignature c.getSpreadArgumentIndex c.getThisArgumentOfCall c.getThisArgumentType c.getTypeArgumentArityError c.getTypeArgumentsFromNodes c.hasCorrectArity c.inferSignatureInstantiationForOverloadFailure c.inferTypeArguments c.invocationError c.invocationErrorDetails c.invocationErrorRecovery c.isConstructorAccessible c.isGenericFunctionReturningFunction c.isPotentiallyUncalledDecorator c.isPromiseResolveArityError c.isSignatureApplicable c.maybeAddMissingAwaitInfo c.pickLongestCandidateSignature c.reorderCandidates c.reportCallResolutionErrors c.reportCannotInvokePossiblyNullOrUndefinedError c.resolveCallExpression c.resolveDecorator c.resolveInstanceofExpression c.resolveNewExpression c.resolveSignature c.resolveTaggedTemplateExpression c.typeHasProtectedAccessibleBase getErrorNodeForCallNode signatureHasLiteralTypes someSignature
+not called in checker or binder: 
+== E-CTX functions 55 lines 1031
+file checker/c48_contextual_types.rs
+   29466-29533 c.getContextualType
+   29546-29559 c.getContextualTypeForInitializerExpression
+   29561-29578 c.getContextualTypeForVariableLikeDeclaration
+   29581-29617 c.getContextuallyTypedParameterType
+   29619-29621 c.isContextSensitiveFunctionOrObjectLiteralMethod
+   29623-29692 c.getSpreadArgumentType
+   29694-29704 c.getMutableArrayOrTupleType
+   29706-29733 c.getContextualTypeForBindingElement
+   29735-29742 c.getContextualTypeForStaticPropertyDeclaration
+   29744-29777 c.getContextualTypeForReturnExpression closures=1
+   29779-29786 c.getContextualIterationType
+   29788-29818 c.getContextualReturnType closures=2
+   29820-29832 c.checkGeneratorInstantiationAssignabilityToReturnType
+   29834-29840 c.getContextualSignatureForFunctionLikeDeclaration
+   29842-29871 c.getContextualTypeForYieldOperand closures=1
+   29873-29882 c.getContextualTypeForAwaitOperand
+   29885-29893 c.getContextualTypeForArgument
+   29895-29922 c.getContextualTypeForArgumentAtIndex
+   29924-29930 c.getContextualTypeForDecorator
+   29932-29964 c.getContextualTypeForBinaryOperand
+   29966-30041 c.getContextualTypeForAssignmentExpression
+   30043-30082 c.getContextualTypeForObjectLiteralElement closures=1
+   30087-30093 c.getContextualTypeForObjectLiteralMethod
+   30095-30142 c.getContextualTypeForElementExpression closures=1
+   30145-30151 c.getContextualTypeForConditionalOperand
+   30153-30158 c.getContextualTypeForSubstitutionExpression
+   30160-30162 c.getContextualImportAttributeType
+file checker/c50_contextual_properties_inference_context.rs
+   30674-30676 c.getTypeOfPropertyOfContextualType
+   30678-30728 c.getTypeOfPropertyOfContextualTypeEx closures=1
+   30730-30745 c.getIndexedMappedTypeSubstitutedTypeOfContextualType
+   30747-30759 c.isExcludedMappedPropertyName closures=1
+   30761-30767 c.getTypeOfConcretePropertyOfContextualType
+   30769-30784 c.getTypeFromIndexInfosOfContextualType
+   30786-30792 c.isCircularMappedProperty
+   30794-30805 c.appendContextualPropertyTypeConstituent
+   30809-30834 c.getApparentTypeOfContextualType closures=1
+   30842-30844 ObjectLiteralDiscriminator.len
+   30846-30851 ObjectLiteralDiscriminator.name
+   30853-30876 ObjectLiteralDiscriminator.matches
+   30878-30906 c.discriminateContextualTypeByObjectMembers closures=2
+   30908-30920 c.getMatchingUnionConstituentForObjectLiteral closures=1
+   30925-30936 c.isPossiblyDiscriminantValue
+   30940-30973 c.instantiateContextualType closures=1
+   30978-30993 c.instantiateInstantiableTypes closures=2
+   30995-30997 c.pushCachedContextualType
+   30999-31001 c.pushContextualType
+   31003-31007 c.popContextualType
+   31009-31016 c.findContextualNode
+   31020-31052 c.isContextSensitive
+   31054-31056 c.isContextSensitiveFunctionLikeDeclaration
+   31058-31072 c.hasContextSensitiveReturnExpression closures=1
+   31074-31076 c.hasContextSensitiveYieldExpression
+   31078-31080 c.pushInferenceContext
+   31082-31086 c.popInferenceContext
+   31088-31095 c.getInferenceContext
+codes 0: 
+calls earlier TYPES (5): Type.AsConditionalType Type.AsMappedType Type.Distributed Type.TargetTupleType Type.Types
+calls earlier LINKS (1): symbolArenaLinkStore.Get
+calls earlier UTIL (6): forEachYieldExpression getPropertyNameFromType hasDotDotDotToken isNodeDescendantOf isNumericLiteralName isTypeUsableAsPropertyName
+calls earlier T-RSTACK (1): c.findResolutionCycleStartIndex
+calls earlier S-MERGE (2): c.getExportSymbolOfValueSymbolIfExported c.getSymbolOfDeclaration
+calls earlier N-RESOLVE (1): c.getResolvedSymbol
+calls earlier BINDER (1): GetSymbolNameForPrivateIdentifier
+calls earlier K-LIT (4): c.getNumberLiteralType c.getRegularTypeOfLiteralType c.getStringLiteralType c.getWidenedLiteralType
+calls earlier K-PRED (4): c.filterType c.maybeTypeOfKind containsType someType
+calls earlier K-GENERIC (1): c.isGenericMappedType
+calls earlier K-UNION (4): c.getUnionType c.getUnionTypeEx c.mapType c.mapTypeEx
+calls earlier K-INTERSECT (1): c.getIntersectionType
+calls earlier T-TUPLE (10): c.createArrayTypeEx c.createTupleTypeEx c.getElementTypeOfSliceOfTupleType c.getElementTypes c.getTypeReferenceArity c.isArrayLikeType c.isMutableArrayLikeType c.isMutableArrayOrTuple getEndElementCount isTupleType
+calls earlier T-TYPENODE (2): c.getTypeFromTypeNode c.tryGetTypeFromTypeNode
+calls earlier T-CONSTRAINT (1): c.getBaseConstraintOrType
+calls earlier T-LOOKUP (5): c.findApplicableIndexInfo c.getIndexInfosOfStructuredType c.getPropertiesOfType c.getPropertyOfType c.getTypeOfPropertyOfType
+calls earlier T-APPARENT (2): c.getApparentType c.getReducedType
+calls earlier T-SIGDECL (3): c.getReturnTypeFromAnnotation c.getReturnTypeOfSignature c.hasBindableName
+calls earlier T-SIGSHAPE (5): c.getRestTypeAtPosition c.getTypeAtPosition c.isResolvingReturnTypeOfSignature c.tryGetTypeAtPosition signatureHasRestParameter
+calls earlier T-SIGINST (1): c.getOrCreateTypeFromSignature
+calls earlier T-INSTANTIATE (2): c.getTypeArguments c.instantiateType
+calls earlier T-SYMTYPE (4): c.checkDeclarationInitializer c.getTypeFromBindingPattern c.getTypeOfSymbol c.removeMissingType
+calls earlier R-REL (2): c.checkTypeAssignableTo c.isTypeAssignableTo
+calls earlier R-DISCRIM (4): c.discriminateTypeByDiscriminableItems c.getConstituentTypeForKeyType c.getKeyPropertyName c.isDiscriminantProperty
+calls earlier E-CORE (5): c.checkExpression c.checkExpressionCached c.checkExpressionWithContextualType c.getContextFreeTypeOfExpression c.getTypeOfExpression
+calls earlier E-LITERAL (1): c.isConstTypeVariable
+calls earlier E-ACCESS (1): c.getThisContainer
+calls earlier E-FUNC (1): c.getContextualSignature
+calls earlier T-RETINFER (2): c.createGeneratorType c.createPromiseLikeType
+calls earlier E-CALL (4): c.getEffectiveCallArguments c.getResolvedSignature c.getSpreadIndices isSpreadArgument
+calls earlier I-INFER (1): hasInferenceCandidatesOrDefault
+calls forward K-KEYOF (2): c.getLiteralTypeFromPropertyName c.getMappedTypeNameTypeKind
+calls forward K-INDEXED (2): c.getIndexedAccessTypeEx c.substituteIndexedMappedType
+calls forward K-SUBST (1): c.getActualTypeVariable
+calls forward K-COND (2): c.getFalseTypeFromConditionalType c.getTrueTypeFromConditionalType
+calls forward T-MAPPED (1): c.getConstraintTypeFromMappedType
+calls forward X-ITER (4): c.checkIteratedTypeOrElementType c.getIteratedTypeOrElementType c.getIterationTypeOfGeneratorFunctionReturnType c.getIterationTypesOfGeneratorFunctionReturnType
+calls forward X-ASYNC (2): c.getAwaitedTypeNoAlias c.getAwaitedTypeOfPromise
+calls forward X-JSX (5): c.discriminateContextualTypeByJSXAttributes c.getContextualJsxElementAttributesType c.getContextualTypeForJsxAttribute c.getContextualTypeForJsxExpression c.getEffectiveFirstArgumentForJsxSignature
+calls forward X-DECORATOR (1): c.getDecoratorCallSignature
+called from earlier c.checkGeneratorInstantiationAssignabilityToReturnType <- E-CORE
+called from earlier c.getApparentTypeOfContextualType <- E-CORE,E-LITERAL,E-ACCESS,E-FUNC
+called from earlier c.getContextualIterationType <- E-CORE,T-RETINFER
+called from earlier c.getContextualReturnType <- T-RETINFER
+called from earlier c.getContextualSignatureForFunctionLikeDeclaration <- T-WIDEN,T-RETINFER
+called from earlier c.getContextualType <- T-SIGDECL,PRINTER,E-CORE,E-LITERAL,T-RETINFER,E-CALL,I-INFER
+called from earlier c.getContextualTypeForObjectLiteralMethod <- I-INFER
+called from earlier c.getContextuallyTypedParameterType <- T-SYMTYPE
+called from earlier c.getInferenceContext <- E-CORE,E-LITERAL,E-ACCESS,E-FUNC,E-CALL
+called from earlier c.getSpreadArgumentType <- E-CALL
+called from earlier c.instantiateContextualType <- PRINTER,E-CORE,T-RETINFER
+called from earlier c.isContextSensitive <- T-DECLARED,R-REL,E-LITERAL,E-FUNC,E-CALL
+called from earlier c.isContextSensitiveFunctionOrObjectLiteralMethod <- T-SYMTYPE,E-ACCESS
+called from earlier c.popContextualType <- R-ELAB,E-CORE,E-LITERAL
+called from earlier c.popInferenceContext <- E-CORE
+called from earlier c.pushCachedContextualType <- E-LITERAL
+called from earlier c.pushContextualType <- R-ELAB,E-CORE
+called from earlier c.pushInferenceContext <- E-CORE
+called from later only: c.findContextualNode c.getContextualTypeForArgumentAtIndex c.getContextualTypeForElementExpression c.getContextualTypeForObjectLiteralElement c.getTypeOfPropertyOfContextualType c.isPossiblyDiscriminantValue
+called only inside the layer: c.appendContextualPropertyTypeConstituent c.discriminateContextualTypeByObjectMembers c.getContextualImportAttributeType c.getContextualTypeForArgument c.getContextualTypeForAssignmentExpression c.getContextualTypeForAwaitOperand c.getContextualTypeForBinaryOperand c.getContextualTypeForBindingElement c.getContextualTypeForConditionalOperand c.getContextualTypeForDecorator c.getContextualTypeForInitializerExpression c.getContextualTypeForReturnExpression c.getContextualTypeForStaticPropertyDeclaration c.getContextualTypeForSubstitutionExpression c.getContextualTypeForVariableLikeDeclaration c.getContextualTypeForYieldOperand c.getIndexedMappedTypeSubstitutedTypeOfContextualType c.getMatchingUnionConstituentForObjectLiteral c.getMutableArrayOrTupleType c.getTypeFromIndexInfosOfContextualType c.getTypeOfConcretePropertyOfContextualType c.getTypeOfPropertyOfContextualTypeEx c.hasContextSensitiveReturnExpression c.hasContextSensitiveYieldExpression c.instantiateInstantiableTypes c.isCircularMappedProperty c.isContextSensitiveFunctionLikeDeclaration c.isExcludedMappedPropertyName
+not called in checker or binder: ObjectLiteralDiscriminator.len ObjectLiteralDiscriminator.matches ObjectLiteralDiscriminator.name
+== F-NARROW functions 134 lines 2481
+file checker/c51_type_facts_awaited.rs
+   31594-31596 c.isSomeSymbolAssigned
+   31598-31605 c.isSomeSymbolAssignedWorker closures=1
+   31614-31630 c.getNarrowableTypeForReference
+   31632-31640 c.isConstraintPosition
+   31642-31647 c.isGenericTypeWithUnionConstraint
+   31649-31654 c.isGenericTypeWithoutNullableConstraint
+   31656-31669 c.hasContextualTypeWithNoGenericTypes
+   31671-31682 c.getNonUndefinedType closures=1
+   31684-31692 c.isGenericTypeWithUndefinedConstraint
+file checker/flow.rs
+   24-26 FlowType.isNil
+   28-33 c.newFlowType
+   52-59 c.getFlowState
+   61-67 c.putFlowState
+   69-75 getFlowNodeOfNode
+   77-79 c.getFlowTypeOfReference
+   81-115 c.getFlowTypeOfReferenceEx
+   117-206 c.getTypeAtFlowNode
+   208-218 getBranchLabelAntecedents
+   220-274 c.getTypeAtFlowAssignment
+   276-281 c.getInitialOrAssignedType
+   283-286 c.isEmptyArrayAssignment
+   288-314 c.getTypeAtFlowCall
+   316-336 c.narrowTypeByTypePredicate closures=1
+   338-352 c.narrowTypeByAssertion
+   354-373 c.getTypeAtFlowCondition
+   377-413 c.narrowType
+   415-426 c.narrowTypeByOptionality closures=1
+   428-442 c.narrowTypeByTruthiness closures=1
+   444-467 c.narrowTypeByCallExpression
+   469-554 c.narrowTypeByBinaryExpression
+   556-612 c.narrowTypeByEquality closures=2
+   614-633 c.narrowTypeByTypeof closures=1
+   646-655 c.narrowTypeByLiteralExpression
+   657-683 c.narrowTypeByTypeName
+   685-700 c.narrowTypeByTypeFacts closures=1
+   702-723 c.narrowTypeByDiscriminantProperty closures=1
+   725-748 c.narrowTypeByDiscriminant closures=1
+   750-758 c.isMatchingConstructorReference
+   760-792 c.narrowTypeByConstructor closures=1
+   794-804 c.isConstructedBy
+   806-809 c.narrowTypeByBooleanComparison
+   811-844 c.narrowTypeByInstanceof
+   846-857 c.getNarrowedType
+   859-964 c.getNarrowedTypeWorker closures=6
+   966-980 c.getInstanceType closures=1
+   982-999 c.narrowTypeByPrivateIdentifierInInExpression
+   1001-1022 c.narrowTypeByInKeyword closures=2
+   1024-1030 c.isTypePresencePossible
+   1032-1057 c.narrowTypeByOptionalChainContainment closures=2
+   1059-1089 c.getTypeAtSwitchClause closures=2
+   1091-1155 c.narrowTypeBySwitchOnDiscriminant closures=3
+   1157-1185 c.narrowTypeBySwitchOnTypeOf closures=3
+   1187-1221 c.narrowTypeBySwitchOnTrue closures=2
+   1223-1229 c.narrowTypeBySwitchOptionalChainContainment
+   1231-1251 c.narrowTypeBySwitchOnDiscriminantProperty closures=2
+   1253-1309 c.getTypeAtFlowBranchLabel
+   1314-1323 c.getUnionOrEvolvingArrayType
+   1325-1402 c.getTypeAtFlowLoopLabel
+   1404-1434 c.getTypeAtFlowArrayMutation
+   1436-1455 c.getDiscriminantPropertyAccess
+   1457-1494 c.getCandidateDiscriminantPropertyAccess
+   1496-1503 getCandidateVariableDeclarationInitializer
+   1509-1518 c.getEvolvingArrayType
+   1520-1525 c.getElementTypeOfEvolvingArrayType
+   1527-1538 isEvolvingArrayTypeList
+   1542-1552 c.isEvolvingArrayOperationTarget
+   1557-1564 c.addEvolvingArrayElementType
+   1566-1571 c.finalizeEvolvingArrayType
+   1573-1578 c.getFinalArrayType
+   1580-1588 c.createFinalArrayType
+   1590-1595 c.reportFlowControlError codes=2563
+   1597-1649 c.isMatchingReference
+   1657-1663 c.getFlowReferenceKey
+   1665-1725 c.writeFlowCacheKey
+   1727-1741 c.getAccessedPropertyName
+   1743-1751 c.tryGetElementAccessExpressionName
+   1753-1780 c.tryGetNameFromEntityNameExpression
+   1782-1790 tryGetNameFromType
+   1792-1804 c.getDestructuringPropertyName
+   1806-1812 c.getLiteralPropertyNameText
+   1814-1839 c.isConstantReference
+   1841-1849 c.containsMatchingReference
+   1851-1859 c.optionalChainContainsReference
+   1861-1874 c.getReferenceCandidate
+   1876-1884 c.getReferenceRoot
+   1886-1896 c.hasMatchingArgument
+   1898-1900 c.isOrContainsMatchingReference
+   1907-1926 c.replacePrimitivesWithLiterals closures=1
+   1928-1931 isCoercibleUnderDoubleEquals
+   1933-1947 c.isExhaustiveSwitchStatement
+   1949-1976 c.computeExhaustiveSwitchStatement closures=1
+   1978-1985 c.eachTypeContainedIn closures=1
+   1989-2009 c.getSwitchClauseTypeOfWitnesses
+   2012-2024 c.getNotEqualFactsFromTypeofSwitch
+   2026-2038 c.getSwitchClauseTypes
+   2040-2045 c.getTypeOfSwitchClause
+   2047-2088 c.getEffectsSignature
+   2093-2105 c.getSymbolHasInstanceMethodOfObjectType
+   2107-2116 c.getPropertyNameForKnownSymbolName
+   2122-2153 c.getTypeOfDottedName
+   2155-2195 c.getExplicitTypeOfSymbol codes=2782
+   2197-2200 c.isDeclarationWithExplicitTypeAnnotation
+   2202-2209 c.isExpandoPropertyFunctionWithReturnTypeAnnotation
+   2211-2213 c.hasTypePredicateOrNeverReturnType
+   2215-2232 c.getExplicitThisType
+   2234-2242 c.getInitialType PANIC@2241
+   2244-2258 c.getInitialTypeOfVariableDeclaration
+   2260-2271 c.getTypeOfInitializer
+   2273-2286 c.getInitialTypeOfBindingElement
+   2288-2312 c.getAssignedType
+   2314-2321 c.getAssignedTypeOfBinaryExpression
+   2323-2325 c.getAssignedTypeOfArrayLiteralElement
+   2327-2337 c.getTypeOfDestructuredArrayElement
+   2339-2347 c.includeUndefinedInIndexSignature
+   2349-2351 c.getAssignedTypeOfSpreadExpression
+   2353-2359 c.getTypeOfDestructuredSpreadExpression
+   2361-2363 c.getAssignedTypeOfPropertyAssignment
+   2365-2378 c.getTypeOfDestructuredProperty
+   2380-2382 c.getAssignedTypeOfShorthandPropertyAssignment
+   2384-2387 c.isDestructuringAssignmentTarget
+   2389-2394 c.getTypeWithDefault
+   2399-2413 c.getAssignmentReducedType
+   2415-2432 c.getAssignmentReducedTypeWorker closures=1
+   2434-2449 c.typeMaybeAssignableTo
+   2451-2464 c.getTypePredicateArgument
+   2466-2486 c.getFlowTypeInConstructor codes=7008
+   2488-2511 c.getFlowTypeInStaticBlocks codes=7008
+   2655-2658 c.isSymbolAssignedDefinitely
+   2661-2664 c.isSymbolAssigned
+   2668-2672 c.isPastLastAssignment
+   2674-2689 c.ensureAssignmentsMarked
+   2691-2695 c.hasParentWithAssignmentsMarked closures=1
+   2703-2747 c.markNodeAssignmentsWorker
+   2752-2764 c.extendAssignmentPosition
+codes 3: TS2563 TS2782(Message) TS7008
+calls earlier TYPES (8): Type.AsEvolvingArrayType Type.AsInterfaceType Type.AsIntersectionType Type.AsLiteralType Type.AsSubstitutionType Type.AsUnionType Type.AsUniqueESSymbolType Type.Types
+calls earlier UTIL (13): IsTypeAny c.isConstantVariable c.isParameterOrMutableLocalVariable getAssignmentTargetKind getBindingElementPropertyName getPropertyNameFromType hasDotDotDotToken hasOnlyExpressionInitializer isCallChain isEmptyArrayLiteral isInCompoundLikeAssignment isNonNullAccess isTypeUsableAsPropertyName
+calls earlier T-KEYS (7): CacheHashKey.IsZero keyBuilder.hash keyBuilder.writeByte keyBuilder.writeNode keyBuilder.writeString keyBuilder.writeSymbol keyBuilder.writeType
+calls earlier K-OBJ (1): c.newObjectType
+calls earlier D-SINK (2): c.addDiagnostic c.error
+calls earlier S-MERGE (4): c.getExportSymbolOfValueSymbolIfExported c.getSymbolOfDeclaration c.resolveSymbol createDiagnosticForNode
+calls earlier N-RESOLVE (2): c.getResolvedSymbol c.getResolvedSymbolOrNil
+calls earlier N-DIAG (1): c.isBlockScopedNameDeclaredBeforeUse
+calls earlier Q-ENTITY (1): c.resolveEntityName
+calls earlier BINDER (1): GetSymbolNameForPrivateIdentifier
+calls earlier TRACER (1): Tracer.Instant
+calls earlier K-LIT (11): c.extractUnitType c.getBaseTypeOfLiteralType c.getFreshTypeOfLiteralType c.getRegularTypeOfLiteralType c.getWidenedLiteralType c.isUnitLikeType getStringLiteralValue isFreshLiteralType isLiteralType isNeitherUnitTypeNorNever isUnitType
+calls earlier K-PRED (12): c.IsEmptyAnonymousObjectType c.allTypesAssignableToKind c.extractTypesOfKind c.filterType c.isPatternLiteralType c.isTypeAssignableToKind c.isUniformUnionType c.maybeTypeOfKind c.removeType containsType everyType someType
+calls earlier K-GENERIC (2): c.isGenericIndexType c.isGenericType
+calls earlier K-UNION (3): c.getUnionType c.getUnionTypeEx c.mapType
+calls earlier K-INTERSECT (2): c.getIntersectionType c.unionContainsType
+calls earlier T-TUPLE (3): c.createArrayType c.getTupleElementType c.isTupleLikeType
+calls earlier T-DECLARED (1): c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE (2): c.getTypeAliasInstantiation c.tryGetTypeFromTypeNode
+calls earlier T-CONSTRAINT (2): c.getBaseConstraintOfType c.getBaseConstraintOrType
+calls earlier T-BASE (2): c.isConstructorType c.isFunctionType
+calls earlier T-LOOKUP (4): c.getApplicableIndexInfoForName c.getPropertyOfType c.getSignaturesOfType c.getTypeOfPropertyOfType
+calls earlier T-APPARENT (1): c.getApparentType
+calls earlier T-SIGDECL (3): c.getReturnTypeFromAnnotation c.getReturnTypeOfSignature c.getSignatureFromDeclaration
+calls earlier T-SIGSHAPE (1): c.getTypePredicateOfSignature
+calls earlier T-SIGINST (1): c.getErasedSignature
+calls earlier T-SYMTYPE (6): c.IsNullableType c.checkRightHandSideOfForOf c.getNonNullableTypeIfNeeded c.getOptionalType c.getTypeOfSymbol c.isVarConstLike
+calls earlier T-WIDEN (1): c.getRegularTypeOfObjectLiteral
+calls earlier PRINTER (2): c.TypeToString c.symbolToString
+calls earlier R-REL (7): c.areTypesComparable c.isTypeAssignableTo c.isTypeDerivedFrom c.isTypeRelatedTo c.isTypeStrictSubtypeOf c.isTypeSubsetOf c.isTypeSubtypeOf
+calls earlier R-DISCRIM (3): c.getConstituentTypeForKeyType c.getKeyPropertyName c.isDiscriminantProperty
+calls earlier E-CORE (6): c.checkExpression c.checkExpressionCached c.checkNonNullExpression c.checkNonNullType c.getContextFreeTypeOfExpression c.getTypeOfExpression
+calls earlier E-ACCESS (5): c.checkSuperExpression c.getFlowTypeOfProperty c.getOptionalExpressionType c.getSymbolForPrivateIdentifierExpression c.isReadonlySymbol
+calls earlier E-FACTS (6): c.convertAutoToAny c.getAdjustedTypeWithFacts c.getTypeFacts c.getTypeWithFacts c.hasTypeFacts c.recombineUnknownType
+calls earlier E-CALL (1): c.getResolvedSignature
+calls earlier E-CTX (1): c.getContextualType
+calls forward F-REACH (1): c.isReachableFlowNode
+calls forward K-KEYOF (1): c.getLiteralTypeFromPropertyName
+calls forward K-INDEXED (1): c.getTypeOfPropertyOrIndexSignatureOfType
+calls forward K-SUBST (1): c.isNoInferType
+calls forward X-ITER (1): c.checkIteratedTypeOrElementType
+called from earlier c.getDestructuringPropertyName <- T-SYMTYPE
+called from earlier c.getEffectsSignature <- E-CALL
+called from earlier c.getFlowTypeInConstructor <- T-SYMTYPE
+called from earlier c.getFlowTypeInStaticBlocks <- T-SYMTYPE
+called from earlier c.getFlowTypeOfReference <- T-SYMTYPE,E-ACCESS
+called from earlier c.getFlowTypeOfReferenceEx <- E-ACCESS,T-RETINFER
+called from earlier c.getNarrowableTypeForReference <- E-ACCESS
+called from earlier c.getNonUndefinedType <- T-SYMTYPE
+called from earlier c.getSymbolHasInstanceMethodOfObjectType <- E-CALL
+called from earlier c.getTypeOfDottedName <- E-CALL
+called from earlier c.getTypeOfInitializer <- T-SYMTYPE
+called from earlier c.hasMatchingArgument <- E-ACCESS
+called from earlier c.isConstantReference <- T-RETINFER
+called from earlier c.isDestructuringAssignmentTarget <- E-ACCESS
+called from earlier c.isEvolvingArrayOperationTarget <- E-ACCESS
+called from earlier c.isMatchingReference <- T-SYMTYPE
+called from earlier c.isPastLastAssignment <- E-ACCESS
+called from earlier c.isSomeSymbolAssigned <- E-ACCESS
+called from earlier c.isSymbolAssigned <- T-RETINFER
+called from earlier c.isSymbolAssignedDefinitely <- E-ACCESS
+called from earlier c.markNodeAssignmentsWorker <- C-INIT
+called from earlier getFlowNodeOfNode <- T-SYMTYPE,E-ACCESS,T-RETINFER
+called from later only: c.getFlowState c.getPropertyNameForKnownSymbolName c.includeUndefinedInIndexSignature c.isExhaustiveSwitchStatement c.putFlowState c.tryGetElementAccessExpressionName getBranchLabelAntecedents
+called only inside the layer: FlowType.isNil c.addEvolvingArrayElementType c.computeExhaustiveSwitchStatement c.containsMatchingReference c.createFinalArrayType c.eachTypeContainedIn c.ensureAssignmentsMarked c.extendAssignmentPosition c.finalizeEvolvingArrayType c.getAccessedPropertyName c.getAssignedType c.getAssignedTypeOfArrayLiteralElement c.getAssignedTypeOfBinaryExpression c.getAssignedTypeOfPropertyAssignment c.getAssignedTypeOfShorthandPropertyAssignment c.getAssignedTypeOfSpreadExpression c.getAssignmentReducedType c.getAssignmentReducedTypeWorker c.getCandidateDiscriminantPropertyAccess c.getDiscriminantPropertyAccess c.getElementTypeOfEvolvingArrayType c.getEvolvingArrayType c.getExplicitThisType c.getExplicitTypeOfSymbol c.getFinalArrayType c.getFlowReferenceKey c.getInitialOrAssignedType c.getInitialType c.getInitialTypeOfBindingElement c.getInitialTypeOfVariableDeclaration c.getInstanceType c.getLiteralPropertyNameText c.getNarrowedType c.getNarrowedTypeWorker c.getNotEqualFactsFromTypeofSwitch c.getReferenceCandidate c.getReferenceRoot c.getSwitchClauseTypeOfWitnesses c.getSwitchClauseTypes c.getTypeAtFlowArrayMutation c.getTypeAtFlowAssignment c.getTypeAtFlowBranchLabel c.getTypeAtFlowCall c.getTypeAtFlowCondition c.getTypeAtFlowLoopLabel c.getTypeAtFlowNode c.getTypeAtSwitchClause c.getTypeOfDestructuredArrayElement c.getTypeOfDestructuredProperty c.getTypeOfDestructuredSpreadExpression c.getTypeOfSwitchClause c.getTypePredicateArgument c.getTypeWithDefault c.getUnionOrEvolvingArrayType c.hasContextualTypeWithNoGenericTypes c.hasParentWithAssignmentsMarked c.hasTypePredicateOrNeverReturnType c.isConstraintPosition c.isConstructedBy c.isDeclarationWithExplicitTypeAnnotation c.isEmptyArrayAssignment c.isExpandoPropertyFunctionWithReturnTypeAnnotation c.isGenericTypeWithUndefinedConstraint c.isGenericTypeWithUnionConstraint c.isGenericTypeWithoutNullableConstraint c.isMatchingConstructorReference c.isOrContainsMatchingReference c.isSomeSymbolAssignedWorker c.isTypePresencePossible c.narrowType c.narrowTypeByAssertion c.narrowTypeByBinaryExpression c.narrowTypeByBooleanComparison c.narrowTypeByCallExpression c.narrowTypeByConstructor c.narrowTypeByDiscriminant c.narrowTypeByDiscriminantProperty c.narrowTypeByEquality c.narrowTypeByInKeyword c.narrowTypeByInstanceof c.narrowTypeByLiteralExpression c.narrowTypeByOptionalChainContainment c.narrowTypeByOptionality c.narrowTypeByPrivateIdentifierInInExpression c.narrowTypeBySwitchOnDiscriminant c.narrowTypeBySwitchOnDiscriminantProperty c.narrowTypeBySwitchOnTrue c.narrowTypeBySwitchOnTypeOf c.narrowTypeBySwitchOptionalChainContainment c.narrowTypeByTruthiness c.narrowTypeByTypeFacts c.narrowTypeByTypeName c.narrowTypeByTypePredicate c.narrowTypeByTypeof c.newFlowType c.optionalChainContainsReference c.replacePrimitivesWithLiterals c.reportFlowControlError c.tryGetNameFromEntityNameExpression c.typeMaybeAssignableTo c.writeFlowCacheKey getCandidateVariableDeclarationInitializer isCoercibleUnderDoubleEquals isEvolvingArrayTypeList tryGetNameFromType
+not called in checker or binder: 
+== F-REACH functions 5 lines 134
+file checker/flow.rs
+   2513-2520 c.isReachableFlowNode
+   2522-2587 c.isReachableFlowNodeWorker
+   2589-2600 c.isFalseExpression
+   2604-2609 c.isPostSuperFlowNode
+   2611-2652 c.isPostSuperFlowNodeWorker
+codes 0: 
+calls earlier T-SIGDECL (1): c.getReturnTypeOfSignature
+calls earlier T-SIGSHAPE (1): c.getTypePredicateOfSignature
+calls earlier F-NARROW (5): c.getEffectsSignature c.getFlowState c.isExhaustiveSwitchStatement c.putFlowState getBranchLabelAntecedents
+called from earlier c.isPostSuperFlowNode <- E-ACCESS
+called from earlier c.isReachableFlowNode <- T-RETINFER,F-NARROW
+called from later only: 
+called only inside the layer: c.isFalseExpression c.isPostSuperFlowNodeWorker c.isReachableFlowNodeWorker
+not called in checker or binder: 
+== F-UNREACH functions 2 lines 79
+file checker/c05_check_source_file.rs
+   2398-2457 c.checkSourceElementUnreachable codes=7027
+   2459-2477 c.isSourceElementUnreachable
+codes 1: TS7027
+calls earlier D-SINK (1): c.addErrorOrSuggestion
+calls earlier F-REACH (1): c.isReachableFlowNode
+called from earlier c.checkSourceElementUnreachable <- X-SOURCE
+called from later only: 
+called only inside the layer: c.isSourceElementUnreachable
+not called in checker or binder: 
+== total functions 487 lines 10467

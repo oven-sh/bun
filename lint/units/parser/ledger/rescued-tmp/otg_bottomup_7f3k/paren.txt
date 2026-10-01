@@ -1,0 +1,31 @@
+export const v = ((b)) => 1
+export const v = ((b), c) => 1
+export const v = ((b)): T => 1
+export const v = ((b) = 1) => 1
+export const v = (({b})) => 1
+export const v = (([b])) => 1
+export const v = y ? a ? ((b)) : c => d : z
+export const v = y ? a ? (b) : c => d : z
+export const v = y ? a ? (b) : c => d : z : w
+export const v = a ? ((b)) : c => d
+export const v = a ? ((b)) : c => d : e
+export const v = a ? ((b), c) : d => e : f
+export const v = a ? (b, (c)) : d => e : f
+export const v = a ? ((b) = 1) : d => e : f
+export const v = a ? (b = (c)) : d => e : f
+export const v = a ? ({b: (c)}) : d => e : f
+export const v = a ? ([(b)]) : d => e : f
+export const v = a ? (b!) : c => d : e
+export const v = a ? (b as any) : c => d : e
+export const v = a ? (<any>b) : c => d : e
+export const v = a ? (b.c) : d => e : f
+export const v = a ? (b()) : d => e : f
+export const v = a ? (1) : d => e : f
+export const v = a ? ("s") : d => e : f
+export const v = a ? (b + c) : d => e : f
+export const v = a ? (b) : (c) : d => e
+export const v = (b!) => 1
+export const v = (b as any) => 1
+export const v = (<any>b) => 1
+export const v = (b!): T => 1
+export const v = (b as any): T => 1

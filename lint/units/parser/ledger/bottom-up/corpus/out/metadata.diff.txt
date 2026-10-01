@@ -1,0 +1,1680 @@
+Differing metadata by (key, value of bun, value of tsc with strictNullChecks off). A row counts once per distinct difference.
+
+   547  returntype: bun Object  tsc undefined
+        origins: p11:positionx183 p09:exprx124 p09:paramPosx114 p11:formx25 p03:declSigx14
+        "class C { m(@d a) {} }"
+        "class C { m(@1 a) {} }"
+        "class C { m(@e a) {} }"
+   432  type: bun undefined  tsc Object
+        origins: p11:formx53 gds:infer/fieldx26 p09:memberPosx18 p11:positionx12 gdt:07-decorator-metadatax3
+        "class C { @d p: undefined.b; }"
+        "class K { @d p: undefined.x; }"
+        "class K { @d p: undefined.A; }"
+   424  paramtypes: bun [undefined]  tsc [Object]
+        origins: p11:formx53 gds:infer/paramx26 gds:infer/ctorx26 p11:positionx9 resc:gte/m3.jsonx3
+        "class C { @d m(a: undefined.b) {} }"
+        "class K { @d m(x: undefined.x) {} }"
+        "class K { @d m(x: import(\"m\") | null) {} }"
+   400  returntype: bun undefined  tsc Object
+        origins: p11:formx53 gds:infer/retx26 p11:positionx3 resc:gte/m3.jsonx3 resc:gte/m4.jsonx3
+        "class C { @d m(): undefined.b { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : A { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : B { throw 0 } }"
+   171  type: bun ref(A)  tsc Object
+        origins: p11:formx32 gdt:07-decorator-metadatax6 td01:op.unique-unionx1 td01:set.union-uniquex1 td01:set.union-assertsx1
+        "class K { @d p: A | asserts; }"
+        "class K { @d p: asserts | A; }"
+        "class C { @d x: asserts | A; }"
+   166  paramtypes: bun [String]  tsc [Object]
+        origins: p11:formx42 resc:gte/m3.jsonx12 resc:gte/m4.jsonx11 resc:gte-probe/types_final.txtx9 resc:gte-probe/types3.txtx9
+        "class K { @d m(x: asserts | string) {} }"
+        "class K { @d m(x: string | never & B) {} }"
+        "class K { @d m(x: A & never | string) {} }"
+   166  returntype: bun String  tsc Object
+        origins: p11:formx42 resc:gte/m3.jsonx12 resc:gte/m4.jsonx11 resc:gte-probe/types_final.txtx9 resc:gte-probe/types3.txtx9
+        "class C { @d m(): X extends Y ? unknown : \"s\" { throw 0 } }"
+        "class C { @d m(): X extends Y ? \"s\" : unknown { throw 0 } }"
+        "class C { @d m(): X extends Y ? string : unknown { throw 0 } }"
+   164  paramtypes: bun [ref(A)]  tsc [Object]
+        origins: p11:formx32 gds:operator/paramx1 td01:op.unique-unionx1 td01:set.union-uniquex1 td01:set.union-assertsx1
+        "class K { @d m(x: A | asserts) {} }"
+        "class K { @d m(x: asserts | A) {} }"
+        "class C { @d m(a: asserts | A) {} }"
+   164  returntype: bun ref(A)  tsc Object
+        origins: p11:formx33 td01:op.unique-unionx1 td01:set.union-uniquex1 td01:set.union-assertsx1 td01:set.union-abstractx1
+        "class C { @d m(): A | asserts a { throw 0 } }"
+        "class C { @d m(): asserts | A { return x; } }"
+        "class C { @d m(): A | import(\"x\") { throw 0 } }"
+   164  type: bun String  tsc Object
+        origins: p11:formx42 resc:gte/m3.jsonx12 resc:gte/m4.jsonx11 resc:gte-probe/types_final.txtx9 resc:gte-probe/types3.txtx9
+        "class C { @d p: null! | string; }"
+        "class C { @d p: never! | string; }"
+        "class K { @d p: asserts | string; }"
+   138  type: bun undefined  tsc String
+        origins: p11:formx38 p11:positionx10 resc:gte-probe/types_final.txtx3 resc:gte/m4.jsonx3 resc:gte-probe/types1.txtx2
+        "class C { @d p: X extends Y ? never : \"s\"; }"
+        "class C { @d p: X extends Y ? \"s\" : never; }"
+        "class K { @d p: X extends Y ? \"s\" : never; }"
+   138  paramtypes: bun [undefined]  tsc [String]
+        origins: p11:formx38 p11:positionx9 resc:gte-probe/types_final.txtx3 resc:gte/m4.jsonx3 resc:gte-probe/types1.txtx2
+        "class C { @d m(a: X extends Y ? never : \"s\") {} }"
+        "class C { @d m(a: X extends Y ? \"s\" : never) {} }"
+        "class K { @d m(x: X extends Y ? \"s\" : never) {} }"
+   132  returntype: bun undefined  tsc String
+        origins: p11:formx38 p11:positionx3 resc:gte-probe/types_final.txtx3 resc:gte/m4.jsonx3 resc:gte-probe/types1.txtx2
+        "class C { @d m(): X extends Y ? never : \"s\" { throw 0 } }"
+        "class C { @d m(): X extends Y ? \"s\" : never { throw 0 } }"
+        "class C { @d m(): X extends Y ? string : never { throw 0 } }"
+    77  paramtypes: bun [Array]  tsc [Object]
+        origins: p11:formx28 gds:operator/paramx6 resc:gte-probe/types_final.txtx6 gds:operator/ctorx6 resc:gte-probe/types3.txtx3
+        "class C { @d m(a: unique []) {} }"
+        "class C { @d m(a: unique [A]) {} }"
+        "class C { @d m(a: readonly A[B]) {} }"
+    74  returntype: bun Array  tsc Object
+        origins: p11:formx28 resc:gte-probe/types_final.txtx6 gds:operator/retx6 resc:gte-probe/types3.txtx3 resc:gte-probe/types4.txtx3
+        "class C { @d m(): unique [A] { throw 0 } }"
+        "class C { @d m(): unique [] { return x; } }"
+        "class C { @d m(): readonly A[B] { throw 0 } }"
+    72  type: bun ref(K)  tsc Object
+        origins: p11:formx69 p11:positionx3
+        "class C { @d p: A extends B ? K : K; }"
+        "class C { @d p: A[] extends B ? K : K; }"
+        "class C { @d p: (A extends B ? K : K); }"
+    71  type: bun Array  tsc Object
+        origins: p11:formx28 resc:gte-probe/types_final.txtx6 gds:operator/fieldx6 resc:gte-probe/types3.txtx3 resc:gte-probe/types4.txtx3
+        "class C { @d x: unique []; }"
+        "class C { @d p: unique [A]; }"
+        "class C { @d p: readonly {}; }"
+    69  paramtypes: bun [ref(K)]  tsc [Object]
+        origins: p11:formx69
+        "class C { @d m(a: A extends B ? K : K) {} }"
+        "class C { @d m(a: A[] extends B ? K : K) {} }"
+        "class C { @d m(a: (A extends B ? K : K)) {} }"
+    69  returntype: bun ref(K)  tsc Object
+        origins: p11:formx69
+        "class C { @d m(): A extends B ? K : K { throw 0 } }"
+        "class C { @d m(): A[] extends B ? K : K { throw 0 } }"
+        "class C { @d m(): (A extends B ? K : K) { throw 0 } }"
+    62  type: bun undefined  tsc Number
+        origins: p11:formx4 td01:m.cond.number.neverx1 td01:m.cond.never.numberx1 td01:m.cond.1.neverx1 td01:m.cond.never.1x1
+        "class C { @d p: X extends Y ? never : 1; }"
+        "class C { @d p: X extends Y ? 1 : never; }"
+        "class K { @d p: X extends Y ? 1 : never; }"
+    62  paramtypes: bun [undefined]  tsc [Number]
+        origins: p11:formx4 td01:m.cond.number.neverx1 td01:m.cond.never.numberx1 td01:m.cond.1.neverx1 td01:m.cond.never.1x1
+        "class C { @d m(a: X extends Y ? never : 1) {} }"
+        "class C { @d m(a: X extends Y ? 1 : never) {} }"
+        "class K { @d m(x: X extends Y ? 1 : never) {} }"
+    62  returntype: bun undefined  tsc Number
+        origins: p11:formx4 td01:m.cond.number.neverx1 td01:m.cond.never.numberx1 td01:m.cond.1.neverx1 td01:m.cond.never.1x1
+        "class C { @d m(): X extends Y ? never : 1 { throw 0 } }"
+        "class C { @d m(): X extends Y ? 1 : never { throw 0 } }"
+        "class C { @d m(): X extends Y ? number : never { throw 0 } }"
+    62  paramtypes: bun [Object]  tsc [String]
+        origins: p11:positionx22 p11:formx6 resc:gte-probe/types_final.txtx6 resc:gte-probe/types3.txtx6 resc:gte-probe/types1.txtx2
+        "class C { @d m(...a: \"s\"[]) {} }"
+        "class C { @d m(...a: string[]) {} }"
+        "class C { m(@e ...a: string[]) {} }"
+    61  type: bun Object  tsc String
+        origins: p11:positionx20 p11:formx6 resc:gte-probe/types3.txtx6 resc:gte-probe/types_final.txtx6 resc:gte-probe/types1.txtx2
+        "class C { @d p: readonly string | string; }"
+        "class C { @d p: string | readonly string; }"
+        "class C { @d p: readonly string & string; }"
+    54  returntype: bun Object  tsc String
+        origins: p11:positionx14 p11:formx6 resc:gte-probe/types_final.txtx6 resc:gte-probe/types3.txtx6 resc:gte-probe/types1.txtx2
+        "class C { m(@d a: string): \"s\" { throw 0 } }"
+        "class C { m(@d a: string): string { throw 0 } }"
+        "class C { m(@d a: string): `a${A}b` { throw 0 } }"
+    40  paramtypes: bun [Object]  tsc [Boolean]
+        origins: p11:positionx18 gds:this-type/paramx5 gds:this-type/ctorx5 p11:formx3 resc:gte-probe/types2.txtx2
+        "class C { @d m(a: this is B) {} }"
+        "class C { @d m(a: this is K) {} }"
+        "class C { m(@d a: this is B) {} }"
+    37  type: bun Object  tsc Boolean
+        origins: p11:positionx20 gds:this-type/fieldx5 p11:formx3 resc:gte-probe/types2.txtx2 resc:gte/m4.jsonx2
+        "class C { @d p: this is B; }"
+        "class C { @d p: this is K; }"
+        "class K { @d p: this is A; }"
+    37  returntype: bun ref(B)  tsc Object
+        origins: p11:formx10 td01:m.cond.B.Bx1 td01:m.cond.B.nullx1 td01:m.cond.B.undefinedx1 td01:m.cond.B.unknownx1
+        "class C { @d m(): asserts a | B { throw 0 } }"
+        "class C { @d m(): asserts a & B { throw 0 } }"
+        "class C { @d m(): asserts this | B { throw 0 } }"
+    37  type: bun Number  tsc Object
+        origins: p11:formx5 td01:m.cond.number.unknownx1 td01:m.cond.unknown.numberx1 td01:m.shape.unique-check.number.unknownx1 td01:m.shape.typeof-check.number.unknownx1
+        "class C { @d p: X extends Y ? unknown : 1; }"
+        "class C { @d p: X extends Y ? 1 : unknown; }"
+        "class C { @d p: X extends Y ? number : unknown; }"
+    37  paramtypes: bun [Number]  tsc [Object]
+        origins: p11:formx5 td01:m.cond.number.unknownx1 td01:m.cond.unknown.numberx1 td01:m.shape.unique-check.number.unknownx1 td01:m.shape.typeof-check.number.unknownx1
+        "class C { @d m(a: X extends Y ? unknown : 1) {} }"
+        "class C { @d m(a: X extends Y ? 1 : unknown) {} }"
+        "class C { @d m(a: X extends Y ? number : unknown) {} }"
+    37  returntype: bun Number  tsc Object
+        origins: p11:formx5 td01:m.cond.number.unknownx1 td01:m.cond.unknown.numberx1 td01:m.shape.unique-check.number.unknownx1 td01:m.shape.typeof-check.number.unknownx1
+        "class C { @d m(): X extends Y ? unknown : 1 { throw 0 } }"
+        "class C { @d m(): X extends Y ? 1 : unknown { throw 0 } }"
+        "class C { @d m(): X extends Y ? number : unknown { throw 0 } }"
+    36  returntype: bun Object  tsc Boolean
+        origins: p11:positionx16 gds:this-type/retx5 p11:formx4 resc:gte-probe/types2.txtx2 resc:gte/m4.jsonx2
+        "class C { @d m(): this is A {} }"
+        "class C { @d m(): any is B { throw 0 } }"
+        "class C { @d m(): this is B { throw 0 } }"
+    34  type: bun ref(B)  tsc Object
+        origins: p11:formx7 td01:m.cond.B.Bx1 td01:m.cond.B.nullx1 td01:m.cond.B.undefinedx1 td01:m.cond.B.unknownx1
+        "class K { @d p: A & never | B; }"
+        "class K { @d p: null & null | B; }"
+        "class K { @d p: never & any | B; }"
+    34  paramtypes: bun [ref(B)]  tsc [Object]
+        origins: p11:formx7 td01:m.cond.B.Bx1 td01:m.cond.B.nullx1 td01:m.cond.B.undefinedx1 td01:m.cond.B.unknownx1
+        "class K { @d m(x: A & never | B) {} }"
+        "class K { @d m(x: null & null | B) {} }"
+        "class K { @d m(x: never & any | B) {} }"
+    33  type: bun Object  tsc (absent)
+        origins: p09:paramPosx22 p03:declSigx7 p09:memberPosx3 p06:paramPropx2 p11:positionx1
+        "class C { set p(@d a) {} }"
+        "class C { set p(@d v) {} }"
+        "class C { set p(@d a,) {} }"
+    33  paramtypes: bun [Object]  tsc (absent)
+        origins: p09:paramPosx22 p03:declSigx7 p09:memberPosx3 p06:paramPropx2 p11:positionx1
+        "class C { set p(@d a) {} }"
+        "class C { set p(@d v) {} }"
+        "class C { set p(@d a,) {} }"
+    31  paramtypes: bun [Object]  tsc [Number]
+        origins: resc:gte-probe/types_final.txtx4 resc:gte-probe/types3.txtx4 resc:gte-probe/types1.txtx3 p11:positionx2 td01:m.shape.union-check.string.number.number.nullx1
+        "class C { @d m(...a: -1[]) {} }"
+        "class C { @d m(...a: number[]) {} }"
+        "class K { @d m(x: keyof X extends C ? number : null) {} }"
+    31  returntype: bun Object  tsc Number
+        origins: resc:gte-probe/types_final.txtx4 resc:gte-probe/types3.txtx4 resc:gte-probe/types1.txtx3 p11:positionx2 td01:m.shape.union-check.string.number.number.nullx1
+        "class C { m(@d a: string): -1 { throw 0 } }"
+        "class C { m(@d a: string): number { throw 0 } }"
+        "class K { @d m(x: any): keyof X extends C ? number : null { return null as any } }"
+    30  returntype: bun ref(a)  tsc Boolean
+        origins: p11:formx11 p11:positionx10 gds:predicate/retx8 gdt:07-decorator-metadatax1
+        "class C { @d m(a: A): a is B {} }"
+        "class C { @d m(): a is B { throw 0 } }"
+        "class C { @d m(): a is\nB { throw 0 } }"
+    29  type: bun Object  tsc Number
+        origins: resc:gte-probe/types_final.txtx4 resc:gte-probe/types3.txtx4 resc:gte-probe/types1.txtx3 td01:m.shape.union-check.string.number.number.nullx1 td01:m.shape.intersection-check.string.number.number.nullx1
+        "class K { @d p: keyof X extends C ? number : null; }"
+        "class K { @d p: keyof X extends C ? null : number; }"
+        "class K { @d p: keyof X extends C ? number : never; }"
+    27  paramtypes: bun [undefined]  tsc [Array]
+        origins: p11:formx10 gds:infer/paramx5 gds:infer/ctorx5 td01:cond.infer-templatex1 td01:m.cond.A$5b$5d.neverx1
+        "class C { @d m(a: X extends Y ? never : A[]) {} }"
+        "class C { @d m(a: X extends Y ? never : [A]) {} }"
+        "class C { @d m(a: X extends Y ? A[] : never) {} }"
+    26  paramtypes: bun [Object]  tsc [ref(asserts)]
+        origins: p11:positionx10 p11:formx2 gds:contextual/paramx2 gds:contextual/ctorx2 resc:gte-probe/types2.txtx2
+        "class C { @d m(a: asserts) {} }"
+        "class C { m(@d a: asserts) {} }"
+        "class K { @d m(x: asserts) {} }"
+    23  type: bun Object  tsc ref(asserts)
+        origins: p11:positionx10 p11:formx3 gds:predicate/fieldx3 resc:gte-probe/types2.txtx2 gds:contextual/fieldx2
+        "class C { @d p: asserts; }"
+        "class K { @d p: asserts; }"
+        "class C { @d x: asserts; }"
+    22  type: bun undefined  tsc Array
+        origins: p11:formx10 gds:infer/fieldx5 td01:cond.infer-templatex1 td01:m.cond.A$5b$5d.neverx1 td01:m.cond.never.A$5b$5dx1
+        "class C { @d p: X extends Y ? never : A[]; }"
+        "class C { @d p: X extends Y ? never : [A]; }"
+        "class C { @d p: X extends Y ? A[] : never; }"
+    22  returntype: bun undefined  tsc Array
+        origins: p11:formx10 gds:infer/retx5 td01:cond.infer-templatex1 td01:m.cond.A$5b$5d.neverx1 td01:m.cond.never.A$5b$5dx1
+        "class C { @d m(): X extends Y ? never : A[] { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : [A] { throw 0 } }"
+        "class C { @d m(): X extends Y ? A[] : never { throw 0 } }"
+    19  paramtypes: bun []  tsc [Object]
+        origins: p11:positionx12 p09:memberPosx6 resc:otg_bottomup_7f3k/deco2.txtx1
+        "class C { @d get x() { return 1 } set x(v) {} }"
+        "class C { @d get x() { return 1 } @d set x(v) {} }"
+        "@x class C { @d get x() { return 1 } set x(v) {} }"
+    16  paramtypes: bun [Object, ref(B)]  tsc [ref(A), ref(B)]
+        origins: p09:paramPosx4 td09:position.173x1 td09:meta.072x1 td09:meta.073x1 td09:meta.085x1
+        "class C { m(a: A, @d b: B) {} }"
+        "class K { m(a: A, @d b: B) {} }"
+        "class C { #m(a: A, @d b: B) {} }"
+    16  returntype: bun Object  tsc ref(asserts)
+        origins: p11:positionx4 p11:formx2 resc:gte-probe/types2.txtx2 gds:contextual/retx2 gds:predicate/retx2
+        "class C { @d m(): asserts { throw 0 } }"
+        "class C { @d *m(): asserts { throw 0 } }"
+        "class C { @d m(): asserts { return x; } }"
+    16  paramtypes: bun [Object, String]  tsc [ref(A), String]
+        origins: p11:positionx16
+        "class C { m(a: A, @d b: string) {} }"
+        "class C { m(a: A!, @d b: string) {} }"
+        "class C { m(a: (A), @d b: string) {} }"
+    16  paramtypes: bun [Object, String]  tsc [String, String]
+        origins: p11:positionx16
+        "class C { m(a: \"s\", @d b: string) {} }"
+        "class C { m(a: string, @d b: string) {} }"
+        "class C { m(a: `a${A}b`, @d b: string) {} }"
+    15  paramtypes: bun [Object]  tsc [ref(A)]
+        origins: p09:paramPosx6 p11:positionx6 p03:declSigx2 td09:position.174x1 td09:meta.039x1
+        "class C { m(@d ...a: A[]) {} }"
+        "class C { @d m(...a: A[]) {} }"
+        "class K { @d m(...a: A[]) {} }"
+    14  type: bun Object  tsc undefined
+        origins: p11:positionx6 resc:gte/m4.jsonx2 p11:formx1 td01:m.intersection.Object.neverx1 td01:m.shape.keyof-check.null.nullx1
+        "class C { @d p: & unknown; }"
+        "class C { @d p: | & unknown; }"
+        "class C { @d p: Object & never; }"
+    12  type: bun ref(A.B)  tsc Object
+        origins: p11:formx7 td01:m.cond.A$2eB.nullx1 td01:m.cond.null.A$2eBx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class C { @d p: X extends Y ? A.B : A.B; }"
+        "class C { @d p: X extends Y ? null : A.B; }"
+        "class C { @d p: X extends Y ? A.B : null; }"
+    12  paramtypes: bun [Array]  tsc [String]
+        origins: p11:formx3 resc:gte-probe/types_final.txtx3 resc:gte-probe/types3.txtx3 resc:gte-probe/types1.txtx2 td01:m.shape.readonly-check.string.stringx1
+        "class K { @d m(x: readonly X[] extends C ? string : null) {} }"
+        "class K { @d m(x: readonly X[] extends C ? null : string) {} }"
+        "class C { @d m(a: readonly A[] extends B ? string : never) {} }"
+    12  returntype: bun Array  tsc String
+        origins: p11:formx3 resc:gte-probe/types_final.txtx3 resc:gte-probe/types3.txtx3 resc:gte-probe/types1.txtx2 td01:m.shape.readonly-check.string.stringx1
+        "class C { @d m(a: readonly string): readonly string { throw 0 } }"
+        "class C { @d m(a: readonly (string)): readonly (string) { throw 0 } }"
+        "class C { @d m(): readonly A[] extends B ? string : never { throw 0 } }"
+    12  returntype: bun Object  tsc Array
+        origins: p11:formx6 p11:positionx6
+        "class C { m(@d a: string): A[] { throw 0 } }"
+        "class C { m(@d a: string): K[] { throw 0 } }"
+        "class C { m(@d a: string): [A, B] { throw 0 } }"
+    12  paramtypes: bun [Object, String]  tsc [Array, String]
+        origins: p11:positionx12
+        "class C { m(a: A[], @d b: string) {} }"
+        "class C { m(a: K[], @d b: string) {} }"
+        "class C { m(a: [A, B], @d b: string) {} }"
+    12  type: bun (absent)  tsc Object
+        origins: p11:positionx11 pinfile:ts.test.tsx1
+        "class C { @d declare p: this; }"
+        "class C { @d declare p: A | B; }"
+        "class C { @d declare p: A & B; }"
+    11  type: bun ref(A)  tsc (absent)
+        origins: p09:paramPosx10 p03:declSigx7 td09:position.189x1
+        "class C { set p(@d a: A) {} }"
+        "class C { set p(@d\na: A) {} }"
+        "class C { set a(@d v: A) {} }"
+    11  paramtypes: bun [ref(A)]  tsc (absent)
+        origins: p09:paramPosx10 p03:declSigx7 td09:position.189x1
+        "class C { set p(@d a: A) {} }"
+        "class C { set p(@d\na: A) {} }"
+        "class C { set a(@d v: A) {} }"
+    11  paramtypes: bun [Object]  tsc [ref(abstract)]
+        origins: p11:formx2 gds:contextual/paramx2 resc:gte/m4.jsonx2 gds:contextual/ctorx2 resc:gte-probe/types3.txtx1
+        "class C { @d m(a: abstract) {} }"
+        "class C { @d m(a:  abstract) {} }"
+        "class C { @d m(a: abstract ) {} }"
+    11  paramtypes: bun [ref(A.B)]  tsc [Object]
+        origins: p11:formx7 td01:m.cond.A$2eB.nullx1 td01:m.cond.null.A$2eBx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class C { @d m(a: X extends Y ? A.B : A.B) {} }"
+        "class C { @d m(a: X extends Y ? null : A.B) {} }"
+        "class C { @d m(a: X extends Y ? A.B : null) {} }"
+    11  returntype: bun ref(A.B)  tsc Object
+        origins: p11:formx7 td01:m.cond.A$2eB.nullx1 td01:m.cond.null.A$2eBx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class C { @d m(): X extends Y ? A.B : A.B { throw 0 } }"
+        "class C { @d m(): X extends Y ? null : A.B { throw 0 } }"
+        "class C { @d m(): X extends Y ? A.B : null { throw 0 } }"
+    11  type: bun Object  tsc ref(Object)
+        origins: p11:formx8 td01:m.union.Object.nullx1 td01:m.intersection.Object.nullx1 td01:m.union.Object.neverx1
+        "class C { @d p: Object | null; }"
+        "class C { @d p: Object & null; }"
+        "class K { @d p: Object | null; }"
+    11  paramtypes: bun [Object]  tsc [ref(Object)]
+        origins: p11:formx8 td01:m.union.Object.nullx1 td01:m.intersection.Object.nullx1 td01:m.union.Object.neverx1
+        "class C { @d m(a: Object | null) {} }"
+        "class C { @d m(a: Object & null) {} }"
+        "class K { @d m(x: Object | null) {} }"
+    11  returntype: bun Object  tsc ref(Object)
+        origins: p11:formx8 td01:m.union.Object.nullx1 td01:m.intersection.Object.nullx1 td01:m.union.Object.neverx1
+        "class C { @d m(): Object | null { throw 0 } }"
+        "class C { @d m(): Object & null { throw 0 } }"
+        "class C { @d m(): Object | never { throw 0 } }"
+    11  type: bun Array  tsc String
+        origins: p11:formx3 resc:gte-probe/types_final.txtx3 resc:gte-probe/types3.txtx3 resc:gte-probe/types1.txtx2 td01:m.shape.readonly-check.string.stringx1
+        "class C { @d p: readonly string; }"
+        "class C { @d p: readonly (string); }"
+        "class K { @d p: readonly X[] extends C ? string : null; }"
+    11  paramtypes: bun [Object]  tsc [Array]
+        origins: p11:formx6 p11:positionx5
+        "class C { @d m(...a: A[][]) {} }"
+        "class C { @d m(...a: K[][]) {} }"
+        "class C { @d m(...a: [A, B][]) {} }"
+    11  returntype: bun Object  tsc Function
+        origins: p11:formx6 p11:positionx5
+        "class C { m(@d a: string): () => void { throw 0 } }"
+        "class C { m(@d a: string): (a: A) => B { throw 0 } }"
+        "class C { m(@d a: string): new () => A { throw 0 } }"
+    11  paramtypes: bun []  tsc [String]
+        origins: p11:positionx8 gdt:07-decorator-metadatax2 td09:meta.064x1
+        "class C { @d get a() { return 1 } set a(v: string) {} }"
+        "class C { @d get p(): \"s\" { throw 0 } set p(v: \"s\") {} }"
+        "class C { @d get p(): string { throw 0 } set p(v: string) {} }"
+    10  paramtypes: bun [Object, String]  tsc [Function, String]
+        origins: p11:positionx10
+        "class C { m(a: () => void, @d b: string) {} }"
+        "class C { m(a: (a: A) => B, @d b: string) {} }"
+        "class C { m(a: new () => A, @d b: string) {} }"
+    10  type: bun (absent)  tsc String
+        origins: p11:positionx8 td09:meta.011x1 gdt:07-decorator-metadatax1
+        "class C { @d declare p: \"s\"; }"
+        "class C { @d declare a: string }"
+        "class C { @d declare p: string; }"
+    10  type: bun ref(E)  tsc Number
+        origins: gdt:07-decorator-metadatax4 p11:positionx2 td09:meta.140x1 td09:meta.143x1 td09:meta.144x1
+        "class C { @d a: E } enum E { A }"
+        "enum E { A } class C { @d p: E; }"
+        "enum E { A }\nclass K { @d p: E; }"
+     9  type: bun Object  tsc ref(abstract)
+        origins: p11:formx2 resc:gte/m4.jsonx2 gds:contextual/fieldx2 resc:gte-probe/types3.txtx1 resc:gte/m1.jsonx1
+        "class C { @d p: abstract; }"
+        "class K { @d p: abstract; }"
+        "class C { @d x: abstract; }"
+     9  returntype: bun undefined  tsc Boolean
+        origins: p11:formx5 td01:m.cond.true.neverx1 td01:m.cond.never.truex1 td01:m.cond.boolean.neverx1 td01:m.cond.never.booleanx1
+        "class C { @d m(): undefined is B { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : true { throw 0 } }"
+        "class C { @d m(): X extends Y ? true : never { throw 0 } }"
+     9  paramtypes: bun [Object]  tsc [undefined]
+        origins: resc:gte/m4.jsonx2 p11:formx1 p11:positionx1 td01:m.intersection.Object.neverx1 td01:m.shape.keyof-check.null.nullx1
+        "class C { @d m(...a: void[]) {} }"
+        "class C { @d m(a: Object & never) {} }"
+        "class K { @d m(x: Object & never) {} }"
+     9  type: bun (absent)  tsc ref(A)
+        origins: p11:positionx8 td09:position.107x1
+        "class C { @d declare a: A }"
+        "class C { @d declare p: A; }"
+        "class C { @d declare p: A!; }"
+     9  returntype: bun Object  tsc ref(A)
+        origins: p11:positionx8 resc:gte-probe/types3.txtx1
+        "class C { m(@d a: string): A { throw 0 } }"
+        "class C { m(@d a: string): A! { throw 0 } }"
+        "class C { m(@d a: string): (A) { throw 0 } }"
+     9  returntype: bun ref(x)  tsc Boolean
+        origins: td01:pred.isx1 td01:pred.is-unionx1 td01:pred.is-conditionalx1 td01:pred.is-fnx1 td01:pred.is-newline-afterx1
+        "class C { @d m(): x is A { return x; } }"
+        "class K { @d m(x: any): x is A { return null as any } }"
+        "class K { @d m(x: any): x is\nA { return null as any } }"
+     8  returntype: bun Object  tsc ref(abstract)
+        origins: p11:formx2 resc:gte/m4.jsonx2 gds:contextual/retx2 resc:gte-probe/types3.txtx1 resc:gte/m1.jsonx1
+        "class C { @d m(): abstract { throw 0 } }"
+        "class C { @d m(): abstract { return x; } }"
+        "class C { @d m(): abstract<T> { throw 0 } }"
+     8  type: bun undefined  tsc Boolean
+        origins: p11:formx4 td01:m.cond.true.neverx1 td01:m.cond.never.truex1 td01:m.cond.boolean.neverx1 td01:m.cond.never.booleanx1
+        "class C { @d p: X extends Y ? never : true; }"
+        "class C { @d p: X extends Y ? true : never; }"
+        "class K { @d p: X extends Y ? true : never; }"
+     8  paramtypes: bun [undefined]  tsc [Boolean]
+        origins: p11:formx4 td01:m.cond.true.neverx1 td01:m.cond.never.truex1 td01:m.cond.boolean.neverx1 td01:m.cond.never.booleanx1
+        "class C { @d m(a: X extends Y ? never : true) {} }"
+        "class C { @d m(a: X extends Y ? true : never) {} }"
+        "class K { @d m(x: X extends Y ? true : never) {} }"
+     8  paramtypes: bun []  tsc [ref(A)]
+        origins: p11:positionx8
+        "class C { @d get p(): A { throw 0 } set p(v: A) {} }"
+        "class C { @d get p(): A! { throw 0 } set p(v: A!) {} }"
+        "class C { @d get p(): (A) { throw 0 } set p(v: (A)) {} }"
+     8  type: bun ref(A)  tsc A
+        origins: td09:meta.131x1 td09:meta.132x1 td09:meta.151x1 td09:meta.178x1 td09:meta.179x1
+        "class A {}\nclass K { @d p: A; }"
+        "class K { @d p: A; }\nclass A {}"
+        "{ class A {} class K { @d p: A; } }"
+     7  returntype: bun Promise  tsc undefined
+        origins: p09:memberPosx6 p11:positionx1 td09:position.101x1 td09:meta.030x1
+        "class C { @d async *m() {} }"
+        "class K { @d async *m() {} }"
+        "@x class C { @d async *m() {} }"
+     7  paramtypes: bun [Array]  tsc [ref(A)]
+        origins: gds:operator/paramx2 resc:gte-probe/types3.txtx2 gds:operator/ctorx2 p11:formx1 td01:op.readonly-namex1
+        "class C { @d m(a: readonly A) {} }"
+        "class K { @d m(x: readonly A) {} }"
+        "class C { @d m(a: readonly  A) {} }"
+     7  type: bun Object  tsc Function
+        origins: p11:formx6 pinfile:ts.test.tsx1
+        "class C { @d p: K | A extends B ? () => void : () => void; }"
+        "class C { @d p: K & A extends B ? () => void : () => void; }"
+        "class C { @d p: keyof A extends B ? () => void : () => void; }"
+     7  type: bun ref(T)  tsc Object
+        origins: gdt:07-decorator-metadatax4 p11:positionx1 td09:meta.051x1 td09:meta.177x1
+        "class C<T> { @d a: T }"
+        "class C<T> { @d p: T; }"
+        "class K<T> { @d p: T; }"
+     7  type: bun Array  tsc Number
+        origins: td01:m.shape.readonly-check.number.numberx1 td01:m.shape.readonly-check.number.nullx1 td01:m.shape.readonly-check.number.neverx1 td01:m.shape.readonly-check.null.numberx1 td01:m.shape.readonly-check.never.numberx1
+        "class K { @d p: readonly X[] extends C ? number : null; }"
+        "class K { @d p: readonly X[] extends C ? null : number; }"
+        "class K { @d p: readonly X[] extends C ? number : never; }"
+     7  type: bun ref(Unk)  tsc Object
+        origins: resc:gte/m2.jsonx7
+        "class C { @d p: Unk extends Foo ? Unk : Unk; }"
+        "class C { @d p: Unk extends Foo ? (Unk) : (Unk); }"
+        "class C { @d p: Unk extends Foo ? Unk | Unk : Unk; }"
+     7  paramtypes: bun [ref(Unk)]  tsc [Object]
+        origins: resc:gte/m2.jsonx7
+        "class C { @d m(a: Unk extends Foo ? Unk : Unk): Unk extends Foo ? Unk : Unk { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? (Unk) : (Unk)): Unk extends Foo ? (Unk) : (Unk) { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? Unk | Unk : Unk): Unk extends Foo ? Unk | Unk : Unk { throw 0 } }"
+     7  returntype: bun ref(Unk)  tsc Object
+        origins: resc:gte/m2.jsonx7
+        "class C { @d m(a: Unk extends Foo ? Unk : Unk): Unk extends Foo ? Unk : Unk { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? (Unk) : (Unk)): Unk extends Foo ? (Unk) : (Unk) { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? Unk | Unk : Unk): Unk extends Foo ? Unk | Unk : Unk { throw 0 } }"
+     7  type: bun ref(D)  tsc D
+        origins: gdt:07-decorator-metadatax7
+        "class C { @d a: D } class D {}"
+        "class D {} class C { @d a: D }"
+        "class C { @d a?: D } class D {}"
+     6  paramtypes: bun [Object]  tsc [ref(T)]
+        origins: p06:paramPropx6
+        "class C { m(@d ...x: T[]) {} }"
+        "class C { static m(@d ...x: T[]) {} }"
+        "class C { constructor(@d ...x: T[]) {} }"
+     6  returntype: bun Array  tsc ref(A)
+        origins: resc:gte-probe/types3.txtx2 gds:operator/retx2 p11:formx1 td01:op.readonly-namex1 resc:gte-probe/types1.txtx1
+        "class C { @d m(): readonly A { throw 0 } }"
+        "class C { @d m(): readonly A { return x; } }"
+        "class C { @d m(): readonly  A { return x; } }"
+     6  type: bun undefined  tsc BigInt
+        origins: p11:formx2 td01:m.cond.1n.neverx1 td01:m.cond.never.1nx1 td01:m.cond.bigint.neverx1 td01:m.cond.never.bigintx1
+        "class K { @d p: X extends Y ? 1n : never; }"
+        "class K { @d p: X extends Y ? never : 1n; }"
+        "class C { @d p: X extends Y ? bigint : never; }"
+     6  paramtypes: bun [undefined]  tsc [BigInt]
+        origins: p11:formx2 td01:m.cond.1n.neverx1 td01:m.cond.never.1nx1 td01:m.cond.bigint.neverx1 td01:m.cond.never.bigintx1
+        "class K { @d m(x: X extends Y ? 1n : never) {} }"
+        "class K { @d m(x: X extends Y ? never : 1n) {} }"
+        "class C { @d m(a: X extends Y ? bigint : never) {} }"
+     6  returntype: bun undefined  tsc BigInt
+        origins: p11:formx2 td01:m.cond.1n.neverx1 td01:m.cond.never.1nx1 td01:m.cond.bigint.neverx1 td01:m.cond.never.bigintx1
+        "class C { @d m(): X extends Y ? bigint : never { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : bigint { throw 0 } }"
+        "class K { @d m(x: any): X extends Y ? 1n : never { return null as any } }"
+     6  type: bun undefined  tsc Function
+        origins: p11:formx2 td01:m.cond.$28$29_$3d$3e_void.neverx1 td01:m.cond.never.$28$29_$3d$3e_voidx1 td01:m.cond.new_$28$29_$3d$3e_A.neverx1 td01:m.cond.never.new_$28$29_$3d$3e_Ax1
+        "class C { @d p: X extends Y ? never : () => void; }"
+        "class C { @d p: X extends Y ? () => void : never; }"
+        "class K { @d p: X extends Y ? () => void : never; }"
+     6  paramtypes: bun [undefined]  tsc [Function]
+        origins: p11:formx2 td01:m.cond.$28$29_$3d$3e_void.neverx1 td01:m.cond.never.$28$29_$3d$3e_voidx1 td01:m.cond.new_$28$29_$3d$3e_A.neverx1 td01:m.cond.never.new_$28$29_$3d$3e_Ax1
+        "class C { @d m(a: X extends Y ? never : () => void) {} }"
+        "class C { @d m(a: X extends Y ? () => void : never) {} }"
+        "class K { @d m(x: X extends Y ? () => void : never) {} }"
+     6  returntype: bun undefined  tsc Function
+        origins: p11:formx2 td01:m.cond.$28$29_$3d$3e_void.neverx1 td01:m.cond.never.$28$29_$3d$3e_voidx1 td01:m.cond.new_$28$29_$3d$3e_A.neverx1 td01:m.cond.never.new_$28$29_$3d$3e_Ax1
+        "class C { @d m(): X extends Y ? never : () => void { throw 0 } }"
+        "class C { @d m(): X extends Y ? () => void : never { throw 0 } }"
+        "class K { @d m(x: any): X extends Y ? () => void : never { return null as any } }"
+     6  type: bun Object  tsc Array
+        origins: p11:formx6
+        "class C { @d p: K | A extends B ? string[] : number[]; }"
+        "class C { @d p: K & A extends B ? string[] : number[]; }"
+        "class C { @d p: keyof A extends B ? string[] : number[]; }"
+     6  paramtypes: bun [Object]  tsc [Function]
+        origins: p11:formx6
+        "class C { @d m(a: K | A extends B ? () => void : () => void) {} }"
+        "class C { @d m(a: K & A extends B ? () => void : () => void) {} }"
+        "class C { @d m(a: keyof A extends B ? () => void : () => void) {} }"
+     6  type: bun (absent)  tsc Array
+        origins: p11:positionx6
+        "class C { @d declare p: A[]; }"
+        "class C { @d declare p: K[]; }"
+        "class C { @d declare p: [A, B]; }"
+     6  paramtypes: bun []  tsc [Array]
+        origins: p11:positionx6
+        "class C { @d get p(): A[] { throw 0 } set p(v: A[]) {} }"
+        "class C { @d get p(): K[] { throw 0 } set p(v: K[]) {} }"
+        "class C { @d get p(): [A, B] { throw 0 } set p(v: [A, B]) {} }"
+     6  type: bun (absent)  tsc Function
+        origins: p11:positionx5 gds:predicate/retx1
+        "class C { @d declare p: () => void; }"
+        "class C { @d declare p: (a: A) => B; }"
+        "class C { @d declare p: new () => A; }"
+     6  paramtypes: bun [Object, String]  tsc [ref(K), String]
+        origins: p11:positionx6
+        "class C { m(a: K, @d b: string) {} }"
+        "class C { m(a: K | null, @d b: string) {} }"
+        "class C { constructor(a: K, @d b: string) {} }"
+     6  paramtypes: bun [Array]  tsc [Number]
+        origins: td01:m.shape.readonly-check.number.numberx1 td01:m.shape.readonly-check.number.nullx1 td01:m.shape.readonly-check.number.neverx1 td01:m.shape.readonly-check.null.numberx1 td01:m.shape.readonly-check.never.numberx1
+        "class K { @d m(x: readonly X[] extends C ? number : null) {} }"
+        "class K { @d m(x: readonly X[] extends C ? null : number) {} }"
+        "class K { @d m(x: readonly X[] extends C ? number : never) {} }"
+     6  returntype: bun Array  tsc Number
+        origins: td01:m.shape.readonly-check.number.numberx1 td01:m.shape.readonly-check.number.nullx1 td01:m.shape.readonly-check.number.neverx1 td01:m.shape.readonly-check.null.numberx1 td01:m.shape.readonly-check.never.numberx1
+        "class K { @d m(x: any): readonly X[] extends C ? number : null { return null as any } }"
+        "class K { @d m(x: any): readonly X[] extends C ? null : number { return null as any } }"
+        "class K { @d m(x: any): readonly X[] extends C ? number : never { return null as any } }"
+     5  type: bun Array  tsc ref(A)
+        origins: resc:gte-probe/types3.txtx2 gds:operator/fieldx2 p11:formx1 resc:gte-probe/types1.txtx1 td01:op.readonly-namex1
+        "class C { @d p: readonly A; }"
+        "class K { @d p: readonly A; }"
+        "class C { @d x: readonly A; }"
+     5  type: bun Symbol  tsc Object
+        origins: p11:formx2 td01:m.shape.symbol-uniquex1 resc:gte-probe/types2.txtx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class K { @d p: symbol | unique symbol; }"
+        "class C { @d p: unique symbol | symbol; }"
+        "class C { @d p: symbol | unique symbol; }"
+     5  paramtypes: bun [Symbol]  tsc [Object]
+        origins: p11:formx2 td01:m.shape.symbol-uniquex1 resc:gte-probe/types2.txtx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class K { @d m(x: symbol | unique symbol) {} }"
+        "class C { @d m(a: X extends Y ? symbol : unknown) {} }"
+        "class C { @d m(a: X extends Y ? unknown : symbol) {} }"
+     5  returntype: bun Symbol  tsc Object
+        origins: p11:formx2 td01:m.shape.symbol-uniquex1 resc:gte-probe/types2.txtx1 resc:gte/m2.jsonx1 resc:gte/m3.jsonx1
+        "class C { @d m(): X extends Y ? symbol : unknown { throw 0 } }"
+        "class C { @d m(): X extends Y ? unknown : symbol { throw 0 } }"
+        "class K { @d m(x: any): symbol | unique symbol { return null as any } }"
+     5  paramtypes: bun []  tsc [Function]
+        origins: p11:positionx5
+        "class C { @d get p(): () => void { throw 0 } set p(v: () => void) {} }"
+        "class C { @d get p(): (a: A) => B { throw 0 } set p(v: (a: A) => B) {} }"
+        "class C { @d get p(): new () => A { throw 0 } set p(v: new () => A) {} }"
+     5  type: bun ref(a)  tsc Boolean
+        origins: p11:positionx5
+        "class C { @d get p(): a is B { throw 0 } }"
+        "class C { @d get p(): a is K { throw 0 } }"
+        "class C { @d get p(): a is string { throw 0 } }"
+     5  type: bun (absent)  tsc Number
+        origins: p11:positionx2 otg:decox1 side:erased/tdx1 side:erased/bux1 resc:erased-bu-7f3a/tests.probe.jsonx1
+        "class C { @d declare p: -1; }"
+        "class C { @d declare p: number; }"
+        "abstract class C { @d abstract a: number; @d declare b: number; @d abstract c(): void; @d m(): void; @d m() {} }"
+     5  type: bun ref(K)  tsc K
+        origins: p11:positionx3 td09:meta.053x1 td09:meta.133x1
+        "class K { @d p: K; }"
+        "class K {} class C { @d p: K; }"
+        "class C { @d p: K; } class K {}"
+     4  type: bun (absent)  tsc ref(T)
+        origins: p09:memberPosx3 resc:otg_bottomup_7f3k/deco2.txtx1
+        "class C { @d declare a: T }"
+        "class C { @d declare x: T; }"
+        "@x class C { @d declare x: T; }"
+     4  paramtypes: bun [Object, Object, ref(C)]  tsc [ref(A), ref(B), C]
+        origins: p09:paramPosx4
+        "class C { m(a: A, b: B, @d c: C) {} }"
+        "class C { #m(a: A, b: B, @d c: C) {} }"
+        "class C { static m(a: A, b: B, @d c: C) {} }"
+     4  paramtypes: bun [Object]  tsc [ref(const)]
+        origins: p11:formx1 resc:gte/m1.jsonx1 gds:query/paramx1 gds:query/ctorx1
+        "class C { @d m(a: const) {} }"
+        "class C { @d m(a:  const) {} }"
+        "@d class C { constructor(a:  const) {} }"
+     4  type: bun Boolean  tsc Object
+        origins: p11:formx4
+        "class C { @d p: X extends Y ? unknown : true; }"
+        "class C { @d p: X extends Y ? true : unknown; }"
+        "class C { @d p: X extends Y ? boolean : unknown; }"
+     4  paramtypes: bun [Boolean]  tsc [Object]
+        origins: p11:formx4
+        "class C { @d m(a: X extends Y ? unknown : true) {} }"
+        "class C { @d m(a: X extends Y ? true : unknown) {} }"
+        "class C { @d m(a: X extends Y ? boolean : unknown) {} }"
+     4  returntype: bun Boolean  tsc Object
+        origins: p11:formx4
+        "class C { @d m(): X extends Y ? unknown : true { throw 0 } }"
+        "class C { @d m(): X extends Y ? true : unknown { throw 0 } }"
+        "class C { @d m(): X extends Y ? boolean : unknown { throw 0 } }"
+     4  type: bun undefined  tsc Symbol
+        origins: p11:formx2 td01:m.cond.symbol.neverx1 td01:m.cond.never.symbolx1
+        "class C { @d p: X extends Y ? symbol : never; }"
+        "class C { @d p: X extends Y ? never : symbol; }"
+        "class K { @d p: X extends Y ? symbol : never; }"
+     4  paramtypes: bun [undefined]  tsc [Symbol]
+        origins: p11:formx2 td01:m.cond.symbol.neverx1 td01:m.cond.never.symbolx1
+        "class C { @d m(a: X extends Y ? symbol : never) {} }"
+        "class C { @d m(a: X extends Y ? never : symbol) {} }"
+        "class K { @d m(x: X extends Y ? symbol : never) {} }"
+     4  returntype: bun undefined  tsc Symbol
+        origins: p11:formx2 td01:m.cond.symbol.neverx1 td01:m.cond.never.symbolx1
+        "class C { @d m(): X extends Y ? symbol : never { throw 0 } }"
+        "class C { @d m(): X extends Y ? never : symbol { throw 0 } }"
+        "class K { @d m(x: any): X extends Y ? symbol : never { return null as any } }"
+     4  type: bun ref(Object)  tsc Object
+        origins: p11:formx3 td01:m.cond.null.Objectx1
+        "class C { @d p: X extends Y ? null : Object; }"
+        "class K { @d p: X extends Y ? null : Object; }"
+        "class C { @d p: X extends Y ? unknown : Object; }"
+     4  paramtypes: bun [ref(Object)]  tsc [Object]
+        origins: p11:formx3 td01:m.cond.null.Objectx1
+        "class C { @d m(a: X extends Y ? null : Object) {} }"
+        "class K { @d m(x: X extends Y ? null : Object) {} }"
+        "class C { @d m(a: X extends Y ? unknown : Object) {} }"
+     4  returntype: bun ref(Object)  tsc Object
+        origins: p11:formx3 td01:m.cond.null.Objectx1
+        "class C { @d m(): X extends Y ? null : Object { throw 0 } }"
+        "class C { @d m(): X extends Y ? unknown : Object { throw 0 } }"
+        "class C { @d m(): X extends Y ? undefined : Object { throw 0 } }"
+     4  paramtypes: bun [String, Object]  tsc [String, Boolean]
+        origins: p11:positionx4
+        "class C { @d m(a: string, b: this is B) {} }"
+        "class C { m(@d a: string, b: this is B) {} }"
+        "class C { @d m(a: string, b: this is K) {} }"
+     4  paramtypes: bun [Object, String]  tsc [Boolean, String]
+        origins: p11:positionx4
+        "class C { m(a: this is B, @d b: string) {} }"
+        "class C { m(a: this is K, @d b: string) {} }"
+        "class C { constructor(a: this is B, @d b: string) {} }"
+     4  paramtypes: bun [Object, String]  tsc [Number, String]
+        origins: p11:positionx4
+        "class C { m(a: -1, @d b: string) {} }"
+        "class C { m(a: number, @d b: string) {} }"
+        "class C { constructor(a: -1, @d b: string) {} }"
+     4  paramtypes: bun []  tsc [Number]
+        origins: p11:positionx3 td09:meta.066x1
+        "class C { @d get p(): -1 { throw 0 } set p(v: -1) {} }"
+        "class C { @d get p(): number { throw 0 } set p(v: number) {} }"
+        "class C { @d get p(): string { throw 0 } set p(v: number) {} }"
+     4  paramtypes: bun [String, Object]  tsc [String, String]
+        origins: p11:positionx4
+        "class C { @d m(a: string, b: A | B extends C ? string : string) {} }"
+        "class C { m(@d a: string, b: A | B extends C ? string : string) {} }"
+        "class C { @d m(a: string, b: keyof A extends B ? string : string) {} }"
+     4  type: bun String  tsc Number
+        origins: p11:positionx1 td01:m.shape.union-check.string.number.number.neverx1 td01:m.shape.union-check.string.string.number.neverx1 td09:meta.066x1
+        "class K { @d p: string | number extends C ? number : never; }"
+        "class K { @d p: string | string extends C ? number : never; }"
+        "class C { @d get p(): string { throw 0 } set p(v: number) {} }"
+     4  type: bun ref(C)  tsc C
+        origins: gdt:07-decorator-metadatax2 p11:positionx1 resc:gte-probe/types1.txtx1
+        "class C { @d a: C }"
+        "class C { @d p: C; }"
+        "class C { @d a: A extends B ? C : C }"
+     4  type: bun ref(I)  tsc Object
+        origins: p11:positionx1 td09:meta.135x1 td09:meta.136x1 gdt:07-decorator-metadatax1
+        "class C { @d a: I } interface I {}"
+        "interface I {} class C { @d p: I; }"
+        "interface I {}\nclass K { @d p: I; }"
+     4  type: bun ref(T)  tsc String
+        origins: p11:positionx2 gdt:07-decorator-metadatax2
+        "class C { @d a: T } type T = string;"
+        "type T = string; class C { @d p: T; }"
+        "class C<T extends string> { @d a: T }"
+     4  paramtypes: bun [ref(T)]  tsc [Object]
+        origins: gdt:07-decorator-metadatax2 p11:positionx1 td09:meta.052x1
+        "class C<T> { @d m(a: T): T {} }"
+        "@d class C<T> { constructor(a: T) {} }"
+        "class C<T> { @d m(a: T): T { throw 0 } }"
+     4  type: bun Array  tsc undefined
+        origins: td01:m.shape.readonly-check.null.nullx1 td01:m.shape.readonly-check.null.neverx1 td01:m.shape.readonly-check.never.nullx1 td01:m.shape.readonly-check.never.neverx1
+        "class K { @d p: readonly X[] extends C ? null : null; }"
+        "class K { @d p: readonly X[] extends C ? null : never; }"
+        "class K { @d p: readonly X[] extends C ? never : null; }"
+     4  paramtypes: bun [Array]  tsc [undefined]
+        origins: td01:m.shape.readonly-check.null.nullx1 td01:m.shape.readonly-check.null.neverx1 td01:m.shape.readonly-check.never.nullx1 td01:m.shape.readonly-check.never.neverx1
+        "class K { @d m(x: readonly X[] extends C ? null : null) {} }"
+        "class K { @d m(x: readonly X[] extends C ? null : never) {} }"
+        "class K { @d m(x: readonly X[] extends C ? never : null) {} }"
+     4  returntype: bun Array  tsc undefined
+        origins: td01:m.shape.readonly-check.null.nullx1 td01:m.shape.readonly-check.null.neverx1 td01:m.shape.readonly-check.never.nullx1 td01:m.shape.readonly-check.never.neverx1
+        "class K { @d m(x: any): readonly X[] extends C ? null : null { return null as any } }"
+        "class K { @d m(x: any): readonly X[] extends C ? null : never { return null as any } }"
+        "class K { @d m(x: any): readonly X[] extends C ? never : null { return null as any } }"
+     4  type: bun ref(A.C)  tsc Object
+        origins: resc:gte-probe/types3.txtx2 resc:gte/m4.jsonx2 resc:gte/m3.jsonx2 td01:m.shape.dot-union-otherx1 resc:gte-probe/types2.txtx1
+        "class K { @d p: A.B | A.C; }"
+        "class C { @d p: A.B | A.C; }"
+        "class C { @d p: A.B & A.C; }"
+     4  paramtypes: bun [ref(A.C)]  tsc [Object]
+        origins: resc:gte-probe/types3.txtx2 resc:gte/m4.jsonx2 resc:gte/m3.jsonx2 td01:m.shape.dot-union-otherx1 resc:gte-probe/types2.txtx1
+        "class K { @d m(x: A.B | A.C) {} }"
+        "class C { @d m(a: A.B | A.C): A.B | A.C { throw 0 } }"
+        "class C { @d m(a: A.B & A.C): A.B & A.C { throw 0 } }"
+     4  returntype: bun ref(A.C)  tsc Object
+        origins: resc:gte-probe/types3.txtx2 resc:gte/m4.jsonx2 resc:gte/m3.jsonx2 td01:m.shape.dot-union-otherx1 resc:gte-probe/types2.txtx1
+        "class C { @d m(a: A.B | A.C): A.B | A.C { throw 0 } }"
+        "class C { @d m(a: A.B & A.C): A.B & A.C { throw 0 } }"
+        "class K { @d m(x: any): A.B | A.C { return null as any } }"
+     4  returntype: bun Object  tsc ref(C)
+        origins: td09:meta.073x1 td09:meta.076x1 td09:meta.085x1 td09:meta.088x1
+        "class K { m(a: A, @d b: B): C { return a } }"
+        "class K { m(@d a: A, b: B): C { return a } }"
+        "class K { static m(a: A, @d b: B): C { return a } }"
+     4  type: bun ref(N.A)  tsc N.A
+        origins: gdt:07-decorator-metadatax2 td09:meta.146x1 td09:meta.149x1
+        "class C { @d a: N.A } namespace N { export class A {} }"
+        "namespace N { export class A {} }\nclass K { @d p: N.A; }"
+        "class C { @d a: N.A } declare namespace N { class A {} }"
+     3  type: bun Object  tsc ref(const)
+        origins: p11:formx1 resc:gte/m1.jsonx1 td01:word.constx1 gds:query/fieldx1
+        "class C { @d p: const; }"
+        "class K { @d p: const; }"
+        "class C { @d x:  const; }"
+     3  returntype: bun Object  tsc ref(const)
+        origins: p11:formx1 resc:gte/m1.jsonx1 gds:query/retx1
+        "class C { @d m(): const { throw 0 } }"
+        "class C { @d m():  const { return x; } }"
+        "class C { @d m(a: const): const { throw 0 } }"
+     3  type: bun Array  tsc ref(Array)
+        origins: p11:formx1 td01:op.readonly-genericx1 gds:operator/fieldx1
+        "class C { @d p: readonly Array<A>; }"
+        "class K { @d p: readonly Array<A>; }"
+        "class C { @d x: readonly Array<A>; }"
+     3  paramtypes: bun [Array]  tsc [ref(Array)]
+        origins: p11:formx1 gds:operator/paramx1 td01:op.readonly-genericx1 gds:operator/ctorx1
+        "class C { @d m(a: readonly Array<A>) {} }"
+        "class K { @d m(x: readonly Array<A>) {} }"
+        "@d class C { constructor(a: readonly Array<A>) {} }"
+     3  returntype: bun Array  tsc ref(Array)
+        origins: p11:formx1 td01:op.readonly-genericx1 gds:operator/retx1
+        "class C { @d m(): readonly Array<A> { throw 0 } }"
+        "class C { @d m(): readonly Array<A> { return x; } }"
+        "class K { @d m(x: any): readonly Array<A> { return null as any } }"
+     3  type: bun Function  tsc Object
+        origins: p11:formx2 pinfile:ts.test.tsx1
+        "class C { @d p: X extends Y ? unknown : () => void; }"
+        "class C { @d p: X extends Y ? () => void : unknown; }"
+        "\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x
+     3  paramtypes: bun [Object]  tsc [ref(B)]
+        origins: p11:positionx3
+        "class C { @d m(...a: A<B>) {} }"
+        "class C { @d m(...a: A<B<C>>) {} }"
+        "class C { @d m(...a: A<B<C<D>>>) {} }"
+     3  type: bun (absent)  tsc ref(K)
+        origins: p11:positionx3
+        "class C { @d declare p: K; }"
+        "class C { @d declare p: K | null; }"
+        "class C { @d declare p: K | undefined; }"
+     3  paramtypes: bun [Object]  tsc [ref(K)]
+        origins: p11:positionx3
+        "class C { @d m(...a: K[]) {} }"
+        "class C { @d m(...a: Array<K>) {} }"
+        "class C { @d m(...a: Promise<K>) {} }"
+     3  returntype: bun Object  tsc ref(K)
+        origins: p11:positionx3
+        "class C { m(@d a: string): K { throw 0 } }"
+        "class C { m(@d a: string): K | null { throw 0 } }"
+        "class C { m(@d a: string): K | undefined { throw 0 } }"
+     3  paramtypes: bun []  tsc [ref(K)]
+        origins: p11:positionx3
+        "class C { @d get p(): K { throw 0 } set p(v: K) {} }"
+        "class C { @d get p(): K | null { throw 0 } set p(v: K | null) {} }"
+        "class C { @d get p(): K | undefined { throw 0 } set p(v: K | undefined) {} }"
+     3  paramtypes: bun [Object, Number]  tsc [String, Number]
+        origins: p11:positionx3
+        "class C { constructor(a: string, @e b: number) {} }"
+        "class C { m(a: string, @e b: number): boolean { throw 0 } }"
+        "class C { static m(a: string, @e b: number): boolean { throw 0 } }"
+     3  returntype: bun Object  tsc Promise
+        origins: p11:positionx1 td09:position.192x1 td09:meta.086x1
+        "class C { async m(@d a: A) {} }"
+        "class K { async m(@d a: A) {} }"
+        "class C { async m(@e a: string) {} }"
+     3  type: bun ref(E)  tsc String
+        origins: p11:positionx1 td09:meta.142x1 gdt:07-decorator-metadatax1
+        "class C { @d a: E } enum E { A = 'a' }"
+        "enum E { A = \"a\" } class C { @d p: E; }"
+        "enum E { A = \"a\" }\nclass K { @d p: E; }"
+     3  type: bun ref(E.A)  tsc Number
+        origins: p11:positionx1 td09:meta.141x1 gdt:07-decorator-metadatax1
+        "class C { @d a: E.A } enum E { A }"
+        "enum E { A } class C { @d p: E.A; }"
+        "enum E { A }\nclass K { @d p: E.A; }"
+     3  returntype: bun ref(T)  tsc Object
+        origins: p11:positionx1 td09:meta.052x1 gdt:07-decorator-metadatax1
+        "class C<T> { @d m(a: T): T {} }"
+        "class C<T> { @d m(a: T): T { throw 0 } }"
+        "class K<T> { @d m(a: T): T { return a } }"
+     3  paramtypes: bun [ref(A)]  tsc [ref(\u0041)]
+        origins: td01:ref.unicodex1 gds:junk/paramx1 gds:junk/ctorx1
+        "class K { @d m(x: \\u0041) {} }"
+        "class C { @d m(a: \\u0041) {} }"
+        "@d class C { constructor(a: \\u0041) {} }"
+     3  type: bun ref(X)  tsc Object
+        origins: td01:m.cond.null.unique_symbolx1 td01:m.cond.null.import$28$22m$22$29x1 td09:meta.139x1
+        "type X<T> = T[];\nclass K { @d p: X<A>; }"
+        "class K { @d p: X extends Y ? null : import(\"m\"); }"
+        "class K { @d p: X extends Y ? null : unique symbol; }"
+     3  paramtypes: bun [Object]  tsc [ref(asserts.a)]
+        origins: resc:gte-probe/types2.txtx1 resc:gte-probe/types4.txtx1 gds:predicate/paramx1 gds:predicate/ctorx1
+        "class C { @d m(a: asserts.a) {} }"
+        "@d class C { constructor(a: asserts.a) {} }"
+        "class C { @d m(a: asserts.a): asserts.a { throw 0 } }"
+     3  type: bun String  tsc ref(string.a)
+        origins: resc:gte-probe/types4.txtx2 bs:typex1
+        "class C { @d p: string.a; }"
+        "class C { @d p: string.a<B>; }"
+        "class C { @d p: string.a | string.a; }"
+     3  paramtypes: bun [String]  tsc [ref(string.a)]
+        origins: resc:gte-probe/types4.txtx2 bs:typex1
+        "class C { @d m(a: string.a): string.a { throw 0 } }"
+        "class C { @d m(a: string.a<B>): string.a<B> { throw 0 } }"
+        "class C { @d m(a: string.a | string.a): string.a | string.a { throw 0 } }"
+     3  returntype: bun String  tsc ref(string.a)
+        origins: resc:gte-probe/types4.txtx2 bs:typex1
+        "class C { @d m(a: string.a): string.a { throw 0 } }"
+        "class C { @d m(a: string.a<B>): string.a<B> { throw 0 } }"
+        "class C { @d m(a: string.a | string.a): string.a | string.a { throw 0 } }"
+     3  type: bun ref(Foo)  tsc Object
+        origins: resc:gte/m1.jsonx2 resc:gte/m2.jsonx1
+        "class C { @d p: Foo extends Bar ? Foo : Foo; }"
+        "class C { @d p: Unk extends Foo ? Foo : Foo; }"
+        "class C { @d p: Foo | Bar extends string ? Foo : Foo; }"
+     3  paramtypes: bun [ref(Foo)]  tsc [Object]
+        origins: resc:gte/m1.jsonx2 resc:gte/m2.jsonx1
+        "class C { @d m(a: Foo extends Bar ? Foo : Foo): Foo extends Bar ? Foo : Foo { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? Foo : Foo): Unk extends Foo ? Foo : Foo { throw 0 } }"
+        "class C { @d m(a: Foo | Bar extends string ? Foo : Foo): Foo | Bar extends string ? Foo : Foo { throw 0 } }"
+     3  returntype: bun ref(Foo)  tsc Object
+        origins: resc:gte/m1.jsonx2 resc:gte/m2.jsonx1
+        "class C { @d m(a: Foo extends Bar ? Foo : Foo): Foo extends Bar ? Foo : Foo { throw 0 } }"
+        "class C { @d m(a: Unk extends Foo ? Foo : Foo): Unk extends Foo ? Foo : Foo { throw 0 } }"
+        "class C { @d m(a: Foo | Bar extends string ? Foo : Foo): Foo | Bar extends string ? Foo : Foo { throw 0 } }"
+     2  type: bun ref(T)  tsc (absent)
+        origins: p06:paramPropx2
+        "class C { set p(@d { x }: T) {} }"
+        "class C { set p(@d public: T) {} }"
+     2  paramtypes: bun [ref(T)]  tsc (absent)
+        origins: p06:paramPropx2
+        "class C { set p(@d { x }: T) {} }"
+        "class C { set p(@d public: T) {} }"
+     2  paramtypes: bun [ref(A), ref(B), ref(C)]  tsc [ref(A), ref(B), C]
+        origins: p09:paramPosx2
+        "class C { @x m(a: A, b: B, @d c: C) {} }"
+        "@x class C { constructor(a: A, b: B, @d c: C) {} }"
+     2  paramtypes: bun [Object]  tsc [ref(any.b)]
+        origins: p11:formx1 resc:gte/m4.jsonx1
+        "class C { @d m(a: any.b) {} }"
+        "class C { @d m(a: any.b): any.b { throw 0 } }"
+     2  returntype: bun Object  tsc ref(any.b)
+        origins: p11:formx1 resc:gte/m4.jsonx1
+        "class C { @d m(): any.b { throw 0 } }"
+        "class C { @d m(a: any.b): any.b { throw 0 } }"
+     2  type: bun Object  tsc ref(asserts.x)
+        origins: p11:formx1 td01:pred.asserts-dotx1
+        "class C { @d p: asserts.x; }"
+        "class K { @d p: asserts.x; }"
+     2  paramtypes: bun [Object]  tsc [ref(asserts.x)]
+        origins: p11:formx1 td01:pred.asserts-dotx1
+        "class C { @d m(a: asserts.x) {} }"
+        "class K { @d m(x: asserts.x) {} }"
+     2  returntype: bun Object  tsc ref(asserts.x)
+        origins: p11:formx1 td01:pred.asserts-dotx1
+        "class C { @d m(): asserts.x { throw 0 } }"
+        "class K { @d m(x: any): asserts.x { return null as any } }"
+     2  returntype: bun ref(is)  tsc Boolean
+        origins: p11:formx1 gds:predicate/retx1
+        "class C { @d m(): is is B { throw 0 } }"
+        "class C { @d m():  is is A { return x; } }"
+     2  returntype: bun String  tsc Boolean
+        origins: p11:formx1 td01:pred.is-keyword-parameterx1
+        "class C { @d m(): string is B { throw 0 } }"
+        "class K { @d m(x: any): string is A { return null as any } }"
+     2  type: bun BigInt  tsc Object
+        origins: p11:formx2
+        "class C { @d p: X extends Y ? bigint : unknown; }"
+        "class C { @d p: X extends Y ? unknown : bigint; }"
+     2  paramtypes: bun [BigInt]  tsc [Object]
+        origins: p11:formx2
+        "class C { @d m(a: X extends Y ? bigint : unknown) {} }"
+        "class C { @d m(a: X extends Y ? unknown : bigint) {} }"
+     2  returntype: bun BigInt  tsc Object
+        origins: p11:formx2
+        "class C { @d m(): X extends Y ? bigint : unknown { throw 0 } }"
+        "class C { @d m(): X extends Y ? unknown : bigint { throw 0 } }"
+     2  paramtypes: bun [Function]  tsc [Object]
+        origins: p11:formx2
+        "class C { @d m(a: X extends Y ? unknown : () => void) {} }"
+        "class C { @d m(a: X extends Y ? () => void : unknown) {} }"
+     2  returntype: bun Function  tsc Object
+        origins: p11:formx2
+        "class C { @d m(): X extends Y ? unknown : () => void { throw 0 } }"
+        "class C { @d m(): X extends Y ? () => void : unknown { throw 0 } }"
+     2  type: bun Number  tsc String
+        origins: p11:formx2
+        "class C { @d p: number | A extends B ? string : never; }"
+        "class C { @d p: number | A extends B ? never : string; }"
+     2  paramtypes: bun [Number]  tsc [String]
+        origins: p11:formx2
+        "class C { @d m(a: number | A extends B ? string : never) {} }"
+        "class C { @d m(a: number | A extends B ? never : string) {} }"
+     2  returntype: bun Number  tsc String
+        origins: p11:formx2
+        "class C { @d m(): number | A extends B ? string : never { throw 0 } }"
+        "class C { @d m(): number | A extends B ? never : string { throw 0 } }"
+     2  type: bun ref(K)  tsc String
+        origins: p11:formx2
+        "class C { @d p: K | A extends B ? string : never; }"
+        "class C { @d p: K | A extends B ? never : string; }"
+     2  paramtypes: bun [ref(K)]  tsc [String]
+        origins: p11:formx2
+        "class C { @d m(a: K | A extends B ? string : never) {} }"
+        "class C { @d m(a: K | A extends B ? never : string) {} }"
+     2  returntype: bun ref(K)  tsc String
+        origins: p11:formx2
+        "class C { @d m(): K | A extends B ? string : never { throw 0 } }"
+        "class C { @d m(): K | A extends B ? never : string { throw 0 } }"
+     2  type: bun Array  tsc Function
+        origins: p11:formx1 resc:gte-probe/types3.txtx1 resc:gte-probe/types_final.txtx1
+        "class C { @d p: readonly (() => void); }"
+        "class C { @d p: readonly A[] extends B ? () => void : () => void; }"
+     2  paramtypes: bun [Array]  tsc [Function]
+        origins: p11:formx1 resc:gte-probe/types3.txtx1 resc:gte-probe/types_final.txtx1
+        "class C { @d m(a: readonly A[] extends B ? () => void : () => void) {} }"
+        "class C { @d m(a: readonly (() => void)): readonly (() => void) { throw 0 } }"
+     2  returntype: bun Array  tsc Function
+        origins: p11:formx1 resc:gte-probe/types3.txtx1 resc:gte-probe/types_final.txtx1
+        "class C { @d m(a: readonly (() => void)): readonly (() => void) { throw 0 } }"
+        "class C { @d m(): readonly A[] extends B ? () => void : () => void { throw 0 } }"
+     2  paramtypes: bun [Object]  tsc [ref(A.B)]
+        origins: p11:positionx1 resc:gte-probe/types3.txtx1
+        "class C { @d m(...a: A.B[]) {} }"
+        "class C { @d m(a: readonly A.B | A.B): readonly A.B | A.B { throw 0 } }"
+     2  returntype: bun Object  tsc ref(A.B)
+        origins: p11:positionx1 resc:gte-probe/types3.txtx1
+        "class C { m(@d a: string): A.B { throw 0 } }"
+        "class C { @d m(a: readonly A.B | A.B): readonly A.B | A.B { throw 0 } }"
+     2  paramtypes: bun [Object, String]  tsc [ref(A.B), String]
+        origins: p11:positionx2
+        "class C { m(a: A.B, @d b: string) {} }"
+        "class C { constructor(a: A.B, @d b: string) {} }"
+     2  paramtypes: bun [String, undefined]  tsc [String, Object]
+        origins: p11:positionx2
+        "class C { @d m(a: string, b: A extends infer U ? U : never) {} }"
+        "class C { m(@d a: string, b: A extends infer U ? U : never) {} }"
+     2  type: bun (absent)  tsc Boolean
+        origins: p11:positionx2
+        "class C { @d declare p: this is B; }"
+        "class C { @d declare p: this is K; }"
+     2  paramtypes: bun []  tsc [Boolean]
+        origins: p11:positionx2
+        "class C { @d get p(): this is B { throw 0 } set p(v: this is B) {} }"
+        "class C { @d get p(): this is K { throw 0 } set p(v: this is K) {} }"
+     2  paramtypes: bun [Object, String]  tsc [undefined, String]
+        origins: p11:positionx2
+        "class C { m(a: void, @d b: string) {} }"
+        "class C { constructor(a: void, @d b: string) {} }"
+     2  paramtypes: bun [String, Object]  tsc [String, ref(asserts)]
+        origins: p11:positionx2
+        "class C { @d m(a: string, b: asserts) {} }"
+        "class C { m(@d a: string, b: asserts) {} }"
+     2  paramtypes: bun [Object, String]  tsc [ref(asserts), String]
+        origins: p11:positionx2
+        "class C { m(a: asserts, @d b: string) {} }"
+        "class C { constructor(a: asserts, @d b: string) {} }"
+     2  paramtypes: bun [Object, String]  tsc [ref(Array), String]
+        origins: p11:positionx2
+        "class C { m(a: Array<K>, @d b: string) {} }"
+        "class C { constructor(a: Array<K>, @d b: string) {} }"
+     2  returntype: bun Object  tsc ref(Promise)
+        origins: p11:positionx1 td09:meta.087x1
+        "class C { m(@d a: string): Promise<K> { throw 0 } }"
+        "class K { async m(a: A, @d b: B): Promise<C> { return a } }"
+     2  paramtypes: bun [Object, String]  tsc [ref(Promise), String]
+        origins: p11:positionx2
+        "class C { m(a: Promise<K>, @d b: string) {} }"
+        "class C { constructor(a: Promise<K>, @d b: string) {} }"
+     2  paramtypes: bun [String, undefined]  tsc [String, String]
+        origins: p11:positionx2
+        "class C { @d m(a: string, b: A extends B ? string : never) {} }"
+        "class C { m(@d a: string, b: A extends B ? string : never) {} }"
+     2  type: bun ref(N.I)  tsc Object
+        origins: p11:positionx1 td09:meta.147x1
+        "namespace N { export interface I {} } class C { @d p: N.I; }"
+        "namespace N { export interface I {} }\nclass K { @d p: N.I; }"
+     2  type: bun ref(globalThis.Date)  tsc Object
+        origins: p11:positionx1 td09:meta.199x1
+        "class C { @d p: globalThis.Date; }"
+        "class K { @d p: globalThis.Date; }"
+     2  type: bun String  tsc ref(string.x)
+        origins: td01:kw.string.dotx1 resc:gte/m1.jsonx1 resc:gte/m4.jsonx1
+        "class K { @d p: string.x; }"
+        "class C { @d p: string.x; }"
+     2  paramtypes: bun [String]  tsc [ref(string.x)]
+        origins: td01:kw.string.dotx1 resc:gte/m1.jsonx1 resc:gte/m4.jsonx1
+        "class K { @d m(x: string.x) {} }"
+        "class C { @d m(a: string.x): string.x { throw 0 } }"
+     2  returntype: bun String  tsc ref(string.x)
+        origins: td01:kw.string.dotx1 resc:gte/m1.jsonx1 resc:gte/m4.jsonx1
+        "class C { @d m(a: string.x): string.x { throw 0 } }"
+        "class K { @d m(x: any): string.x { return null as any } }"
+     2  type: bun ref(A)  tsc ref(\u0041)
+        origins: td01:ref.unicodex1 gds:junk/fieldx1
+        "class K { @d p: \\u0041; }"
+        "class C { @d x: \\u0041; }"
+     2  returntype: bun ref(A)  tsc ref(\u0041)
+        origins: td01:ref.unicodex1 gds:junk/retx1
+        "class C { @d m(): \\u0041 { return x; } }"
+        "class K { @d m(x: any): \\u0041 { return null as any } }"
+     2  type: bun Object  tsc ref(abstract.A)
+        origins: td01:word.abstract.qualifierx1 td03:sig.511x1 gds:contextual/fieldx1
+        "class K { @d p: abstract.A; }"
+        "class C { @d x: abstract.A; }"
+     2  type: bun Object  tsc ref(asserts.A)
+        origins: td01:word.asserts.qualifierx1 gds:contextual/fieldx1
+        "class K { @d p: asserts.A; }"
+        "class C { @d x: asserts.A; }"
+     2  paramtypes: bun [ref(X)]  tsc [Object]
+        origins: td01:m.cond.null.unique_symbolx1 td01:m.cond.null.import$28$22m$22$29x1
+        "class K { @d m(x: X extends Y ? null : import(\"m\")) {} }"
+        "class K { @d m(x: X extends Y ? null : unique symbol) {} }"
+     2  returntype: bun ref(X)  tsc Object
+        origins: td01:m.cond.null.unique_symbolx1 td01:m.cond.null.import$28$22m$22$29x1
+        "class K { @d m(x: any): X extends Y ? null : import(\"m\") { return null as any } }"
+        "class K { @d m(x: any): X extends Y ? null : unique symbol { return null as any } }"
+     2  type: bun ref(Function)  tsc Object
+        origins: td01:m.cond.Function.nullx1 td01:m.cond.null.Functionx1
+        "class K { @d p: X extends Y ? Function : null; }"
+        "class K { @d p: X extends Y ? null : Function; }"
+     2  paramtypes: bun [ref(Function)]  tsc [Object]
+        origins: td01:m.cond.Function.nullx1 td01:m.cond.null.Functionx1
+        "class K { @d m(x: X extends Y ? Function : null) {} }"
+        "class K { @d m(x: X extends Y ? null : Function) {} }"
+     2  returntype: bun ref(Function)  tsc Object
+        origins: td01:m.cond.Function.nullx1 td01:m.cond.null.Functionx1
+        "class K { @d m(x: any): X extends Y ? Function : null { return null as any } }"
+        "class K { @d m(x: any): X extends Y ? null : Function { return null as any } }"
+     2  type: bun ref(Promise)  tsc Object
+        origins: td01:m.cond.Promise$3cA$3e.nullx1 td01:m.cond.null.Promise$3cA$3ex1
+        "class K { @d p: X extends Y ? Promise<A> : null; }"
+        "class K { @d p: X extends Y ? null : Promise<A>; }"
+     2  paramtypes: bun [ref(Promise)]  tsc [Object]
+        origins: td01:m.cond.Promise$3cA$3e.nullx1 td01:m.cond.null.Promise$3cA$3ex1
+        "class K { @d m(x: X extends Y ? Promise<A> : null) {} }"
+        "class K { @d m(x: X extends Y ? null : Promise<A>) {} }"
+     2  returntype: bun ref(Promise)  tsc Object
+        origins: td01:m.cond.Promise$3cA$3e.nullx1 td01:m.cond.null.Promise$3cA$3ex1
+        "class K { @d m(x: any): X extends Y ? Promise<A> : null { return null as any } }"
+        "class K { @d m(x: any): X extends Y ? null : Promise<A> { return null as any } }"
+     2  type: bun ref(Array)  tsc Object
+        origins: td01:m.cond.Array$3cA$3e.nullx1 td01:m.cond.null.Array$3cA$3ex1
+        "class K { @d p: X extends Y ? Array<A> : null; }"
+        "class K { @d p: X extends Y ? null : Array<A>; }"
+     2  paramtypes: bun [ref(Array)]  tsc [Object]
+        origins: td01:m.cond.Array$3cA$3e.nullx1 td01:m.cond.null.Array$3cA$3ex1
+        "class K { @d m(x: X extends Y ? Array<A> : null) {} }"
+        "class K { @d m(x: X extends Y ? null : Array<A>) {} }"
+     2  returntype: bun ref(Array)  tsc Object
+        origins: td01:m.cond.Array$3cA$3e.nullx1 td01:m.cond.null.Array$3cA$3ex1
+        "class K { @d m(x: any): X extends Y ? Array<A> : null { return null as any } }"
+        "class K { @d m(x: any): X extends Y ? null : Array<A> { return null as any } }"
+     2  paramtypes: bun [String]  tsc [Number]
+        origins: td01:m.shape.union-check.string.number.number.neverx1 td01:m.shape.union-check.string.string.number.neverx1
+        "class K { @d m(x: string | number extends C ? number : never) {} }"
+        "class K { @d m(x: string | string extends C ? number : never) {} }"
+     2  returntype: bun String  tsc Number
+        origins: td01:m.shape.union-check.string.number.number.neverx1 td01:m.shape.union-check.string.string.number.neverx1
+        "class K { @d m(x: any): string | number extends C ? number : never { return null as any } }"
+        "class K { @d m(x: any): string | string extends C ? number : never { return null as any } }"
+     2  type: bun ref(A)  tsc String
+        origins: td01:m.shape.union-check.A.number.string.neverx1 td01:m.shape.union-check.A.string.string.neverx1
+        "class K { @d p: A | number extends C ? string : never; }"
+        "class K { @d p: A | string extends C ? string : never; }"
+     2  paramtypes: bun [ref(A)]  tsc [String]
+        origins: td01:m.shape.union-check.A.number.string.neverx1 td01:m.shape.union-check.A.string.string.neverx1
+        "class K { @d m(x: A | number extends C ? string : never) {} }"
+        "class K { @d m(x: A | string extends C ? string : never) {} }"
+     2  returntype: bun ref(A)  tsc String
+        origins: td01:m.shape.union-check.A.number.string.neverx1 td01:m.shape.union-check.A.string.string.neverx1
+        "class K { @d m(x: any): A | number extends C ? string : never { return null as any } }"
+        "class K { @d m(x: any): A | string extends C ? string : never { return null as any } }"
+     2  type: bun ref(A)  tsc Number
+        origins: td01:m.shape.union-check.A.number.number.neverx1 td01:m.shape.union-check.A.string.number.neverx1
+        "class K { @d p: A | number extends C ? number : never; }"
+        "class K { @d p: A | string extends C ? number : never; }"
+     2  paramtypes: bun [ref(A)]  tsc [Number]
+        origins: td01:m.shape.union-check.A.number.number.neverx1 td01:m.shape.union-check.A.string.number.neverx1
+        "class K { @d m(x: A | number extends C ? number : never) {} }"
+        "class K { @d m(x: A | string extends C ? number : never) {} }"
+     2  returntype: bun ref(A)  tsc Number
+        origins: td01:m.shape.union-check.A.number.number.neverx1 td01:m.shape.union-check.A.string.number.neverx1
+        "class K { @d m(x: any): A | number extends C ? number : never { return null as any } }"
+        "class K { @d m(x: any): A | string extends C ? number : never { return null as any } }"
+     2  returntype: bun Object  tsc ref(E)
+        origins: td09:meta.092x1 td09:meta.093x1
+        "class K { m(@d a: A) {} n(c: C, @e d: D): E { return c } }"
+        "class K { n(c: C): D { return c } m(a: A, @d b: B): E { return a } }"
+     2  paramtypes: bun (absent)  tsc [ref(A)]
+        origins: td09:meta.128x1 gdt:07-decorator-metadatax1
+        "export default @d class { constructor(a: A) {} }"
+        "export default @d class C { constructor(a: A) {} }"
+     2  type: bun ref(X)  tsc String
+        origins: td09:meta.137x1 td09:meta.138x1
+        "type X = string;\nclass K { @d p: X; }"
+        "class K { @d p: X; }\ntype X = string;"
+     2  type: bun ref(N.M.A)  tsc N.M.A
+        origins: td09:meta.150x1 gdt:07-decorator-metadatax1
+        "class C { @d a: N.M.A } namespace N { export namespace M { export class A {} } }"
+        "namespace N { export namespace M { export class A {} } }\nclass K { @d p: N.M.A; }"
+     2  type: bun ref(N.A)  tsc Object
+        origins: td09:meta.166x1 gdt:07-decorator-metadatax1
+        "import type * as N from 'a'; class C { @d a: N.A }"
+        "import type * as N from \"m\";\nclass K { @d p: N.A; }"
+     2  paramtypes: bun [ref(C)]  tsc [C]
+        origins: resc:gte-probe/types1.txtx1 gdt:07-decorator-metadatax1
+        "@d class C { constructor(a: C) {} }"
+        "class C { @d m(a: A extends B ? C : C): A extends B ? C : C { throw 0 } }"
+     2  returntype: bun ref(C)  tsc C
+        origins: resc:gte-probe/types1.txtx1 gdt:07-decorator-metadatax1
+        "class C { @d m(@p a: A, @p b: B): C {} }"
+        "class C { @d m(a: A extends B ? C : C): A extends B ? C : C { throw 0 } }"
+     2  type: bun Object  tsc ref(asserts.a)
+        origins: resc:gte-probe/types2.txtx1 resc:gte-probe/types4.txtx1 gds:predicate/fieldx1
+        "class C { @d p: asserts.a; }"
+        "class C { @d x: asserts.a; }"
+     2  returntype: bun Object  tsc ref(asserts.a)
+        origins: resc:gte-probe/types2.txtx1 resc:gte-probe/types4.txtx1 gds:predicate/retx1
+        "class C { @d m(): asserts.a { return x; } }"
+        "class C { @d m(a: asserts.a): asserts.a { throw 0 } }"
+     2  type: bun ref(A)  tsc typeof (_a = typeof A /*2*/ !== "undefined" && A /*2*/) === "function" ? _a : Object
+        origins: bs:typex2
+        "class C { @d p: /*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;; }"
+        "class C { @d p: /*1*/ A /*2*/ < /*3*/ B /*4*/ < /*5*/ C /*6*/ >> /*7*/ = y; }"
+     2  paramtypes: bun [Object]  tsc [ref(asserts.A)]
+        origins: gds:contextual/paramx1 gds:contextual/ctorx1
+        "class C { @d m(a: asserts.A) {} }"
+        "@d class C { constructor(a: asserts.A) {} }"
+     2  paramtypes: bun [Object]  tsc [ref(abstract.A)]
+        origins: gds:contextual/paramx1 gds:contextual/ctorx1
+        "class C { @d m(a: abstract.A) {} }"
+        "@d class C { constructor(a: abstract.A) {} }"
+     2  paramtypes: bun [ref(AB)]  tsc [ref(A\u0042)]
+        origins: gds:junk/paramx1 gds:junk/ctorx1
+        "class C { @d m(a: A\\u0042) {} }"
+        "@d class C { constructor(a: A\\u0042) {} }"
+     2  paramtypes: bun [ref(A)]  tsc [typeof (_a = typeof A /*c*/ !== "undefined" && A /*c*/) === "function" ? _a : Object]
+        origins: gds:junk/paramx1 gds:junk/ctorx1
+        "class C { @d m(a: A/*c*/) {} }"
+        "@d class C { constructor(a: A/*c*/) {} }"
+     2  paramtypes: bun [ref(A)]  tsc [typeof (_a = typeof A //c !== "undefined" && A //c ) === "function" ? _a : Object]
+        origins: gds:junk/paramx1 gds:junk/ctorx1
+        "class C { @d m(a: A//c\n) {} }"
+        "@d class C { constructor(a: A//c\n) {} }"
+     2  paramtypes: bun [Array]  tsc [Symbol]
+        origins: gds:operator/paramx1 gds:operator/ctorx1
+        "class C { @d m(a: readonly  symbol) {} }"
+        "@d class C { constructor(a: readonly  symbol) {} }"
+     2  paramtypes: bun [Array]  tsc [ref(a)]
+        origins: gds:operator/paramx1 gds:operator/ctorx1
+        "class C { @d m(a: readonly  a) {} }"
+        "@d class C { constructor(a: readonly  a) {} }"
+     2  paramtypes: bun [Object]  tsc [ref(asserts.b)]
+        origins: gds:predicate/paramx1 gds:predicate/ctorx1
+        "class C { @d m(a: asserts .b) {} }"
+        "@d class C { constructor(a: asserts .b) {} }"
+     1  type: bun ref(B)  tsc (absent)
+        origins: p09:paramPosx1
+        "class C { set p(this: A, @d a: B) {} }"
+     1  paramtypes: bun [ref(B)]  tsc (absent)
+        origins: p09:paramPosx1
+        "class C { set p(this: A, @d a: B) {} }"
+     1  type: bun Object  tsc ref(any.b)
+        origins: p11:formx1 resc:gte/m4.jsonx1
+        "class C { @d p: any.b; }"
+     1  type: bun String  tsc ref(string.b)
+        origins: p11:formx1
+        "class C { @d p: string.b; }"
+     1  paramtypes: bun [String]  tsc [ref(string.b)]
+        origins: p11:formx1
+        "class C { @d m(a: string.b) {} }"
+     1  returntype: bun String  tsc ref(string.b)
+        origins: p11:formx1
+        "class C { @d m(): string.b { throw 0 } }"
+     1  type: bun Number  tsc ref(number.b.c)
+        origins: p11:formx1
+        "class C { @d p: number.b.c; }"
+     1  paramtypes: bun [Number]  tsc [ref(number.b.c)]
+        origins: p11:formx1
+        "class C { @d m(a: number.b.c) {} }"
+     1  returntype: bun Number  tsc ref(number.b.c)
+        origins: p11:formx1
+        "class C { @d m(): number.b.c { throw 0 } }"
+     1  type: bun Object  tsc ref(object.b)
+        origins: p11:formx1
+        "class C { @d p: object.b; }"
+     1  paramtypes: bun [Object]  tsc [ref(object.b)]
+        origins: p11:formx1
+        "class C { @d m(a: object.b) {} }"
+     1  returntype: bun Object  tsc ref(object.b)
+        origins: p11:formx1
+        "class C { @d m(): object.b { throw 0 } }"
+     1  type: bun undefined  tsc ref(never.b)
+        origins: p11:formx1
+        "class C { @d p: never.b; }"
+     1  paramtypes: bun [undefined]  tsc [ref(never.b)]
+        origins: p11:formx1
+        "class C { @d m(a: never.b) {} }"
+     1  returntype: bun undefined  tsc ref(never.b)
+        origins: p11:formx1
+        "class C { @d m(): never.b { throw 0 } }"
+     1  type: bun Object  tsc ref(unknown.b)
+        origins: p11:formx1
+        "class C { @d p: unknown.b; }"
+     1  paramtypes: bun [Object]  tsc [ref(unknown.b)]
+        origins: p11:formx1
+        "class C { @d m(a: unknown.b) {} }"
+     1  returntype: bun Object  tsc ref(unknown.b)
+        origins: p11:formx1
+        "class C { @d m(): unknown.b { throw 0 } }"
+     1  type: bun Symbol  tsc ref(symbol.b)
+        origins: p11:formx1
+        "class C { @d p: symbol.b; }"
+     1  paramtypes: bun [Symbol]  tsc [ref(symbol.b)]
+        origins: p11:formx1
+        "class C { @d m(a: symbol.b) {} }"
+     1  returntype: bun Symbol  tsc ref(symbol.b)
+        origins: p11:formx1
+        "class C { @d m(): symbol.b { throw 0 } }"
+     1  type: bun BigInt  tsc ref(bigint.b)
+        origins: p11:formx1
+        "class C { @d p: bigint.b<T>; }"
+     1  paramtypes: bun [BigInt]  tsc [ref(bigint.b)]
+        origins: p11:formx1
+        "class C { @d m(a: bigint.b<T>) {} }"
+     1  returntype: bun BigInt  tsc ref(bigint.b)
+        origins: p11:formx1
+        "class C { @d m(): bigint.b<T> { throw 0 } }"
+     1  type: bun Boolean  tsc ref(boolean.b)
+        origins: p11:formx1
+        "class C { @d p: boolean.b; }"
+     1  paramtypes: bun [Boolean]  tsc [ref(boolean.b)]
+        origins: p11:formx1
+        "class C { @d m(a: boolean.b) {} }"
+     1  returntype: bun Boolean  tsc ref(boolean.b)
+        origins: p11:formx1
+        "class C { @d m(): boolean.b { throw 0 } }"
+     1  type: bun Object  tsc ref(abstract.x)
+        origins: p11:formx1
+        "class C { @d p: abstract.x; }"
+     1  paramtypes: bun [Object]  tsc [ref(abstract.x)]
+        origins: p11:formx1
+        "class C { @d m(a: abstract.x) {} }"
+     1  returntype: bun Object  tsc ref(abstract.x)
+        origins: p11:formx1
+        "class C { @d m(): abstract.x { throw 0 } }"
+     1  type: bun (absent)  tsc ref(A.B)
+        origins: p11:positionx1
+        "class C { @d declare p: A.B; }"
+     1  paramtypes: bun []  tsc [ref(A.B)]
+        origins: p11:positionx1
+        "class C { @d get p(): A.B { throw 0 } set p(v: A.B) {} }"
+     1  type: bun (absent)  tsc undefined
+        origins: p11:positionx1
+        "class C { @d declare p: void; }"
+     1  paramtypes: bun []  tsc [undefined]
+        origins: p11:positionx1
+        "class C { @d get p(): void { throw 0 } set p(v: void) {} }"
+     1  type: bun (absent)  tsc ref(asserts)
+        origins: p11:positionx1
+        "class C { @d declare p: asserts; }"
+     1  paramtypes: bun []  tsc [ref(asserts)]
+        origins: p11:positionx1
+        "class C { @d get p(): asserts { throw 0 } set p(v: asserts) {} }"
+     1  type: bun (absent)  tsc ref(Array)
+        origins: p11:positionx1
+        "class C { @d declare p: Array<K>; }"
+     1  paramtypes: bun [Object]  tsc [ref(Array)]
+        origins: p11:positionx1
+        "class C { @d m(...a: Array<K>[]) {} }"
+     1  returntype: bun Object  tsc ref(Array)
+        origins: p11:positionx1
+        "class C { m(@d a: string): Array<K> { throw 0 } }"
+     1  paramtypes: bun []  tsc [ref(Array)]
+        origins: p11:positionx1
+        "class C { @d get p(): Array<K> { throw 0 } set p(v: Array<K>) {} }"
+     1  type: bun (absent)  tsc ref(Promise)
+        origins: p11:positionx1
+        "class C { @d declare p: Promise<K>; }"
+     1  paramtypes: bun [Object]  tsc [ref(Promise)]
+        origins: p11:positionx1
+        "class C { @d m(...a: Promise<K>[]) {} }"
+     1  paramtypes: bun []  tsc [ref(Promise)]
+        origins: p11:positionx1
+        "class C { @d get p(): Promise<K> { throw 0 } set p(v: Promise<K>) {} }"
+     1  paramtypes: bun [String, Number, Boolean, ref(C)]  tsc [String, Number, Boolean, C]
+        origins: p11:positionx1
+        "@d class C { constructor(private a: string, protected b: number, readonly c: boolean, public d?: C) {} }"
+     1  paramtypes: bun [Object, Object, Boolean]  tsc [String, Number, Boolean]
+        origins: p11:positionx1
+        "class C { m(a: string, b: number, @e c: boolean) {} }"
+     1  type: bun String  tsc (absent)
+        origins: p11:positionx1
+        "class C { set p(@e v: string) {} }"
+     1  paramtypes: bun [String]  tsc (absent)
+        origins: p11:positionx1
+        "class C { set p(@e v: string) {} }"
+     1  type: bun ref(N.K)  tsc N.K
+        origins: p11:positionx1
+        "namespace N { export class K {} } class C { @d p: N.K; }"
+     1  type: bun ref(K.L)  tsc Object
+        origins: p11:positionx1
+        "import type * as K from \"k\"; class C { @d p: K.L; }"
+     1  type: bun Object  tsc ref(any.x)
+        origins: td01:kw.any.dotx1
+        "class K { @d p: any.x; }"
+     1  paramtypes: bun [Object]  tsc [ref(any.x)]
+        origins: td01:kw.any.dotx1
+        "class K { @d m(x: any.x) {} }"
+     1  returntype: bun Object  tsc ref(any.x)
+        origins: td01:kw.any.dotx1
+        "class K { @d m(x: any): any.x { return null as any } }"
+     1  type: bun Object  tsc ref(unknown.x)
+        origins: td01:kw.unknown.dotx1
+        "class K { @d p: unknown.x; }"
+     1  paramtypes: bun [Object]  tsc [ref(unknown.x)]
+        origins: td01:kw.unknown.dotx1
+        "class K { @d m(x: unknown.x) {} }"
+     1  returntype: bun Object  tsc ref(unknown.x)
+        origins: td01:kw.unknown.dotx1
+        "class K { @d m(x: any): unknown.x { return null as any } }"
+     1  type: bun undefined  tsc ref(never.x)
+        origins: td01:kw.never.dotx1
+        "class K { @d p: never.x; }"
+     1  paramtypes: bun [undefined]  tsc [ref(never.x)]
+        origins: td01:kw.never.dotx1
+        "class K { @d m(x: never.x) {} }"
+     1  returntype: bun undefined  tsc ref(never.x)
+        origins: td01:kw.never.dotx1
+        "class K { @d m(x: any): never.x { return null as any } }"
+     1  type: bun Object  tsc ref(object.x)
+        origins: td01:kw.object.dotx1
+        "class K { @d p: object.x; }"
+     1  paramtypes: bun [Object]  tsc [ref(object.x)]
+        origins: td01:kw.object.dotx1
+        "class K { @d m(x: object.x) {} }"
+     1  returntype: bun Object  tsc ref(object.x)
+        origins: td01:kw.object.dotx1
+        "class K { @d m(x: any): object.x { return null as any } }"
+     1  type: bun Number  tsc ref(number.x)
+        origins: td01:kw.number.dotx1
+        "class K { @d p: number.x; }"
+     1  paramtypes: bun [Number]  tsc [ref(number.x)]
+        origins: td01:kw.number.dotx1
+        "class K { @d m(x: number.x) {} }"
+     1  returntype: bun Number  tsc ref(number.x)
+        origins: td01:kw.number.dotx1
+        "class K { @d m(x: any): number.x { return null as any } }"
+     1  type: bun Boolean  tsc ref(boolean.x)
+        origins: td01:kw.boolean.dotx1
+        "class K { @d p: boolean.x; }"
+     1  paramtypes: bun [Boolean]  tsc [ref(boolean.x)]
+        origins: td01:kw.boolean.dotx1
+        "class K { @d m(x: boolean.x) {} }"
+     1  returntype: bun Boolean  tsc ref(boolean.x)
+        origins: td01:kw.boolean.dotx1
+        "class K { @d m(x: any): boolean.x { return null as any } }"
+     1  type: bun BigInt  tsc ref(bigint.x)
+        origins: td01:kw.bigint.dotx1
+        "class K { @d p: bigint.x; }"
+     1  paramtypes: bun [BigInt]  tsc [ref(bigint.x)]
+        origins: td01:kw.bigint.dotx1
+        "class K { @d m(x: bigint.x) {} }"
+     1  returntype: bun BigInt  tsc ref(bigint.x)
+        origins: td01:kw.bigint.dotx1
+        "class K { @d m(x: any): bigint.x { return null as any } }"
+     1  type: bun Symbol  tsc ref(symbol.x)
+        origins: td01:kw.symbol.dotx1
+        "class K { @d p: symbol.x; }"
+     1  paramtypes: bun [Symbol]  tsc [ref(symbol.x)]
+        origins: td01:kw.symbol.dotx1
+        "class K { @d m(x: symbol.x) {} }"
+     1  returntype: bun Symbol  tsc ref(symbol.x)
+        origins: td01:kw.symbol.dotx1
+        "class K { @d m(x: any): symbol.x { return null as any } }"
+     1  type: bun Object  tsc ref(const.A)
+        origins: td01:word.const.qualifierx1
+        "class K { @d p: const.A; }"
+     1  type: bun undefined  tsc ref(never.A)
+        origins: td01:word.never.qualifierx1
+        "class K { @d p: never.A; }"
+     1  type: bun Object  tsc ref(any.A)
+        origins: td01:word.any.qualifierx1
+        "class K { @d p: any.A; }"
+     1  type: bun ref(X.A)  tsc Object
+        origins: td01:m.cond.null.import$28$22m$22$29$2eAx1
+        "class K { @d p: X extends Y ? null : import(\"m\").A; }"
+     1  paramtypes: bun [ref(X.A)]  tsc [Object]
+        origins: td01:m.cond.null.import$28$22m$22$29$2eAx1
+        "class K { @d m(x: X extends Y ? null : import(\"m\").A) {} }"
+     1  returntype: bun ref(X.A)  tsc Object
+        origins: td01:m.cond.null.import$28$22m$22$29$2eAx1
+        "class K { @d m(x: any): X extends Y ? null : import(\"m\").A { return null as any } }"
+     1  paramtypes: bun [ref(A), Object]  tsc [ref(A), ref(B)]
+        origins: td09:meta.041x1
+        "class K { @d m(a: A, ...b: B[]) {} }"
+     1  type: bun Number  tsc (absent)
+        origins: td09:meta.066x1
+        "class K { @d get p(): string { return a } @e set p(v: number) {} }"
+     1  paramtypes: bun [Number]  tsc (absent)
+        origins: td09:meta.066x1
+        "class K { @d get p(): string { return a } @e set p(v: number) {} }"
+     1  returntype: bun Object  tsc ref(B)
+        origins: td09:meta.071x1
+        "class K { m(@d a: A): B { return a } }"
+     1  paramtypes: bun [Object, Object, ref(C)]  tsc [ref(A), ref(B), ref(C)]
+        origins: td09:meta.074x1
+        "class K { m(a: A, b: B, @d c: C): D { return a } }"
+     1  returntype: bun Object  tsc ref(D)
+        origins: td09:meta.074x1
+        "class K { m(a: A, b: B, @d c: C): D { return a } }"
+     1  paramtypes: bun [Object, Object]  tsc [ref(A), ref(B)]
+        origins: td09:meta.080x1
+        "class K { m(a: A, @d ...b: B[]) {} }"
+     1  paramtypes: bun [Object, ref(D)]  tsc [ref(C), ref(D)]
+        origins: td09:meta.092x1
+        "class K { m(@d a: A) {} n(c: C, @e d: D): E { return c } }"
+     1  paramtypes: bun [ref(A), ref(B), ref(C), Object]  tsc [ref(A), ref(B), ref(C), ref(E)]
+        origins: td09:meta.105x1
+        "@d class K { constructor(a: A, b: B, c?: C, ...e: E[]) {} }"
+     1  paramtypes: bun [ref(T), ref(K)]  tsc [Object, K]
+        origins: td09:meta.119x1
+        "@d class K<T> { constructor(a: T, b: K<T>) {} }"
+     1  paramtypes: bun [ref(K)]  tsc [K]
+        origins: td09:meta.134x1
+        "class K { @d m(a: K): K { return a } }"
+     1  returntype: bun ref(K)  tsc K
+        origins: td09:meta.134x1
+        "class K { @d m(a: K): K { return a } }"
+     1  type: bun ref(C.D)  tsc Object
+        origins: resc:gte-probe/types1.txtx1
+        "class C { @d p: A extends B ? C.D : C.D; }"
+     1  paramtypes: bun [ref(C.D)]  tsc [Object]
+        origins: resc:gte-probe/types1.txtx1
+        "class C { @d m(a: A extends B ? C.D : C.D): A extends B ? C.D : C.D { throw 0 } }"
+     1  returntype: bun ref(C.D)  tsc Object
+        origins: resc:gte-probe/types1.txtx1
+        "class C { @d m(a: A extends B ? C.D : C.D): A extends B ? C.D : C.D { throw 0 } }"
+     1  type: bun Array  tsc ref(A.B)
+        origins: resc:gte-probe/types3.txtx1
+        "class C { @d p: readonly A.B; }"
+     1  paramtypes: bun [Array]  tsc [ref(A.B)]
+        origins: resc:gte-probe/types3.txtx1
+        "class C { @d m(a: readonly A.B): readonly A.B { throw 0 } }"
+     1  returntype: bun Array  tsc ref(A.B)
+        origins: resc:gte-probe/types3.txtx1
+        "class C { @d m(a: readonly A.B): readonly A.B { throw 0 } }"
+     1  type: bun Object  tsc ref(A.B)
+        origins: resc:gte-probe/types3.txtx1
+        "class C { @d p: readonly A.B | A.B; }"
+     1  type: bun Object  tsc ref(A)
+        origins: resc:gte-probe/types3.txtx1
+        "class C { @d p: readonly A | A; }"
+     1  type: bun ref(A.B.D)  tsc Object
+        origins: resc:gte-probe/types3.txtx1 resc:gte/m3.jsonx1
+        "class C { @d p: A.B.C | A.B.D; }"
+     1  paramtypes: bun [ref(A.B.D)]  tsc [Object]
+        origins: resc:gte-probe/types3.txtx1 resc:gte/m3.jsonx1
+        "class C { @d m(a: A.B.C | A.B.D): A.B.C | A.B.D { throw 0 } }"
+     1  returntype: bun ref(A.B.D)  tsc Object
+        origins: resc:gte-probe/types3.txtx1 resc:gte/m3.jsonx1
+        "class C { @d m(a: A.B.C | A.B.D): A.B.C | A.B.D { throw 0 } }"
+     1  type: bun Object  tsc ref(abstract.a.b)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d p: abstract.a.b; }"
+     1  paramtypes: bun [Object]  tsc [ref(abstract.a.b)]
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: abstract.a.b): abstract.a.b { throw 0 } }"
+     1  returntype: bun Object  tsc ref(abstract.a.b)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: abstract.a.b): abstract.a.b { throw 0 } }"
+     1  type: bun Object  tsc ref(any.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d p: any.a; }"
+     1  paramtypes: bun [Object]  tsc [ref(any.a)]
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: any.a): any.a { throw 0 } }"
+     1  returntype: bun Object  tsc ref(any.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: any.a): any.a { throw 0 } }"
+     1  type: bun Number  tsc ref(number.a.b)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d p: number.a.b; }"
+     1  paramtypes: bun [Number]  tsc [ref(number.a.b)]
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: number.a.b): number.a.b { throw 0 } }"
+     1  returntype: bun Number  tsc ref(number.a.b)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: number.a.b): number.a.b { throw 0 } }"
+     1  type: bun Object  tsc ref(object.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d p: object.a; }"
+     1  paramtypes: bun [Object]  tsc [ref(object.a)]
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: object.a): object.a { throw 0 } }"
+     1  returntype: bun Object  tsc ref(object.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: object.a): object.a { throw 0 } }"
+     1  type: bun undefined  tsc ref(never.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d p: never.a; }"
+     1  paramtypes: bun [undefined]  tsc [ref(never.a)]
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: never.a): never.a { throw 0 } }"
+     1  returntype: bun undefined  tsc ref(never.a)
+        origins: resc:gte-probe/types4.txtx1
+        "class C { @d m(a: never.a): never.a { throw 0 } }"
+     1  type: bun Array  tsc ref(Foo)
+        origins: resc:gte/m1.jsonx1
+        "class C { @d p: readonly Foo; }"
+     1  paramtypes: bun [Array]  tsc [ref(Foo)]
+        origins: resc:gte/m1.jsonx1
+        "class C { @d m(a: readonly Foo): readonly Foo { throw 0 } }"
+     1  returntype: bun Array  tsc ref(Foo)
+        origins: resc:gte/m1.jsonx1
+        "class C { @d m(a: readonly Foo): readonly Foo { throw 0 } }"
+     1  type: bun Object  tsc ref(any.b.c)
+        origins: resc:gte/m1.jsonx1
+        "class C { @d p: any.b.c; }"
+     1  paramtypes: bun [Object]  tsc [ref(any.b.c)]
+        origins: resc:gte/m1.jsonx1
+        "class C { @d m(a: any.b.c): any.b.c { throw 0 } }"
+     1  returntype: bun Object  tsc ref(any.b.c)
+        origins: resc:gte/m1.jsonx1
+        "class C { @d m(a: any.b.c): any.b.c { throw 0 } }"
+     1  type: bun Object  tsc ref(Unk)
+        origins: resc:gte/m2.jsonx1
+        "class C { @d p: readonly Unk | Unk; }"
+     1  paramtypes: bun [Object]  tsc [ref(Unk)]
+        origins: resc:gte/m2.jsonx1
+        "class C { @d m(a: readonly Unk | Unk): readonly Unk | Unk { throw 0 } }"
+     1  returntype: bun Object  tsc ref(Unk)
+        origins: resc:gte/m2.jsonx1
+        "class C { @d m(a: readonly Unk | Unk): readonly Unk | Unk { throw 0 } }"
+     1  type: bun Array  tsc ref(Unk)
+        origins: resc:gte/m2.jsonx1
+        "class C { @d p: readonly (Unk); }"
+     1  paramtypes: bun [Array]  tsc [ref(Unk)]
+        origins: resc:gte/m2.jsonx1
+        "class C { @d m(a: readonly (Unk)): readonly (Unk) { throw 0 } }"
+     1  returntype: bun Array  tsc ref(Unk)
+        origins: resc:gte/m2.jsonx1
+        "class C { @d m(a: readonly (Unk)): readonly (Unk) { throw 0 } }"
+     1  type: bun ref(A.B.C)  tsc Object
+        origins: resc:gte/m3.jsonx1
+        "class C { @d p: A.B | A.B.C; }"
+     1  paramtypes: bun [ref(A.B.C)]  tsc [Object]
+        origins: resc:gte/m3.jsonx1
+        "class C { @d m(a: A.B | A.B.C): A.B | A.B.C { throw 0 } }"
+     1  returntype: bun ref(A.B.C)  tsc Object
+        origins: resc:gte/m3.jsonx1
+        "class C { @d m(a: A.B | A.B.C): A.B | A.B.C { throw 0 } }"
+     1  returntype: bun Object  tsc ref(asserts.A)
+        origins: gds:contextual/retx1
+        "class C { @d m(): asserts.A { return x; } }"
+     1  returntype: bun Object  tsc ref(abstract.A)
+        origins: gds:contextual/retx1
+        "class C { @d m(): abstract.A { return x; } }"
+     1  type: bun ref(AB)  tsc ref(A\u0042)
+        origins: gds:junk/fieldx1
+        "class C { @d x: A\\u0042; }"
+     1  returntype: bun ref(AB)  tsc ref(A\u0042)
+        origins: gds:junk/retx1
+        "class C { @d m(): A\\u0042 { return x; } }"
+     1  type: bun ref(A)  tsc typeof (_a = typeof A /*c*/ !== "undefined" && A /*c*/) === "function" ? _a : Object
+        origins: gds:junk/fieldx1
+        "class C { @d x: A/*c*/; }"
+     1  returntype: bun ref(A)  tsc typeof (_a = typeof A /*c*/ !== "undefined" && A /*c*/) === "function" ? _a : Object
+        origins: gds:junk/retx1
+        "class C { @d m(): A/*c*/ { return x; } }"
+     1  type: bun ref(A)  tsc typeof (_a = typeof A //c !== "undefined" && A //c ) === "function" ? _a : Object
+        origins: gds:junk/fieldx1
+        "class C { @d x: A//c\n; }"
+     1  returntype: bun ref(A)  tsc typeof (_a = typeof A //c !== "undefined" && A //c ) === "function" ? _a : Object
+        origins: gds:junk/retx1
+        "class C { @d m(): A//c\n { return x; } }"
+     1  type: bun Array  tsc Symbol
+        origins: gds:operator/fieldx1
+        "class C { @d x: readonly  symbol; }"
+     1  returntype: bun Array  tsc Symbol
+        origins: gds:operator/retx1
+        "class C { @d m(): readonly  symbol { return x; } }"
+     1  type: bun Array  tsc ref(a)
+        origins: gds:operator/fieldx1
+        "class C { @d x: readonly  a; }"
+     1  returntype: bun Array  tsc ref(a)
+        origins: gds:operator/retx1
+        "class C { @d m(): readonly  a { return x; } }"
+     1  paramtypes: bun (absent)  tsc []
+        origins: gds:predicate/retx1
+        "class C { @d m(): asserts is is  { return x; } }"
+     1  returntype: bun (absent)  tsc Boolean
+        origins: gds:predicate/retx1
+        "class C { @d m(): asserts is is  { return x; } }"
+     1  type: bun Object  tsc ref(asserts.b)
+        origins: gds:predicate/fieldx1
+        "class C { @d x: asserts .b; }"
+     1  returntype: bun Object  tsc ref(asserts.b)
+        origins: gds:predicate/retx1
+        "class C { @d m(): asserts .b { return x; } }"
+     1  returntype: bun ref(ab)  tsc Boolean
+        origins: gds:predicate/retx1
+        "class C { @d m(): ab is A { return x; } }"
+     1  type: bun ref(N.T)  tsc Number
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d a: N.T } namespace N { export type T = 1 }"
+     1  type: bun ref(E)  tsc Object
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d a: E } enum E { A = 1, B = 'b' }"
+     1  type: bun ref(E.A)  tsc String
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d a: E.A } enum E { A = 'a' }"
+     1  type: bun ref(globalThis.Array)  tsc Object
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d a: globalThis.Array<A> }"
+     1  type: bun ref(T)  tsc undefined
+        origins: gdt:07-decorator-metadatax1
+        "class C<T extends A> { @d a: T }"
+     1  paramtypes: bun [ref(D)]  tsc [D]
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d m<D>(a: D): D {} } class D {}"
+     1  returntype: bun ref(D)  tsc D
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d m<D>(a: D): D {} } class D {}"
+     1  paramtypes: bun [String, Object]  tsc [String, Number]
+        origins: gdt:07-decorator-metadatax1
+        "class C { @d m(a?: string, ...b: number[]) {} }"
+     1  paramtypes: bun [String, Number, Object]  tsc [String, Number, Boolean]
+        origins: gdt:07-decorator-metadatax1
+        "@d class C { constructor(a?: string, b: number = 1, ...c: boolean[]) {} }"
+     1  paramtypes: bun (absent)  tsc [Object, Object]
+        origins: pinfile:ts.test.tsx1
+        "\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x
+     1  returntype: bun (absent)  tsc undefined
+        origins: pinfile:ts.test.tsx1
+        "\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x
+     1  paramtypes: bun [Object, Object]  tsc (absent)
+        origins: pinfile:ts.test.tsx1
+        "\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x
+     1  returntype: bun undefined  tsc (absent)
+        origins: pinfile:ts.test.tsx1
+        "\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x

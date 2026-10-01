@@ -1,0 +1,86 @@
+THE FOUR RULES (proposed files: src/lint/rules/{no_compare_neg_zero,use_isnan,valid_typeof,no_unsafe_negation}.rs)
+ESLint pin 4618052eed6bb3ef420cf0db0490bbda2fd835a5, defaults only. All reports are errors. Helpers: spec-scan.txt.
+COMPARE = BinLt BinLe BinGt BinGe BinLooseEq BinLooseNe BinStrictEq BinStrictNe. EQUALITY = the last four.
+op_text(op) = bun_ast::op::TABLE.get_ptr_const(op).text. Every rule hooks visit_e_binary(node, loc) (each link of a chain
+is delivered, walk.rs:397-409) and must return walk::walk_e_binary(self, node).
+
+no-compare-neg-zero
+  neg_zero(e): e.data is EUnary u, u.op == UnNeg, u.value.data is ENumber n, n.value() == 0.0 (0, 0.0, 0x0, 0e5, .0; not 0n).
+  Report when node.op in COMPARE and neg_zero(left) or neg_zero(right).
+  start = start_of_binary. len = end of the number of the reported operand (right one when both) - start.
+  "Do not use the '{op}' operator to compare against -0."
+
+use-isnan   (enforceForSwitchCase true, enforceForIndexOf false: no call is ever checked)
+  last(e) = e.right when e is EBinary with BinComma, else e. One level only: `(a, (b, NaN))` is not NaN.
+  nan(e) on last(e): EIdentifier named NaN -> needs global NaN;
+     EDot with name "NaN", or EIndex whose index is EString eql_comptime(b"NaN") (a template without `${` is an EString
+     with prefer_template, parse/mod.rs:339-348), and a target that is EIdentifier named Number -> needs global Number.
+     optional_chain does not matter. Names: ParsedOnly::name_of(ref) (parse_entry.rs:63).
+  Binary: node.op in COMPARE and nan(left) or nan(right); reported when ANY of the operands that match is global.
+     start = start_of_binary; len = end of the matching operand's last token - start.
+     "Use the isNaN function to compare with NaN."
+  visit_s_switch(node, loc): nan(node.test) -> start = loc (the `switch`), len 6,
+     "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch."
+     each case with Some(value) and nan(value) -> start = case_keyword_before(value.loc), else value.loc; len 4,
+     "'case NaN' can never match. Use Number.isNaN before the switch."
+     Case.loc is ALWAYS Loc::EMPTY (parse_stmt.rs:386-390): never read it.
+
+valid-typeof   (requireStringLiterals false)
+  node.op in EQUALITY. For (self, sibling) in (left, right) and (right, left), self being EUnary with UnTypeof:
+     sibling EString (quoted or template without `${`) not one of
+        symbol undefined object boolean number string function bigint (decoded value, eql_comptime)   -> report now
+     sibling ENumber, EBigInt, EBoolean, ENull, ERegExp (ESLint: any Literal)                           -> report now
+     sibling EIdentifier named undefined                                                                -> needs global undefined
+     anything else (typeof, template with `${`, tagged template, identifier, sequence)                  -> nothing
+  start = sibling.loc, len = its token. "Invalid typeof comparison value."
+
+no-unsafe-negation   (enforceForOrderingRelations false)
+  node.op is BinIn or BinInstanceof, node.left.data is EUnary with UnNot, source[left.loc] == `!`.
+  scanned = scan(left.loc + 1, right.loc, spans under unary.value and right, op_text). None -> no report.
+  scanned.lowest < 0 -> `(!a) in b`, no report. Else start = left.loc, len = before_operator - left.loc, or 1.
+  "Unexpected negating the left operand of '{op}' operator."
+
+GLOBAL REFERENCES (the tree as written has no scopes)
+  ESLint: isGlobalReference / isReferenceToGlobalVariable = the name resolves to the builtin global and nothing declares it
+  in scope. Decided: a name-dependent report is held until the walk ends and is emitted only when NO declaration of that
+  name is anywhere in the file. That is exact whenever the file declares none (also inside `with` and beside `eval`:
+  checked), and silent otherwise. Declarations to watch for NaN, Number, undefined:
+     visit_b_identifier (variables, parameters, catch, patterns, for-in and for-of)        B::Identifier { r#ref }
+     visit_s_function / visit_e_function: node.func.name;  visit_s_class: node.class.class_name;  visit_e_class: class_name
+     visit_s_import: default_name, every item (alias, original_name and name.ref_), namespace_ref when star_name_loc is set
+  Not declarations: labels, property keys, assignments, export aliases.
+
+WHAT THE RULES NEED FROM THE FRAMEWORK
+  source bytes and &Source; name_of(Ref); report(rule, start, len, message); report_if_global(name, rule, start, len,
+  message) with the three watched names; a step after the walk that emits the held reports; the walk run INSIDE the
+  closure of Parser::parse_only with owned diagnostics; a parse with default features (minify_syntax rewrites optional
+  chains while parsing, parse_suffix.rs:132).
+  Sort and deduplicate with the length in the key: `x === NaN === NaN` is two reports at 1:1 with one text (ESLint prints
+  both); their lengths differ.
+
+API.md, DIFFERENCES TO LIST
+  1. No options, no suggestions, no `/* global */` comments, no globals configuration.
+  2. A file that declares NaN, Number or undefined anywhere gets no report that depends on that name. ESLint reports the
+     uses outside the scope of the declaration. Waits for scopes.
+  3. A comparison whose left operand opens with `(` followed by a comment or a line break is reported at the first token of
+     the operand, not at the `(`.
+  4. `case`, then a comment or a line break, then the expression: reported at the expression, not at `case`.
+  5. The end of a report is not ESLint's: a comparison ends at the operand that is -0 or NaN, a switch and a case at the keyword.
+  6. no-unsafe-negation reads the source between `!` and the right operand until the parser records parentheses.
+
+NEEDS.md, REQUESTS
+  N1 parser: the parentheses of an expression, innermost first, on the result of parse_only and parse_for_lint:
+       pub fn parentheses_of(&self, expr: &bun_ast::Expr) -> &[bun_ast::Range]      (Range = `(` up to and with `)`)
+     keyed by the Expr (pointer of a boxed payload, variant and loc of an inline one). Removes scan() and differences 3, 6.
+  N2 parser: Case.loc = loc of `case` / `default` (parse_stmt.rs:386-390 writes Loc::EMPTY; the field exists). Removes 4.
+  N3 parser or binder: pub fn declares(&self, name: &[u8]) -> bool now (p.symbols holds every declared name after the
+     parse); name resolution per reference later. Removes 2.
+  N4 node index: the end offset of an expression and of a statement. Removes 5.
+
+TESTS (test/cli/lint/rules/<rule>.test.ts)
+  One spawn per table: every case is its own file in one tempDir, all given as operands of one `bun --lint`, stderr piped
+  (plain format), lines filtered by the rule name, grouped by file. A table of valid cases carries one invalid sentinel
+  file, or it also passes with the installed bun. Cases with JSX are `.js` or `.jsx` (Loader::Jsx, bundler/options.rs:587).
+  The astral character of the column cases is written with String.fromCodePoint(0x1F600). Columns count UTF-16 units.
+  The Bun side of every expectation is derived, not run: a case that Bun's parser rejects leaves the table and is named
+  in the report.

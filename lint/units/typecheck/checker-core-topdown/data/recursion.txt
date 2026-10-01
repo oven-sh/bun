@@ -1,0 +1,31 @@
+total functions 3060 SCCs 1564 largest SCC size 1444
+in-scope functions 557
+in-scope functions inside the largest SCC: 88
+   C-INIT 1 getGlobalTypeAliasSymbol
+   N-DIAG 6 getImmediateAliasedSymbol, getSpellingSuggestionForName, getTypeOnlyAliasDeclaration, getTypeOnlyAliasDeclarationEx, isBlockScopedNameDeclaredBeforeUse, isUsedInFunctionOrInstanceProperty
+   N-RESOLVE 1 getSymbol
+   D-SINK 1 isDeprecatedSymbol
+   S-MERGE 11 combineSymbolTables, getLateBoundSymbol, getParentOfSymbol, getSymbolIfSameReference, getSymbolOfDeclaration, getSymbolOfNode, mergeSymbol, mergeSymbolTable, reportMergeSymbolError, resolveSymbol, resolveSymbolEx
+   A-ALIAS 33 canHaveSyntheticDefault, checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol, errorNoModuleMemberSymbol, getExportOfModule, getExternalModuleMember, getPropertyOfVariable, getSymbolFlags, getSymbolFlagsEx, getSymbolOfPartOfRightHandSideOfImportEquals, getTargetOfAccessExpression, getTargetOfAliasDeclaration, getTargetOfAliasLikeExpression, getTargetOfBinaryExpression, getTargetOfExportAssignment, getTargetOfExportSpecifier, getTargetOfImportClause, getTargetOfImportEqualsDeclaration, getTargetOfImportSpecifier, getTargetOfModuleDefault, getTargetOfNamespaceExport, getTargetOfNamespaceExportDeclaration, getTargetOfNamespaceImport, getTypeOnlyDeclarationOfEntityName, isOnlyImportableAsDefault, markSymbolOfAliasDeclarationIfTypeOnly, reportNonDefaultExport, reportNonExportedMember, resolveAlias, resolveAliasWithDeprecationCheck, resolveExportByName, resolveExternalModuleTypeByLiteral, resolveIndirectionAlias, tryResolveAlias
+   M-MODULE 19 cloneTypeAsModuleType, createDefaultPropertyWrapperForModule, extendExportSymbols, getExportsOfModule, getExportsOfModuleWorker, getExportsOfSymbol, getExternalModuleFileFromDeclaration, getMembersOfSymbol, getResolvedMembersOrExportsOfSymbol, getTypeWithSyntheticDefaultImportType, getTypeWithSyntheticDefaultOnly, hasSignatures, lateBindMember, resolveESModuleSymbol, resolveExternalModule, resolveExternalModuleName, resolveExternalModuleNameWorker, resolveExternalModuleSymbol, tryFindAmbientModule
+   Q-ENTITY 5 getFullyQualifiedName, getSuggestedSymbolForNonexistentModule, resolveEntityName, resolveQualifiedName, tryGetQualifiedNameAsValue
+   T-KEYS 3 getRelationKey, isTypeReferenceWithGenericArguments, writeGenericTypeReferences
+   T-RSTACK 1 reportCircularityError
+   K-OBJ 4 createDeferredTypeReference, newAnonymousType, newConditionalType, setStructuredTypeMembers
+   MAPPER 1 mapTypeWithCompositeMapper
+   UTIL 2 isJSLiteralType, isOptionalParameter
+small SCC: ['compareTypeNames', 'compareTypeMappers', 'compareTypeLists', 'CompareTypes']
+self-recursive in scope:
+   N-DIAG checker.go 1928 isBlockScopedNameDeclaredBeforeUse
+   N-DIAG checker.go 2017 isUsedInFunctionOrInstanceProperty
+   Q-ENTITY checker.go 16007 getFullyQualifiedName
+   T-KEYS checker.go 17750 isTypeReferenceWithGenericArguments
+   UTIL utilities.go 207 getAliasDeclarationFromName
+   UTIL utilities.go 415 CompareTypes
+   UTIL utilities.go 672 compareTypeMappers
+   UTIL utilities.go 1559 tryGetPropertyAccessOrIdentifierToString
+   UTIL utilities.go 1747 isJSLiteralType
+   N-RESOLVE nameresolver.go 377 requiresScopeChangeWorker
+cycles inside the in-scope subgraph:
+   ['Checker.canHaveSyntheticDefault(A-ALIAS)', 'Checker.checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol(A-ALIAS)', 'Checker.combineSymbolTables(S-MERGE)', 'Checker.createDefaultPropertyWrapperForModule(M-MODULE)', 'Checker.errorNoModuleMemberSymbol(A-ALIAS)', 'Checker.extendExportSymbols(M-MODULE)', 'Checker.getExportOfModule(A-ALIAS)', 'Checker.getExportsOfModule(M-MODULE)', 'Checker.getExportsOfModuleWorker(M-MODULE)', 'Checker.getExportsOfSymbol(M-MODULE)', 'Checker.getExternalModuleMember(A-ALIAS)', 'Checker.getLateBoundSymbol(S-MERGE)', 'Checker.getMembersOfSymbol(M-MODULE)', 'Checker.getPropertyOfVariable(A-ALIAS)', 'Checker.getResolvedMembersOrExportsOfSymbol(M-MODULE)', 'Checker.getSpellingSuggestionForName(N-DIAG)', 'Checker.getSuggestedSymbolForNonexistentModule(Q-ENTITY)', 'Checker.getSymbol(N-RESOLVE)', 'Checker.getSymbolFlags(A-ALIAS)', 'Checker.getSymbolFlagsEx(A-ALIAS)', 'Checker.getSymbolIfSameReference(S-MERGE)', 'Checker.getSymbolOfDeclaration(S-MERGE)', 'Checker.getSymbolOfPartOfRightHandSideOfImportEquals(A-ALIAS)', 'Checker.getTargetOfAccessExpression(A-ALIAS)', 'Checker.getTargetOfAliasDeclaration(A-ALIAS)', 'Checker.getTargetOfAliasLikeExpression(A-ALIAS)', 'Checker.getTargetOfBinaryExpression(A-ALIAS)', 'Checker.getTargetOfExportAssignment(A-ALIAS)', 'Checker.getTargetOfExportSpecifier(A-ALIAS)', 'Checker.getTargetOfImportClause(A-ALIAS)', 'Checker.getTargetOfImportEqualsDeclaration(A-ALIAS)', 'Checker.getTargetOfImportSpecifier(A-ALIAS)', 'Checker.getTargetOfModuleDefault(A-ALIAS)', 'Checker.getTargetOfNamespaceExport(A-ALIAS)', 'Checker.getTargetOfNamespaceExportDeclaration(A-ALIAS)', 'Checker.getTargetOfNamespaceImport(A-ALIAS)', 'Checker.getTypeOnlyAliasDeclaration(N-DIAG)', 'Checker.getTypeOnlyDeclarationOfEntityName(A-ALIAS)', 'Checker.getTypeWithSyntheticDefaultImportType(M-MODULE)', 'Checker.getTypeWithSyntheticDefaultOnly(M-MODULE)', 'Checker.isOnlyImportableAsDefault(A-ALIAS)', 'Checker.markSymbolOfAliasDeclarationIfTypeOnly(A-ALIAS)', 'Checker.mergeSymbol(S-MERGE)', 'Checker.mergeSymbolTable(S-MERGE)', 'Checker.reportNonDefaultExport(A-ALIAS)', 'Checker.reportNonExportedMember(A-ALIAS)', 'Checker.resolveAlias(A-ALIAS)', 'Checker.resolveESModuleSymbol(M-MODULE)', 'Checker.resolveEntityName(Q-ENTITY)', 'Checker.resolveExportByName(A-ALIAS)', 'Checker.resolveExternalModule(M-MODULE)', 'Checker.resolveExternalModuleName(M-MODULE)', 'Checker.resolveExternalModuleNameWorker(M-MODULE)', 'Checker.resolveExternalModuleSymbol(M-MODULE)', 'Checker.resolveIndirectionAlias(A-ALIAS)', 'Checker.resolveQualifiedName(Q-ENTITY)', 'Checker.resolveSymbol(S-MERGE)', 'Checker.resolveSymbolEx(S-MERGE)', 'Checker.tryFindAmbientModule(M-MODULE)', 'Checker.tryResolveAlias(A-ALIAS)']
+   ['CompareTypes(UTIL)', 'compareTypeLists(UTIL)', 'compareTypeMappers(UTIL)', 'compareTypeNames(UTIL)']

@@ -1,0 +1,12 @@
+files 7027
+adjacent pairs same file,line,col 1212 of which code order reversed 77
+adjacent pairs same file,line,col,code 151
+  identical head text, identical chain 23
+  identical head text, chain differs 0
+  head text in DEscending byte order (text compare would flip) 2
+    compiler/intersectionsOfLargeUnions.errors.txt
+       b'intersectionsOfLargeUnions.ts' 21 15 2536 b"Type 'T' cannot be used to index type 'HTMLElementTagNameMap'."
+       b'intersectionsOfLargeUnions.ts' 21 15 2536 b"Type 'P' cannot be used to index type 'HTMLElementTagNameMap[T]'."
+    compiler/intersectionsOfLargeUnions2.errors.txt
+       b'intersectionsOfLargeUnions2.ts' 31 15 2536 b"Type 'T' cannot be used to index type 'HTMLElementTagNameMap'."
+       b'intersectionsOfLargeUnions2.ts' 31 15 2536 b"Type 'P' cannot be used to index type 'HTMLElementTagNameMap[T]'."

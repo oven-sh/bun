@@ -1,0 +1,27 @@
+class C { [k: string]: number, }
+class C { [k: string]: number, m() {} }
+class C { [k: string]: number, [j: number]: string }
+class C { static [k: string]: number, x = 1 }
+class C { [k: string]: number,, }
+class C { [k: string]: number,; }
+class C { [k: string]: number\n, m() {} }
+declare class C { [k: string]: number, }
+abstract class C { [k: string]: number, abstract m(): void }
+var x = class { [k: string]: number, };
+class C { readonly [k: string]: number, }
+class C { x: number, }
+class C { m(): void, }
+namespace N { import("x"); }
+namespace N { import.meta; }
+namespace N { import.meta.url; }
+namespace N { import("x").then(f); }
+namespace N { export const a = import("x"); }
+namespace N { import\n("x"); }
+namespace N { import<T>("x"); }
+namespace N { import.defer("x"); }
+export namespace N { import("x"); }
+declare namespace N { import("x"); }
+namespace N { namespace M { import("x"); } }
+namespace N.M { import("x"); }
+export import("x");
+export import.meta;

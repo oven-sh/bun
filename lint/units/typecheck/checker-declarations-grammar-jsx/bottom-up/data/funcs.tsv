@@ -1,0 +1,671 @@
+layer	file	lines	function	closures	codes	panic lines	assert lines	program	maprange
+D-DRIVER	checker.go	2202-2236	c.checkSourceFile	0					
+D-DRIVER	checker.go	2238-2245	c.checkSourceElements	0					
+D-DRIVER	checker.go	2247-2258	c.checkSourceElement	0					
+D-DRIVER	checker.go	2260-2396	c.checkSourceElementWorker	0					
+D-DRIVER	checker.go	2398-2457	c.checkSourceElementUnreachable	0	7027				
+D-DRIVER	checker.go	2459-2477	c.isSourceElementUnreachable	0					
+D-DRIVER	checker.go	2490-2496	c.checkNodeDeferred	0					
+D-DRIVER	checker.go	2498-2507	c.checkDeferredNodes	0					
+D-DRIVER	checker.go	2509-2545	c.checkDeferredNode	0					
+D-TYPENODE	checker.go	2611-2633	c.checkTypeParameter	0	1110,2344,2368,2716				
+D-TYPENODE	checker.go	2635-2656	c.checkTypeParameterDeferred	0	2636,2637				
+D-TYPENODE	checker.go	2658-2660	c.shouldCheckErasableSyntax	0					
+D-TYPENODE	checker.go	2990-3004	c.checkTypeReferenceNode	0	8020				
+D-TYPENODE	checker.go	3006-3022	c.checkTypeReferenceOrImport	1					
+D-TYPENODE	checker.go	3024-3039	c.checkTypeArgumentConstraints	0	2344				
+D-TYPENODE	checker.go	3041-3061	c.getDeprecatedSuggestionNode	0					
+D-TYPENODE	checker.go	3063-3105	c.checkTypePredicate	0	1225,1228,1229,2677				
+D-TYPENODE	checker.go	3107-3117	c.getTypePredicateParent	0					
+D-TYPENODE	checker.go	3119-3136	c.checkIfTypePredicateVariableIsDeclaredInBindingPattern	0	1230				
+D-TYPENODE	checker.go	3138-3140	c.checkTypeQuery	0					
+D-TYPENODE	checker.go	3142-3148	c.checkTypeLiteral	0					
+D-TYPENODE	checker.go	3150-3219	c.checkObjectTypeForDuplicateDeclarations	1	2300,2699,2804				
+D-TYPENODE	checker.go	3221-3235	c.reportDuplicateMemberErrors	0					
+D-TYPENODE	checker.go	3237-3239	c.checkArrayType	0					
+D-TYPENODE	checker.go	3241-3276	c.checkTupleType	0	1257,1265,1266,2574				
+D-TYPENODE	checker.go	3278-3281	c.checkUnionOrIntersectionType	0					
+D-TYPENODE	checker.go	3283-3285	c.checkThisType	0					
+D-TYPENODE	checker.go	3287-3290	c.checkTypeOperator	0					
+D-TYPENODE	checker.go	3292-3294	c.checkConditionalType	0					
+D-TYPENODE	checker.go	3296-3321	c.checkInferType	2	1338,2838				
+D-TYPENODE	checker.go	3323-3330	c.checkTemplateLiteralType	0					
+D-TYPENODE	checker.go	3332-3338	c.checkImportType	0					
+D-TYPENODE	checker.go	3340-3371	c.getResolutionModeOverride	0	1453,1463,1464				
+D-TYPENODE	checker.go	3373-3386	c.checkNamedTupleMember	0	5085,5086,5087				
+D-TYPENODE	checker.go	3388-3391	c.checkIndexedAccessType	0					
+D-TYPENODE	checker.go	3393-3410	c.checkMappedType	0					
+D-TYPENODE	checker.go	6966-6989	c.checkTypeAliasDeclaration	0	1156,2457,2795				
+D-TYPENODE	checker.go	6991-6998	c.checkTypeNameIsReserved	0					
+D-TYPENODE	checker.go	7092-7109	c.checkTypeParameters	0	2300,2706				
+D-TYPENODE	checker.go	7112-7128	c.checkTypeParametersNotReferenced	1	2744				
+D-VAR	checker.go	5854-5861	c.checkVariableStatement	0					
+D-VAR	checker.go	5863-5869	c.checkVariableDeclarationList	0					
+D-VAR	checker.go	5871-5877	c.checkVariableDeclaration	0					
+D-VAR	checker.go	5880-6037	c.checkVariableLikeDeclaration	2	1539,2371,2687,2850,2851				
+D-VAR	checker.go	6039-6049	c.errorNextVariableOrPropertyDeclarationMustHaveSameType	0	2403,2717,6203				
+D-VAR	checker.go	6051-6110	c.checkVarDeclaredNamesNotShadowed	0	2481	6087			
+D-FUNC	checker.go	2662-2707	c.checkParameter	0	1294,2369,2370,2398,2463,2680,2681,2730,2784				
+D-FUNC	checker.go	2709-2722	c.checkPropertyDeclaration	0	1267				
+D-FUNC	checker.go	2724-2729	c.checkPropertySignature	0	18016				
+D-FUNC	checker.go	2731-2780	c.checkSignatureDeclaration	0	2505,7013,7020				
+D-FUNC	checker.go	2790-2803	c.checkAsyncFunctionReturnType	0	1058,1064				
+D-FUNC	checker.go	2805-2824	c.checkMethodDeclaration	0	1245,1368,18016				
+D-FUNC	checker.go	2826-2830	c.checkClassStaticBlockDeclaration	0					
+D-FUNC	checker.go	2832-2895	c.checkConstructorDeclaration	1	2376,2377,2401,17005				
+D-FUNC	checker.go	2897-2912	c.findFirstSuperCall	1					
+D-FUNC	checker.go	2914-2916	isInstancePropertyWithInitializerOrPrivateIdentifierProperty	0					
+D-FUNC	checker.go	2918-2921	superCallIsRootLevelInConstructor	0					
+D-FUNC	checker.go	2923-2936	nodeImmediatelyReferencesSuperOrThis	0					
+D-FUNC	checker.go	2938-2988	c.checkAccessorDeclaration	0	1341,2378,2676,2808				
+D-FUNC	checker.go	3412-3416	c.checkFunctionDeclaration	0					
+D-FUNC	checker.go	3418-3467	c.checkFunctionOrMethodDeclaration	0	8030				
+D-FUNC	checker.go	3469-3475	c.checkFunctionOrConstructorSymbol	0					
+D-FUNC	checker.go	3477-3707	c.checkFunctionOrConstructorSymbolWorker	5	2383,2384,2385,2386,2387,2388,2389,2390,2391,2392,2393,2394,2512,2516,2750,2813,2814,6506				3516
+D-FUNC	checker.go	3709-3722	c.getEffectiveDeclarationFlags	0					
+D-FUNC	checker.go	3724-3734	c.isImplementationCompatibleWithOverload	0					
+D-FUNC	checker.go	3736-3786	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow	0	2355,2366,2534,7030				
+D-FUNC	checker.go	3788-3791	c.isUnwrappedReturnTypeUndefinedVoidOrAny	0					
+D-STMT	checker.go	3793-3808	c.checkBlock	0					
+D-STMT	checker.go	3810-3820	c.checkIfStatement	0	1313				
+D-STMT	checker.go	3822-3827	c.checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	0					
+D-STMT	checker.go	3829-3836	c.checkTestingKnownTruthyTypes	0					
+D-STMT	checker.go	3838-3896	c.checkTestingKnownTruthyType	0	2774,2801,2845				
+D-STMT	checker.go	3898-3917	c.isSymbolUsedInBinaryExpressionChain	1					
+D-STMT	checker.go	3919-3953	c.isSymbolUsedInConditionBody	1					
+D-STMT	checker.go	3955-3959	c.checkDoStatement	0					
+D-STMT	checker.go	3961-3965	c.checkWhileStatement	0					
+D-STMT	checker.go	3967-3991	c.checkForStatement	0					
+D-STMT	checker.go	3993-4033	c.checkForInStatement	0	2405,2406,2407,2491,2780				
+D-STMT	checker.go	4035-4038	c.getIndexTypeOrString	0					
+D-STMT	checker.go	4040-4086	c.checkForOfStatement	0	2487,2781,18038				
+D-STMT	checker.go	4088-4092	c.checkBreakOrContinueStatement	0					
+D-STMT	checker.go	4094-4135	c.checkReturnStatement	0	1108,2408,2409,7030,18041				
+D-STMT	checker.go	4139-4162	c.checkReturnExpression	0	1058				
+D-STMT	checker.go	4164-4177	c.checkWithStatement	0	1300,2410				
+D-STMT	checker.go	4179-4213	c.checkSwitchStatement	0	1113,7029				
+D-STMT	checker.go	4215-4231	c.checkLabeledStatement	0	1114,7028				
+D-STMT	checker.go	4233-4241	c.checkThrowStatement	0	1142				
+D-STMT	checker.go	4243-4253	c.checkTryStatement	0					
+D-STMT	checker.go	4255-4279	c.checkCatchClause	0	1196,1197,2492				4270
+D-STMT	checker.go	4281-4284	c.checkBindingElement	0					
+D-CLASS	checker.go	4286-4299	c.checkClassDeclaration	1	1211,18036				
+D-CLASS	checker.go	4301-4402	c.checkClassLikeDeclaration	2	2415,2417,2420,2422,2500,2510,2545,2720,2797				
+D-CLASS	checker.go	4404-4428	c.checkJSDocAugmentsTagMatchesExtends	0	8023				
+D-CLASS	checker.go	4430-4450	c.checkClassForStaticPropertyNameConflicts	0	2699				
+D-CLASS	checker.go	4453-4473	c.checkTypeParameterListsIdentical	0	2428				
+D-CLASS	checker.go	4475-4479	c.getClassOrInterfaceDeclarationsOfSymbol	1					
+D-CLASS	checker.go	4481-4516	c.areTypeParametersIdentical	0					
+D-CLASS	checker.go	4518-4529	c.checkBaseTypeAccessibility	0	2675				
+D-CLASS	checker.go	4531-4554	c.issueMemberSpecificError	0	2416				
+D-CLASS	checker.go	4556-4571	c.getTypeWithoutSignatures	0					
+D-CLASS	checker.go	4573-4727	c.checkKindsOfPropertyMemberOverrides	4	2423,2425,2426,2515,2610,2611,2612,2650,2653,2654,2655,2656				4701
+D-CLASS	checker.go	4729-4734	c.arePropertiesAbstractOrInterface	2					
+D-CLASS	checker.go	4736-4739	c.isPropertyAbstractOrInterface	0					
+D-CLASS	checker.go	4741-4764	c.checkMembersForOverrideModifier	0					
+D-CLASS	checker.go	4766-4773	c.checkMemberForOverrideModifier	0					
+D-CLASS	checker.go	4775-4798	c.getMemberOverrideModifierStatus	0					
+D-CLASS	checker.go	4800-4856	c.checkMemberForOverrideModifierWorker	0	4112,4113,4114,4115,4116,4117,4119,4120,4121,4122,4123,4127,4128				
+D-CLASS	checker.go	4858-4860	c.getSuggestedSymbolForNonexistentClassMember	0					
+D-CLASS	checker.go	4862-4887	c.checkIndexConstraints	0					
+D-CLASS	checker.go	4889-4933	c.checkIndexConstraintForProperty	1	2411,2728				
+D-CLASS	checker.go	4935-4970	c.checkIndexConstraintForIndexSignature	1	2413				
+D-CLASS	checker.go	4972-4978	c.checkClassOrInterfaceForDuplicateIndexSignatures	0					
+D-CLASS	checker.go	4980-5007	c.checkTypeForDuplicateIndexSignatures	0	2374				5000
+D-CLASS	checker.go	5009-5030	c.checkPropertyInitialization	0	2564				
+D-CLASS	checker.go	5032-5034	c.isPropertyWithoutInitializer	0					
+D-CLASS	checker.go	5036-5051	c.isPropertyInitializedInStaticBlocks	0					
+D-CLASS	checker.go	5053-5065	c.isPropertyInitializedInConstructor	0					
+D-CLASS	checker.go	5067-5105	c.checkInterfaceDeclaration	0	1156,2427,2430,2499				
+D-CLASS	checker.go	5112-5142	c.checkInheritedPropertiesAreIdentical	0	2319,2320				5118
+D-CLASS	checker.go	5144-5146	c.isPropertyIdenticalTo	0					
+D-ENUMNS	checker.go	5148-5197	c.checkEnumDeclaration	0	1294,2432,2473				
+D-ENUMNS	checker.go	5199-5206	c.checkEnumMember	0	18024				
+D-ENUMNS	checker.go	5208-5296	c.checkModuleDeclaration	1	1035,1234,1235,1280,1287,1294,1540,2433,2434,2435,2436,2669,2670			GetEmitModuleFormatOfFile	
+D-ENUMNS	checker.go	5298-5301	isInstantiatedModule	0					
+D-ENUMNS	checker.go	5303-5310	getFirstNonAmbientClassOrFunctionDeclaration	0					
+D-ENUMNS	checker.go	5312-5314	c.getIsolatedModulesLikeFlagName	0					
+D-ENUMNS	checker.go	5316-5342	c.checkModuleAugmentationElement	0	2666,2667				
+D-IMPEXP	checker.go	5344-5410	c.checkImportDeclaration	0	1191,1232,1473,1543,2882			GetEmitModuleFormatOfFile	
+D-IMPEXP	checker.go	5412-5453	c.checkExternalImportOrExportDeclaration	0	1141,1147,1194,2439,2858				
+D-IMPEXP	checker.go	5455-5465	c.checkImportBinding	0				GetEmitModuleFormatOfFile	
+D-IMPEXP	checker.go	5467-5478	c.checkModuleExportName	0	1003,18057				
+D-IMPEXP	checker.go	5480-5485	hasTypeJsonImportAttribute	1					
+D-IMPEXP	checker.go	5487-5521	c.checkImportAttributes	0	1454,2823,2856,2857				
+D-IMPEXP	checker.go	5523-5538	c.getTypeFromImportAttributes	0					
+D-IMPEXP	checker.go	5540-5581	c.checkImportEqualsDeclaration	0	1202,1232,1294,1392,1473,2437,2438				
+D-IMPEXP	checker.go	5583-5630	c.checkExportDeclaration	0	1193,1194,1233,1474,2498			GetEmitModuleFormatOfFile	
+D-IMPEXP	checker.go	5632-5639	c.checkExternalModuleNameInGlobalScope	0					
+D-IMPEXP	checker.go	5641-5663	c.checkExportSpecifier	0	2661			GetEmitModuleFormatOfFile	
+D-IMPEXP	checker.go	5665-5671	isContainedByNamespace	0					
+D-IMPEXP	checker.go	5673-5769	c.checkExportAssignment	0	1063,1120,1203,1218,1231,1258,1282,1283,1284,1285,1289,1290,1291,1292,1294,1319,2714			GetEmitModuleFormatOfFile,GetImpliedNodeFormatForEmit	
+D-IMPEXP	checker.go	5771-5781	getVerbatimModuleSyntaxErrorMessage	0	1286,1295				
+D-IMPEXP	checker.go	5783-5826	c.checkExternalModuleExports	2	2309,2323				5797
+D-IMPEXP	checker.go	5828-5835	c.hasExportedMembersOfKind	0					5829
+D-IMPEXP	checker.go	5837-5844	c.hasShadowedNamespace	0					
+D-IMPEXP	checker.go	5846-5848	isNotOverload	0					
+D-IMPEXP	checker.go	5850-5852	c.checkMissingDeclaration	0					
+D-IMPEXP	checker.go	6826-6952	c.checkAliasSymbol	1	1205,1269,1288,1293,1448,1484,1485,2440,2484,2748,2865,18042,18043,18044		6843,6897	GetEmitModuleFormatOfFile,GetProjectReferenceFromOutputDts	
+D-IMPEXP	checker.go	6954-6964	c.areDeclarationFlagsIdentical	0					
+D-IMPEXP	checker.go	7000-7049	c.checkExportsOnMergedDeclarations	0	2395,2652				
+D-IMPEXP	checker.go	7051-7090	c.getDeclarationSpaces	0		7089			
+U-ALIASMARK	checker.go	28312-28477	c.markLinkedReferences	0		28475			
+U-ALIASMARK	checker.go	28479-28492	isExportOrExportExpression	1					
+U-ALIASMARK	checker.go	28494-28513	shouldMarkIdentifierAliasReferenced	0					
+U-ALIASMARK	checker.go	28515-28518	isInternalModuleImportEqualsDeclaration	0					
+U-ALIASMARK	checker.go	28520-28528	c.markIdentifierAliasReferenced	0					
+U-ALIASMARK	checker.go	28530-28600	c.markPropertyAliasReferenced	0					
+U-ALIASMARK	checker.go	28602-28613	isPartOfImportEqualsModuleReference	0					
+U-ALIASMARK	checker.go	28615-28623	c.markExportAssignmentAliasReferenced	0					
+U-ALIASMARK	checker.go	28625-28669	c.markJsxAliasReferenced	0	2874				
+U-ALIASMARK	checker.go	28671-28675	c.markImportEqualsAliasReferenced	0					
+U-ALIASMARK	checker.go	28677-28697	c.markExportSpecifierAliasReferenced	0					
+U-ALIASMARK	checker.go	28809-28855	c.markDecoratorAliasReferenced	0					
+U-ALIASMARK	checker.go	28857-28863	c.getParameterTypeNodeForDecoratorCheck	0					
+U-ALIASMARK	checker.go	28865-28870	c.markDecoratorMedataDataTypeNodeAsReferenced	0					
+U-ALIASMARK	checker.go	28872-28891	c.getEntityNameForDecoratorMetadata	0					
+U-ALIASMARK	checker.go	28893-28923	c.getEntityNameForDecoratorMetadataFromTypeList	0					
+U-ALIASMARK	checker.go	28925-28942	c.markAliasReferenced	0					
+U-ALIASMARK	checker.go	28947-28966	c.markAliasSymbolAsReferenced	0		28953			
+U-ALIASMARK	checker.go	28968-28978	c.markExportAsReferenced	0					
+U-ALIASMARK	checker.go	28980-29013	c.markEntityNameOrEntityExpressionAsReference	0	1272,1376				
+U-ALIASMARK	checker.go	29015-29032	getEntityNameFromTypeNode	0					
+U-ALIASMARK	checker.go	29036-29040	c.markTypeNodeAsReferenced	0					
+D-UNUSED	checker.go	7130-7134	c.registerForUnusedIdentifiersCheck	0					
+D-UNUSED	checker.go	7136-7161	c.checkUnusedIdentifiers	0		7158			
+D-UNUSED	checker.go	7163-7165	c.isReferenced	0					
+D-UNUSED	checker.go	7174-7179	c.reportUnusedVariable	0					
+D-UNUSED	checker.go	7181-7192	c.reportUnused	0					
+D-UNUSED	checker.go	7194-7203	c.unusedIsError	0		7201			
+D-UNUSED	checker.go	7205-7228	c.checkUnusedClassMembers	0	6133,6138	7225			
+D-UNUSED	checker.go	7230-7269	c.checkUnusedLocalsAndParameters	0					7233,7259,7266
+D-UNUSED	checker.go	7271-7274	c.reportUnusedLocal	0	6133,6196				
+D-UNUSED	checker.go	7276-7283	c.reportUnusedVariables	0	6199				
+D-UNUSED	checker.go	7285-7287	c.reportUnusedParameters	0					
+D-UNUSED	checker.go	7289-7296	c.reportUnusedBindingElements	0	6198				
+D-UNUSED	checker.go	7298-7309	c.reportUnusedVariableDeclarations	0	6133				
+D-UNUSED	checker.go	7311-7336	c.isUnreferencedVariableDeclaration	0					
+D-UNUSED	checker.go	7338-7355	c.reportUnusedImports	0	6192				
+D-UNUSED	checker.go	7357-7359	isIdentifierThatStartsWithUnderscore	0					
+D-UNUSED	checker.go	7361-7370	importClauseFromImported	0					
+D-UNUSED	checker.go	7372-7377	c.checkUnusedInferTypeParameter	0	6196				
+D-UNUSED	checker.go	7379-7398	c.checkUnusedTypeParameters	0	6196,6205				
+D-UNUSED	checker.go	7400-7402	c.isUnreferencedTypeParameter	0					
+D-UNUSED	checker.go	7404-7417	c.checkUnusedRenamedBindingElements	0	2842,2843		7408		
+D-ITER	checker.go	6185-6194	c.checkIteratedTypeOrElementType	0					
+D-ITER	checker.go	6196-6301	c.getIteratedTypeOrElementType	1	2763,2764,2765,2766				
+D-ITER	checker.go	6306-6312	c.getIterationTypeOfGeneratorFunctionReturnType	0					
+D-ITER	checker.go	6314-6325	c.getIterationTypesOfGeneratorFunctionReturnType	0					
+D-ITER	checker.go	6328-6334	c.getIterationTypeOfIterable	0					
+D-ITER	checker.go	6355-6375	c.getIterationTypesOfIterable	0					
+D-ITER	checker.go	6377-6445	c.getIterationTypesOfIterableWorker	2					
+D-ITER	checker.go	6447-6472	c.getIterationTypesOfIterableFast	0					
+D-ITER	checker.go	6474-6480	IterationTypesResolver.getResolvedIterationTypes	0					
+D-ITER	checker.go	6482-6484	c.isReferenceToType	0					
+D-ITER	checker.go	6486-6488	c.isReferenceToSomeType	0					
+D-ITER	checker.go	6490-6492	c.getBuiltinIteratorReturnType	0					
+D-ITER	checker.go	6494-6496	IterationTypes.hasTypes	0					
+D-ITER	checker.go	6498-6508	IterationTypes.getType	0		6507			
+D-ITER	checker.go	6510-6516	c.combineIterationTypes	3					
+D-ITER	checker.go	6518-6524	c.getIterationTypeUnion	0					
+D-ITER	checker.go	6526-6540	c.getAsyncFromSyncIterationTypes	0					
+D-ITER	checker.go	6550-6569	c.getIterationTypesOfIterableSlow	1					
+D-ITER	checker.go	6575-6577	c.getIterationTypesOfIterator	0					
+D-ITER	checker.go	6585-6594	c.getIterationTypesOfIteratorWorker	0					
+D-ITER	checker.go	6596-6621	c.getIterationTypesOfIteratorFast	0					
+D-ITER	checker.go	6623-6629	c.getIterationTypesOfIteratorSlow	0					
+D-ITER	checker.go	6631-6732	c.getIterationTypesOfMethod	0					
+D-ITER	checker.go	6739-6770	c.getIterationTypesOfIteratorResult	0					
+D-ITER	checker.go	6772-6774	c.isYieldIteratorResult	0					
+D-ITER	checker.go	6776-6778	c.isReturnIteratorResult	0					
+D-ITER	checker.go	6780-6787	c.isIteratorResult	0					
+D-ITER	checker.go	6789-6802	c.reportTypeNotIterableError	0	2488,2504				
+D-ITER	checker.go	6804-6816	c.getIterationDiagnosticDetails	0	2461,2495,2802				
+D-ITER	checker.go	6818-6824	isES2015OrLaterIterable	0					
+E-AWAIT	checker.go	10935-10943	c.checkAwaitExpression	0	1320,80007				
+E-AWAIT	checker.go	29042-29044	c.GetPromisedTypeOfPromise	0					
+E-AWAIT	checker.go	29049-29122	c.getPromisedTypeOfPromiseEx	0	1059,1060,2684		29099		
+E-AWAIT	checker.go	29124-29126	c.getTypeOfFirstParameterOfSignature	0					
+E-AWAIT	checker.go	29128-29133	c.getTypeOfFirstParameterOfSignatureWithFallback	0					
+E-AWAIT	checker.go	31355-31366	c.checkAwaitedType	0					
+E-AWAIT	checker.go	31376-31378	c.getAwaitedType	0					
+E-AWAIT	checker.go	31380-31386	c.getAwaitedTypeEx	0					
+E-AWAIT	checker.go	31389-31391	c.getAwaitedTypeNoAlias	0					
+E-AWAIT	checker.go	31393-31505	c.getAwaitedTypeNoAliasEx	1	1062,2684				
+E-AWAIT	checker.go	31507-31513	c.isAwaitedTypeInstantiation	0					
+E-AWAIT	checker.go	31515-31531	c.isAwaitedTypeNeeded	0					
+E-AWAIT	checker.go	31533-31548	c.createAwaitedTypeIfNeeded	0					
+E-AWAIT	checker.go	31550-31559	c.tryCreateAwaitedType	0					
+E-AWAIT	checker.go	31562-31570	c.unwrapAwaitedType	0					
+E-AWAIT	checker.go	31572-31579	c.isThenableType	0					
+E-AWAIT	checker.go	31581-31583	c.getAwaitedTypeOfPromise	0					
+E-AWAIT	checker.go	31585-31591	c.getAwaitedTypeOfPromiseEx	0					
+D-DECOR	checker.go	6112-6149	c.checkDecorators	0					
+D-DECOR	checker.go	6151-6183	c.checkDecorator	0	1270,1271	6180			
+E-DECOR	checker.go	8833-8864	c.resolveDecorator	0	1329				
+E-DECOR	checker.go	8869-8873	c.isPotentiallyUncalledDecorator	1					
+E-DECOR	checker.go	8876-8888	c.getDiagnosticHeadMessageForDecoratorResolution	0	1238,1239,1240,1241	8887			
+E-DECOR	checker.go	9273-9278	c.getDecoratorArgumentCount	0					
+E-DECOR	checker.go	9283-9302	c.getLegacyDecoratorArgumentCount	0		9301			
+E-DECOR	checker.go	29924-29930	c.getContextualTypeForDecorator	0					
+E-DECOR	checker.go	30265-30276	c.getEffectiveDecoratorArguments	0		30275			
+E-DECOR	checker.go	30278-30283	c.getDecoratorCallSignature	0					
+E-DECOR	checker.go	30285-30350	c.getLegacyDecoratorCallSignature	0			30305		
+E-DECOR	checker.go	30352-30528	c.getESDecoratorCallSignature	0					
+E-DECOR	checker.go	30530-30532	c.newClassDecoratorContextType	0					
+E-DECOR	checker.go	30534-30536	c.newClassMethodDecoratorContextType	0					
+E-DECOR	checker.go	30538-30540	c.newClassGetterDecoratorContextType	0					
+E-DECOR	checker.go	30542-30544	c.newClassSetterDecoratorContextType	0					
+E-DECOR	checker.go	30546-30548	c.newClassAccessorDecoratorContextType	0					
+E-DECOR	checker.go	30550-30552	c.newClassFieldDecoratorContextType	0					
+E-DECOR	checker.go	30556-30573	c.getClassMemberDecoratorContextOverrideType	0					
+E-DECOR	checker.go	30575-30601	c.newClassMemberDecoratorContextTypeForNode	0		30597			
+E-DECOR	checker.go	30603-30605	c.newClassAccessorDecoratorTargetType	0					
+E-DECOR	checker.go	30607-30609	c.newClassAccessorDecoratorResultType	0					
+E-DECOR	checker.go	30611-30615	c.newClassFieldDecoratorInitializerMutatorType	0					
+E-DECOR	checker.go	30619-30624	c.newESDecoratorCallSignature	0					
+E-DECOR	checker.go	30627-30630	c.newFunctionType	0					
+E-DECOR	checker.go	30632-30634	c.newGetterFunctionType	0					
+E-DECOR	checker.go	30636-30639	c.newSetterFunctionType	0					
+E-DECOR	checker.go	30642-30645	c.newCallSignature	0					
+E-DECOR	checker.go	30647-30649	c.newTypedPropertyDescriptorType	0					
+E-DECOR	checker.go	30651-30657	c.getParentTypeOfClassElement	0					
+E-DECOR	checker.go	30659-30672	c.getClassElementPropertyKeyType	0					
+D-HELPERS	checker.go	10171-10197	c.checkClassExpressionExternalHelpers	0					
+D-HELPERS	checker.go	28699-28735	c.checkExternalEmitHelpers	0	2343,2807				
+D-HELPERS	checker.go	28737-28744	c.hasSignatureWithArityGreaterThan	0					
+D-HELPERS	checker.go	28746-28794	c.getHelperNames	0		28792			
+D-HELPERS	checker.go	28796-28807	c.resolveHelpersModule	0	2354			GetImportHelpersImportSpecifier	
+E-COLLIDE	checker.go	10534-10551	c.checkCollisionsForDeclarationName	0	2414,2431				
+E-COLLIDE	checker.go	10553-10571	c.checkCollisionWithRequireExportsInGeneratedCode	0	2441			GetEmitModuleFormatOfFile	
+E-COLLIDE	checker.go	10573-10587	c.checkCollisionWithGlobalObjectInGeneratedCode	0	2441			GetEmitModuleFormatOfFile	
+E-COLLIDE	checker.go	10589-10615	c.needCollisionCheckForIdentifier	0					
+E-COLLIDE	checker.go	10617-10627	c.setNodeLinksForPrivateIdentifierScope	0					
+E-COLLIDE	checker.go	10629-10636	c.recordPotentialCollisionWithWeakMapSetInGeneratedCode	1					
+E-COLLIDE	checker.go	10638-10646	c.checkWeakMapSetCollision	0	18027				
+E-COLLIDE	checker.go	10648-10662	c.checkCollisionWithGlobalPromiseInGeneratedCode	0	2529				
+E-COLLIDE	checker.go	10664-10670	c.recordPotentialCollisionWithReflectInGeneratedCode	1					
+E-COLLIDE	checker.go	10672-10699	c.checkReflectCollision	0	2818				
+E-COLLIDE	checker.go	10701-10705	c.checkClassNameCollisionWithObject	0	2725			GetEmitModuleFormatOfFile	
+G-GRAMMAR	grammarchecks.go	19-27	c.grammarErrorOnFirstToken	0					
+G-GRAMMAR	grammarchecks.go	29-36	c.grammarErrorAtPos	0					
+G-GRAMMAR	grammarchecks.go	38-45	c.grammarErrorOnNode	0					
+G-GRAMMAR	grammarchecks.go	47-56	c.grammarErrorOnNodeSkippedOnNoEmit	0					
+G-GRAMMAR	grammarchecks.go	58-67	getIdentifierFromEntityNameExpression	0					
+G-GRAMMAR	grammarchecks.go	69-98	c.checkGrammarRegularExpressionLiteral	1			94		
+G-GRAMMAR	grammarchecks.go	100-118	c.checkGrammarPrivateIdentifierExpression	0	1451,2304,18016				
+G-GRAMMAR	grammarchecks.go	120-125	c.checkGrammarMappedType	0	7061				
+G-GRAMMAR	grammarchecks.go	127-197	c.checkGrammarDecorator	0	1497,1498				
+G-GRAMMAR	grammarchecks.go	199-204	c.checkGrammarExportDeclaration	0					
+G-GRAMMAR	grammarchecks.go	206-212	c.checkGrammarModuleElementContext	0					
+G-GRAMMAR	grammarchecks.go	214-569	c.checkGrammarModifiers	0	1024,1028,1029,1030,1031,1038,1040,1044,1070,1071,1079,1089,1090,1187,1206,1207,1242,1243,1244,1248,1249,1253,1273,1274,1275,1277,1287,1317,1319,1433,1486,1491,1495,8038,18010,18019	263		GetEmitModuleFormatOfFile	
+G-GRAMMAR	grammarchecks.go	571-577	c.reportObviousModifierErrors	0	1184				
+G-GRAMMAR	grammarchecks.go	579-585	c.findFirstModifierExcept	0					
+G-GRAMMAR	grammarchecks.go	587-640	c.findFirstIllegalModifier	0		637			
+G-GRAMMAR	grammarchecks.go	642-648	c.reportObviousDecoratorErrors	0	1206				
+G-GRAMMAR	grammarchecks.go	650-657	c.findFirstIllegalDecorator	0					
+G-GRAMMAR	grammarchecks.go	659-669	c.checkGrammarAsyncModifier	0	1042				
+G-GRAMMAR	grammarchecks.go	671-676	c.checkGrammarForDisallowedTrailingComma	0					
+G-GRAMMAR	grammarchecks.go	678-685	c.checkGrammarTypeParameterList	0	1098				
+G-GRAMMAR	grammarchecks.go	687-720	c.checkGrammarParameterList	0	1013,1014,1015,1016,1047,1048				
+G-GRAMMAR	grammarchecks.go	722-756	c.checkGrammarForUseStrictSimpleParameterList	1	1346,1347,1348,1349,6204				
+G-GRAMMAR	grammarchecks.go	758-765	c.checkGrammarFunctionLikeDeclaration	0					
+G-GRAMMAR	grammarchecks.go	767-770	c.checkGrammarClassLikeDeclaration	0					
+G-GRAMMAR	grammarchecks.go	772-794	c.checkGrammarArrowFunction	0	1200,7060				
+G-GRAMMAR	grammarchecks.go	796-838	c.checkGrammarIndexSignatureParameters	1	1017,1018,1019,1020,1021,1022,1025,1096,1268,1337				
+G-GRAMMAR	grammarchecks.go	840-843	c.checkGrammarIndexSignature	0					
+G-GRAMMAR	grammarchecks.go	845-853	c.checkGrammarForAtLeastOneTypeArgument	0	1099				
+G-GRAMMAR	grammarchecks.go	855-857	c.checkGrammarTypeArguments	0	1009				
+G-GRAMMAR	grammarchecks.go	859-864	c.checkGrammarTaggedTemplateChain	0	1358				
+G-GRAMMAR	grammarchecks.go	866-883	c.checkGrammarHeritageClause	0	1009,1097				
+G-GRAMMAR	grammarchecks.go	885-890	c.checkGrammarExpressionWithTypeArguments	0	1326				
+G-GRAMMAR	grammarchecks.go	892-933	c.checkGrammarClassDeclarationHeritageClauses	0	1172,1173,1174,1175	918			
+G-GRAMMAR	grammarchecks.go	935-959	c.checkGrammarInterfaceDeclaration	0	1172,1176	950			
+G-GRAMMAR	grammarchecks.go	961-972	c.checkGrammarComputedPropertyName	0	1171				
+G-GRAMMAR	grammarchecks.go	974-988	c.checkGrammarForGenerator	0	1221,1222	977			
+G-GRAMMAR	grammarchecks.go	990-992	c.checkGrammarForInvalidQuestionMark	0					
+G-GRAMMAR	grammarchecks.go	994-996	c.checkGrammarForInvalidExclamationToken	0					
+G-GRAMMAR	grammarchecks.go	998-1136	c.checkGrammarObjectLiteralExpression	1	1042,1117,1118,1119,1162,1255,1312,1539,2300,2501,18016	1105			
+G-GRAMMAR	grammarchecks.go	1138-1160	c.checkGrammarJsxElement	0	17000,17001				
+G-GRAMMAR	grammarchecks.go	1162-1172	c.checkGrammarJsxName	0	2633,2639				
+G-GRAMMAR	grammarchecks.go	1174-1180	c.checkGrammarJsxExpression	0	18007				
+G-GRAMMAR	grammarchecks.go	1182-1287	c.checkGrammarForInOrForOfStatement	0	1091,1103,1106,1188,1189,1190,1309,1356,1431,1432,2404,2483		1222	GetSourceFileMetaData	
+G-GRAMMAR	grammarchecks.go	1289-1339	c.checkGrammarAccessor	0	1005,1049,1051,1052,1053,1054,1094,1095,1183,1318	1324			
+G-GRAMMAR	grammarchecks.go	1345-1349	c.doesAccessorHaveCorrectParameterCount	0					
+G-GRAMMAR	grammarchecks.go	1351-1389	c.checkGrammarTypeOperatorNode	0	1005,1330,1331,1332,1333,1334,1335,1354				
+G-GRAMMAR	grammarchecks.go	1391-1407	c.checkGrammarForInvalidDynamicName	0					
+G-GRAMMAR	grammarchecks.go	1410-1412	c.isNonBindableDynamicName	0					
+G-GRAMMAR	grammarchecks.go	1414-1460	c.checkGrammarMethod	0	1005,1162,1165,1168,1169,1170,1184,1255				
+G-GRAMMAR	grammarchecks.go	1462-1516	c.checkGrammarBreakOrContinueStatement	0	1104,1105,1107,1115,1116				
+G-GRAMMAR	grammarchecks.go	1518-1537	c.checkGrammarBindingElement	0	1013,1186,2462,2566				
+G-GRAMMAR	grammarchecks.go	1539-1594	c.checkGrammarVariableDeclaration	0	1155,1182,1255,1263,1264,1492			GetEmitModuleFormatOfFile	
+G-GRAMMAR	grammarchecks.go	1596-1609	c.checkGrammarForEsModuleMarkerInBindingName	0	1216				
+G-GRAMMAR	grammarchecks.go	1611-1626	c.checkGrammarNameInLetOrConstDeclarations	0	2480				
+G-GRAMMAR	grammarchecks.go	1628-1656	c.checkGrammarVariableDeclarationList	0	1009,1123,1493,1494,1545,1546,1547,1548				
+G-GRAMMAR	grammarchecks.go	1658-1757	c.checkGrammarAwaitOrAwaitUsing	0	1308,1309,1356,1375,1378,2524,2852,2853,2854,18037,18054			GetSourceFileMetaData	
+G-GRAMMAR	grammarchecks.go	1759-1770	c.checkGrammarYieldExpression	0	1163,2523				
+G-GRAMMAR	grammarchecks.go	1772-1794	c.checkGrammarForDisallowedBlockScopedVariableStatement	0	1156	1787			
+G-GRAMMAR	grammarchecks.go	1796-1811	c.containerAllowsBlockScopedVariable	0					
+G-GRAMMAR	grammarchecks.go	1813-1839	c.checkGrammarMetaProperty	0	1005,17012,18061				
+G-GRAMMAR	grammarchecks.go	1841-1854	c.checkGrammarConstructorTypeParameters	0	1092				
+G-GRAMMAR	grammarchecks.go	1856-1862	c.checkGrammarConstructorTypeAnnotation	0	1093				
+G-GRAMMAR	grammarchecks.go	1864-1923	c.checkGrammarProperty	0	1166,1169,1170,1246,1247,1255,1263,1264,1276,7061,18006	1885,1896			
+G-GRAMMAR	grammarchecks.go	1925-1958	c.checkAmbientInitializer	0	1039,1254	1942			
+G-GRAMMAR	grammarchecks.go	1960-1963	isInitializerStringOrNumberLiteralExpression	0					
+G-GRAMMAR	grammarchecks.go	1965-1976	isInitializerBigIntLiteralExpression	0					
+G-GRAMMAR	grammarchecks.go	1978-1992	c.isInitializerSimpleLiteralEnumReference	0					
+G-GRAMMAR	grammarchecks.go	1994-2012	c.checkGrammarTopLevelElementForRequiredDeclareModifier	0	1046				
+G-GRAMMAR	grammarchecks.go	2014-2023	c.checkGrammarTopLevelElementsForRequiredDeclareModifier	0					
+G-GRAMMAR	grammarchecks.go	2025-2027	c.checkGrammarSourceFile	0					
+G-GRAMMAR	grammarchecks.go	2029-2057	c.checkGrammarStatementInAmbientContext	0	1036,1183				
+G-GRAMMAR	grammarchecks.go	2059-2085	c.checkGrammarNumericLiteral	0	80008				
+G-GRAMMAR	grammarchecks.go	2087-2098	c.checkGrammarBigIntLiteral	0	2737				
+G-GRAMMAR	grammarchecks.go	2100-2121	c.checkGrammarImportClause	0	1363,18058,18059,18060				
+G-GRAMMAR	grammarchecks.go	2123-2142	c.checkGrammarTypeOnlyNamedImportsOrExports	0	2206,2207				
+G-GRAMMAR	grammarchecks.go	2144-2185	c.checkGrammarImportCallExpression	0	1009,1323,1324,1325,1326,1450,18060				
+X-JSX	jsx.go	72-75	c.checkJsxElement	0					
+X-JSX	jsx.go	77-87	c.checkJsxElementDeferred	0					
+X-JSX	jsx.go	89-99	c.checkJsxExpression	0	2609				
+X-JSX	jsx.go	101-104	c.checkJsxSelfClosingElement	0					
+X-JSX	jsx.go	106-108	c.checkJsxSelfClosingElementDeferred	0					
+X-JSX	jsx.go	110-124	c.checkJsxFragment	0	17016,17017				
+X-JSX	jsx.go	126-129	c.checkJsxAttributes	0					
+X-JSX	jsx.go	131-158	c.checkJsxOpeningLikeElementOrOpeningFragment	0	2786,18053				
+X-JSX	jsx.go	160-168	c.checkJsxPreconditions	0	2602,17004				
+X-JSX	jsx.go	170-196	c.checkJsxReturnAssignableToAppropriateBound	0	2786,2787,2788,2789				
+X-JSX	jsx.go	198-203	c.inferJsxTypeArguments	0					
+X-JSX	jsx.go	205-213	c.getContextualTypeForJsxExpression	0					
+X-JSX	jsx.go	215-227	c.getContextualTypeForJsxAttribute	0					
+X-JSX	jsx.go	229-240	c.getContextualJsxElementAttributesType	0					
+X-JSX	jsx.go	242-264	c.getContextualTypeForChildJsxExpression	1					
+X-JSX	jsx.go	266-294	c.discriminateContextualTypeByJSXAttributes	2					
+X-JSX	jsx.go	296-367	c.elaborateJsxComponents	4	2745,2746,2747				
+X-JSX	jsx.go	376-391	c.generateJsxChildren	1					
+X-JSX	jsx.go	393-418	c.getElaborationElementForJsxChild	1		417			
+X-JSX	jsx.go	420-483	c.elaborateIterableOrArrayLikeTargetElementwise	1	2412				
+X-JSX	jsx.go	485-498	c.getSuggestedSymbolForNonexistentJSXAttribute	2					
+X-JSX	jsx.go	500-543	c.getJSXFragmentType	0	2879				
+X-JSX	jsx.go	545-585	c.resolveJsxOpeningLikeElement	0	2558,2604				
+X-JSX	jsx.go	591-701	c.checkApplicableSignatureForJsxCallLikeElement	1	2728,6229				
+X-JSX	jsx.go	710-867	c.createJsxAttributesTypeFromAttributesProperty	2	2698,2710		762,768		
+X-JSX	jsx.go	869-875	c.checkJsxAttribute	0					
+X-JSX	jsx.go	877-894	c.checkJsxChildren	0					
+X-JSX	jsx.go	896-923	c.getUninstantiatedJsxSignaturesOfType	1	2339				
+X-JSX	jsx.go	925-930	c.getEffectiveFirstArgumentForJsxSignature	0					
+X-JSX	jsx.go	932-940	c.getJsxPropsTypeFromCallSignature	0					
+X-JSX	jsx.go	942-987	c.getJsxPropsTypeFromClassType	0	2607				
+X-JSX	jsx.go	989-1016	c.getJsxPropsTypeForSignatureFromMember	0					
+X-JSX	jsx.go	1018-1028	c.getJsxManagedAttributesFromLocatedAttributes	0					
+X-JSX	jsx.go	1030-1048	c.instantiateAliasOrInterfaceWithDefaults	0					
+X-JSX	jsx.go	1050-1055	c.getJsxLibraryManagedAttributes	0					
+X-JSX	jsx.go	1057-1063	c.getJsxElementTypeSymbol	0					
+X-JSX	jsx.go	1073-1075	c.getJsxElementPropertiesName	0					
+X-JSX	jsx.go	1077-1083	c.getJsxElementChildrenPropertyName	0					
+X-JSX	jsx.go	1091-1112	c.getNameFromJsxElementAttributesContainer	0	2608				
+X-JSX	jsx.go	1114-1133	c.getStaticTypeOfReferencedJsxConstructor	0					
+X-JSX	jsx.go	1135-1155	c.getIntrinsicAttributesTypeFromStringLiteralType	0					
+X-JSX	jsx.go	1157-1169	c.getJsxReferenceKind	0					
+X-JSX	jsx.go	1171-1183	c.createSignatureForJSXIntrinsic	0					
+X-JSX	jsx.go	1188-1208	c.getIntrinsicAttributesTypeFromJsxOpeningLikeElement	0			1189		
+X-JSX	jsx.go	1214-1255	c.getIntrinsicTagSymbol	0	2339,7026	1224			
+X-JSX	jsx.go	1257-1263	c.getJsxStatelessElementTypeAt	0					
+X-JSX	jsx.go	1265-1271	c.getJsxElementClassTypeAt	0					
+X-JSX	jsx.go	1273-1275	c.getJsxElementTypeAt	0					
+X-JSX	jsx.go	1277-1291	c.getJsxElementTypeTypeAt	0					
+X-JSX	jsx.go	1293-1302	c.getJsxType	0					
+X-JSX	jsx.go	1304-1337	c.getJsxNamespaceAt	0					
+X-JSX	jsx.go	1339-1386	c.getJsxNamespace	0					
+X-JSX	jsx.go	1388-1402	c.getLocalJsxNamespace	0					
+X-JSX	jsx.go	1404-1412	c.getJsxFactoryEntity	0					
+X-JSX	jsx.go	1414-1433	c.getJsxFragmentFactoryEntity	0					
+X-JSX	jsx.go	1435-1441	c.parseIsolatedEntityName	0					
+X-JSX	jsx.go	1443-1447	markAsSynthetic	0					
+X-JSX	jsx.go	1449-1484	c.getJsxNamespaceContainerForImplicitImport	1	2875				
+X-JSX	jsx.go	1486-1488	c.getJSXRuntimeImportSpecifier	0				GetJSXRuntimeImportSpecifier	
+D-JSDOC	checker.go	2547-2551	c.checkJSDocComments	0					
+D-JSDOC	checker.go	2553-2560	c.checkJSDocComment	0					
+D-JSDOC	checker.go	2562-2585	c.resolveJSDocMemberName	0					
+D-JSDOC	checker.go	2587-2590	c.checkJSDocType	0					
+D-JSDOC	checker.go	2592-2609	c.checkJSDocTypeIsInJsFile	0	8020,17019,17020				
+D-JSDOC	jsdoc.go	9-84	c.checkUnmatchedJSDocParameters	0	8024,8029,8032				
+D-JSDOC	jsdoc.go	86-100	getAllJSDocTags	0					
+T-JSDECL	checker.go	18151-18162	c.getTypeOfPrototypeProperty	1					
+T-JSDECL	checker.go	18173-18224	c.getWidenedTypeForAssignmentDeclaration	1		18179,18184			
+T-JSDECL	checker.go	18226-18250	c.getAssignmentDeclarationInitializerType	0					
+T-JSDECL	checker.go	18257-18264	c.hasParentWithTypeAnnotation	0					
+T-JSDECL	checker.go	18266-18278	c.containsSameNamedThisProperty	1					
+T-JSDECL	checker.go	18280-18296	c.getTypeFromPropertyDescriptor	0					
+T-JSDECL	checker.go	18301-18344	c.isConstructorDeclaredThisProperty	0		18308			
+T-JSDECL	checker.go	18346-18350	c.isGlobalSymbolConstructor	0					
+Z-SERVICES	checker.go	31704-31710	c.GetSymbolAtLocation	0					
+Z-SERVICES	checker.go	31717-31885	c.getSymbolAtLocation	0		31846			
+Z-SERVICES	checker.go	31887-31901	c.getIndexSignaturesAtLocation	0					
+Z-SERVICES	checker.go	31903-32036	c.getSymbolOfNameOrPropertyAccessExpression	0		31921			
+Z-SERVICES	checker.go	32038-32051	c.isThisPropertyAndThisTyped	0					
+Z-SERVICES	checker.go	32053-32163	c.getTypeOfNode	0					
+Z-SERVICES	checker.go	32165-32180	c.getThisTypeOfObjectLiteralFromContextualType	0					
+Z-SERVICES	checker.go	32182-32196	c.getThisTypeFromContextualType	1					
+Z-SERVICES	checker.go	32198-32203	c.getThisTypeArgument	0					
+Z-SERVICES	checker.go	32205-32207	c.getApplicableIndexInfos	1					
+Z-SERVICES	checker.go	32209-32236	c.getApplicableIndexSymbol	0					
+Z-SERVICES	checker.go	32238-32243	c.getRegularTypeOfExpression	0					
+Z-SERVICES	checker.go	32245-32280	c.containsArgumentsReference	1					
+Z-SERVICES	checker.go	32282-32284	c.GetTypeAtLocation	0					
+Z-SERVICES	checker.go	32286-32292	c.GetEmitResolver	1					
+Z-SERVICES	checker.go	32294-32296	c.GetAliasedSymbol	0					
+Z-SERVICES	emitresolver.go	45-51	newEmitResolver	0					
+Z-SERVICES	emitresolver.go	53-57	EmitResolver.GetJsxFactoryEntity	0					
+Z-SERVICES	emitresolver.go	59-63	EmitResolver.GetJsxFragmentFactoryEntity	0					
+Z-SERVICES	emitresolver.go	65-69	EmitResolver.IsOptionalParameter	0					
+Z-SERVICES	emitresolver.go	71-87	EmitResolver.IsLateBound	0					
+Z-SERVICES	emitresolver.go	89-102	EmitResolver.GetEnumMemberValue	0					
+Z-SERVICES	emitresolver.go	104-109	EmitResolver.IsDeclarationVisible	0					
+Z-SERVICES	emitresolver.go	111-129	EmitResolver.isDeclarationVisible	0					
+Z-SERVICES	emitresolver.go	131-234	EmitResolver.determineIfDeclarationIsVisible	0					
+Z-SERVICES	emitresolver.go	236-247	EmitResolver.PrecalculateDeclarationEmitVisibility	0					
+Z-SERVICES	emitresolver.go	249-258	isCommonJSModuleExports	0					
+Z-SERVICES	emitresolver.go	260-274	EmitResolver.aliasMarkingVisitorWorker	0					
+Z-SERVICES	emitresolver.go	278-309	EmitResolver.markLinkedAliases	0					
+Z-SERVICES	emitresolver.go	311-332	getMeaningOfEntityNameReference	0					
+Z-SERVICES	emitresolver.go	334-338	EmitResolver.IsEntityNameVisible	0					
+Z-SERVICES	emitresolver.go	340-380	EmitResolver.isEntityNameVisible	0					
+Z-SERVICES	emitresolver.go	382-382	noopAddVisibleAlias	0					
+Z-SERVICES	emitresolver.go	384-465	EmitResolver.hasVisibleDeclarations	1					
+Z-SERVICES	emitresolver.go	467-506	EmitResolver.IsImplementationOfOverload	0					
+Z-SERVICES	emitresolver.go	508-542	EmitResolver.IsImportRequiredByAugmentation	0					
+Z-SERVICES	emitresolver.go	544-566	EmitResolver.IsDefinitelyReferenceToGlobalSymbolObject	0					
+Z-SERVICES	emitresolver.go	568-575	EmitResolver.RequiresAddingImplicitUndefined	0					
+Z-SERVICES	emitresolver.go	577-583	EmitResolver.RequiresAddingImplicitUndefinedUnsafe	0					
+Z-SERVICES	emitresolver.go	585-603	EmitResolver.requiresAddingImplicitUndefined	0		601			
+Z-SERVICES	emitresolver.go	605-607	EmitResolver.requiresAddingImplicitUndefinedWorker	0					
+Z-SERVICES	emitresolver.go	609-620	EmitResolver.declaredParameterTypeContainsUndefined	0					
+Z-SERVICES	emitresolver.go	622-627	EmitResolver.isOptionalUninitializedParameterProperty	0					
+Z-SERVICES	emitresolver.go	629-637	EmitResolver.isRequiredInitializedParameter	0					
+Z-SERVICES	emitresolver.go	639-641	EmitResolver.isOptionalParameter	0					
+Z-SERVICES	emitresolver.go	643-658	EmitResolver.IsLiteralConstDeclaration	0					
+Z-SERVICES	emitresolver.go	660-673	EmitResolver.IsExpandoFunctionDeclarationUnsafe	0					
+Z-SERVICES	emitresolver.go	675-679	EmitResolver.IsExpandoFunctionDeclaration	0					
+Z-SERVICES	emitresolver.go	681-683	EmitResolver.isSymbolAccessible	0					
+Z-SERVICES	emitresolver.go	685-691	EmitResolver.IsSymbolAccessible	0					
+Z-SERVICES	emitresolver.go	693-695	isConstEnumOrConstEnumOnlyModule	0					
+Z-SERVICES	emitresolver.go	697-721	EmitResolver.IsReferencedAliasDeclaration	0					
+Z-SERVICES	emitresolver.go	723-733	EmitResolver.IsValueAliasDeclaration	0					
+Z-SERVICES	emitresolver.go	735-762	EmitResolver.isValueAliasDeclarationWorker	0					
+Z-SERVICES	emitresolver.go	764-787	EmitResolver.isAliasResolvedToValue	0					
+Z-SERVICES	emitresolver.go	789-806	EmitResolver.IsTopLevelValueImportEqualsWithEntityName	0					
+Z-SERVICES	emitresolver.go	808-830	EmitResolver.MarkLinkedReferencesRecursively	1					
+Z-SERVICES	emitresolver.go	832-840	EmitResolver.GetExternalModuleFileFromDeclaration	0					
+Z-SERVICES	emitresolver.go	842-856	EmitResolver.getReferenceResolver	0					
+Z-SERVICES	emitresolver.go	858-867	EmitResolver.GetReferencedExportContainer	0					
+Z-SERVICES	emitresolver.go	869-873	EmitResolver.SetReferencedImportDeclaration	0					
+Z-SERVICES	emitresolver.go	875-887	EmitResolver.GetReferencedImportDeclaration	0					
+Z-SERVICES	emitresolver.go	889-898	EmitResolver.GetReferencedValueDeclaration	0					
+Z-SERVICES	emitresolver.go	900-902	EmitResolver.GetReferencedValueDeclarationUnsafe	0					
+Z-SERVICES	emitresolver.go	904-913	EmitResolver.GetReferencedValueDeclarations	0					
+Z-SERVICES	emitresolver.go	916-922	EmitResolver.IsNameResolvable	0					
+Z-SERVICES	emitresolver.go	924-933	EmitResolver.GetElementAccessExpressionName	0					
+Z-SERVICES	emitresolver.go	935-944	EmitResolver.GetReferencedMemberValueDeclaration	0					
+Z-SERVICES	emitresolver.go	950-960	EmitResolver.CreateReturnTypeOfSignatureDeclaration	0					
+Z-SERVICES	emitresolver.go	962-972	EmitResolver.CreateTypeParametersOfSignatureDeclaration	0					
+Z-SERVICES	emitresolver.go	974-986	EmitResolver.CreateTypeOfDeclaration	0					
+Z-SERVICES	emitresolver.go	988-1047	EmitResolver.CreateLiteralConstValue	0		1046			
+Z-SERVICES	emitresolver.go	1049-1059	EmitResolver.CreateTypeOfExpression	0					
+Z-SERVICES	emitresolver.go	1061-1149	EmitResolver.CreateLateBoundIndexSignatures	1					
+Z-SERVICES	emitresolver.go	1151-1156	EmitResolver.GetEffectiveDeclarationFlags	0					
+Z-SERVICES	emitresolver.go	1158-1163	EmitResolver.GetResolutionModeOverride	0					
+Z-SERVICES	emitresolver.go	1165-1170	EmitResolver.GetConstantValue	0					
+Z-SERVICES	emitresolver.go	1172-1262	EmitResolver.GetTypeReferenceSerializationKind	0					
+Z-SERVICES	emitresolver.go	1264-1277	EmitResolver.GetPropertiesOfContainerFunction	0					
+Z-SERVICES	emitresolver.go	1279-1286	EmitResolver.TryJSTypeNodeToTypeNode	0					
+Z-SERVICES	emitresolver.go	1299-1330	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant	0					
+Z-SERVICES	exports.go	9-11	c.GetStringType	0					
+Z-SERVICES	exports.go	13-15	c.GetNumberType	0					
+Z-SERVICES	exports.go	17-19	c.GetBooleanType	0					
+Z-SERVICES	exports.go	21-23	c.GetVoidType	0					
+Z-SERVICES	exports.go	25-27	c.GetUndefinedType	0					
+Z-SERVICES	exports.go	29-31	c.GetNullType	0					
+Z-SERVICES	exports.go	33-35	c.GetAnyType	0					
+Z-SERVICES	exports.go	37-39	c.GetErrorType	0					
+Z-SERVICES	exports.go	41-43	c.GetNeverType	0					
+Z-SERVICES	exports.go	45-47	c.GetUnknownType	0					
+Z-SERVICES	exports.go	49-51	c.GetBigIntType	0					
+Z-SERVICES	exports.go	53-55	c.GetESSymbolType	0					
+Z-SERVICES	exports.go	57-59	c.GetNonPrimitiveType	0					
+Z-SERVICES	exports.go	61-63	c.GetBaseTypeOfLiteralType	0					
+Z-SERVICES	exports.go	65-67	c.GetUnknownSymbol	0					
+Z-SERVICES	exports.go	69-71	c.GetUndefinedSymbol	0					
+Z-SERVICES	exports.go	73-75	c.GetArgumentsSymbol	0					
+Z-SERVICES	exports.go	77-79	c.GetUnknownSignature	0					
+Z-SERVICES	exports.go	81-83	c.GetUnionType	0					
+Z-SERVICES	exports.go	85-90	c.GetNameTypeOfSymbol	0					
+Z-SERVICES	exports.go	92-94	IsTypeUsableAsPropertyName	0					
+Z-SERVICES	exports.go	96-98	GetPropertyNameFromType	0					
+Z-SERVICES	exports.go	100-102	c.GetGlobalSymbol	0					
+Z-SERVICES	exports.go	104-106	c.GetMergedSymbol	0					
+Z-SERVICES	exports.go	108-110	c.TryFindAmbientModule	0					
+Z-SERVICES	exports.go	112-114	c.GetImmediateAliasedSymbol	0					
+Z-SERVICES	exports.go	116-118	c.GetTypeOnlyAliasDeclaration	0					
+Z-SERVICES	exports.go	120-122	c.ResolveExternalModuleName	0					
+Z-SERVICES	exports.go	124-126	c.ResolveExternalModuleSymbol	0					
+Z-SERVICES	exports.go	128-130	c.GetTypeFromTypeNode	0					
+Z-SERVICES	exports.go	132-134	c.IsArrayLikeType	0					
+Z-SERVICES	exports.go	136-138	c.GetPropertiesOfType	0					
+Z-SERVICES	exports.go	140-142	c.GetPropertyOfType	0					
+Z-SERVICES	exports.go	144-146	c.TypeHasCallOrConstructSignatures	0					
+Z-SERVICES	exports.go	156-158	c.IsPropertyAccessible	0					
+Z-SERVICES	exports.go	160-162	c.GetTypeOfPropertyOfContextualType	0					
+Z-SERVICES	exports.go	164-166	GetDeclarationModifierFlagsFromSymbol	0					
+Z-SERVICES	exports.go	168-170	c.WasCanceled	0					
+Z-SERVICES	exports.go	172-174	c.GetSignaturesOfType	0					
+Z-SERVICES	exports.go	176-178	c.GetDeclaredTypeOfSymbol	0					
+Z-SERVICES	exports.go	180-182	c.GetTypeOfSymbol	0					
+Z-SERVICES	exports.go	184-186	c.GetConstraintOfTypeParameter	0					
+Z-SERVICES	exports.go	188-190	c.GetTrueTypeOfConditionalType	0					
+Z-SERVICES	exports.go	192-194	c.GetFalseTypeOfConditionalType	0					
+Z-SERVICES	exports.go	196-198	c.GetDefaultFromTypeParameter	0					
+Z-SERVICES	exports.go	200-202	c.GetResolutionModeOverride	0					
+Z-SERVICES	exports.go	204-206	c.GetEffectiveDeclarationFlags	0					
+Z-SERVICES	exports.go	208-210	c.GetBaseConstraintOfType	0					
+Z-SERVICES	exports.go	212-214	c.GetTypePredicateOfSignature	0					
+Z-SERVICES	exports.go	216-218	IsTupleType	0					
+Z-SERVICES	exports.go	220-222	c.IsArrayType	0					
+Z-SERVICES	exports.go	224-226	c.GetReturnTypeOfSignature	0					
+Z-SERVICES	exports.go	228-230	c.HasEffectiveRestParameter	0					
+Z-SERVICES	exports.go	232-234	c.GetLocalTypeParametersOfClassOrInterfaceOrTypeAlias	0					
+Z-SERVICES	exports.go	236-238	c.GetContextualTypeForObjectLiteralElement	0					
+Z-SERVICES	exports.go	240-242	c.TypePredicateToString	0					
+Z-SERVICES	exports.go	244-246	c.GetExpandedParameters	0					
+Z-SERVICES	exports.go	248-250	c.GetResolvedSignature	0					
+Z-SERVICES	exports.go	253-255	c.GetTypeOfPropertyOfType	0					
+Z-SERVICES	exports.go	257-259	c.GetContextualTypeForArgumentAtIndex	0					
+Z-SERVICES	exports.go	261-263	c.GetIndexSignaturesAtLocation	0					
+Z-SERVICES	exports.go	265-267	c.GetResolvedSymbol	0					
+Z-SERVICES	exports.go	269-271	c.GetJsxNamespace	0					
+Z-SERVICES	exports.go	273-279	c.GetJsxFragmentFactory	0					
+Z-SERVICES	exports.go	281-283	c.ResolveName	0					
+Z-SERVICES	exports.go	285-287	c.GetSymbolFlags	0					
+Z-SERVICES	exports.go	289-291	c.GetBaseTypes	0					
+Z-SERVICES	exports.go	293-295	c.GetApparentType	0					
+Z-SERVICES	exports.go	299-301	c.GetFullyQualifiedName	0					
+Z-SERVICES	exports.go	303-305	c.GetBaseConstructorTypeOfClass	0					
+Z-SERVICES	exports.go	307-309	c.GetMemberOverrideModifierStatus	0					
+Z-SERVICES	exports.go	311-313	c.GetRestTypeOfSignature	0					
+Z-SERVICES	exports.go	315-317	c.GetTypeArguments	0					
+Z-SERVICES	exports.go	319-321	c.GetIndexInfoOfType	0					
+Z-SERVICES	exports.go	323-325	c.GetIndexInfosOfType	0					
+Z-SERVICES	exports.go	327-329	c.IsContextSensitive	0					
+Z-SERVICES	exports.go	331-333	c.FillMissingTypeArguments	0					
+Z-SERVICES	exports.go	335-337	c.GetMinTypeArgumentCount	0					
+Z-SERVICES	exports.go	339-341	c.GetWidenedLiteralType	0					
+Z-SERVICES	exports.go	343-345	c.IsTypeAssignableTo	0					
+Z-SERVICES	exports.go	347-349	c.GetUnionTypeEx	0					
+Z-SERVICES	exports.go	351-361	c.RequiresAddingImplicitUndefined	0					
+Z-SERVICES	exports.go	363-365	c.RemoveMissingOrUndefinedType	0					
+Z-SERVICES	exports.go	367-369	c.GetWidenedType	0					
+Z-SERVICES	exports.go	371-373	c.CompareSymbols	0					
+Z-SERVICES	services.go	17-19	c.GetSymbolsInScope	0					
+Z-SERVICES	services.go	21-119	c.getSymbolsInScope	4					46,54
+Z-SERVICES	services.go	121-123	c.GetExportsOfModule	0					
+Z-SERVICES	services.go	125-152	c.ForEachExportAndPropertyOfModule	0					126,147
+Z-SERVICES	services.go	154-156	c.IsValidPropertyAccess	0					
+Z-SERVICES	services.go	158-168	c.isValidPropertyAccess	0		167			
+Z-SERVICES	services.go	170-178	c.isValidPropertyAccessWithType	0					
+Z-SERVICES	services.go	188-197	c.IsValidPropertyAccessForCompletions	0					
+Z-SERVICES	services.go	199-219	c.GetAllPossiblePropertiesOfTypes	0					
+Z-SERVICES	services.go	221-223	c.IsUnknownSymbol	0					
+Z-SERVICES	services.go	225-227	c.IsUndefinedSymbol	0					
+Z-SERVICES	services.go	229-231	c.IsArgumentsSymbol	0					
+Z-SERVICES	services.go	234-236	c.GetNonOptionalType	0					
+Z-SERVICES	services.go	238-240	c.GetStringIndexType	0					
+Z-SERVICES	services.go	242-244	c.GetNumberIndexType	0					
+Z-SERVICES	services.go	246-248	c.GetElementTypeOfArrayType	0					
+Z-SERVICES	services.go	250-252	c.GetCallSignatures	0					
+Z-SERVICES	services.go	254-256	c.GetConstructSignatures	0					
+Z-SERVICES	services.go	258-260	c.GetApparentProperties	0					
+Z-SERVICES	services.go	262-283	c.getAugmentedPropertiesOfType	0					
+Z-SERVICES	services.go	285-301	c.TryGetMemberInModuleExportsAndProperties	0					
+Z-SERVICES	services.go	303-306	c.TryGetMemberInModuleExports	0					
+Z-SERVICES	services.go	308-314	c.shouldTreatPropertiesOfExternalModuleAsExports	0					
+Z-SERVICES	services.go	316-321	c.GetContextualType	1					
+Z-SERVICES	services.go	323-342	runWithInferenceBlockedFromSourceNode	0					
+Z-SERVICES	services.go	344-354	GetResolvedSignatureForSignatureHelp	1					
+Z-SERVICES	services.go	356-383	runWithoutResolvedSignatureCaching	0					374,377
+Z-SERVICES	services.go	385-390	c.SkipAlias	0					
+Z-SERVICES	services.go	392-402	c.GetRootSymbols	0					
+Z-SERVICES	services.go	404-409	c.GetMappedTypeSymbolOfProperty	0					
+Z-SERVICES	services.go	411-440	c.getImmediateRootSymbols	1					
+Z-SERVICES	services.go	442-459	c.tryGetTarget	0					
+Z-SERVICES	services.go	461-463	c.GetExportSymbolOfSymbol	0					
+Z-SERVICES	services.go	465-482	c.GetExportSpecifierLocalTargetSymbol	0		481			
+Z-SERVICES	services.go	484-489	c.GetShorthandAssignmentValueSymbol	0					
+Z-SERVICES	services.go	497-509	c.GetSymbolsOfParameterPropertyDeclaration	0		508			
+Z-SERVICES	services.go	513-537	c.IsDeclarationUsed	0					
+Z-SERVICES	services.go	541-573	c.IsSymbolReferencedInFile	0					
+Z-SERVICES	services.go	576-611	c.GetReferencesToSymbolInFile	0					
+Z-SERVICES	services.go	613-620	c.getLocalSymbolForExportSpecifier	0					
+Z-SERVICES	services.go	622-633	isExportSpecifierAlias	0			623		
+Z-SERVICES	services.go	635-642	getPossibleSymbolReferenceNodes	1					
+Z-SERVICES	services.go	644-687	getPossibleSymbolReferencePositions	0					
+Z-SERVICES	services.go	689-694	c.GetTypeArgumentConstraint	0					
+Z-SERVICES	services.go	697-714	c.getUninstantiatedSignatures	0					
+Z-SERVICES	services.go	716-729	c.getTypeParameterConstraintForPositionAcrossSignatures	0					
+Z-SERVICES	services.go	731-803	c.getTypeArgumentConstraint	0					
+Z-SERVICES	services.go	805-827	c.IsTypeInvalidDueToUnionDiscriminant	1					
+Z-SERVICES	services.go	830-840	c.GetExportsAndPropertiesOfModule	0					
+Z-SERVICES	services.go	842-844	c.getExportsOfModuleAsArray	0					
+Z-SERVICES	services.go	847-853	c.GetJsxIntrinsicTagNamesAt	0					
+Z-SERVICES	services.go	855-857	c.GetContextualTypeForJsxAttribute	0					
+Z-SERVICES	services.go	859-886	c.GetConstantValue	0					
+Z-SERVICES	services.go	888-898	c.getResolvedSignatureWorker	0					
+Z-SERVICES	services.go	900-922	c.GetCandidateSignaturesForStringLiteralCompletions	2					
+Z-SERVICES	services.go	925-927	c.GetTypeAtPosition	0					
+Z-SERVICES	services.go	929-938	c.GetTypeParameterAtPosition	0					
+Z-SERVICES	services.go	942-968	c.GetContextualTypeForArrayLiteralAtPosition	0					
+Z-SERVICES	services.go	993-996	isKnownGenericTypeName	0					
+Z-SERVICES	services.go	998-1012	c.GetFirstTypeArgumentFromKnownType	0					
+Z-SERVICES	services.go	1015-1049	c.GetPropertySymbolsFromContextualType	3					
+Z-SERVICES	services.go	1060-1068	c.GetPropertySymbolOfDestructuringAssignment	0					
+Z-SERVICES	services.go	1079-1107	c.getTypeOfAssignmentPattern	0					
+Z-SERVICES	services.go	1109-1111	c.GetSignatureFromDeclaration	0					
+Z-SERVICES	services.go	1114-1125	c.IsLibSymbolForHoverVerbosity	0				IsSourceFileDefaultLibrary	
+Z-SERVICES	services.go	1129-1140	c.IsLibTypeForHoverVerbosity	0					

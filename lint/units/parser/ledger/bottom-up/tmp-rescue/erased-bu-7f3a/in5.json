@@ -1,0 +1,12 @@
+[
+ ["g5-type-as", "import { type as } from 'm';\nfoo()"],
+ ["g5-type-as-export", "export { type as } from 'm';\nfoo()"],
+ ["g5-control", "import { type a } from 'm';\nfoo()"],
+ ["type-as-as-x", "import { type as as x } from 'm';\nfoo()"],
+ ["type-as-x", "import { type as x } from 'm';\nfoo(x)"],
+ ["type-as-as", "import { type as as } from 'm';\nfoo(as)"],
+ ["import-eq-redeclare", "import a = b.c;\nimport a = d.e;"],
+ ["export-default-class-ambient", "declare module 'm' { export default class C { m(): void } }\nfoo()"],
+ ["declare-class-field-init", "class C { declare x = 1 }"],
+ ["export-declare-global-body", "export declare global { var x: number; function f(): void }\nfoo()"]
+]

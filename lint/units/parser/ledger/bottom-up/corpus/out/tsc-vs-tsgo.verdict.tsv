@@ -1,0 +1,1182 @@
+i	dialect	tsc count	tsc first	tsc message	go count	go first	go message	origins	source
+3425	ts	0			1	1110,15,1	Type expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: ?) {}
+3425	tsx	0			1	1110,15,1	Type expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: ?) {}
+3425	dts	0			1	1110,15,1	Type expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: ?) {}
+3427	ts	0			1	1110,15,1	Type expected.	p01:jsdoc	const f = (a: ?) => 0;
+3427	tsx	0			1	1110,15,1	Type expected.	p01:jsdoc	const f = (a: ?) => 0;
+3427	dts	0			1	1110,15,1	Type expected.	p01:jsdoc	const f = (a: ?) => 0;
+3430	ts	0			1	1110,3,1	Type expected.	p01:jsdoc td01:postfix.question-alone@targ gds:jsdoc/targ	f<?>(x);
+3430	tsx	0			1	1110,3,1	Type expected.	p01:jsdoc td01:postfix.question-alone@targ gds:jsdoc/targ	f<?>(x);
+3430	dts	0			1	1110,3,1	Type expected.	p01:jsdoc td01:postfix.question-alone@targ gds:jsdoc/targ	f<?>(x);
+3432	ts	0			1	1110,10,1	Type expected.	p01:jsdoc	let x: A<?>;
+3432	tsx	0			1	1110,10,1	Type expected.	p01:jsdoc	let x: A<?>;
+3432	dts	0			1	1110,10,1	Type expected.	p01:jsdoc	let x: A<?>;
+3433	ts	0			1	1110,12,1	Type expected.	p01:jsdoc	let x: (a: ?) => void;
+3433	tsx	0			1	1110,12,1	Type expected.	p01:jsdoc	let x: (a: ?) => void;
+3433	dts	0			1	1110,12,1	Type expected.	p01:jsdoc	let x: (a: ?) => void;
+3435	ts	0			1	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ? };
+3435	tsx	0			1	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ? };
+3435	dts	0			1	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ? };
+3644	ts	0			2	1005,17,1	';' expected.	p01:jsdoc td01:postfix.jsdoc-function@alias	type X = function(A): B;
+3644	tsx	0			2	1005,17,1	';' expected.	p01:jsdoc td01:postfix.jsdoc-function@alias	type X = function(A): B;
+3644	dts	0			2	1005,17,1	';' expected.	p01:jsdoc td01:postfix.jsdoc-function@alias	type X = function(A): B;
+3645	ts	0			2	1005,15,1	',' expected.	p01:jsdoc td01:postfix.jsdoc-function@var	let x: function(A): B;
+3645	tsx	0			2	1005,15,1	',' expected.	p01:jsdoc td01:postfix.jsdoc-function@var	let x: function(A): B;
+3645	dts	0			2	1005,15,1	',' expected.	p01:jsdoc td01:postfix.jsdoc-function@var	let x: function(A): B;
+3646	ts	0			4	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(A): B) {}
+3646	tsx	0			4	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(A): B) {}
+3646	dts	0			4	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(A): B) {}
+3647	ts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(A): B { throw 0 }
+3647	tsx	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(A): B { throw 0 }
+3647	dts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(A): B { throw 0 }
+3648	ts	0			5	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(A): B) => 0;
+3648	tsx	0			5	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(A): B) => 0;
+3648	dts	0			5	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(A): B) => 0;
+3649	ts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(A): B => 0;
+3649	tsx	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(A): B => 0;
+3649	dts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(A): B => 0;
+3650	ts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(A): B;
+3650	tsx	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(A): B;
+3650	dts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(A): B;
+3651	ts	0			1	1005,16,1	'{' expected.	p01:jsdoc td01:postfix.jsdoc-function@targ	f<function(A): B>(x);
+3651	tsx	0			1	1005,16,1	'{' expected.	p01:jsdoc td01:postfix.jsdoc-function@targ	f<function(A): B>(x);
+3651	dts	0			1	1005,16,1	'{' expected.	p01:jsdoc td01:postfix.jsdoc-function@targ	f<function(A): B>(x);
+3652	ts	0			4	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(A): B; }
+3652	tsx	0			4	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(A): B; }
+3652	dts	0			4	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(A): B; }
+3653	ts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(A): B>;
+3653	tsx	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(A): B>;
+3653	dts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(A): B>;
+3654	ts	0			5	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(A): B) => void;
+3654	tsx	0			5	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(A): B) => void;
+3654	dts	0			5	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(A): B) => void;
+3655	ts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(A): B];
+3655	tsx	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(A): B];
+3655	dts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(A): B];
+3656	ts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(A): B };
+3656	tsx	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(A): B };
+3656	dts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(A): B };
+3657	ts	0			4	1005,17,1	';' expected.	p01:jsdoc gds:jsdoc/alias	type X = function(new: A);
+3657	tsx	0			4	1005,17,1	';' expected.	p01:jsdoc gds:jsdoc/alias	type X = function(new: A);
+3657	dts	0			4	1005,17,1	';' expected.	p01:jsdoc gds:jsdoc/alias	type X = function(new: A);
+3658	ts	0			4	1005,15,1	',' expected.	p01:jsdoc gds:jsdoc/var	let x: function(new: A);
+3658	tsx	0			4	1005,15,1	',' expected.	p01:jsdoc gds:jsdoc/var	let x: function(new: A);
+3658	dts	0			4	1005,15,1	',' expected.	p01:jsdoc gds:jsdoc/var	let x: function(new: A);
+3659	ts	0			5	1005,22,1	',' expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: function(new: A)) {}
+3659	tsx	0			5	1005,22,1	',' expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: function(new: A)) {}
+3659	dts	0			5	1005,22,1	',' expected.	p01:jsdoc gds:jsdoc/fnparam	function f(a: function(new: A)) {}
+3660	ts	0			4	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(new: A) { throw 0 }
+3660	tsx	0			4	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(new: A) { throw 0 }
+3660	dts	0			4	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(new: A) { throw 0 }
+3661	ts	0			6	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(new: A)) => 0;
+3661	tsx	0			6	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(new: A)) => 0;
+3661	dts	0			6	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(new: A)) => 0;
+3662	ts	0			6	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(new: A) => 0;
+3662	tsx	0			6	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(new: A) => 0;
+3662	dts	0			6	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(new: A) => 0;
+3663	ts	0			4	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(new: A);
+3663	tsx	0			4	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(new: A);
+3663	dts	0			4	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(new: A);
+3664	ts	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	p01:jsdoc gds:jsdoc/targ	f<function(new: A)>(x);
+3664	tsx	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	p01:jsdoc gds:jsdoc/targ	f<function(new: A)>(x);
+3664	dts	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	p01:jsdoc gds:jsdoc/targ	f<function(new: A)>(x);
+3665	ts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(new: A); }
+3665	tsx	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(new: A); }
+3665	dts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(new: A); }
+3666	ts	0			6	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(new: A)>;
+3666	tsx	0			6	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(new: A)>;
+3666	dts	0			6	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(new: A)>;
+3667	ts	0			6	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(new: A)) => void;
+3667	tsx	0			6	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(new: A)) => void;
+3667	dts	0			6	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(new: A)) => void;
+3668	ts	0			3	1005,16,1	',' expected.	p01:jsdoc	let x: [function(new: A)];
+3668	tsx	0			3	1005,16,1	',' expected.	p01:jsdoc	let x: [function(new: A)];
+3668	dts	0			3	1005,16,1	',' expected.	p01:jsdoc	let x: [function(new: A)];
+3669	ts	0			3	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(new: A) };
+3669	tsx	0			3	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(new: A) };
+3669	dts	0			3	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(new: A) };
+3670	ts	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function(this: A);
+3670	tsx	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function(this: A);
+3670	dts	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function(this: A);
+3671	ts	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function(this: A);
+3671	tsx	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function(this: A);
+3671	dts	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function(this: A);
+3672	ts	0			2	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(this: A)) {}
+3672	tsx	0			2	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(this: A)) {}
+3672	dts	0			2	1005,22,1	',' expected.	p01:jsdoc	function f(a: function(this: A)) {}
+3673	ts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(this: A) { throw 0 }
+3673	tsx	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(this: A) { throw 0 }
+3673	dts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function(this: A) { throw 0 }
+3674	ts	0			3	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(this: A)) => 0;
+3674	tsx	0			3	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(this: A)) => 0;
+3674	dts	0			3	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function(this: A)) => 0;
+3675	ts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(this: A) => 0;
+3675	tsx	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(this: A) => 0;
+3675	dts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function(this: A) => 0;
+3676	ts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(this: A);
+3676	tsx	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(this: A);
+3676	dts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function(this: A);
+3677	ts	0			1	1005,19,1	'{' expected.	p01:jsdoc	f<function(this: A)>(x);
+3677	tsx	0			1	1005,19,1	'{' expected.	p01:jsdoc	f<function(this: A)>(x);
+3677	dts	0			1	1005,19,1	'{' expected.	p01:jsdoc	f<function(this: A)>(x);
+3678	ts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(this: A); }
+3678	tsx	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(this: A); }
+3678	dts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(this: A); }
+3679	ts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(this: A)>;
+3679	tsx	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(this: A)>;
+3679	dts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function(this: A)>;
+3680	ts	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(this: A)) => void;
+3680	tsx	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(this: A)) => void;
+3680	dts	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function(this: A)) => void;
+3681	ts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(this: A)];
+3681	tsx	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(this: A)];
+3681	dts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function(this: A)];
+3682	ts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(this: A) };
+3682	tsx	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(this: A) };
+3682	dts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function(this: A) };
+3683	ts	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function();
+3683	tsx	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function();
+3683	dts	0			2	1005,17,1	';' expected.	p01:jsdoc	type X = function();
+3684	ts	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function();
+3684	tsx	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function();
+3684	dts	0			2	1005,15,1	',' expected.	p01:jsdoc	let x: function();
+3685	ts	0			3	1005,22,1	',' expected.	p01:jsdoc	function f(a: function()) {}
+3685	tsx	0			3	1005,22,1	',' expected.	p01:jsdoc	function f(a: function()) {}
+3685	dts	0			3	1005,22,1	',' expected.	p01:jsdoc	function f(a: function()) {}
+3686	ts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function() { throw 0 }
+3686	tsx	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function() { throw 0 }
+3686	dts	0			2	1144,22,1	'{' or ';' expected.	p01:jsdoc	function f(): function() { throw 0 }
+3687	ts	0			4	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function()) => 0;
+3687	tsx	0			4	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function()) => 0;
+3687	dts	0			4	1005,22,1	',' expected.	p01:jsdoc	const f = (a: function()) => 0;
+3688	ts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function() => 0;
+3688	tsx	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function() => 0;
+3688	dts	0			4	1005,13,1	',' expected.	p01:jsdoc	const f = (a): function() => 0;
+3689	ts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function();
+3689	tsx	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function();
+3689	dts	0			2	1005,23,1	',' expected.	p01:jsdoc	const v = x as function();
+3690	ts	0			1	1005,12,1	'{' expected.	p01:jsdoc	f<function()>(x);
+3690	tsx	0			1	1005,12,1	'{' expected.	p01:jsdoc	f<function()>(x);
+3690	dts	0			1	1005,12,1	'{' expected.	p01:jsdoc	f<function()>(x);
+3691	ts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(); }
+3691	tsx	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(); }
+3691	dts	0			2	1441,21,1	Cannot start a function call in a type annotation.	p01:jsdoc	class C { p: function(); }
+3692	ts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function()>;
+3692	tsx	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function()>;
+3692	dts	0			3	1005,17,1	'>' expected.	p01:jsdoc	let x: A<function()>;
+3693	ts	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function()) => void;
+3693	tsx	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function()) => void;
+3693	dts	0			4	1005,19,1	',' expected.	p01:jsdoc	let x: (a: function()) => void;
+3694	ts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function()];
+3694	tsx	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function()];
+3694	dts	0			2	1005,16,1	',' expected.	p01:jsdoc	let x: [function()];
+3695	ts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function() };
+3695	tsx	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function() };
+3695	dts	0			1	1005,20,1	';' expected.	p01:jsdoc	let x: { a: function() };
+3792	ts	3	1005,13,1	',' expected.	0			p01:jsdoc	const f = (a): ?(A) => 0;
+3792	tsx	3	1005,13,1	',' expected.	0			p01:jsdoc	const f = (a): ?(A) => 0;
+3792	dts	3	1005,13,1	',' expected.	0			p01:jsdoc	const f = (a): ?(A) => 0;
+3813	ts	0			3	1110,11,1	Type expected.	p01:jsdoc	type X = ?() => void;
+3813	tsx	0			3	1110,11,1	Type expected.	p01:jsdoc	type X = ?() => void;
+3813	dts	0			3	1110,11,1	Type expected.	p01:jsdoc	type X = ?() => void;
+3814	ts	0			3	1110,9,1	Type expected.	p01:jsdoc	let x: ?() => void;
+3814	tsx	0			3	1110,9,1	Type expected.	p01:jsdoc	let x: ?() => void;
+3814	dts	0			3	1110,9,1	Type expected.	p01:jsdoc	let x: ?() => void;
+3815	ts	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(a: ?() => void) {}
+3815	tsx	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(a: ?() => void) {}
+3815	dts	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(a: ?() => void) {}
+3816	ts	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(): ?() => void { throw 0 }
+3816	tsx	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(): ?() => void { throw 0 }
+3816	dts	0			3	1110,16,1	Type expected.	p01:jsdoc	function f(): ?() => void { throw 0 }
+3817	ts	0			4	1110,16,1	Type expected.	p01:jsdoc	const f = (a: ?() => void) => 0;
+3817	tsx	0			4	1110,16,1	Type expected.	p01:jsdoc	const f = (a: ?() => void) => 0;
+3817	dts	0			4	1110,16,1	Type expected.	p01:jsdoc	const f = (a: ?() => void) => 0;
+3818	ts	0			2	1110,17,1	Type expected.	p01:jsdoc	const f = (a): ?() => void => 0;
+3818	tsx	0			2	1110,17,1	Type expected.	p01:jsdoc	const f = (a): ?() => void => 0;
+3818	dts	0			2	1110,17,1	Type expected.	p01:jsdoc	const f = (a): ?() => void => 0;
+3819	ts	0			3	1110,17,1	Type expected.	p01:jsdoc	const v = x as ?() => void;
+3819	tsx	0			3	1110,17,1	Type expected.	p01:jsdoc	const v = x as ?() => void;
+3819	dts	0			3	1110,17,1	Type expected.	p01:jsdoc	const v = x as ?() => void;
+3820	ts	0			3	1109,2,1	Expression expected.	p01:jsdoc	f<?() => void>(x);
+3820	tsx	0			3	1109,2,1	Expression expected.	p01:jsdoc	f<?() => void>(x);
+3820	dts	0			3	1109,2,1	Expression expected.	p01:jsdoc	f<?() => void>(x);
+3821	ts	0			2	1110,15,1	Type expected.	p01:jsdoc	class C { p: ?() => void; }
+3821	tsx	0			2	1110,15,1	Type expected.	p01:jsdoc	class C { p: ?() => void; }
+3821	dts	0			2	1110,15,1	Type expected.	p01:jsdoc	class C { p: ?() => void; }
+3822	ts	0			4	1110,11,1	Type expected.	p01:jsdoc	let x: A<?() => void>;
+3822	tsx	0			4	1110,11,1	Type expected.	p01:jsdoc	let x: A<?() => void>;
+3822	dts	0			4	1110,11,1	Type expected.	p01:jsdoc	let x: A<?() => void>;
+3823	ts	0			5	1110,13,1	Type expected.	p01:jsdoc	let x: (a: ?() => void) => void;
+3823	tsx	0			5	1110,13,1	Type expected.	p01:jsdoc	let x: (a: ?() => void) => void;
+3823	dts	0			5	1110,13,1	Type expected.	p01:jsdoc	let x: (a: ?() => void) => void;
+3824	ts	0			3	1110,10,1	Type expected.	p01:jsdoc	let x: [?() => void];
+3824	tsx	0			3	1110,10,1	Type expected.	p01:jsdoc	let x: [?() => void];
+3824	dts	0			3	1110,10,1	Type expected.	p01:jsdoc	let x: [?() => void];
+3825	ts	0			3	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ?() => void };
+3825	tsx	0			3	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ?() => void };
+3825	dts	0			3	1110,14,1	Type expected.	p01:jsdoc	let x: { a: ?() => void };
+9925	ts	1	1003,20,0	Identifier expected.	0			p01:query gds:query/alias	type X = typeof a.#b;
+9925	tsx	1	1003,20,0	Identifier expected.	0			p01:query gds:query/alias	type X = typeof a.#b;
+9925	dts	1	1003,20,0	Identifier expected.	0			p01:query gds:query/alias	type X = typeof a.#b;
+9926	ts	1	1003,18,0	Identifier expected.	0			p01:query gds:query/var	let x: typeof a.#b;
+9926	tsx	1	1003,18,0	Identifier expected.	0			p01:query gds:query/var	let x: typeof a.#b;
+9926	dts	1	1003,18,0	Identifier expected.	0			p01:query gds:query/var	let x: typeof a.#b;
+9927	ts	1	1003,25,0	Identifier expected.	0			p01:query gds:query/fnparam	function f(a: typeof a.#b) {}
+9927	tsx	1	1003,25,0	Identifier expected.	0			p01:query gds:query/fnparam	function f(a: typeof a.#b) {}
+9927	dts	1	1003,25,0	Identifier expected.	0			p01:query gds:query/fnparam	function f(a: typeof a.#b) {}
+9928	ts	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b { throw 0 }
+9928	tsx	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b { throw 0 }
+9928	dts	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b { throw 0 }
+9929	ts	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b) => 0;
+9929	tsx	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b) => 0;
+9929	dts	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b) => 0;
+9930	ts	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b => 0;
+9930	tsx	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b => 0;
+9930	dts	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b => 0;
+9931	ts	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b;
+9931	tsx	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b;
+9931	dts	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b;
+9932	ts	1	1003,13,0	Identifier expected.	0			p01:query gds:query/targ	f<typeof a.#b>(x);
+9932	tsx	1	1003,13,0	Identifier expected.	0			p01:query gds:query/targ	f<typeof a.#b>(x);
+9932	dts	1	1003,13,0	Identifier expected.	0			p01:query gds:query/targ	f<typeof a.#b>(x);
+9933	ts	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b; }
+9933	tsx	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b; }
+9933	dts	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b; }
+9934	ts	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b>;
+9934	tsx	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b>;
+9934	dts	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b>;
+9935	ts	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b) => void;
+9935	tsx	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b) => void;
+9935	dts	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b) => void;
+9936	ts	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b];
+9936	tsx	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b];
+9936	dts	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b];
+9937	ts	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b };
+9937	tsx	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b };
+9937	dts	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b };
+9938	ts	1	1003,22,0	Identifier expected.	0			p01:query	type X = typeof a.b.#c;
+9938	tsx	1	1003,22,0	Identifier expected.	0			p01:query	type X = typeof a.b.#c;
+9938	dts	1	1003,22,0	Identifier expected.	0			p01:query	type X = typeof a.b.#c;
+9939	ts	1	1003,20,0	Identifier expected.	0			p01:query	let x: typeof a.b.#c;
+9939	tsx	1	1003,20,0	Identifier expected.	0			p01:query	let x: typeof a.b.#c;
+9939	dts	1	1003,20,0	Identifier expected.	0			p01:query	let x: typeof a.b.#c;
+9940	ts	1	1003,27,0	Identifier expected.	0			p01:query	function f(a: typeof a.b.#c) {}
+9940	tsx	1	1003,27,0	Identifier expected.	0			p01:query	function f(a: typeof a.b.#c) {}
+9940	dts	1	1003,27,0	Identifier expected.	0			p01:query	function f(a: typeof a.b.#c) {}
+9941	ts	1	1003,27,0	Identifier expected.	0			p01:query	function f(): typeof a.b.#c { throw 0 }
+9941	tsx	1	1003,27,0	Identifier expected.	0			p01:query	function f(): typeof a.b.#c { throw 0 }
+9941	dts	1	1003,27,0	Identifier expected.	0			p01:query	function f(): typeof a.b.#c { throw 0 }
+9942	ts	1	1003,27,0	Identifier expected.	0			p01:query	const f = (a: typeof a.b.#c) => 0;
+9942	tsx	1	1003,27,0	Identifier expected.	0			p01:query	const f = (a: typeof a.b.#c) => 0;
+9942	dts	1	1003,27,0	Identifier expected.	0			p01:query	const f = (a: typeof a.b.#c) => 0;
+9943	ts	1	1003,28,0	Identifier expected.	0			p01:query	const f = (a): typeof a.b.#c => 0;
+9943	tsx	1	1003,28,0	Identifier expected.	0			p01:query	const f = (a): typeof a.b.#c => 0;
+9943	dts	1	1003,28,0	Identifier expected.	0			p01:query	const f = (a): typeof a.b.#c => 0;
+9944	ts	1	1003,28,0	Identifier expected.	0			p01:query	const v = x as typeof a.b.#c;
+9944	tsx	1	1003,28,0	Identifier expected.	0			p01:query	const v = x as typeof a.b.#c;
+9944	dts	1	1003,28,0	Identifier expected.	0			p01:query	const v = x as typeof a.b.#c;
+9945	ts	1	1003,15,0	Identifier expected.	0			p01:query	f<typeof a.b.#c>(x);
+9945	tsx	1	1003,15,0	Identifier expected.	0			p01:query	f<typeof a.b.#c>(x);
+9945	dts	1	1003,15,0	Identifier expected.	0			p01:query	f<typeof a.b.#c>(x);
+9946	ts	1	1003,26,0	Identifier expected.	0			p01:query	class C { p: typeof a.b.#c; }
+9946	tsx	1	1003,26,0	Identifier expected.	0			p01:query	class C { p: typeof a.b.#c; }
+9946	dts	1	1003,26,0	Identifier expected.	0			p01:query	class C { p: typeof a.b.#c; }
+9947	ts	1	1003,22,0	Identifier expected.	0			p01:query	let x: A<typeof a.b.#c>;
+9947	tsx	1	1003,22,0	Identifier expected.	0			p01:query	let x: A<typeof a.b.#c>;
+9947	dts	1	1003,22,0	Identifier expected.	0			p01:query	let x: A<typeof a.b.#c>;
+9948	ts	1	1003,24,0	Identifier expected.	0			p01:query	let x: (a: typeof a.b.#c) => void;
+9948	tsx	1	1003,24,0	Identifier expected.	0			p01:query	let x: (a: typeof a.b.#c) => void;
+9948	dts	1	1003,24,0	Identifier expected.	0			p01:query	let x: (a: typeof a.b.#c) => void;
+9949	ts	1	1003,21,0	Identifier expected.	0			p01:query	let x: [typeof a.b.#c];
+9949	tsx	1	1003,21,0	Identifier expected.	0			p01:query	let x: [typeof a.b.#c];
+9949	dts	1	1003,21,0	Identifier expected.	0			p01:query	let x: [typeof a.b.#c];
+9950	ts	1	1003,25,0	Identifier expected.	0			p01:query	let x: { a: typeof a.b.#c };
+9950	tsx	1	1003,25,0	Identifier expected.	0			p01:query	let x: { a: typeof a.b.#c };
+9950	dts	1	1003,25,0	Identifier expected.	0			p01:query	let x: { a: typeof a.b.#c };
+9951	ts	1	1003,20,0	Identifier expected.	0			p01:query	type X = typeof a.#b.c;
+9951	tsx	1	1003,20,0	Identifier expected.	0			p01:query	type X = typeof a.#b.c;
+9951	dts	1	1003,20,0	Identifier expected.	0			p01:query	type X = typeof a.#b.c;
+9952	ts	1	1003,18,0	Identifier expected.	0			p01:query	let x: typeof a.#b.c;
+9952	tsx	1	1003,18,0	Identifier expected.	0			p01:query	let x: typeof a.#b.c;
+9952	dts	1	1003,18,0	Identifier expected.	0			p01:query	let x: typeof a.#b.c;
+9953	ts	1	1003,25,0	Identifier expected.	0			p01:query	function f(a: typeof a.#b.c) {}
+9953	tsx	1	1003,25,0	Identifier expected.	0			p01:query	function f(a: typeof a.#b.c) {}
+9953	dts	1	1003,25,0	Identifier expected.	0			p01:query	function f(a: typeof a.#b.c) {}
+9954	ts	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b.c { throw 0 }
+9954	tsx	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b.c { throw 0 }
+9954	dts	1	1003,25,0	Identifier expected.	0			p01:query	function f(): typeof a.#b.c { throw 0 }
+9955	ts	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b.c) => 0;
+9955	tsx	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b.c) => 0;
+9955	dts	1	1003,25,0	Identifier expected.	0			p01:query	const f = (a: typeof a.#b.c) => 0;
+9956	ts	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b.c => 0;
+9956	tsx	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b.c => 0;
+9956	dts	1	1003,26,0	Identifier expected.	0			p01:query	const f = (a): typeof a.#b.c => 0;
+9957	ts	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b.c;
+9957	tsx	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b.c;
+9957	dts	1	1003,26,0	Identifier expected.	0			p01:query	const v = x as typeof a.#b.c;
+9958	ts	1	1003,13,0	Identifier expected.	0			p01:query	f<typeof a.#b.c>(x);
+9958	tsx	1	1003,13,0	Identifier expected.	0			p01:query	f<typeof a.#b.c>(x);
+9958	dts	1	1003,13,0	Identifier expected.	0			p01:query	f<typeof a.#b.c>(x);
+9959	ts	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b.c; }
+9959	tsx	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b.c; }
+9959	dts	1	1003,24,0	Identifier expected.	0			p01:query	class C { p: typeof a.#b.c; }
+9960	ts	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b.c>;
+9960	tsx	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b.c>;
+9960	dts	1	1003,20,0	Identifier expected.	0			p01:query	let x: A<typeof a.#b.c>;
+9961	ts	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b.c) => void;
+9961	tsx	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b.c) => void;
+9961	dts	1	1003,22,0	Identifier expected.	0			p01:query	let x: (a: typeof a.#b.c) => void;
+9962	ts	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b.c];
+9962	tsx	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b.c];
+9962	dts	1	1003,19,0	Identifier expected.	0			p01:query	let x: [typeof a.#b.c];
+9963	ts	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b.c };
+9963	tsx	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b.c };
+9963	dts	1	1003,23,0	Identifier expected.	0			p01:query	let x: { a: typeof a.#b.c };
+11172	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	type X = import("x", { assert: { "resolution-mode": "import" } });
+11172	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	type X = import("x", { assert: { "resolution-mode": "import" } });
+11172	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	type X = import("x", { assert: { "resolution-mode": "import" } });
+11173	ts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: import("x", { assert: { "resolution-mode": "import" } });
+11173	tsx	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: import("x", { assert: { "resolution-mode": "import" } });
+11173	dts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: import("x", { assert: { "resolution-mode": "import" } });
+11174	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(a: import("x", { assert: { "resolution-mode": "import" } })) {}
+11174	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(a: import("x", { assert: { "resolution-mode": "import" } })) {}
+11174	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(a: import("x", { assert: { "resolution-mode": "import" } })) {}
+11175	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 }
+11175	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 }
+11175	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	function f(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 }
+11176	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a: import("x", { assert: { "resolution-mode": "import" } })) => 0;
+11176	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a: import("x", { assert: { "resolution-mode": "import" } })) => 0;
+11176	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a: import("x", { assert: { "resolution-mode": "import" } })) => 0;
+11177	ts	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a): import("x", { assert: { "resolution-mode": "import" } }) => 0;
+11177	tsx	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a): import("x", { assert: { "resolution-mode": "import" } }) => 0;
+11177	dts	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const f = (a): import("x", { assert: { "resolution-mode": "import" } }) => 0;
+11178	ts	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const v = x as import("x", { assert: { "resolution-mode": "import" } });
+11178	tsx	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const v = x as import("x", { assert: { "resolution-mode": "import" } });
+11178	dts	0			1	2880,29,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	const v = x as import("x", { assert: { "resolution-mode": "import" } });
+11179	ts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	f<import("x", { assert: { "resolution-mode": "import" } })>(x);
+11179	tsx	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	f<import("x", { assert: { "resolution-mode": "import" } })>(x);
+11179	dts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	f<import("x", { assert: { "resolution-mode": "import" } })>(x);
+11180	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	class C { p: import("x", { assert: { "resolution-mode": "import" } }); }
+11180	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	class C { p: import("x", { assert: { "resolution-mode": "import" } }); }
+11180	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	class C { p: import("x", { assert: { "resolution-mode": "import" } }); }
+11181	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: A<import("x", { assert: { "resolution-mode": "import" } })>;
+11181	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: A<import("x", { assert: { "resolution-mode": "import" } })>;
+11181	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: A<import("x", { assert: { "resolution-mode": "import" } })>;
+11182	ts	0			1	2880,25,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: (a: import("x", { assert: { "resolution-mode": "import" } })) => void;
+11182	tsx	0			1	2880,25,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: (a: import("x", { assert: { "resolution-mode": "import" } })) => void;
+11182	dts	0			1	2880,25,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: (a: import("x", { assert: { "resolution-mode": "import" } })) => void;
+11183	ts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: [import("x", { assert: { "resolution-mode": "import" } })];
+11183	tsx	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: [import("x", { assert: { "resolution-mode": "import" } })];
+11183	dts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: [import("x", { assert: { "resolution-mode": "import" } })];
+11184	ts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: { a: import("x", { assert: { "resolution-mode": "import" } }) };
+11184	tsx	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: { a: import("x", { assert: { "resolution-mode": "import" } }) };
+11184	dts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p01:import	let x: { a: import("x", { assert: { "resolution-mode": "import" } }) };
+12903	ts	5	1005,17,3	')' expected.	0			p01:fn	type X = (public ...a: A[]) => void;
+12903	tsx	5	1005,17,3	')' expected.	0			p01:fn	type X = (public ...a: A[]) => void;
+12903	dts	5	1005,17,3	')' expected.	0			p01:fn	type X = (public ...a: A[]) => void;
+12904	ts	3	1005,22,3	')' expected.	0			p01:fn	function f(a: (public ...a: A[]) => void) {}
+12904	tsx	3	1005,22,3	')' expected.	0			p01:fn	function f(a: (public ...a: A[]) => void) {}
+12904	dts	3	1005,22,3	')' expected.	0			p01:fn	function f(a: (public ...a: A[]) => void) {}
+12905	ts	7	1005,13,1	',' expected.	0			p01:fn	const f = (a): (public ...a: A[]) => void => 0;
+12905	tsx	7	1005,13,1	',' expected.	0			p01:fn	const f = (a): (public ...a: A[]) => void => 0;
+12905	dts	7	1005,13,1	',' expected.	0			p01:fn	const f = (a): (public ...a: A[]) => void => 0;
+12906	ts	5	1005,10,3	')' expected.	0			p01:fn p03:typeSig	f<(public ...a: A[]) => void>(x);
+12906	tsx	5	1005,10,3	')' expected.	0			p01:fn p03:typeSig	f<(public ...a: A[]) => void>(x);
+12906	dts	5	1005,10,3	')' expected.	0			p01:fn p03:typeSig	f<(public ...a: A[]) => void>(x);
+12907	ts	4	1005,23,3	')' expected.	0			p01:fn	const v = x as (public ...a: A[]) => void;
+12907	tsx	4	1005,23,3	')' expected.	0			p01:fn	const v = x as (public ...a: A[]) => void;
+12907	dts	4	1005,23,3	')' expected.	0			p01:fn	const v = x as (public ...a: A[]) => void;
+12908	ts	3	1005,21,3	')' expected.	0			p01:fn	class C { p: (public ...a: A[]) => void; }
+12908	tsx	3	1005,21,3	')' expected.	0			p01:fn	class C { p: (public ...a: A[]) => void; }
+12908	dts	3	1005,21,3	')' expected.	0			p01:fn	class C { p: (public ...a: A[]) => void; }
+19314	ts	0			2	1109,0,6	Expression expected.	p02:ifaceName	export interface await {}
+19314	tsx	0			2	1109,0,6	Expression expected.	p02:ifaceName	export interface await {}
+19462	ts	0			1	1003,25,5	Identifier expected.	p02:ifaceName	export default interface await {}
+19462	tsx	0			1	1003,25,5	Identifier expected.	p02:ifaceName	export default interface await {}
+19787	ts	0			3	1109,0,6	Expression expected.	p02:aliasName	export type await = 1
+19787	tsx	0			3	1109,0,6	Expression expected.	p02:aliasName	export type await = 1
+20617	ts	4	1005,15,3	')' expected.	0			p03:typeSig	let x: (public ...a: A[]) => void;
+20617	tsx	4	1005,15,3	')' expected.	0			p03:typeSig	let x: (public ...a: A[]) => void;
+20617	dts	4	1005,15,3	')' expected.	0			p03:typeSig	let x: (public ...a: A[]) => void;
+20623	ts	4	1110,17,3	Type expected.	0			p03:typeSig	let x: (readonly ...a) => void;
+20623	tsx	4	1110,17,3	Type expected.	0			p03:typeSig	let x: (readonly ...a) => void;
+20623	dts	4	1110,17,3	Type expected.	0			p03:typeSig	let x: (readonly ...a) => void;
+22034	ts	4	1005,20,3	')' expected.	0			p03:typeSig	let x: A | ((public ...a: A[]) => void);
+22034	tsx	4	1005,20,3	')' expected.	0			p03:typeSig	let x: A | ((public ...a: A[]) => void);
+22034	dts	4	1005,20,3	')' expected.	0			p03:typeSig	let x: A | ((public ...a: A[]) => void);
+22040	ts	4	1110,22,3	Type expected.	0			p03:typeSig	let x: A | ((readonly ...a) => void);
+22040	tsx	4	1110,22,3	Type expected.	0			p03:typeSig	let x: A | ((readonly ...a) => void);
+22040	dts	4	1110,22,3	Type expected.	0			p03:typeSig	let x: A | ((readonly ...a) => void);
+22295	ts	5	1005,12,3	')' expected.	0			p03:typeSig	f<(readonly ...a) => void>(x);
+22295	tsx	5	1005,12,3	')' expected.	0			p03:typeSig	f<(readonly ...a) => void>(x);
+22295	dts	5	1005,12,3	')' expected.	0			p03:typeSig	f<(readonly ...a) => void>(x);
+22605	ts	5	1005,23,3	')' expected.	0			p03:typeSig	const f = (): ((public ...a: A[]) => void) => 0;
+22605	tsx	5	1005,23,3	')' expected.	0			p03:typeSig	const f = (): ((public ...a: A[]) => void) => 0;
+22605	dts	5	1005,23,3	')' expected.	0			p03:typeSig	const f = (): ((public ...a: A[]) => void) => 0;
+22611	ts	5	1110,25,3	Type expected.	0			p03:typeSig	const f = (): ((readonly ...a) => void) => 0;
+22611	tsx	5	1110,25,3	Type expected.	0			p03:typeSig	const f = (): ((readonly ...a) => void) => 0;
+22611	dts	5	1110,25,3	Type expected.	0			p03:typeSig	const f = (): ((readonly ...a) => void) => 0;
+53831	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:importType otg:imports	import type A from "x" assert { type: "json" };
+53831	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:importType otg:imports	import type A from "x" assert { type: "json" };
+53831	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:importType otg:imports	import type A from "x" assert { type: "json" };
+53925	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:exportType	export type { A } from "x" assert { a: "b" };
+53925	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:exportType	export type { A } from "x" assert { a: "b" };
+53925	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:exportType	export type { A } from "x" assert { a: "b" };
+54403	ts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert { type: "json" };
+54403	tsx	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert { type: "json" };
+54403	dts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert { type: "json" };
+54407	ts	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import "x" assert { type: "json" };
+54407	tsx	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import "x" assert { type: "json" };
+54407	dts	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import "x" assert { type: "json" };
+54432	ts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert\n{ type: "json" };
+54432	tsx	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert\n{ type: "json" };
+54432	dts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	import A from "x" assert\n{ type: "json" };
+54446	ts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	export { A } from "x" assert { type: "json" };
+54446	tsx	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	export { A } from "x" assert { type: "json" };
+54446	dts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p07:attributes	export { A } from "x" assert { type: "json" };
+62889	ts	0			1	1110,19,1	Type expected.	p11:form gds:jsdoc/param	class C { @d m(a: ?) {} }
+62889	tsx	0			1	1110,19,1	Type expected.	p11:form gds:jsdoc/param	class C { @d m(a: ?) {} }
+62889	dts	0			1	1110,19,1	Type expected.	p11:form gds:jsdoc/param	class C { @d m(a: ?) {} }
+62939	ts	0			4	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(A): B; }
+62939	tsx	0			4	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(A): B; }
+62939	dts	0			4	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(A): B; }
+62940	ts	0			5	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(A): B) {} }
+62940	tsx	0			5	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(A): B) {} }
+62940	dts	0			5	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(A): B) {} }
+62941	ts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(A): B { throw 0 } }
+62941	tsx	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(A): B { throw 0 } }
+62941	dts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(A): B { throw 0 } }
+62942	ts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(new: A); }
+62942	tsx	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(new: A); }
+62942	dts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(new: A); }
+62943	ts	0			6	1005,26,1	',' expected.	p11:form gds:jsdoc/param	class C { @d m(a: function(new: A)) {} }
+62943	tsx	0			6	1005,26,1	',' expected.	p11:form gds:jsdoc/param	class C { @d m(a: function(new: A)) {} }
+62943	dts	0			6	1005,26,1	',' expected.	p11:form gds:jsdoc/param	class C { @d m(a: function(new: A)) {} }
+62944	ts	0			5	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(new: A) { throw 0 } }
+62944	tsx	0			5	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(new: A) { throw 0 } }
+62944	dts	0			5	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(new: A) { throw 0 } }
+62945	ts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(this: A); }
+62945	tsx	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(this: A); }
+62945	dts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(this: A); }
+62946	ts	0			3	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(this: A)) {} }
+62946	tsx	0			3	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(this: A)) {} }
+62946	dts	0			3	1005,26,1	',' expected.	p11:form	class C { @d m(a: function(this: A)) {} }
+62947	ts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(this: A) { throw 0 } }
+62947	tsx	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(this: A) { throw 0 } }
+62947	dts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function(this: A) { throw 0 } }
+62948	ts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(); }
+62948	tsx	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(); }
+62948	dts	0			2	1441,24,1	Cannot start a function call in a type annotation.	p11:form	class C { @d p: function(); }
+62949	ts	0			4	1005,26,1	',' expected.	p11:form	class C { @d m(a: function()) {} }
+62949	tsx	0			4	1005,26,1	',' expected.	p11:form	class C { @d m(a: function()) {} }
+62949	dts	0			4	1005,26,1	',' expected.	p11:form	class C { @d m(a: function()) {} }
+62950	ts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function() { throw 0 } }
+62950	tsx	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function() { throw 0 } }
+62950	dts	0			3	1144,26,1	'{' or ';' expected.	p11:form	class C { @d m(): function() { throw 0 } }
+62978	ts	0			2	1110,18,1	Type expected.	p11:form	class C { @d p: ?() => void; }
+62978	tsx	0			2	1110,18,1	Type expected.	p11:form	class C { @d p: ?() => void; }
+62978	dts	0			2	1110,18,1	Type expected.	p11:form	class C { @d p: ?() => void; }
+62979	ts	0			3	1110,20,1	Type expected.	p11:form	class C { @d m(a: ?() => void) {} }
+62979	tsx	0			3	1110,20,1	Type expected.	p11:form	class C { @d m(a: ?() => void) {} }
+62979	dts	0			3	1110,20,1	Type expected.	p11:form	class C { @d m(a: ?() => void) {} }
+62980	ts	0			5	1110,20,1	Type expected.	p11:form	class C { @d m(): ?() => void { throw 0 } }
+62980	tsx	0			5	1110,20,1	Type expected.	p11:form	class C { @d m(): ?() => void { throw 0 } }
+62980	dts	0			5	1110,20,1	Type expected.	p11:form	class C { @d m(): ?() => void { throw 0 } }
+64898	ts	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b; }
+64898	tsx	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b; }
+64898	dts	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b; }
+64899	ts	1	1003,29,0	Identifier expected.	0			p11:form gds:query/param	class C { @d m(a: typeof a.#b) {} }
+64899	tsx	1	1003,29,0	Identifier expected.	0			p11:form gds:query/param	class C { @d m(a: typeof a.#b) {} }
+64899	dts	1	1003,29,0	Identifier expected.	0			p11:form gds:query/param	class C { @d m(a: typeof a.#b) {} }
+64900	ts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b { throw 0 } }
+64900	tsx	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b { throw 0 } }
+64900	dts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b { throw 0 } }
+64901	ts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.b.#c; }
+64901	tsx	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.b.#c; }
+64901	dts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.b.#c; }
+64902	ts	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.b.#c) {} }
+64902	tsx	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.b.#c) {} }
+64902	dts	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.b.#c) {} }
+64903	ts	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.b.#c { throw 0 } }
+64903	tsx	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.b.#c { throw 0 } }
+64903	dts	1	1003,31,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.b.#c { throw 0 } }
+64904	ts	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b.c; }
+64904	tsx	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b.c; }
+64904	dts	1	1003,27,0	Identifier expected.	0			p11:form	class C { @d p: typeof a.#b.c; }
+64905	ts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.#b.c) {} }
+64905	tsx	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.#b.c) {} }
+64905	dts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(a: typeof a.#b.c) {} }
+64906	ts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b.c { throw 0 } }
+64906	tsx	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b.c { throw 0 } }
+64906	dts	1	1003,29,0	Identifier expected.	0			p11:form	class C { @d m(): typeof a.#b.c { throw 0 } }
+65186	ts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d p: import("x", { assert: { "resolution-mode": "import" } }); }
+65186	tsx	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d p: import("x", { assert: { "resolution-mode": "import" } }); }
+65186	dts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d p: import("x", { assert: { "resolution-mode": "import" } }); }
+65187	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(a: import("x", { assert: { "resolution-mode": "import" } })) {} }
+65187	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(a: import("x", { assert: { "resolution-mode": "import" } })) {} }
+65187	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(a: import("x", { assert: { "resolution-mode": "import" } })) {} }
+65188	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 } }
+65188	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 } }
+65188	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	p11:form	class C { @d m(): import("x", { assert: { "resolution-mode": "import" } }) { throw 0 } }
+65873	ts	3	1005,24,3	')' expected.	0			p11:form	class C { @d p: (public ...a: A[]) => void; }
+65873	tsx	3	1005,24,3	')' expected.	0			p11:form	class C { @d p: (public ...a: A[]) => void; }
+65873	dts	3	1005,24,3	')' expected.	0			p11:form	class C { @d p: (public ...a: A[]) => void; }
+65874	ts	5	1005,26,3	')' expected.	0			p11:form	class C { @d m(a: (public ...a: A[]) => void) {} }
+65874	tsx	5	1005,26,3	')' expected.	0			p11:form	class C { @d m(a: (public ...a: A[]) => void) {} }
+65874	dts	5	1005,26,3	')' expected.	0			p11:form	class C { @d m(a: (public ...a: A[]) => void) {} }
+65875	ts	6	1005,26,3	')' expected.	0			p11:form	class C { @d m(): (public ...a: A[]) => void { throw 0 } }
+65875	tsx	6	1005,26,3	')' expected.	0			p11:form	class C { @d m(): (public ...a: A[]) => void { throw 0 } }
+65875	dts	6	1005,26,3	')' expected.	0			p11:form	class C { @d m(): (public ...a: A[]) => void { throw 0 } }
+81963	ts	1	1005,17,1	';' expected.	0			td01:word.function.qualifier@alias	type X = function.A;
+81963	tsx	1	1005,17,1	';' expected.	0			td01:word.function.qualifier@alias	type X = function.A;
+81963	dts	1	1005,17,1	';' expected.	0			td01:word.function.qualifier@alias	type X = function.A;
+81964	ts	1	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.qualifier@prop	class K { @d p: function.A; }
+81964	tsx	1	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.qualifier@prop	class K { @d p: function.A; }
+81964	dts	1	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.qualifier@prop	class K { @d p: function.A; }
+81965	ts	2	1005,17,1	';' expected.	0			td01:word.function.targs@alias	type X = function<A>;
+81965	tsx	3	1005,17,1	';' expected.	0			td01:word.function.targs@alias	type X = function<A>;
+81965	dts	2	1005,17,1	';' expected.	0			td01:word.function.targs@alias	type X = function<A>;
+81966	ts	3	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.targs@prop	class K { @d p: function<A>; }
+81966	tsx	4	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.targs@prop	class K { @d p: function<A>; }
+81966	dts	3	1442,24,1	Expected '=' for property initializer.	0			td01:word.function.targs@prop	class K { @d p: function<A>; }
+82531	ts	1	1003,20,0	Identifier expected.	0			td01:query.private@alias	type X = typeof x.#p;
+82531	tsx	1	1003,20,0	Identifier expected.	0			td01:query.private@alias	type X = typeof x.#p;
+82531	dts	1	1003,20,0	Identifier expected.	0			td01:query.private@alias	type X = typeof x.#p;
+82532	ts	1	1003,18,0	Identifier expected.	0			td01:query.private@var	let x: typeof x.#p;
+82532	tsx	1	1003,18,0	Identifier expected.	0			td01:query.private@var	let x: typeof x.#p;
+82532	dts	1	1003,18,0	Identifier expected.	0			td01:query.private@var	let x: typeof x.#p;
+82533	ts	1	1003,25,0	Identifier expected.	0			td01:query.private@param	function f(x: typeof x.#p) {}
+82533	tsx	1	1003,25,0	Identifier expected.	0			td01:query.private@param	function f(x: typeof x.#p) {}
+82533	dts	1	1003,25,0	Identifier expected.	0			td01:query.private@param	function f(x: typeof x.#p) {}
+82534	ts	1	1003,31,0	Identifier expected.	0			td01:query.private@ret	function f(x: any): typeof x.#p { return null as any }
+82534	tsx	1	1003,31,0	Identifier expected.	0			td01:query.private@ret	function f(x: any): typeof x.#p { return null as any }
+82534	dts	1	1003,31,0	Identifier expected.	0			td01:query.private@ret	function f(x: any): typeof x.#p { return null as any }
+82535	ts	1	1003,23,0	Identifier expected.	0			td01:query.private@arrowp	let f = (x: typeof x.#p) => x;
+82535	tsx	1	1003,23,0	Identifier expected.	0			td01:query.private@arrowp	let f = (x: typeof x.#p) => x;
+82535	dts	1	1003,23,0	Identifier expected.	0			td01:query.private@arrowp	let f = (x: typeof x.#p) => x;
+82536	ts	1	1003,29,0	Identifier expected.	0			td01:query.private@arrowr	let f = (x: any): typeof x.#p => x;
+82536	tsx	1	1003,29,0	Identifier expected.	0			td01:query.private@arrowr	let f = (x: any): typeof x.#p => x;
+82536	dts	1	1003,29,0	Identifier expected.	0			td01:query.private@arrowr	let f = (x: any): typeof x.#p => x;
+82537	ts	1	1003,24,0	Identifier expected.	0			td01:query.private@as	let v = x as typeof x.#p;
+82537	tsx	1	1003,24,0	Identifier expected.	0			td01:query.private@as	let v = x as typeof x.#p;
+82537	dts	1	1003,24,0	Identifier expected.	0			td01:query.private@as	let v = x as typeof x.#p;
+82538	ts	1	1003,31,0	Identifier expected.	0			td01:query.private@satis	let v = x satisfies typeof x.#p;
+82538	tsx	1	1003,31,0	Identifier expected.	0			td01:query.private@satis	let v = x satisfies typeof x.#p;
+82538	dts	1	1003,31,0	Identifier expected.	0			td01:query.private@satis	let v = x satisfies typeof x.#p;
+82539	ts	1	1003,20,0	Identifier expected.	0			td01:query.private@angle	let v = <typeof x.#p>x;
+82539	dts	1	1003,20,0	Identifier expected.	0			td01:query.private@angle	let v = <typeof x.#p>x;
+82540	ts	1	1003,13,0	Identifier expected.	0			td01:query.private@targ	f<typeof x.#p>(x);
+82540	tsx	1	1003,13,0	Identifier expected.	0			td01:query.private@targ	f<typeof x.#p>(x);
+82540	dts	1	1003,13,0	Identifier expected.	0			td01:query.private@targ	f<typeof x.#p>(x);
+82541	ts	2	1003,32,0	Identifier expected.	0			td01:query.private@tparam	function f<U extends typeof x.#p, V = typeof x.#p>() {}
+82541	tsx	2	1003,32,0	Identifier expected.	0			td01:query.private@tparam	function f<U extends typeof x.#p, V = typeof x.#p>() {}
+82541	dts	2	1003,32,0	Identifier expected.	0			td01:query.private@tparam	function f<U extends typeof x.#p, V = typeof x.#p>() {}
+82542	ts	1	1003,27,0	Identifier expected.	0			td01:query.private@prop	class K { @d p: typeof x.#p; }
+82542	tsx	1	1003,27,0	Identifier expected.	0			td01:query.private@prop	class K { @d p: typeof x.#p; }
+82542	dts	1	1003,27,0	Identifier expected.	0			td01:query.private@prop	class K { @d p: typeof x.#p; }
+82543	ts	1	1003,29,0	Identifier expected.	0			td01:query.private@mparam	class K { @d m(x: typeof x.#p) {} }
+82543	tsx	1	1003,29,0	Identifier expected.	0			td01:query.private@mparam	class K { @d m(x: typeof x.#p) {} }
+82543	dts	1	1003,29,0	Identifier expected.	0			td01:query.private@mparam	class K { @d m(x: typeof x.#p) {} }
+82544	ts	1	1003,35,0	Identifier expected.	0			td01:query.private@mret	class K { @d m(x: any): typeof x.#p { return null as any } }
+82544	tsx	1	1003,35,0	Identifier expected.	0			td01:query.private@mret	class K { @d m(x: any): typeof x.#p { return null as any } }
+82544	dts	1	1003,35,0	Identifier expected.	0			td01:query.private@mret	class K { @d m(x: any): typeof x.#p { return null as any } }
+82545	ts	1	1003,23,0	Identifier expected.	0			td01:query.this-private@alias	type X = typeof this.#p;
+82545	tsx	1	1003,23,0	Identifier expected.	0			td01:query.this-private@alias	type X = typeof this.#p;
+82545	dts	1	1003,23,0	Identifier expected.	0			td01:query.this-private@alias	type X = typeof this.#p;
+82546	ts	1	1003,21,0	Identifier expected.	0			td01:query.this-private@var	let x: typeof this.#p;
+82546	tsx	1	1003,21,0	Identifier expected.	0			td01:query.this-private@var	let x: typeof this.#p;
+82546	dts	1	1003,21,0	Identifier expected.	0			td01:query.this-private@var	let x: typeof this.#p;
+82547	ts	1	1003,28,0	Identifier expected.	0			td01:query.this-private@param	function f(x: typeof this.#p) {}
+82547	tsx	1	1003,28,0	Identifier expected.	0			td01:query.this-private@param	function f(x: typeof this.#p) {}
+82547	dts	1	1003,28,0	Identifier expected.	0			td01:query.this-private@param	function f(x: typeof this.#p) {}
+82548	ts	1	1003,34,0	Identifier expected.	0			td01:query.this-private@ret	function f(x: any): typeof this.#p { return null as any }
+82548	tsx	1	1003,34,0	Identifier expected.	0			td01:query.this-private@ret	function f(x: any): typeof this.#p { return null as any }
+82548	dts	1	1003,34,0	Identifier expected.	0			td01:query.this-private@ret	function f(x: any): typeof this.#p { return null as any }
+82549	ts	1	1003,26,0	Identifier expected.	0			td01:query.this-private@arrowp	let f = (x: typeof this.#p) => x;
+82549	tsx	1	1003,26,0	Identifier expected.	0			td01:query.this-private@arrowp	let f = (x: typeof this.#p) => x;
+82549	dts	1	1003,26,0	Identifier expected.	0			td01:query.this-private@arrowp	let f = (x: typeof this.#p) => x;
+82550	ts	1	1003,32,0	Identifier expected.	0			td01:query.this-private@arrowr	let f = (x: any): typeof this.#p => x;
+82550	tsx	1	1003,32,0	Identifier expected.	0			td01:query.this-private@arrowr	let f = (x: any): typeof this.#p => x;
+82550	dts	1	1003,32,0	Identifier expected.	0			td01:query.this-private@arrowr	let f = (x: any): typeof this.#p => x;
+82551	ts	1	1003,27,0	Identifier expected.	0			td01:query.this-private@as	let v = x as typeof this.#p;
+82551	tsx	1	1003,27,0	Identifier expected.	0			td01:query.this-private@as	let v = x as typeof this.#p;
+82551	dts	1	1003,27,0	Identifier expected.	0			td01:query.this-private@as	let v = x as typeof this.#p;
+82552	ts	1	1003,34,0	Identifier expected.	0			td01:query.this-private@satis	let v = x satisfies typeof this.#p;
+82552	tsx	1	1003,34,0	Identifier expected.	0			td01:query.this-private@satis	let v = x satisfies typeof this.#p;
+82552	dts	1	1003,34,0	Identifier expected.	0			td01:query.this-private@satis	let v = x satisfies typeof this.#p;
+82553	ts	1	1003,23,0	Identifier expected.	0			td01:query.this-private@angle	let v = <typeof this.#p>x;
+82553	dts	1	1003,23,0	Identifier expected.	0			td01:query.this-private@angle	let v = <typeof this.#p>x;
+82554	ts	1	1003,16,0	Identifier expected.	0			td01:query.this-private@targ	f<typeof this.#p>(x);
+82554	tsx	1	1003,16,0	Identifier expected.	0			td01:query.this-private@targ	f<typeof this.#p>(x);
+82554	dts	1	1003,16,0	Identifier expected.	0			td01:query.this-private@targ	f<typeof this.#p>(x);
+82555	ts	2	1003,35,0	Identifier expected.	0			td01:query.this-private@tparam	function f<U extends typeof this.#p, V = typeof this.#p>() {}
+82555	tsx	2	1003,35,0	Identifier expected.	0			td01:query.this-private@tparam	function f<U extends typeof this.#p, V = typeof this.#p>() {}
+82555	dts	2	1003,35,0	Identifier expected.	0			td01:query.this-private@tparam	function f<U extends typeof this.#p, V = typeof this.#p>() {}
+82556	ts	1	1003,30,0	Identifier expected.	0			td01:query.this-private@prop	class K { @d p: typeof this.#p; }
+82556	tsx	1	1003,30,0	Identifier expected.	0			td01:query.this-private@prop	class K { @d p: typeof this.#p; }
+82556	dts	1	1003,30,0	Identifier expected.	0			td01:query.this-private@prop	class K { @d p: typeof this.#p; }
+82557	ts	1	1003,32,0	Identifier expected.	0			td01:query.this-private@mparam	class K { @d m(x: typeof this.#p) {} }
+82557	tsx	1	1003,32,0	Identifier expected.	0			td01:query.this-private@mparam	class K { @d m(x: typeof this.#p) {} }
+82557	dts	1	1003,32,0	Identifier expected.	0			td01:query.this-private@mparam	class K { @d m(x: typeof this.#p) {} }
+82558	ts	1	1003,38,0	Identifier expected.	0			td01:query.this-private@mret	class K { @d m(x: any): typeof this.#p { return null as any } }
+82558	tsx	1	1003,38,0	Identifier expected.	0			td01:query.this-private@mret	class K { @d m(x: any): typeof this.#p { return null as any } }
+82558	dts	1	1003,38,0	Identifier expected.	0			td01:query.this-private@mret	class K { @d m(x: any): typeof this.#p { return null as any } }
+83142	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@alias	type X = import("m", { assert: { "resolution-mode": "import" } });
+83142	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@alias	type X = import("m", { assert: { "resolution-mode": "import" } });
+83142	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@alias	type X = import("m", { assert: { "resolution-mode": "import" } });
+83143	ts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@var	let x: import("m", { assert: { "resolution-mode": "import" } });
+83143	tsx	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@var	let x: import("m", { assert: { "resolution-mode": "import" } });
+83143	dts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@var	let x: import("m", { assert: { "resolution-mode": "import" } });
+83144	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@param	function f(x: import("m", { assert: { "resolution-mode": "import" } })) {}
+83144	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@param	function f(x: import("m", { assert: { "resolution-mode": "import" } })) {}
+83144	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@param	function f(x: import("m", { assert: { "resolution-mode": "import" } })) {}
+83145	ts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@ret	function f(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any }
+83145	tsx	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@ret	function f(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any }
+83145	dts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@ret	function f(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any }
+83146	ts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowp	let f = (x: import("m", { assert: { "resolution-mode": "import" } })) => x;
+83146	tsx	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowp	let f = (x: import("m", { assert: { "resolution-mode": "import" } })) => x;
+83146	dts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowp	let f = (x: import("m", { assert: { "resolution-mode": "import" } })) => x;
+83147	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowr	let f = (x: any): import("m", { assert: { "resolution-mode": "import" } }) => x;
+83147	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowr	let f = (x: any): import("m", { assert: { "resolution-mode": "import" } }) => x;
+83147	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@arrowr	let f = (x: any): import("m", { assert: { "resolution-mode": "import" } }) => x;
+83148	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@as	let v = x as import("m", { assert: { "resolution-mode": "import" } });
+83148	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@as	let v = x as import("m", { assert: { "resolution-mode": "import" } });
+83148	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@as	let v = x as import("m", { assert: { "resolution-mode": "import" } });
+83149	ts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@satis	let v = x satisfies import("m", { assert: { "resolution-mode": "import" } });
+83149	tsx	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@satis	let v = x satisfies import("m", { assert: { "resolution-mode": "import" } });
+83149	dts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@satis	let v = x satisfies import("m", { assert: { "resolution-mode": "import" } });
+83150	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@angle	let v = <import("m", { assert: { "resolution-mode": "import" } })>x;
+83150	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@angle	let v = <import("m", { assert: { "resolution-mode": "import" } })>x;
+83151	ts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@targ	f<import("m", { assert: { "resolution-mode": "import" } })>(x);
+83151	tsx	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@targ	f<import("m", { assert: { "resolution-mode": "import" } })>(x);
+83151	dts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@targ	f<import("m", { assert: { "resolution-mode": "import" } })>(x);
+83152	ts	0			2	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@tparam	function f<U extends import("m", { assert: { "resolution-mode": "import" } }), V = import("m", { assert: { "resolution-mode": "import" } })>() {}
+83152	tsx	0			2	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@tparam	function f<U extends import("m", { assert: { "resolution-mode": "import" } }), V = import("m", { assert: { "resolution-mode": "import" } })>() {}
+83152	dts	0			2	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@tparam	function f<U extends import("m", { assert: { "resolution-mode": "import" } }), V = import("m", { assert: { "resolution-mode": "import" } })>() {}
+83153	ts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@prop	class K { @d p: import("m", { assert: { "resolution-mode": "import" } }); }
+83153	tsx	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@prop	class K { @d p: import("m", { assert: { "resolution-mode": "import" } }); }
+83153	dts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@prop	class K { @d p: import("m", { assert: { "resolution-mode": "import" } }); }
+83154	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mparam	class K { @d m(x: import("m", { assert: { "resolution-mode": "import" } })) {} }
+83154	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mparam	class K { @d m(x: import("m", { assert: { "resolution-mode": "import" } })) {} }
+83154	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mparam	class K { @d m(x: import("m", { assert: { "resolution-mode": "import" } })) {} }
+83155	ts	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mret	class K { @d m(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any } }
+83155	tsx	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mret	class K { @d m(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any } }
+83155	dts	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td01:import.assert@mret	class K { @d m(x: any): import("m", { assert: { "resolution-mode": "import" } }) { return null as any } }
+85287	ts	0			1	1110,15,1	Type expected.	td01:postfix.question-alone@param	function f(x: ?) {}
+85287	tsx	0			1	1110,15,1	Type expected.	td01:postfix.question-alone@param	function f(x: ?) {}
+85287	dts	0			1	1110,15,1	Type expected.	td01:postfix.question-alone@param	function f(x: ?) {}
+85289	ts	0			1	1110,13,1	Type expected.	td01:postfix.question-alone@arrowp	let f = (x: ?) => x;
+85289	tsx	0			1	1110,13,1	Type expected.	td01:postfix.question-alone@arrowp	let f = (x: ?) => x;
+85289	dts	0			1	1110,13,1	Type expected.	td01:postfix.question-alone@arrowp	let f = (x: ?) => x;
+85293	ts	0			1	1110,10,1	Type expected.	td01:postfix.question-alone@angle gds:jsdoc/angle	let v = <?>x;
+85293	dts	0			1	1110,10,1	Type expected.	td01:postfix.question-alone@angle gds:jsdoc/angle	let v = <?>x;
+85294	ts	0			2	1110,22,1	Type expected.	td01:postfix.question-alone@tparam	function f<U extends ?, V = ?>() {}
+85294	tsx	0			2	1110,22,1	Type expected.	td01:postfix.question-alone@tparam	function f<U extends ?, V = ?>() {}
+85294	dts	0			2	1110,22,1	Type expected.	td01:postfix.question-alone@tparam	function f<U extends ?, V = ?>() {}
+85296	ts	0			1	1110,19,1	Type expected.	td01:postfix.question-alone@mparam	class K { @d m(x: ?) {} }
+85296	tsx	0			1	1110,19,1	Type expected.	td01:postfix.question-alone@mparam	class K { @d m(x: ?) {} }
+85296	dts	0			1	1110,19,1	Type expected.	td01:postfix.question-alone@mparam	class K { @d m(x: ?) {} }
+85460	ts	0			4	1005,22,1	',' expected.	td01:postfix.jsdoc-function@param	function f(x: function(A): B) {}
+85460	tsx	0			4	1005,22,1	',' expected.	td01:postfix.jsdoc-function@param	function f(x: function(A): B) {}
+85460	dts	0			4	1005,22,1	',' expected.	td01:postfix.jsdoc-function@param	function f(x: function(A): B) {}
+85461	ts	0			2	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function@ret	function f(x: any): function(A): B { return null as any }
+85461	tsx	0			2	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function@ret	function f(x: any): function(A): B { return null as any }
+85461	dts	0			2	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function@ret	function f(x: any): function(A): B { return null as any }
+85462	ts	0			5	1005,20,1	',' expected.	td01:postfix.jsdoc-function@arrowp	let f = (x: function(A): B) => x;
+85462	tsx	0			5	1005,20,1	',' expected.	td01:postfix.jsdoc-function@arrowp	let f = (x: function(A): B) => x;
+85462	dts	0			5	1005,20,1	',' expected.	td01:postfix.jsdoc-function@arrowp	let f = (x: function(A): B) => x;
+85463	ts	0			1	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function@arrowr	let f = (x: any): function(A): B => x;
+85463	tsx	0			1	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function@arrowr	let f = (x: any): function(A): B => x;
+85463	dts	0			1	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function@arrowr	let f = (x: any): function(A): B => x;
+85464	ts	0			2	1005,21,1	',' expected.	td01:postfix.jsdoc-function@as	let v = x as function(A): B;
+85464	tsx	0			2	1005,21,1	',' expected.	td01:postfix.jsdoc-function@as	let v = x as function(A): B;
+85464	dts	0			2	1005,21,1	',' expected.	td01:postfix.jsdoc-function@as	let v = x as function(A): B;
+85465	ts	0			2	1005,28,1	',' expected.	td01:postfix.jsdoc-function@satis	let v = x satisfies function(A): B;
+85465	tsx	0			2	1005,28,1	',' expected.	td01:postfix.jsdoc-function@satis	let v = x satisfies function(A): B;
+85465	dts	0			2	1005,28,1	',' expected.	td01:postfix.jsdoc-function@satis	let v = x satisfies function(A): B;
+85466	ts	0			3	1005,17,1	'>' expected.	td01:postfix.jsdoc-function@angle	let v = <function(A): B>x;
+85466	dts	0			3	1005,17,1	'>' expected.	td01:postfix.jsdoc-function@angle	let v = <function(A): B>x;
+85467	ts	0			5	1005,29,1	'>' expected.	td01:postfix.jsdoc-function@tparam	function f<U extends function(A): B, V = function(A): B>() {}
+85467	tsx	0			5	1005,29,1	'>' expected.	td01:postfix.jsdoc-function@tparam	function f<U extends function(A): B, V = function(A): B>() {}
+85467	dts	0			5	1005,29,1	'>' expected.	td01:postfix.jsdoc-function@tparam	function f<U extends function(A): B, V = function(A): B>() {}
+85468	ts	0			4	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function@prop	class K { @d p: function(A): B; }
+85468	tsx	0			4	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function@prop	class K { @d p: function(A): B; }
+85468	dts	0			4	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function@prop	class K { @d p: function(A): B; }
+85469	ts	0			5	1005,26,1	',' expected.	td01:postfix.jsdoc-function@mparam	class K { @d m(x: function(A): B) {} }
+85469	tsx	0			5	1005,26,1	',' expected.	td01:postfix.jsdoc-function@mparam	class K { @d m(x: function(A): B) {} }
+85469	dts	0			5	1005,26,1	',' expected.	td01:postfix.jsdoc-function@mparam	class K { @d m(x: function(A): B) {} }
+85470	ts	0			3	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function@mret	class K { @d m(x: any): function(A): B { return null as any } }
+85470	tsx	0			3	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function@mret	class K { @d m(x: any): function(A): B { return null as any } }
+85470	dts	0			3	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function@mret	class K { @d m(x: any): function(A): B { return null as any } }
+85471	ts	0			5	1005,17,1	';' expected.	td01:postfix.jsdoc-function-new@alias	type X = function(new: A): B;
+85471	tsx	0			5	1005,17,1	';' expected.	td01:postfix.jsdoc-function-new@alias	type X = function(new: A): B;
+85471	dts	0			5	1005,17,1	';' expected.	td01:postfix.jsdoc-function-new@alias	type X = function(new: A): B;
+85472	ts	0			5	1005,15,1	',' expected.	td01:postfix.jsdoc-function-new@var	let x: function(new: A): B;
+85472	tsx	0			5	1005,15,1	',' expected.	td01:postfix.jsdoc-function-new@var	let x: function(new: A): B;
+85472	dts	0			5	1005,15,1	',' expected.	td01:postfix.jsdoc-function-new@var	let x: function(new: A): B;
+85473	ts	0			7	1005,22,1	',' expected.	td01:postfix.jsdoc-function-new@param	function f(x: function(new: A): B) {}
+85473	tsx	0			7	1005,22,1	',' expected.	td01:postfix.jsdoc-function-new@param	function f(x: function(new: A): B) {}
+85473	dts	0			7	1005,22,1	',' expected.	td01:postfix.jsdoc-function-new@param	function f(x: function(new: A): B) {}
+85474	ts	0			6	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@ret	function f(x: any): function(new: A): B { return null as any }
+85474	tsx	0			6	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@ret	function f(x: any): function(new: A): B { return null as any }
+85474	dts	0			6	1144,28,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@ret	function f(x: any): function(new: A): B { return null as any }
+85475	ts	0			8	1005,20,1	',' expected.	td01:postfix.jsdoc-function-new@arrowp	let f = (x: function(new: A): B) => x;
+85475	tsx	0			8	1005,20,1	',' expected.	td01:postfix.jsdoc-function-new@arrowp	let f = (x: function(new: A): B) => x;
+85475	dts	0			8	1005,20,1	',' expected.	td01:postfix.jsdoc-function-new@arrowp	let f = (x: function(new: A): B) => x;
+85476	ts	0			5	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function-new@arrowr	let f = (x: any): function(new: A): B => x;
+85476	tsx	0			5	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function-new@arrowr	let f = (x: any): function(new: A): B => x;
+85476	dts	0			5	1005,26,1	'=>' expected.	td01:postfix.jsdoc-function-new@arrowr	let f = (x: any): function(new: A): B => x;
+85477	ts	0			5	1005,21,1	',' expected.	td01:postfix.jsdoc-function-new@as	let v = x as function(new: A): B;
+85477	tsx	0			5	1005,21,1	',' expected.	td01:postfix.jsdoc-function-new@as	let v = x as function(new: A): B;
+85477	dts	0			5	1005,21,1	',' expected.	td01:postfix.jsdoc-function-new@as	let v = x as function(new: A): B;
+85478	ts	0			5	1005,28,1	',' expected.	td01:postfix.jsdoc-function-new@satis	let v = x satisfies function(new: A): B;
+85478	tsx	0			5	1005,28,1	',' expected.	td01:postfix.jsdoc-function-new@satis	let v = x satisfies function(new: A): B;
+85478	dts	0			5	1005,28,1	',' expected.	td01:postfix.jsdoc-function-new@satis	let v = x satisfies function(new: A): B;
+85479	ts	0			5	1005,17,1	'>' expected.	td01:postfix.jsdoc-function-new@angle	let v = <function(new: A): B>x;
+85479	dts	0			5	1005,17,1	'>' expected.	td01:postfix.jsdoc-function-new@angle	let v = <function(new: A): B>x;
+85480	ts	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	td01:postfix.jsdoc-function-new@targ	f<function(new: A): B>(x);
+85480	tsx	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	td01:postfix.jsdoc-function-new@targ	f<function(new: A): B>(x);
+85480	dts	0			3	1359,11,3	Identifier expected. 'new' is a reserved word that cannot be used here.	td01:postfix.jsdoc-function-new@targ	f<function(new: A): B>(x);
+85481	ts	0			9	1005,29,1	'>' expected.	td01:postfix.jsdoc-function-new@tparam	function f<U extends function(new: A): B, V = function(new: A): B>() {}
+85481	tsx	0			9	1005,29,1	'>' expected.	td01:postfix.jsdoc-function-new@tparam	function f<U extends function(new: A): B, V = function(new: A): B>() {}
+85481	dts	0			9	1005,29,1	'>' expected.	td01:postfix.jsdoc-function-new@tparam	function f<U extends function(new: A): B, V = function(new: A): B>() {}
+85482	ts	0			3	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function-new@prop	class K { @d p: function(new: A): B; }
+85482	tsx	0			3	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function-new@prop	class K { @d p: function(new: A): B; }
+85482	dts	0			3	1441,24,1	Cannot start a function call in a type annotation.	td01:postfix.jsdoc-function-new@prop	class K { @d p: function(new: A): B; }
+85483	ts	0			8	1005,26,1	',' expected.	td01:postfix.jsdoc-function-new@mparam	class K { @d m(x: function(new: A): B) {} }
+85483	tsx	0			8	1005,26,1	',' expected.	td01:postfix.jsdoc-function-new@mparam	class K { @d m(x: function(new: A): B) {} }
+85483	dts	0			8	1005,26,1	',' expected.	td01:postfix.jsdoc-function-new@mparam	class K { @d m(x: function(new: A): B) {} }
+85484	ts	0			7	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@mret	class K { @d m(x: any): function(new: A): B { return null as any } }
+85484	tsx	0			7	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@mret	class K { @d m(x: any): function(new: A): B { return null as any } }
+85484	dts	0			7	1144,32,1	'{' or ';' expected.	td01:postfix.jsdoc-function-new@mret	class K { @d m(x: any): function(new: A): B { return null as any } }
+90319	ts	0			3	1144,29,1	'{' or ';' expected.	td01:broken.function-expression@ret	function f(x: any): function () {} { return null as any }
+90319	tsx	0			3	1144,29,1	'{' or ';' expected.	td01:broken.function-expression@ret	function f(x: any): function () {} { return null as any }
+90319	dts	0			3	1144,29,1	'{' or ';' expected.	td01:broken.function-expression@ret	function f(x: any): function () {} { return null as any }
+103937	ts	4	1005,17,3	')' expected.	0			td03:sig.211@alias	type X = (public ...a: A[]) => R;
+103937	tsx	4	1005,17,3	')' expected.	0			td03:sig.211@alias	type X = (public ...a: A[]) => R;
+103937	dts	4	1005,17,3	')' expected.	0			td03:sig.211@alias	type X = (public ...a: A[]) => R;
+103938	ts	3	1005,24,3	')' expected.	0			td03:sig.211@prop	class K { @d p: (public ...a: A[]) => R; }
+103938	tsx	3	1005,24,3	')' expected.	0			td03:sig.211@prop	class K { @d p: (public ...a: A[]) => R; }
+103938	dts	3	1005,24,3	')' expected.	0			td03:sig.211@prop	class K { @d p: (public ...a: A[]) => R; }
+113277	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.037	import type { A } from "m" assert { "resolution-mode": "import" };
+113277	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.037	import type { A } from "m" assert { "resolution-mode": "import" };
+113277	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.037	import type { A } from "m" assert { "resolution-mode": "import" };
+113359	ts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.138	import a from "m" assert { type: "json" };
+113359	tsx	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.138	import a from "m" assert { type: "json" };
+113359	dts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:import.138	import a from "m" assert { type: "json" };
+113718	ts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:export.102	export { a } from "m" assert { type: "json" };
+113718	tsx	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:export.102	export { a } from "m" assert { type: "json" };
+113718	dts	0			1	2880,22,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td07:export.102	export { a } from "m" assert { type: "json" };
+115005	ts	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td10:dts.252	export declare const a: import("m", { assert: { "resolution-mode": "import" } }).A;
+115005	tsx	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td10:dts.252	export declare const a: import("m", { assert: { "resolution-mode": "import" } }).A;
+115005	dts	0			1	2880,38,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	td10:dts.252	export declare const a: import("m", { assert: { "resolution-mode": "import" } }).A;
+115028	ts	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.dts.020	/// <reference
+115028	tsx	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.dts.020	/// <reference
+115028	dts	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.dts.020	/// <reference
+115086	ts	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.ts.020	/// <reference\nlet v = 1;
+115086	tsx	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.ts.020	/// <reference\nlet v = 1;
+115086	dts	0			1	1084,0,14	Invalid 'reference' directive syntax.	td10:pragma.ts.020	/// <reference\nlet v = 1;
+117578	ts	4	1005,15,3	')' expected.	0			resc:gct1a-42866/misc1.txt	let g: (public ...a) => void
+117578	tsx	4	1005,15,3	')' expected.	0			resc:gct1a-42866/misc1.txt	let g: (public ...a) => void
+117578	dts	4	1005,15,3	')' expected.	0			resc:gct1a-42866/misc1.txt	let g: (public ...a) => void
+117975	ts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gct1a-42866/targs.txt	let x: import("x", { assert: { type: "json" } })
+117975	tsx	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gct1a-42866/targs.txt	let x: import("x", { assert: { type: "json" } })
+117975	dts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gct1a-42866/targs.txt	let x: import("x", { assert: { type: "json" } })
+118588	ts	0			1	1005,33,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = 1 + 2 as number * 3
+118588	tsx	0			1	1005,33,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = 1 + 2 as number * 3
+118588	dts	0			1	1005,33,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = 1 + 2 as number * 3
+118589	ts	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any * c
+118589	tsx	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any * c
+118589	dts	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any * c
+118598	ts	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b satisfies any * c
+118598	tsx	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b satisfies any * c
+118598	dts	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b satisfies any * c
+118599	ts	0			1	1005,31,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a ** b as any ** c
+118599	tsx	0			1	1005,31,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a ** b as any ** c
+118599	dts	0			1	1005,31,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a ** b as any ** c
+118600	ts	0			1	1005,30,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any ** c
+118600	tsx	0			1	1005,30,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any ** c
+118600	dts	0			1	1005,30,2	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any ** c
+118602	ts	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any as any * c
+118602	tsx	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any as any * c
+118602	dts	0			1	1005,37,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a + b as any as any * c
+118608	ts	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a < b as any + c
+118608	tsx	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a < b as any + c
+118608	dts	0			1	1005,30,1	',' expected.	resc:otg_bottomup_7f3k/asprec.txt	export const v = a < b as any + c
+119116	ts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:otg_bottomup_7f3k/imp2.txt	import A from "x" assert { type: "json" }; A;
+119116	tsx	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:otg_bottomup_7f3k/imp2.txt	import A from "x" assert { type: "json" }; A;
+119116	dts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:otg_bottomup_7f3k/imp2.txt	import A from "x" assert { type: "json" }; A;
+119626	ts	1	1003,20,0	Identifier expected.	0			resc:gte-probe/in3.txt	type T = typeof a.#b
+119626	tsx	1	1003,20,0	Identifier expected.	0			resc:gte-probe/in3.txt	type T = typeof a.#b
+119626	dts	1	1003,20,0	Identifier expected.	0			resc:gte-probe/in3.txt	type T = typeof a.#b
+119663	ts	1	1003,37,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(): typeof this.#a { return 1 } }
+119663	tsx	1	1003,37,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(): typeof this.#a { return 1 } }
+119663	dts	1	1003,37,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(): typeof this.#a { return 1 } }
+119664	ts	1	1003,38,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(x: C): typeof x.#a { return 1 } }
+119664	tsx	1	1003,38,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(x: C): typeof x.#a { return 1 } }
+119664	dts	1	1003,38,0	Identifier expected.	0			resc:gte-probe/in4.txt	class C { #a = 1; m(x: C): typeof x.#a { return 1 } }
+119691	ts	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(string): number
+119691	tsx	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(string): number
+119691	dts	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(string): number
+119692	ts	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(): void
+119692	tsx	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(): void
+119692	dts	0			2	1005,15,1	',' expected.	resc:gte-probe/in4.txt	let x: function(): void
+119709	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte-probe/in4.txt	type T = import("x", { assert: { type: "json" } })
+119709	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte-probe/in4.txt	type T = import("x", { assert: { type: "json" } })
+119709	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte-probe/in4.txt	type T = import("x", { assert: { type: "json" } })
+121028	ts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:bu/codes-inputs-t3 resc:lexhooks/t3.json	import a from 'x' assert { type: 'json' }
+121028	tsx	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:bu/codes-inputs-t3 resc:lexhooks/t3.json	import a from 'x' assert { type: 'json' }
+121028	dts	0			1	2880,18,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:bu/codes-inputs-t3 resc:lexhooks/t3.json	import a from 'x' assert { type: 'json' }
+121491	ts	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:td/codes-inputs resc:lexhooks/inputs-codes.json	import 'a' assert { type: 'json' }
+121491	tsx	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:td/codes-inputs resc:lexhooks/inputs-codes.json	import 'a' assert { type: 'json' }
+121491	dts	0			1	2880,11,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	lex:td/codes-inputs resc:lexhooks/inputs-codes.json	import 'a' assert { type: 'json' }
+121758	ts	0			1	1084,18,14	Invalid 'reference' directive syntax.	lex:td/pragma-inputs resc:lexhooks/extra-inputs.json	//\n///\n// @\n/// <\n/// <reference\n
+121758	tsx	0			1	1084,18,14	Invalid 'reference' directive syntax.	lex:td/pragma-inputs resc:lexhooks/extra-inputs.json	//\n///\n// @\n/// <\n/// <reference\n
+121758	dts	0			1	1084,18,14	Invalid 'reference' directive syntax.	lex:td/pragma-inputs resc:lexhooks/extra-inputs.json	//\n///\n// @\n/// <\n/// <reference\n
+122021	ts	0			1	1005,11,1	';' expected.	side:wrappers/parens side:wrappers/strict	a + b as T * c
+122021	tsx	0			1	1005,11,1	';' expected.	side:wrappers/parens side:wrappers/strict	a + b as T * c
+122021	dts	0			1	1005,11,1	';' expected.	side:wrappers/parens side:wrappers/strict	a + b as T * c
+122208	ts	1	1003,37,0	Identifier expected.	0			bs:more	class C { #b = 1; m(a: typeof this.#b) {} }
+122208	tsx	1	1003,37,0	Identifier expected.	0			bs:more	class C { #b = 1; m(a: typeof this.#b) {} }
+122208	dts	1	1003,37,0	Identifier expected.	0			bs:more	class C { #b = 1; m(a: typeof this.#b) {} }
+122873	ts	0			1	1005,11,1	';' expected.	resc:parser-research/chains.json	a + b as T * c;
+122873	tsx	0			1	1005,11,1	';' expected.	resc:parser-research/chains.json	a + b as T * c;
+122873	dts	0			1	1005,11,1	';' expected.	resc:parser-research/chains.json	a + b as T * c;
+123048	ts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte/p1.json	let a: import('x', { assert: { type: 'json' } });
+123048	tsx	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte/p1.json	let a: import('x', { assert: { type: 'json' } });
+123048	dts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	resc:gte/p1.json	let a: import('x', { assert: { type: 'json' } });
+123056	ts	1	1003,18,0	Identifier expected.	0			resc:gte/p1.json	let a: typeof x.#y;
+123056	tsx	1	1003,18,0	Identifier expected.	0			resc:gte/p1.json	let a: typeof x.#y;
+123056	dts	1	1003,18,0	Identifier expected.	0			resc:gte/p1.json	let a: typeof x.#y;
+134904	ts	1	1003,27,0	Identifier expected.	0			gds:query/field	class C { @d x: typeof a.#b; }
+134904	tsx	1	1003,27,0	Identifier expected.	0			gds:query/field	class C { @d x: typeof a.#b; }
+134904	dts	1	1003,27,0	Identifier expected.	0			gds:query/field	class C { @d x: typeof a.#b; }
+134905	ts	1	1003,39,0	Identifier expected.	0			gds:query/ctor	@d class C { constructor(a: typeof a.#b) {} }
+134905	tsx	1	1003,39,0	Identifier expected.	0			gds:query/ctor	@d class C { constructor(a: typeof a.#b) {} }
+134905	dts	1	1003,39,0	Identifier expected.	0			gds:query/ctor	@d class C { constructor(a: typeof a.#b) {} }
+134906	ts	1	1003,29,0	Identifier expected.	0			gds:query/ret	class C { @d m(): typeof a.#b { return x; } }
+134906	tsx	1	1003,29,0	Identifier expected.	0			gds:query/ret	class C { @d m(): typeof a.#b { return x; } }
+134906	dts	1	1003,29,0	Identifier expected.	0			gds:query/ret	class C { @d m(): typeof a.#b { return x; } }
+134907	ts	1	1003,25,0	Identifier expected.	0			gds:query/fnret	function f(): typeof a.#b { return x; }
+134907	tsx	1	1003,25,0	Identifier expected.	0			gds:query/fnret	function f(): typeof a.#b { return x; }
+134907	dts	1	1003,25,0	Identifier expected.	0			gds:query/fnret	function f(): typeof a.#b { return x; }
+134908	ts	1	1003,23,0	Identifier expected.	0			gds:query/arrowparam	let f = (a: typeof a.#b) => a;
+134908	tsx	1	1003,23,0	Identifier expected.	0			gds:query/arrowparam	let f = (a: typeof a.#b) => a;
+134908	dts	1	1003,23,0	Identifier expected.	0			gds:query/arrowparam	let f = (a: typeof a.#b) => a;
+134909	ts	1	1003,24,0	Identifier expected.	0			gds:query/arrowret	let f = (a): typeof a.#b => a;
+134909	tsx	1	1003,24,0	Identifier expected.	0			gds:query/arrowret	let f = (a): typeof a.#b => a;
+134909	dts	1	1003,24,0	Identifier expected.	0			gds:query/arrowret	let f = (a): typeof a.#b => a;
+134910	ts	1	1003,28,0	Identifier expected.	0			gds:query/ternary	let v = a ? (b): typeof a.#b => c : d;
+134910	tsx	1	1003,28,0	Identifier expected.	0			gds:query/ternary	let v = a ? (b): typeof a.#b => c : d;
+134910	dts	1	1003,28,0	Identifier expected.	0			gds:query/ternary	let v = a ? (b): typeof a.#b => c : d;
+134911	ts	1	1003,24,0	Identifier expected.	0			gds:query/as	let v = x as typeof a.#b;
+134911	tsx	1	1003,24,0	Identifier expected.	0			gds:query/as	let v = x as typeof a.#b;
+134911	dts	1	1003,24,0	Identifier expected.	0			gds:query/as	let v = x as typeof a.#b;
+134912	ts	1	1003,31,0	Identifier expected.	0			gds:query/satisfies	let v = x satisfies typeof a.#b;
+134912	tsx	1	1003,31,0	Identifier expected.	0			gds:query/satisfies	let v = x satisfies typeof a.#b;
+134912	dts	1	1003,31,0	Identifier expected.	0			gds:query/satisfies	let v = x satisfies typeof a.#b;
+134913	ts	1	1003,20,0	Identifier expected.	0			gds:query/angle	let v = <typeof a.#b>x;
+134913	dts	1	1003,20,0	Identifier expected.	0			gds:query/angle	let v = <typeof a.#b>x;
+134914	ts	1	1003,32,0	Identifier expected.	0			gds:query/tparam	function f<U extends typeof a.#b>() {}
+134914	tsx	1	1003,32,0	Identifier expected.	0			gds:query/tparam	function f<U extends typeof a.#b>() {}
+134914	dts	1	1003,32,0	Identifier expected.	0			gds:query/tparam	function f<U extends typeof a.#b>() {}
+136174	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/alias	type X = import('x', { assert: { 'resolution-mode': 'import' } });
+136174	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/alias	type X = import('x', { assert: { 'resolution-mode': 'import' } });
+136174	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/alias	type X = import('x', { assert: { 'resolution-mode': 'import' } });
+136175	ts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/var	let x: import('x', { assert: { 'resolution-mode': 'import' } });
+136175	tsx	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/var	let x: import('x', { assert: { 'resolution-mode': 'import' } });
+136175	dts	0			1	2880,21,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/var	let x: import('x', { assert: { 'resolution-mode': 'import' } });
+136176	ts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/field	class C { @d x: import('x', { assert: { 'resolution-mode': 'import' } }); }
+136176	tsx	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/field	class C { @d x: import('x', { assert: { 'resolution-mode': 'import' } }); }
+136176	dts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/field	class C { @d x: import('x', { assert: { 'resolution-mode': 'import' } }); }
+136177	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/param	class C { @d m(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136177	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/param	class C { @d m(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136177	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/param	class C { @d m(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136178	ts	0			1	2880,42,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ctor	@d class C { constructor(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136178	tsx	0			1	2880,42,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ctor	@d class C { constructor(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136178	dts	0			1	2880,42,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ctor	@d class C { constructor(a: import('x', { assert: { 'resolution-mode': 'import' } })) {} }
+136179	ts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ret	class C { @d m(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+136179	tsx	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ret	class C { @d m(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+136179	dts	0			1	2880,32,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ret	class C { @d m(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+136180	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnparam	function f(a: import('x', { assert: { 'resolution-mode': 'import' } })) {}
+136180	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnparam	function f(a: import('x', { assert: { 'resolution-mode': 'import' } })) {}
+136180	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnparam	function f(a: import('x', { assert: { 'resolution-mode': 'import' } })) {}
+136181	ts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnret	function f(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+136181	tsx	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnret	function f(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+136181	dts	0			1	2880,28,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/fnret	function f(): import('x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+136182	ts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowparam	let f = (a: import('x', { assert: { 'resolution-mode': 'import' } })) => a;
+136182	tsx	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowparam	let f = (a: import('x', { assert: { 'resolution-mode': 'import' } })) => a;
+136182	dts	0			1	2880,26,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowparam	let f = (a: import('x', { assert: { 'resolution-mode': 'import' } })) => a;
+136183	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowret	let f = (a): import('x', { assert: { 'resolution-mode': 'import' } }) => a;
+136183	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowret	let f = (a): import('x', { assert: { 'resolution-mode': 'import' } }) => a;
+136183	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/arrowret	let f = (a): import('x', { assert: { 'resolution-mode': 'import' } }) => a;
+136184	ts	0			1	2880,31,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ternary	let v = a ? (b): import('x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+136184	tsx	0			1	2880,31,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ternary	let v = a ? (b): import('x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+136184	dts	0			1	2880,31,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/ternary	let v = a ? (b): import('x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+136185	ts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/as	let v = x as import('x', { assert: { 'resolution-mode': 'import' } });
+136185	tsx	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/as	let v = x as import('x', { assert: { 'resolution-mode': 'import' } });
+136185	dts	0			1	2880,27,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/as	let v = x as import('x', { assert: { 'resolution-mode': 'import' } });
+136186	ts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/satisfies	let v = x satisfies import('x', { assert: { 'resolution-mode': 'import' } });
+136186	tsx	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/satisfies	let v = x satisfies import('x', { assert: { 'resolution-mode': 'import' } });
+136186	dts	0			1	2880,34,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/satisfies	let v = x satisfies import('x', { assert: { 'resolution-mode': 'import' } });
+136187	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/angle	let v = <import('x', { assert: { 'resolution-mode': 'import' } })>x;
+136187	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/angle	let v = <import('x', { assert: { 'resolution-mode': 'import' } })>x;
+136188	ts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/targ	f<import('x', { assert: { 'resolution-mode': 'import' } })>(x);
+136188	tsx	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/targ	f<import('x', { assert: { 'resolution-mode': 'import' } })>(x);
+136188	dts	0			1	2880,16,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/targ	f<import('x', { assert: { 'resolution-mode': 'import' } })>(x);
+136189	ts	0			1	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/tparam	function f<U extends import('x', { assert: { 'resolution-mode': 'import' } })>() {}
+136189	tsx	0			1	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/tparam	function f<U extends import('x', { assert: { 'resolution-mode': 'import' } })>() {}
+136189	dts	0			1	2880,35,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gds:import-type/tparam	function f<U extends import('x', { assert: { 'resolution-mode': 'import' } })>() {}
+152344	ts	0			1	1110,29,1	Type expected.	gds:jsdoc/ctor	@d class C { constructor(a: ?) {} }
+152344	tsx	0			1	1110,29,1	Type expected.	gds:jsdoc/ctor	@d class C { constructor(a: ?) {} }
+152344	dts	0			1	1110,29,1	Type expected.	gds:jsdoc/ctor	@d class C { constructor(a: ?) {} }
+152347	ts	0			1	1110,13,1	Type expected.	gds:jsdoc/arrowparam	let f = (a: ?) => a;
+152347	tsx	0			1	1110,13,1	Type expected.	gds:jsdoc/arrowparam	let f = (a: ?) => a;
+152347	dts	0			1	1110,13,1	Type expected.	gds:jsdoc/arrowparam	let f = (a: ?) => a;
+152350	ts	0			1	1110,22,1	Type expected.	gds:jsdoc/tparam	function f<U extends ?>() {}
+152350	tsx	0			1	1110,22,1	Type expected.	gds:jsdoc/tparam	function f<U extends ?>() {}
+152350	dts	0			1	1110,22,1	Type expected.	gds:jsdoc/tparam	function f<U extends ?>() {}
+152373	ts	0			2	1005,17,1	';' expected.	gds:jsdoc/alias	type X = function(): void;
+152373	tsx	0			2	1005,17,1	';' expected.	gds:jsdoc/alias	type X = function(): void;
+152373	dts	0			2	1005,17,1	';' expected.	gds:jsdoc/alias	type X = function(): void;
+152374	ts	0			2	1005,15,1	',' expected.	gds:jsdoc/var	let x: function(): void;
+152374	tsx	0			2	1005,15,1	',' expected.	gds:jsdoc/var	let x: function(): void;
+152374	dts	0			2	1005,15,1	',' expected.	gds:jsdoc/var	let x: function(): void;
+152375	ts	0			3	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(): void; }
+152375	tsx	0			3	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(): void; }
+152375	dts	0			3	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(): void; }
+152376	ts	0			3	1005,26,1	',' expected.	gds:jsdoc/param	class C { @d m(a: function(): void) {} }
+152376	tsx	0			3	1005,26,1	',' expected.	gds:jsdoc/param	class C { @d m(a: function(): void) {} }
+152376	dts	0			3	1005,26,1	',' expected.	gds:jsdoc/param	class C { @d m(a: function(): void) {} }
+152377	ts	0			3	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(): void) {} }
+152377	tsx	0			3	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(): void) {} }
+152377	dts	0			3	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(): void) {} }
+152378	ts	0			3	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(): void { return x; } }
+152378	tsx	0			3	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(): void { return x; } }
+152378	dts	0			3	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(): void { return x; } }
+152379	ts	0			2	1005,22,1	',' expected.	gds:jsdoc/fnparam	function f(a: function(): void) {}
+152379	tsx	0			2	1005,22,1	',' expected.	gds:jsdoc/fnparam	function f(a: function(): void) {}
+152379	dts	0			2	1005,22,1	',' expected.	gds:jsdoc/fnparam	function f(a: function(): void) {}
+152380	ts	0			2	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(): void { return x; }
+152380	tsx	0			2	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(): void { return x; }
+152380	dts	0			2	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(): void { return x; }
+152381	ts	0			3	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(): void) => a;
+152381	tsx	0			3	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(): void) => a;
+152381	dts	0			3	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(): void) => a;
+152382	ts	0			4	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(): void => a;
+152382	tsx	0			4	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(): void => a;
+152382	dts	0			4	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(): void => a;
+152383	ts	0			1	1005,34,2	'{' expected.	gds:jsdoc/ternary	let v = a ? (b): function(): void => c : d;
+152383	tsx	0			1	1005,34,2	'{' expected.	gds:jsdoc/ternary	let v = a ? (b): function(): void => c : d;
+152383	dts	0			1	1005,34,2	'{' expected.	gds:jsdoc/ternary	let v = a ? (b): function(): void => c : d;
+152384	ts	0			2	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(): void;
+152384	tsx	0			2	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(): void;
+152384	dts	0			2	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(): void;
+152385	ts	0			2	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(): void;
+152385	tsx	0			2	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(): void;
+152385	dts	0			2	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(): void;
+152386	ts	0			5	1005,17,1	'>' expected.	gds:jsdoc/angle	let v = <function(): void>x;
+152386	dts	0			5	1005,17,1	'>' expected.	gds:jsdoc/angle	let v = <function(): void>x;
+152387	ts	0			1	1005,18,1	'{' expected.	gds:jsdoc/targ	f<function(): void>(x);
+152387	tsx	0			1	1005,18,1	'{' expected.	gds:jsdoc/targ	f<function(): void>(x);
+152387	dts	0			1	1005,18,1	'{' expected.	gds:jsdoc/targ	f<function(): void>(x);
+152388	ts	0			4	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(): void>() {}
+152388	tsx	0			4	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(): void>() {}
+152388	dts	0			4	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(): void>() {}
+152409	ts	0			2	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(new: A); }
+152409	tsx	0			2	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(new: A); }
+152409	dts	0			2	1441,24,1	Cannot start a function call in a type annotation.	gds:jsdoc/field	class C { @d x: function(new: A); }
+152410	ts	0			6	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(new: A)) {} }
+152410	tsx	0			6	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(new: A)) {} }
+152410	dts	0			6	1005,36,1	',' expected.	gds:jsdoc/ctor	@d class C { constructor(a: function(new: A)) {} }
+152411	ts	0			5	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(new: A) { return x; } }
+152411	tsx	0			5	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(new: A) { return x; } }
+152411	dts	0			5	1144,26,1	'{' or ';' expected.	gds:jsdoc/ret	class C { @d m(): function(new: A) { return x; } }
+152412	ts	0			4	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(new: A) { return x; }
+152412	tsx	0			4	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(new: A) { return x; }
+152412	dts	0			4	1144,22,1	'{' or ';' expected.	gds:jsdoc/fnret	function f(): function(new: A) { return x; }
+152413	ts	0			6	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(new: A)) => a;
+152413	tsx	0			6	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(new: A)) => a;
+152413	dts	0			6	1005,20,1	',' expected.	gds:jsdoc/arrowparam	let f = (a: function(new: A)) => a;
+152414	ts	0			6	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(new: A) => a;
+152414	tsx	0			6	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(new: A) => a;
+152414	dts	0			6	1005,11,1	',' expected.	gds:jsdoc/arrowret	let f = (a): function(new: A) => a;
+152415	ts	0			3	1359,26,3	Identifier expected. 'new' is a reserved word that cannot be used here.	gds:jsdoc/ternary	let v = a ? (b): function(new: A) => c : d;
+152415	tsx	0			3	1359,26,3	Identifier expected. 'new' is a reserved word that cannot be used here.	gds:jsdoc/ternary	let v = a ? (b): function(new: A) => c : d;
+152415	dts	0			3	1359,26,3	Identifier expected. 'new' is a reserved word that cannot be used here.	gds:jsdoc/ternary	let v = a ? (b): function(new: A) => c : d;
+152416	ts	0			4	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(new: A);
+152416	tsx	0			4	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(new: A);
+152416	dts	0			4	1005,21,1	',' expected.	gds:jsdoc/as	let v = x as function(new: A);
+152417	ts	0			4	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(new: A);
+152417	tsx	0			4	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(new: A);
+152417	dts	0			4	1005,28,1	',' expected.	gds:jsdoc/satisfies	let v = x satisfies function(new: A);
+152418	ts	0			4	1005,17,1	'>' expected.	gds:jsdoc/angle	let v = <function(new: A)>x;
+152418	dts	0			4	1005,17,1	'>' expected.	gds:jsdoc/angle	let v = <function(new: A)>x;
+152419	ts	0			6	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(new: A)>() {}
+152419	tsx	0			6	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(new: A)>() {}
+152419	dts	0			6	1005,29,1	'>' expected.	gds:jsdoc/tparam	function f<U extends function(new: A)>() {}
+153096	ts	0			3	1144,23,1	'{' or ';' expected.	gds:junk/fnret	function f(): function () {} { return x; }
+153096	tsx	0			3	1144,23,1	'{' or ';' expected.	gds:junk/fnret	function f(): function () {} { return x; }
+153096	dts	0			3	1144,23,1	'{' or ';' expected.	gds:junk/fnret	function f(): function () {} { return x; }
+162657	ts	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B?];
+162657	tsx	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B?];
+162657	dts	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B?];
+162658	ts	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B?];
+162658	tsx	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B?];
+162658	dts	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B?];
+162659	ts	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B?]; }
+162659	tsx	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B?]; }
+162659	dts	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B?]; }
+162660	ts	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B?]) {} }
+162660	tsx	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B?]) {} }
+162660	dts	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B?]) {} }
+162661	ts	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B?]) {} }
+162661	tsx	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B?]) {} }
+162661	dts	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B?]) {} }
+162662	ts	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B?] { return x; } }
+162662	tsx	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B?] { return x; } }
+162662	dts	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B?] { return x; } }
+162663	ts	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B?]) {}
+162663	tsx	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B?]) {}
+162663	dts	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B?]) {}
+162664	ts	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B?] { return x; }
+162664	tsx	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B?] { return x; }
+162664	dts	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B?] { return x; }
+162665	ts	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B?]) => a;
+162665	tsx	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B?]) => a;
+162665	dts	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B?]) => a;
+162666	ts	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B?] => a;
+162666	tsx	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B?] => a;
+162666	dts	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B?] => a;
+162667	ts	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B?] => c : d;
+162667	tsx	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B?] => c : d;
+162667	dts	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B?] => c : d;
+162668	ts	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B?];
+162668	tsx	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B?];
+162668	dts	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B?];
+162669	ts	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B?];
+162669	tsx	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B?];
+162669	dts	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B?];
+162670	ts	0			1	1110,11,1	Type expected.	gds:tuple/angle/m	let v = <[?, B?]>x;
+162670	dts	0			1	1110,11,1	Type expected.	gds:tuple/angle/m	let v = <[?, B?]>x;
+162671	ts	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B?]>(x);
+162671	tsx	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B?]>(x);
+162671	dts	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B?]>(x);
+162672	ts	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B?]>() {}
+162672	tsx	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B?]>() {}
+162672	dts	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B?]>() {}
+162765	ts	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B];
+162765	tsx	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B];
+162765	dts	0			1	1110,11,1	Type expected.	gds:tuple/alias/m	type X = [?, B];
+162766	ts	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B];
+162766	tsx	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B];
+162766	dts	0			1	1110,9,1	Type expected.	gds:tuple/var/m	let x: [?, B];
+162767	ts	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B]; }
+162767	tsx	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B]; }
+162767	dts	0			1	1110,18,1	Type expected.	gds:tuple/field/m	class C { @d x: [?, B]; }
+162768	ts	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B]) {} }
+162768	tsx	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B]) {} }
+162768	dts	0			1	1110,20,1	Type expected.	gds:tuple/param/m	class C { @d m(a: [?, B]) {} }
+162769	ts	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B]) {} }
+162769	tsx	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B]) {} }
+162769	dts	0			1	1110,30,1	Type expected.	gds:tuple/ctor/m	@d class C { constructor(a: [?, B]) {} }
+162770	ts	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B] { return x; } }
+162770	tsx	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B] { return x; } }
+162770	dts	0			1	1110,20,1	Type expected.	gds:tuple/ret/m	class C { @d m(): [?, B] { return x; } }
+162771	ts	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B]) {}
+162771	tsx	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B]) {}
+162771	dts	0			1	1110,16,1	Type expected.	gds:tuple/fnparam/m	function f(a: [?, B]) {}
+162772	ts	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B] { return x; }
+162772	tsx	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B] { return x; }
+162772	dts	0			1	1110,16,1	Type expected.	gds:tuple/fnret/m	function f(): [?, B] { return x; }
+162773	ts	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B]) => a;
+162773	tsx	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B]) => a;
+162773	dts	0			1	1110,14,1	Type expected.	gds:tuple/arrowparam/m	let f = (a: [?, B]) => a;
+162774	ts	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B] => a;
+162774	tsx	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B] => a;
+162774	dts	0			1	1110,15,1	Type expected.	gds:tuple/arrowret/m	let f = (a): [?, B] => a;
+162775	ts	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B] => c : d;
+162775	tsx	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B] => c : d;
+162775	dts	0			1	1110,19,1	Type expected.	gds:tuple/ternary/m	let v = a ? (b): [?, B] => c : d;
+162776	ts	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B];
+162776	tsx	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B];
+162776	dts	0			1	1110,15,1	Type expected.	gds:tuple/as/m	let v = x as [?, B];
+162777	ts	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B];
+162777	tsx	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B];
+162777	dts	0			1	1110,22,1	Type expected.	gds:tuple/satisfies/m	let v = x satisfies [?, B];
+162778	ts	0			1	1110,11,1	Type expected.	gds:tuple/angle/m	let v = <[?, B]>x;
+162778	dts	0			1	1110,11,1	Type expected.	gds:tuple/angle/m	let v = <[?, B]>x;
+162779	ts	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B]>(x);
+162779	tsx	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B]>(x);
+162779	dts	0			1	1110,4,1	Type expected.	gds:tuple/targ/m	f<[?, B]>(x);
+162780	ts	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B]>() {}
+162780	tsx	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B]>() {}
+162780	dts	0			1	1110,23,1	Type expected.	gds:tuple/tparam/m	function f<U extends [?, B]>() {}
+224549	ts	0			1	1110,15,1	Type expected.	gds:function-type/arrowret/m	let f = (a): (?) => B => a;
+224549	tsx	0			1	1110,15,1	Type expected.	gds:function-type/arrowret/m	let f = (a): (?) => B => a;
+224549	dts	0			1	1110,15,1	Type expected.	gds:function-type/arrowret/m	let f = (a): (?) => B => a;
+224550	ts	0			1	1110,19,1	Type expected.	gds:function-type/ternary/m	let v = a ? (b): (?) => B => c : d;
+224550	tsx	0			1	1110,19,1	Type expected.	gds:function-type/ternary/m	let v = a ? (b): (?) => B => c : d;
+224550	dts	0			1	1110,19,1	Type expected.	gds:function-type/ternary/m	let v = a ? (b): (?) => B => c : d;
+274172	ts	0			1	1110,11,1	Type expected.	gds:parenthesized/alias/m	type X = (?);
+274172	tsx	0			1	1110,11,1	Type expected.	gds:parenthesized/alias/m	type X = (?);
+274172	dts	0			1	1110,11,1	Type expected.	gds:parenthesized/alias/m	type X = (?);
+274173	ts	0			1	1110,9,1	Type expected.	gds:parenthesized/var/m	let x: (?);
+274173	tsx	0			1	1110,9,1	Type expected.	gds:parenthesized/var/m	let x: (?);
+274173	dts	0			1	1110,9,1	Type expected.	gds:parenthesized/var/m	let x: (?);
+274174	ts	0			1	1110,18,1	Type expected.	gds:parenthesized/field/m	class C { @d x: (?); }
+274174	tsx	0			1	1110,18,1	Type expected.	gds:parenthesized/field/m	class C { @d x: (?); }
+274174	dts	0			1	1110,18,1	Type expected.	gds:parenthesized/field/m	class C { @d x: (?); }
+274175	ts	0			1	1110,20,1	Type expected.	gds:parenthesized/param/m	class C { @d m(a: (?)) {} }
+274175	tsx	0			1	1110,20,1	Type expected.	gds:parenthesized/param/m	class C { @d m(a: (?)) {} }
+274175	dts	0			1	1110,20,1	Type expected.	gds:parenthesized/param/m	class C { @d m(a: (?)) {} }
+274176	ts	0			1	1110,30,1	Type expected.	gds:parenthesized/ctor/m	@d class C { constructor(a: (?)) {} }
+274176	tsx	0			1	1110,30,1	Type expected.	gds:parenthesized/ctor/m	@d class C { constructor(a: (?)) {} }
+274176	dts	0			1	1110,30,1	Type expected.	gds:parenthesized/ctor/m	@d class C { constructor(a: (?)) {} }
+274177	ts	0			1	1110,20,1	Type expected.	gds:parenthesized/ret/m	class C { @d m(): (?) { return x; } }
+274177	tsx	0			1	1110,20,1	Type expected.	gds:parenthesized/ret/m	class C { @d m(): (?) { return x; } }
+274177	dts	0			1	1110,20,1	Type expected.	gds:parenthesized/ret/m	class C { @d m(): (?) { return x; } }
+274178	ts	0			1	1110,16,1	Type expected.	gds:parenthesized/fnparam/m	function f(a: (?)) {}
+274178	tsx	0			1	1110,16,1	Type expected.	gds:parenthesized/fnparam/m	function f(a: (?)) {}
+274178	dts	0			1	1110,16,1	Type expected.	gds:parenthesized/fnparam/m	function f(a: (?)) {}
+274179	ts	0			1	1110,16,1	Type expected.	gds:parenthesized/fnret/m	function f(): (?) { return x; }
+274179	tsx	0			1	1110,16,1	Type expected.	gds:parenthesized/fnret/m	function f(): (?) { return x; }
+274179	dts	0			1	1110,16,1	Type expected.	gds:parenthesized/fnret/m	function f(): (?) { return x; }
+274180	ts	0			1	1110,14,1	Type expected.	gds:parenthesized/arrowparam/m	let f = (a: (?)) => a;
+274180	tsx	0			1	1110,14,1	Type expected.	gds:parenthesized/arrowparam/m	let f = (a: (?)) => a;
+274180	dts	0			1	1110,14,1	Type expected.	gds:parenthesized/arrowparam/m	let f = (a: (?)) => a;
+274181	ts	0			1	1110,15,1	Type expected.	gds:parenthesized/arrowret/m	let f = (a): (?) => a;
+274181	tsx	0			1	1110,15,1	Type expected.	gds:parenthesized/arrowret/m	let f = (a): (?) => a;
+274181	dts	0			1	1110,15,1	Type expected.	gds:parenthesized/arrowret/m	let f = (a): (?) => a;
+274182	ts	0			1	1110,19,1	Type expected.	gds:parenthesized/ternary/m	let v = a ? (b): (?) => c : d;
+274182	tsx	0			1	1110,19,1	Type expected.	gds:parenthesized/ternary/m	let v = a ? (b): (?) => c : d;
+274182	dts	0			1	1110,19,1	Type expected.	gds:parenthesized/ternary/m	let v = a ? (b): (?) => c : d;
+274183	ts	0			1	1110,15,1	Type expected.	gds:parenthesized/as/m	let v = x as (?);
+274183	tsx	0			1	1110,15,1	Type expected.	gds:parenthesized/as/m	let v = x as (?);
+274183	dts	0			1	1110,15,1	Type expected.	gds:parenthesized/as/m	let v = x as (?);
+274184	ts	0			1	1110,22,1	Type expected.	gds:parenthesized/satisfies/m	let v = x satisfies (?);
+274184	tsx	0			1	1110,22,1	Type expected.	gds:parenthesized/satisfies/m	let v = x satisfies (?);
+274184	dts	0			1	1110,22,1	Type expected.	gds:parenthesized/satisfies/m	let v = x satisfies (?);
+274185	ts	0			1	1110,11,1	Type expected.	gds:parenthesized/angle/m	let v = <(?)>x;
+274185	dts	0			1	1110,11,1	Type expected.	gds:parenthesized/angle/m	let v = <(?)>x;
+274186	ts	0			1	1110,4,1	Type expected.	gds:parenthesized/targ/m	f<(?)>(x);
+274186	tsx	0			1	1110,4,1	Type expected.	gds:parenthesized/targ/m	f<(?)>(x);
+274186	dts	0			1	1110,4,1	Type expected.	gds:parenthesized/targ/m	f<(?)>(x);
+274187	ts	0			1	1110,23,1	Type expected.	gds:parenthesized/tparam/m	function f<U extends (?)>() {}
+274187	tsx	0			1	1110,23,1	Type expected.	gds:parenthesized/tparam/m	function f<U extends (?)>() {}
+274187	dts	0			1	1110,23,1	Type expected.	gds:parenthesized/tparam/m	function f<U extends (?)>() {}
+329482	ts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gdt:06-imports-exports	import type A from 'a' assert { type: 'json' };
+329482	tsx	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gdt:06-imports-exports	import type A from 'a' assert { type: 'json' };
+329482	dts	0			1	2880,23,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	gdt:06-imports-exports	import type A from 'a' assert { type: 'json' };
+330663	ts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { type: 'json' } }) = require('fs')
+330663	tsx	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { type: 'json' } }) = require('fs')
+330663	dts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { type: 'json' } }) = require('fs')
+330664	ts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { 'resolution-mode': 'import' } }) = require('fs')
+330664	tsx	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { 'resolution-mode': 'import' } }) = require('fs')
+330664	dts	0			1	2880,30,6	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.	pin:transpiler.test.js	let fs: typeof import('fs', { assert: { 'resolution-mode': 'import' } }) = require('fs')
+330836	ts	1	1003,47,0	Identifier expected.	0			pin:transpiler.test.js	class Container { get data(): typeof this.#data {} }
+330836	tsx	1	1003,47,0	Identifier expected.	0			pin:transpiler.test.js	class Container { get data(): typeof this.#data {} }
+330836	dts	1	1003,47,0	Identifier expected.	0			pin:transpiler.test.js	class Container { get data(): typeof this.#data {} }
+330837	ts	1	1003,23,0	Identifier expected.	0			pin:transpiler.test.js	const a: typeof this.#a = 1;
+330837	tsx	1	1003,23,0	Identifier expected.	0			pin:transpiler.test.js	const a: typeof this.#a = 1;
+330837	dts	1	1003,23,0	Identifier expected.	0			pin:transpiler.test.js	const a: typeof this.#a = 1;

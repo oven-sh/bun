@@ -1,0 +1,181 @@
+{
+	"valid": [
+		{
+			"code": "class A { foo() {} bar() {} }"
+		},
+		{
+			"code": "class A { static foo() {} foo() {} }"
+		},
+		{
+			"code": "class A { get foo() {} set foo(value) {} }"
+		},
+		{
+			"code": "class A { static foo() {} get foo() {} set foo(value) {} }"
+		},
+		{
+			"code": "class A { foo() { } } class B { foo() { } }"
+		},
+		{
+			"code": "class A { [foo]() {} foo() {} }"
+		},
+		{
+			"code": "class A { 'foo'() {} 'bar'() {} baz() {} }"
+		},
+		{
+			"code": "class A { *'foo'() {} *'bar'() {} *baz() {} }"
+		},
+		{
+			"code": "class A { get 'foo'() {} get 'bar'() {} get baz() {} }"
+		},
+		{
+			"code": "class A { 1() {} 2() {} }"
+		},
+		{
+			"code": "class A { ['foo']() {} ['bar']() {} }"
+		},
+		{
+			"code": "class A { [`foo`]() {} [`bar`]() {} }"
+		},
+		{
+			"code": "class A { [12]() {} [123]() {} }"
+		},
+		{
+			"code": "class A { [1.0]() {} ['1.0']() {} }"
+		},
+		{
+			"code": "class A { [0x1]() {} [`0x1`]() {} }"
+		},
+		{
+			"code": "class A { [null]() {} ['']() {} }"
+		},
+		{
+			"code": "class A { get ['foo']() {} set ['foo'](value) {} }"
+		},
+		{
+			"code": "class A { ['foo']() {} static ['foo']() {} }"
+		},
+		{
+			"code": "class A { ['constructor']() {} constructor() {} }"
+		},
+		{
+			"code": "class A { 'constructor'() {} [`constructor`]() {} }"
+		},
+		{
+			"code": "class A { constructor() {} get [`constructor`]() {} }"
+		},
+		{
+			"code": "class A { 'constructor'() {} set ['constructor'](value) {} }"
+		},
+		{
+			"code": "class A { ['foo' + '']() {} ['foo']() {} }"
+		},
+		{
+			"code": "class A { [`foo${''}`]() {} [`foo`]() {} }"
+		},
+		{
+			"code": "class A { [-1]() {} ['-1']() {} }"
+		},
+		{
+			"code": "class A { [foo]() {} [foo]() {} }"
+		},
+		{
+			"code": "class A { foo; static foo; }"
+		},
+		{
+			"code": "class A { foo; #foo; }"
+		},
+		{
+			"code": "class A { '#foo'; #foo; }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "class A { foo() {} foo() {} }"
+		},
+		{
+			"code": "!class A { foo() {} foo() {} };"
+		},
+		{
+			"code": "class A { 'foo'() {} 'foo'() {} }"
+		},
+		{
+			"code": "class A { 10() {} 1e1() {} }"
+		},
+		{
+			"code": "class A { ['foo']() {} ['foo']() {} }"
+		},
+		{
+			"code": "class A { static ['foo']() {} static foo() {} }"
+		},
+		{
+			"code": "class A { set 'foo'(value) {} set ['foo'](val) {} }"
+		},
+		{
+			"code": "class A { ''() {} ['']() {} }"
+		},
+		{
+			"code": "class A { [`foo`]() {} [`foo`]() {} }"
+		},
+		{
+			"code": "class A { static get [`foo`]() {} static get ['foo']() {} }"
+		},
+		{
+			"code": "class A { foo() {} [`foo`]() {} }"
+		},
+		{
+			"code": "class A { get [`foo`]() {} 'foo'() {} }"
+		},
+		{
+			"code": "class A { static 'foo'() {} static [`foo`]() {} }"
+		},
+		{
+			"code": "class A { ['constructor']() {} ['constructor']() {} }"
+		},
+		{
+			"code": "class A { static [`constructor`]() {} static constructor() {} }"
+		},
+		{
+			"code": "class A { static constructor() {} static 'constructor'() {} }"
+		},
+		{
+			"code": "class A { [123]() {} [123]() {} }"
+		},
+		{
+			"code": "class A { [0x10]() {} 16() {} }"
+		},
+		{
+			"code": "class A { [100]() {} [1e2]() {} }"
+		},
+		{
+			"code": "class A { [123.00]() {} [`123`]() {} }"
+		},
+		{
+			"code": "class A { static '65'() {} static [0o101]() {} }"
+		},
+		{
+			"code": "class A { [123n]() {} 123() {} }",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "class A { [null]() {} 'null'() {} }"
+		},
+		{
+			"code": "class A { foo() {} foo() {} foo() {} }"
+		},
+		{
+			"code": "class A { static foo() {} static foo() {} }"
+		},
+		{
+			"code": "class A { foo() {} get foo() {} }"
+		},
+		{
+			"code": "class A { set foo(value) {} foo() {} }"
+		},
+		{
+			"code": "class A { foo; foo; }"
+		}
+	],
+	"skipped": 0
+}

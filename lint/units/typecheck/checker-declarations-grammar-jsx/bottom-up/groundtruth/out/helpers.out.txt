@@ -1,0 +1,12 @@
+PARSE other.ts parse=[] js=[] bind=[]
+PARSE tslib.d.ts parse=[] js=[] bind=[]
+PARSE helpers.ts parse=[] js=[] bind=[]
+helpers.ts(4,16)+2: error TS2343: This syntax requires an imported helper named '__awaiter' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.
+helpers.ts(5,32)+7: error TS2807: This syntax requires an imported helper named '__classPrivateFieldGet' with 4 parameters, which is not compatible with the one in 'tslib'. Consider upgrading your version of 'tslib'.
+helpers.ts(6,17)+2: error TS2343: This syntax requires an imported helper named '__asyncGenerator' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.
+helpers.ts(6,17)+2: error TS2343: This syntax requires an imported helper named '__await' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.
+helpers.ts(7,1)+32: error TS2343: This syntax requires an imported helper named '__importStar' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.
+RESOLUTIONDEPTH 0 []
+global: error TS2318: Cannot find global type 'AsyncIterableIterator'.
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=18 GetEmitSyntaxForUsageLocation=1 GetImpliedNodeFormatForEmit=1 GetImportHelpersImportSpecifier=1 GetModeForUsageLocation=2 GetResolvedModule=2 GetSourceFile=2 GetSourceFileForResolvedModule=2 Options=1 SourceFiles=1
+COUNTS TypeCount=100 SymbolCount=8 SignatureCount=8 TotalInstantiationCount=0

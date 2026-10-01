@@ -1,0 +1,117 @@
+group	path	state	detail
+other machine state: probes	/workspace/notes/lint/units/parser/probes/probe.mjs	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/upstream-verdicts.json	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/results	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/make_rows.mjs	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/metadata_tags.mjs	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/typescript-grammar.test.template.ts	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/existing-tests	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/upstream	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/type-forms	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/object-types	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/expressions	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/signatures	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/class-members	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/inputs/module-syntax	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/type-grammar-core	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/members-params-args	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/decorator-metadata	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/type-nodes	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/lexer-comments	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/lint-entry	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/diag-codes	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/area-expressions	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/area-functions-classes	absent	
+other machine state: probes	/workspace/notes/lint/units/parser/probes/area-statements-modules	absent	
+other machine state: tools and binaries	/workspace/notes/lint/units/parser/tools	absent	
+other machine state: tools and binaries	/workspace/notes/lint/units/parser/verify	absent	
+other machine state: tools and binaries	/workspace/notes/lint/units/parser/base	absent	
+other machine state: tools and binaries	/workspace/notes/lint/measure/pr2	absent	
+other machine state: tools and binaries	/workspace/notes/lint/measure/pr2/bun.pr2b	absent	
+other machine state: tools and binaries	/workspace/notes/lint/measure/pr2/bun-profile.pr2b	absent	
+other machine state: tools and binaries	/tmp/rr/bin/tsgo	absent	
+other machine state: tools and binaries	/tmp/lexprobe	absent	
+other machine state: tools and binaries	/tmp/parser-bootstrap	absent	
+other machine state: tools and binaries	/tmp/sidecar-research	absent	
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/run.mjs	present	file, 12402 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/report.mjs	present	file, 8124 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/clusters.mjs	present	file, 4201 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/digest.mjs	present	file, 2585 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/strict.mjs	present	file, 3346 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/metadata.mjs	present	file, 12580 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/candidates.mjs	present	file, 19523 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/existing-tests.mjs	present	file, 7904 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/existing-errors.mjs	present	file, 6951 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/existing-accepts.mjs	present	file, 3032 bytes, tracked in the notes: 1
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/inputs	present	directory, 13 files, 244541 bytes, tracked in the notes: 13
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/out	present	directory, 93 files, 58275159 bytes, tracked in the notes: 93
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/out/raw	present	directory, 12 files, 1983685 bytes, tracked in the notes: 12
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/top-down	present	directory, 43 files, 4419643 bytes, tracked in the notes: 43
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/probes/outside-type-grammar	present	directory, 83 files, 1331059 bytes, tracked in the notes: 83
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/grammar-diff	present	directory, 19 files, 3989582 bytes, tracked in the notes: 19
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/measure	present	directory, 215 files, 335633589 bytes, tracked in the notes: 200
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/measure/base/bin	present	directory, 2 files, 250749040 bytes, tracked in the notes: 0
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/measure/base/grammar-diff	present	directory, 9 files, 9177721 bytes, tracked in the notes: 9
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/measure/base/cg-b	present	directory, 24 files, 74378443 bytes, tracked in the notes: 12
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/lexer-lint-hooks	present	directory, 47 files, 289895 bytes, tracked in the notes: 47
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/sidecar-core	present	directory, 6 files, 8014 bytes, tracked in the notes: 6
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/sidecar-erased-statements	present	directory, 7 files, 82170 bytes, tracked in the notes: 7
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/sidecar-inline-drops-wrappers	present	directory, 15 files, 45027 bytes, tracked in the notes: 15
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/sidecar-skip-call-sites	present	directory, 8 files, 46142 bytes, tracked in the notes: 8
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/build-sink	present	directory, 22 files, 283651 bytes, tracked in the notes: 22
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/build-sink-positions	present	directory, 16 files, 166826 bytes, tracked in the notes: 16
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/type-nodes-layout	present	directory, 3 files, 88878 bytes, tracked in the notes: 3
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/lint-entry-probe	present	directory, 12 files, 32198 bytes, tracked in the notes: 12
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/api-contract-top-down	present	directory, 3 files, 34486 bytes, tracked in the notes: 3
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/ledger/rescued-tmp	present	directory, 142 files, 867555 bytes, tracked in the notes: 142
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/ledger/bottom-up/tmp-rescue	present	directory, 118 files, 599933 bytes, tracked in the notes: 118
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/ledger/bottom-up/corpus	present	directory, 41 files, 13521049 bytes, tracked in the notes: 40
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/ledger/bottom-up/tsgo-oracle	present	directory, 2 files, 7247 bytes, tracked in the notes: 2
+this machine: notes of the parser unit	/workspace/notes/lint/units/parser/ledger/bottom-up/pins	present	directory, 17 files, 215773 bytes, tracked in the notes: 17
+this machine: shared tools	/workspace/notes/lint/tools/symsizes.py	present	file, 2300 bytes, tracked in the notes: 1
+this machine: shared tools	/workspace/notes/lint/tools/cgbench.sh	present	file, 857 bytes, tracked in the notes: 1
+this machine: shared tools	/workspace/notes/lint/tools/cgsum.py	present	file, 1839 bytes, tracked in the notes: 1
+this machine: shared tools	/workspace/notes/lint/benchroot	present	directory, 378 files, 10230614 bytes, tracked in the notes: 0
+this machine: shared tools	/workspace/tools/vg	present	file, 344 bytes
+this machine: shared tools	/workspace/tools/valgrind/bin/valgrind	present	file, 29704 bytes
+this machine: shared tools	/workspace/notes/lint/design	present	directory, 0 files, 0 bytes, tracked in the notes: 0
+this machine: shared tools	/workspace/notes/lint/parser-inventory	present	directory, 0 files, 0 bytes, tracked in the notes: 0
+this machine: shared tools	/workspace/notes/lint/port-map	present	directory, 0 files, 0 bytes, tracked in the notes: 0
+this machine: shared tools	/workspace/ref/typescript-go	present	directory, 136966 files, 675473059 bytes
+this machine: shared tools	/tmp/rr/go126/bin/go	present	file, 15388811 bytes
+this machine: shared tools	/tmp/rr/deps	present	directory, 685 files, 33333838 bytes
+this machine: shared tools	/tmp/rr/dumpast	present	file, 11283166 bytes
+this machine: shared tools	/tmp/rr/parsediag-bu	present	file, 11510120 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/gct1a-42866	present	directory, 24 files, 58790 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/otg_bottomup_7f3k	present	directory, 28 files, 62144 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/sidecar-probe	present	directory, 31 files, 1657956 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/lint-entry-probe	present	directory, 13 files, 715355 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/sidl	present	directory, 2 files, 3672 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/lexhooks	present	directory, 42 files, 4812217 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/tsnodes	present	directory, 214 files, 63070086 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/gte	present	directory, 35 files, 57121 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/gte-probe	present	directory, 25 files, 45282 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/gotg	present	directory, 84 files, 1331162 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/gotg1b	present	directory, 3 files, 6551 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/parser-research	present	directory, 6 files, 11801 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/tsprobe	present	directory, 3 files, 6951 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/sidecar-oracle	present	directory, 10 files, 71881 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/sidecar-wrappers-probe	present	directory, 13 files, 50210 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/erased-bu-7f3a	present	directory, 13 files, 83344 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/erased-probe	present	directory, 10 files, 52854 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/erased-research	present	directory, 6 files, 15280 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/parser-base	present	directory, 152 files, 23309669 bytes
+this machine: scratch in /tmp (lost at a restart)	/tmp/parser-probe	present	directory, 13876 files, 1533860161 bytes
+binary: installed (bun on PATH)	/workspace/bun/build/release/bun	present	sha256 b36205654bfff3445a8ee9cab737992decb0237f7fb90419fd041aac542cb5aa, 80705056 bytes, reports 1.4.3-canary.1+367d939d9
+binary: base release of the worktree	/workspace/wt/parser/build/release/bun	present	sha256 62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552, 80832072 bytes, reports 1.4.3-canary.1+e3566be88
+binary: base release, copy in the notes (git-ignored)	/workspace/notes/lint/units/parser/measure/base/bin/bun	present	sha256 62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552, 80832072 bytes, reports 1.4.3-canary.1+e3566be88
+binary: base profile of the worktree	/workspace/wt/parser/build/release/bun-profile	present	sha256 96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc, 169916968 bytes, reports 1.4.3-canary.1+e3566be88
+binary: base profile, copy in the notes (git-ignored)	/workspace/notes/lint/units/parser/measure/base/bin/bun-profile	present	sha256 96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc, 169916968 bytes, reports 1.4.3-canary.1+e3566be88
+binary: debug build of the worktree	/workspace/wt/parser/build/debug/bun-debug	present	sha256 855d7a7b192eb299ee100feb1232e06b6292512fe31d375cea12a5932196de43, pinned revision e3566be889995ffff8b08823b9233617f979c889
+git	/workspace/wt/parser HEAD	e3566be889995ffff8b08823b9233617f979c889	branch robobun/abbc0c92/lint-parser, 0 changed files
+git	commit 8965734d5	absent	not an object of the repository
+git	commit 367d939d9	present	367d939d9a node:net: let the GC collect a handle whose socket is destroyed before it connects (#4229
+git	commit 2d28b35c01	present	2d28b35c01 js_parser: make the type grammar generic over a sink
+git	commit 36cd1514e	present	36cd1514ec Remove dead code from the bake client, uSockets, uWS HTTP/2, uws_sys, and the CI pipeline
+git	commit e3566be889	present	e3566be889 typecheck, lint: add the two crates to the workspace
+git	notes HEAD	de1d0b8f31	origin de1d0b8f31

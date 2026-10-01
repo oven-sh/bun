@@ -1,0 +1,376 @@
+file /expr1.ts scriptKind=3 variant=0 dts=false textLen=705
+externalModuleIndicator KindMetaProperty[216,228)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=349 identifiers=104 text=126 reparsedClones=0
+import KindStringLiteral[237,240) "m"
+root KindSourceFile [0,705) f=0x180000
+  .Statements: list [0,704) n=33
+    - KindExpressionStatement [0,8) f=0x0
+      .Expression: KindBinaryExpression [0,7) f=0x0
+        .Left: KindParenthesizedExpression [0,3) f=0x0
+          .Expression: KindIdentifier [1,2) f=0x0 Text="a"
+        .OperatorToken: KindPlusToken [3,5) f=0x0
+        .Right: KindIdentifier [5,7) f=0x0 Text="b"
+    - KindExpressionStatement [8,17) f=0x0
+      .Expression: KindParenthesizedExpression [8,16) f=0x0
+        .Expression: KindBinaryExpression [10,15) f=0x0
+          .Left: KindIdentifier [10,11) f=0x0 Text="a"
+          .OperatorToken: KindPlusToken [11,13) f=0x0
+          .Right: KindIdentifier [13,15) f=0x0 Text="b"
+    - KindExpressionStatement [17,32) f=0x0
+      .Expression: KindBinaryExpression [17,31) f=0x0
+        .Left: KindParenthesizedExpression [17,27) f=0x0
+          .Expression: KindBinaryExpression [19,26) f=0x0
+            .Left: KindParenthesizedExpression [19,22) f=0x0
+              .Expression: KindIdentifier [20,21) f=0x0 Text="a"
+            .OperatorToken: KindPlusToken [22,24) f=0x0
+            .Right: KindIdentifier [24,26) f=0x0 Text="b"
+        .OperatorToken: KindAsteriskToken [27,29) f=0x0
+        .Right: KindIdentifier [29,31) f=0x0 Text="c"
+    - KindExpressionStatement [32,40) f=0x0
+      .Expression: KindParenthesizedExpression [32,39) f=0x0
+        .Expression: KindBinaryExpression [34,38) f=0x0
+          .Left: KindIdentifier [34,35) f=0x0 Text="a"
+          .OperatorToken: KindCommaToken [35,36) f=0x0
+          .Right: KindIdentifier [36,38) f=0x0 Text="b"
+    - KindExpressionStatement [40,51) f=0x0
+      .Expression: KindCallExpression [40,50) f=0x0
+        .Arguments: list [43,49) n=2
+          - KindParenthesizedExpression [43,46) f=0x0
+            .Expression: KindIdentifier [44,45) f=0x0 Text="a"
+          - KindIdentifier [47,49) f=0x0 Text="b"
+        .Expression: KindIdentifier [40,42) f=0x0 Text="f"
+    - KindExpressionStatement [51,61) f=0x0
+      .Expression: KindPropertyAccessExpression [51,60) f=0x0
+        .Expression: KindParenthesizedExpression [51,58) f=0x0
+          .Expression: KindPropertyAccessExpression [53,57) f=0x20
+            .Expression: KindIdentifier [53,54) f=0x0 Text="a"
+            .QuestionDotToken: KindQuestionDotToken [54,56) f=0x0
+            .name: KindIdentifier [56,57) f=0x0 Text="b"
+        .name: KindIdentifier [59,60) f=0x0 Text="c"
+    - KindExpressionStatement [61,77) f=0x0
+      .Expression: KindElementAccessExpression [61,76) f=0x20
+        .ArgumentExpression: KindIdentifier [74,75) f=0x0 Text="e"
+        .Expression: KindCallExpression [61,71) f=0x20
+          .Arguments: list [69,70) n=1
+            - KindIdentifier [69,70) f=0x0 Text="d"
+          .Expression: KindPropertyAccessExpression [61,68) f=0x20
+            .Expression: KindPropertyAccessExpression [61,66) f=0x20
+              .Expression: KindIdentifier [61,63) f=0x0 Text="a"
+              .QuestionDotToken: KindQuestionDotToken [63,65) f=0x0
+              .name: KindIdentifier [65,66) f=0x0 Text="b"
+            .name: KindIdentifier [67,68) f=0x0 Text="c"
+        .QuestionDotToken: KindQuestionDotToken [71,73) f=0x0
+    - KindExpressionStatement [77,85) f=0x0
+      .Expression: KindCallExpression [77,84) f=0x20
+        .Arguments: list [82,83) n=1
+          - KindIdentifier [82,83) f=0x0 Text="x"
+        .Expression: KindIdentifier [77,79) f=0x0 Text="a"
+        .QuestionDotToken: KindQuestionDotToken [79,81) f=0x0
+    - KindExpressionStatement [85,99) f=0x0
+      .Expression: KindBinaryExpression [85,98) f=0x0
+        .Left: KindIdentifier [85,87) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [87,89) f=0x0
+        .Right: KindArrowFunction [89,98) f=0x0
+          .Body: KindIdentifier [96,98) f=0x0 Text="y"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [93,96) f=0x0
+          .Parameters: list [91,92) n=1
+            - KindParameter [91,92) f=0x0
+              .name: KindIdentifier [91,92) f=0x0 Text="y"
+    - KindExpressionStatement [99,115) f=0x0
+      .Expression: KindBinaryExpression [99,114) f=0x0
+        .Left: KindIdentifier [99,101) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [101,103) f=0x0
+        .Right: KindParenthesizedExpression [103,114) f=0x0
+          .Expression: KindArrowFunction [105,113) f=0x0
+            .Body: KindIdentifier [111,113) f=0x0 Text="y"
+            .EqualsGreaterThanToken: KindEqualsGreaterThanToken [108,111) f=0x0
+            .Parameters: list [106,107) n=1
+              - KindParameter [106,107) f=0x0
+                .name: KindIdentifier [106,107) f=0x0 Text="y"
+    - KindExpressionStatement [115,135) f=0x0
+      .Expression: KindBinaryExpression [115,134) f=0x0
+        .Left: KindIdentifier [115,117) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [117,119) f=0x0
+        .Right: KindArrowFunction [119,134) f=0x0
+          .Body: KindIdentifier [132,134) f=0x2000 Text="y"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [129,132) f=0x0
+          .Parameters: list [127,128) n=1
+            - KindParameter [127,128) f=0x2000
+              .name: KindIdentifier [127,128) f=0x2000 Text="y"
+          .modifiers.flags=0x400
+          .modifiers: list [119,125) n=1
+            - KindAsyncKeyword [119,125) f=0x0
+    - KindExpressionStatement [135,153) f=0x0
+      .Expression: KindBinaryExpression [135,152) f=0x0
+        .Left: KindIdentifier [135,137) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [137,139) f=0x0
+        .Right: KindArrowFunction [139,152) f=0x0
+          .Body: KindIdentifier [150,152) f=0x2000 Text="y"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [147,150) f=0x0
+          .Parameters: list [145,147) n=1
+            - KindParameter [145,147) f=0x0
+              .name: KindIdentifier [145,147) f=0x0 Text="y"
+          .modifiers.flags=0x400
+          .modifiers: list [139,145) n=1
+            - KindAsyncKeyword [139,145) f=0x0
+    - KindExpressionStatement [153,177) f=0x0
+      .Expression: KindBinaryExpression [153,176) f=0x0
+        .Left: KindIdentifier [153,155) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [155,157) f=0x0
+        .Right: KindArrowFunction [157,176) f=0x0
+          .Body: KindBlock [162,176) f=0x0
+            .Statements: list [164,174) n=1
+              - KindReturnStatement [164,174) f=0x0
+                .Expression: KindIdentifier [171,173) f=0x0 Text="y"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [159,162) f=0x0
+          .Parameters: list [157,159) n=1
+            - KindParameter [157,159) f=0x0
+              .name: KindIdentifier [157,159) f=0x0 Text="y"
+    - KindExpressionStatement [177,186) f=0x0
+      .Expression: KindNewExpression [177,185) f=0x0
+        .Expression: KindIdentifier [181,185) f=0x0 Text="Foo"
+    - KindExpressionStatement [186,204) f=0x0
+      .Expression: KindNewExpression [186,203) f=0x0
+        .Arguments: list [195,202) n=2
+          - KindNumericLiteral [195,196) f=0x0 Text="1" TokenFlags=0x0
+          - KindSpreadElement [197,202) f=0x0
+            .Expression: KindIdentifier [201,202) f=0x0 Text="r"
+        .Expression: KindIdentifier [190,194) f=0x0 Text="Foo"
+    - KindExpressionStatement [204,216) f=0x0
+      .Expression: KindMetaProperty [204,215) f=0x0 KeywordToken=KindNewKeyword
+        .name: KindIdentifier [209,215) f=0x0 Text="target"
+    - KindExpressionStatement [216,229) f=0x0
+      .Expression: KindMetaProperty [216,228) f=0x0 KeywordToken=KindImportKeyword
+        .name: KindIdentifier [224,228) f=0x0 Text="meta"
+    - KindExpressionStatement [229,242) f=0x0
+      .Expression: KindCallExpression [229,241) f=0x0
+        .Arguments: list [237,240) n=1
+          - KindStringLiteral [237,240) f=0x0 Text="m" TokenFlags=0x0
+        .Expression: KindImportKeyword [229,236) f=0x0
+    - KindExpressionStatement [242,257) f=0x0
+      .Expression: KindArrayLiteralExpression [242,256) f=0x0
+        .Elements: list [244,254) n=3
+          - KindNumericLiteral [244,245) f=0x0 Text="1" TokenFlags=0x0
+          - KindOmittedExpression [246,246) f=0x0
+          - KindSpreadElement [248,253) f=0x0
+            .Expression: KindIdentifier [252,253) f=0x0 Text="s"
+    - KindExpressionStatement [257,359) f=0x0
+      .Expression: KindParenthesizedExpression [257,358) f=0x0
+        .Expression: KindObjectLiteralExpression [259,357) f=0x0
+          .Properties: list [260,355) n=10
+            - KindShorthandPropertyAssignment [260,262) f=0x0
+              .name: KindIdentifier [260,262) f=0x0 Text="a"
+            - KindPropertyAssignment [263,268) f=0x0
+              .Initializer: KindIdentifier [266,268) f=0x0 Text="c"
+              .name: KindIdentifier [263,265) f=0x0 Text="b"
+            - KindPropertyAssignment [269,276) f=0x0
+              .Initializer: KindIdentifier [274,276) f=0x0 Text="e"
+              .name: KindComputedPropertyName [269,273) f=0x0
+                .Expression: KindIdentifier [271,272) f=0x0 Text="d"
+            - KindSpreadAssignment [277,282) f=0x0
+              .Expression: KindIdentifier [281,282) f=0x0 Text="f"
+            - KindMethodDeclaration [283,290) f=0x0
+              .Body: KindBlock [287,290) f=0x0
+                .Statements: list [289,289) n=0
+              .Parameters: list [286,286) n=0
+              .name: KindIdentifier [283,285) f=0x0 Text="g"
+            - KindGetAccessor [291,313) f=0x0
+              .Body: KindBlock [299,313) f=0x0
+                .Statements: list [301,311) n=1
+                  - KindReturnStatement [301,311) f=0x0
+                    .Expression: KindNumericLiteral [308,310) f=0x0 Text="1" TokenFlags=0x0
+              .Parameters: list [298,298) n=0
+              .name: KindIdentifier [295,297) f=0x0 Text="h"
+            - KindSetAccessor [314,326) f=0x0
+              .Body: KindBlock [323,326) f=0x0
+                .Statements: list [325,325) n=0
+              .Parameters: list [321,322) n=1
+                - KindParameter [321,322) f=0x0
+                  .name: KindIdentifier [321,322) f=0x0 Text="v"
+              .name: KindIdentifier [318,320) f=0x0 Text="h"
+            - KindMethodDeclaration [327,341) f=0x0
+              .AsteriskToken: KindAsteriskToken [333,335) f=0x0
+              .Body: KindBlock [338,341) f=0x2800
+                .Statements: list [340,340) n=0
+              .Parameters: list [337,337) n=0
+              .modifiers.flags=0x400
+              .modifiers: list [327,333) n=1
+                - KindAsyncKeyword [327,333) f=0x0
+              .name: KindIdentifier [335,336) f=0x0 Text="i"
+            - KindPropertyAssignment [342,349) f=0x0
+              .Initializer: KindNumericLiteral [347,349) f=0x0 Text="1" TokenFlags=0x0
+              .name: KindStringLiteral [342,346) f=0x0 Text="s" TokenFlags=0x0
+            - KindPropertyAssignment [350,355) f=0x0
+              .Initializer: KindNumericLiteral [353,355) f=0x0 Text="3" TokenFlags=0x0
+              .name: KindNumericLiteral [350,352) f=0x0 Text="2" TokenFlags=0x0
+    - KindExpressionStatement [359,374) f=0x0
+      .Expression: KindTemplateExpression [359,373) f=0x0
+        .Head: KindTemplateHead [359,364) f=0x0 RawText="a" TemplateFlags=0x0 Text="a" TokenFlags=0x0
+        .TemplateSpans: list [364,373) n=2
+          - KindTemplateSpan [364,369) f=0x0
+            .Expression: KindIdentifier [364,365) f=0x0 Text="b"
+            .Literal: KindTemplateMiddle [365,369) f=0x0 RawText="c" TemplateFlags=0x0 Text="c" TokenFlags=0x0
+          - KindTemplateSpan [369,373) f=0x0
+            .Expression: KindIdentifier [369,370) f=0x0 Text="d"
+            .Literal: KindTemplateTail [370,373) f=0x0 RawText="e" TemplateFlags=0x0 Text="e" TokenFlags=0x0
+    - KindExpressionStatement [374,387) f=0x0
+      .Expression: KindTaggedTemplateExpression [374,386) f=0x0
+        .Tag: KindIdentifier [374,378) f=0x0 Text="tag"
+        .Template: KindTemplateExpression [378,386) f=0x0
+          .Head: KindTemplateHead [378,382) f=0x0 RawText="x" TemplateFlags=0x0 Text="x" TokenFlags=0x0
+          .TemplateSpans: list [382,386) n=1
+            - KindTemplateSpan [382,386) f=0x0
+              .Expression: KindIdentifier [382,383) f=0x0 Text="y"
+              .Literal: KindTemplateTail [383,386) f=0x0 RawText="z" TemplateFlags=0x0 Text="z" TokenFlags=0x0
+    - KindExpressionStatement [387,399) f=0x0
+      .Expression: KindTaggedTemplateExpression [387,398) f=0x0
+        .Tag: KindIdentifier [387,391) f=0x0 Text="tag"
+        .Template: KindNoSubstitutionTemplateLiteral [391,398) f=0x0 RawText="" TemplateFlags=0x0 Text="plain" TokenFlags=0x0
+    - KindExpressionStatement [399,408) f=0x0
+      .Expression: KindNoSubstitutionTemplateLiteral [399,407) f=0x0 RawText="" TemplateFlags=0x0 Text="plain" TokenFlags=0x0
+    - KindExpressionStatement [408,419) f=0x0
+      .Expression: KindConditionalExpression [408,418) f=0x0
+        .ColonToken: KindColonToken [414,416) f=0x0
+        .Condition: KindIdentifier [408,410) f=0x0 Text="a"
+        .QuestionToken: KindQuestionToken [410,412) f=0x0
+        .WhenFalse: KindIdentifier [416,418) f=0x0 Text="c"
+        .WhenTrue: KindIdentifier [412,414) f=0x0 Text="b"
+    - KindExpressionStatement [419,429) f=0x0
+      .Expression: KindBinaryExpression [419,428) f=0x0
+        .Left: KindPostfixUnaryExpression [419,423) f=0x0 Operator=KindPlusPlusToken
+          .Operand: KindIdentifier [419,421) f=0x0 Text="a"
+        .OperatorToken: KindCommaToken [423,424) f=0x0
+        .Right: KindPrefixUnaryExpression [424,428) f=0x0 Operator=KindMinusMinusToken
+          .Operand: KindIdentifier [427,428) f=0x0 Text="b"
+    - KindExpressionStatement [429,475) f=0x0
+      .Expression: KindBinaryExpression [429,474) f=0x0
+        .Left: KindBinaryExpression [429,470) f=0x0
+          .Left: KindBinaryExpression [429,466) f=0x0
+            .Left: KindBinaryExpression [429,462) f=0x0
+              .Left: KindBinaryExpression [429,458) f=0x0
+                .Left: KindBinaryExpression [429,446) f=0x0
+                  .Left: KindTypeOfExpression [429,438) f=0x0
+                    .Expression: KindIdentifier [436,438) f=0x0 Text="a"
+                  .OperatorToken: KindCommaToken [438,439) f=0x0
+                  .Right: KindVoidExpression [439,446) f=0x0
+                    .Expression: KindNumericLiteral [444,446) f=0x0 Text="0" TokenFlags=0x0
+                .OperatorToken: KindCommaToken [446,447) f=0x0
+                .Right: KindDeleteExpression [447,458) f=0x0
+                  .Expression: KindPropertyAccessExpression [454,458) f=0x0
+                    .Expression: KindIdentifier [454,456) f=0x0 Text="a"
+                    .name: KindIdentifier [457,458) f=0x0 Text="b"
+              .OperatorToken: KindCommaToken [458,459) f=0x0
+              .Right: KindPrefixUnaryExpression [459,462) f=0x0 Operator=KindExclamationToken
+                .Operand: KindIdentifier [461,462) f=0x0 Text="a"
+            .OperatorToken: KindCommaToken [462,463) f=0x0
+            .Right: KindPrefixUnaryExpression [463,466) f=0x0 Operator=KindTildeToken
+              .Operand: KindIdentifier [465,466) f=0x0 Text="a"
+          .OperatorToken: KindCommaToken [466,467) f=0x0
+          .Right: KindPrefixUnaryExpression [467,470) f=0x0 Operator=KindMinusToken
+            .Operand: KindIdentifier [469,470) f=0x0 Text="a"
+        .OperatorToken: KindCommaToken [470,471) f=0x0
+        .Right: KindPrefixUnaryExpression [471,474) f=0x0 Operator=KindPlusToken
+          .Operand: KindIdentifier [473,474) f=0x0 Text="a"
+    - KindExpressionStatement [475,494) f=0x0
+      .Expression: KindBinaryExpression [475,493) f=0x0
+        .Left: KindIdentifier [475,477) f=0x0 Text="a"
+        .OperatorToken: KindQuestionQuestionEqualsToken [477,481) f=0x0
+        .Right: KindBinaryExpression [481,493) f=0x0
+          .Left: KindIdentifier [481,483) f=0x0 Text="b"
+          .OperatorToken: KindBarBarToken [483,486) f=0x0
+          .Right: KindBinaryExpression [486,493) f=0x0
+            .Left: KindIdentifier [486,488) f=0x0 Text="c"
+            .OperatorToken: KindAmpersandAmpersandToken [488,491) f=0x0
+            .Right: KindIdentifier [491,493) f=0x0 Text="d"
+    - KindExpressionStatement [494,509) f=0x0
+      .Expression: KindCallExpression [494,508) f=0x0
+        .Arguments: list [506,507) n=1
+          - KindIdentifier [506,507) f=0x0 Text="s"
+        .Expression: KindPropertyAccessExpression [494,505) f=0x0
+          .Expression: KindRegularExpressionLiteral [494,500) f=0x0 Text="/re/g" TokenFlags=0x0
+          .name: KindIdentifier [501,505) f=0x0 Text="test"
+    - KindExpressionStatement [509,559) f=0x0
+      .Expression: KindBinaryExpression [509,558) f=0x0
+        .Left: KindIdentifier [509,511) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [511,513) f=0x0
+        .Right: KindFunctionExpression [513,558) f=0x0
+          .AsteriskToken: KindAsteriskToken [522,523) f=0x0
+          .Body: KindBlock [555,558) f=0x800
+            .Statements: list [557,557) n=0
+          .Parameters: list [530,554) n=4
+            - KindParameter [530,535) f=0x800
+              .Initializer: KindNumericLiteral [533,535) f=0x800 Text="1" TokenFlags=0x0
+              .name: KindIdentifier [530,531) f=0x800 Text="p"
+            - KindParameter [536,540) f=0x800
+              .name: KindObjectBindingPattern [536,540) f=0x800
+                .Elements: list [538,539) n=1
+                  - KindBindingElement [538,539) f=0x800
+                    .name: KindIdentifier [538,539) f=0x800 Text="q"
+            - KindParameter [541,545) f=0x800
+              .name: KindArrayBindingPattern [541,545) f=0x800
+                .Elements: list [543,544) n=1
+                  - KindBindingElement [543,544) f=0x800
+                    .name: KindIdentifier [543,544) f=0x800 Text="r"
+            - KindParameter [546,554) f=0x800
+              .DotDotDotToken: KindDotDotDotToken [546,550) f=0x800
+              .name: KindIdentifier [550,554) f=0x800 Text="rest"
+          .name: KindIdentifier [523,529) f=0x800 Text="named"
+    - KindExpressionStatement [559,687) f=0x0
+      .Expression: KindBinaryExpression [559,686) f=0x0
+        .Left: KindIdentifier [559,561) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [561,563) f=0x0
+        .Right: KindClassExpression [563,686) f=0x0
+          .HeritageClauses: list [575,588) n=1
+            - KindHeritageClause [575,588) f=0x0 Token=KindExtendsKeyword
+              .Types: list [583,588) n=1
+                - KindExpressionWithTypeArguments [583,588) f=0x0
+                  .Expression: KindIdentifier [583,588) f=0x0 Text="Base"
+          .Members: list [590,684) n=7
+            - KindPropertyDeclaration [590,604) f=0x0
+              .Initializer: KindNumericLiteral [601,603) f=0x0 Text="1" TokenFlags=0x0
+              .modifiers.flags=0x100
+              .modifiers: list [590,597) n=1
+                - KindStaticKeyword [590,597) f=0x0
+              .name: KindIdentifier [597,599) f=0x0 Text="s"
+            - KindPropertyDeclaration [604,608) f=0x0
+              .name: KindPrivateIdentifier [604,607) f=0x0 Text="#p"
+            - KindMethodDeclaration [608,615) f=0x0
+              .Body: KindBlock [612,615) f=0x0
+                .Statements: list [614,614) n=0
+              .Parameters: list [611,611) n=0
+              .name: KindIdentifier [608,610) f=0x0 Text="m"
+            - KindClassStaticBlockDeclaration [615,631) f=0x0
+              .Body: KindBlock [622,631) f=0x2000
+                .Statements: list [624,629) n=1
+                  - KindExpressionStatement [624,629) f=0x2000
+                    .Expression: KindCallExpression [624,628) f=0x2000
+                      .Arguments: list [627,627) n=0
+                      .Expression: KindIdentifier [624,626) f=0x2000 Text="f"
+            - KindSemicolonClassElement [631,633) f=0x0
+            - KindConstructor [633,660) f=0x0
+              .Body: KindBlock [647,660) f=0x0
+                .Statements: list [649,658) n=1
+                  - KindExpressionStatement [649,658) f=0x0
+                    .Expression: KindCallExpression [649,657) f=0x0
+                      .Arguments: list [656,656) n=0
+                      .Expression: KindSuperKeyword [649,655) f=0x0
+              .Parameters: list [646,646) n=0
+            - KindGetAccessor [660,684) f=0x0
+              .Body: KindBlock [670,684) f=0x0
+                .Statements: list [672,682) n=1
+                  - KindReturnStatement [672,682) f=0x0
+                    .Expression: KindNumericLiteral [679,681) f=0x0 Text="1" TokenFlags=0x0
+              .Parameters: list [669,669) n=0
+              .name: KindComputedPropertyName [664,668) f=0x0
+                .Expression: KindIdentifier [666,667) f=0x0 Text="k"
+          .name: KindIdentifier [569,575) f=0x0 Text="Named"
+    - KindExpressionStatement [687,696) f=0x0
+      .Expression: KindAwaitExpression [687,695) f=0x0
+        .Expression: KindNumericLiteral [693,695) f=0x0 Text="1" TokenFlags=0x0
+    - KindExpressionStatement [696,704) f=0x0
+      .Expression: KindPropertyAccessExpression [696,703) f=0x0
+        .Expression: KindThisKeyword [696,701) f=0x0
+        .name: KindIdentifier [702,703) f=0x0 Text="x"
+  .EndOfFileToken: KindEndOfFile [704,705) f=0x0

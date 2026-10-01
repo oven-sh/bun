@@ -1,0 +1,21 @@
+== vt-member.js
+vt-member.js	OK
+vt-member.js	4	0	1:5	internal-error	This file is nested too deeply to check all of it.
+vt-member.js	800044	8	3:14	valid-typeof	Invalid typeof comparison value.
+== vt-member-before.js
+vt-member-before.js	OK
+vt-member-before.js	37	8	2:14	valid-typeof	Invalid typeof comparison value.
+vt-member-before.js	51	0	3:5	internal-error	This file is nested too deeply to check all of it.
+== vt-leftchain.js
+vt-leftchain.js	OK
+vt-leftchain.js	17	8	1:18	valid-typeof	Invalid typeof comparison value.
+== vt-or.js
+vt-or.js	OK
+vt-or.js	24992	8	1:24993	valid-typeof	Invalid typeof comparison value.
+vt-or.js	24967	8	1:24968	valid-typeof	Invalid typeof comparison value.
+1000 x valid-typeof Invalid typeof comparison value.
+== vt-nested.js
+vt-nested.js	OK
+vt-nested.js	65996	8	1:65997	valid-typeof	Invalid typeof comparison value.
+vt-nested.js	65982	8	1:65983	valid-typeof	Invalid typeof comparison value.
+2999 x valid-typeof Invalid typeof comparison value.

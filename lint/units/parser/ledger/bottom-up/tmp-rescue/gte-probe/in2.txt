@@ -1,0 +1,67 @@
+# predicates in any position
+let x: a is string
+let x: this is string
+let x: asserts a
+let x: asserts a is string
+let x: asserts this
+let x: asserts this is string
+function f(a: any): a is string { return true }
+function f(a: any): asserts a { }
+function f(a: any): asserts a is string { }
+function f(this: any): this is string { return true }
+function f(this: any): asserts this { }
+function f(this: any): asserts this is string { }
+function f(a: any): asserts\na { }
+function f(a: any): a\nis string { return true }
+function f(a: any): asserts a\nis string { }
+function f(a: any): (a is string) { return true }
+function f(a: any): a is string | number { return true }
+function f(a: any): string | a is number { return true }
+function f(a: any): a.b is string { return true }
+function f(a: any): a<T> is string { return true }
+function f(a: any): string is string { return true }
+function f(a: any): any is string { return true }
+function f(a: any): keyof is string { return true }
+function f(a: any): readonly is string { return true }
+function f(a: any): infer is string { return true }
+function f(a: any): unique is string { return true }
+function f(a: any): abstract is string { return true }
+function f(a: any): asserts is string { return true }
+function f(a: any): asserts asserts is string { }
+function f(a: any): asserts asserts { }
+function f(a: any): asserts is { }
+function f(a: any): asserts string { }
+function f(a: any): asserts a.b { }
+function f(a: any): asserts a | b { }
+function f(a: any): asserts a[] { }
+function f(a: any): asserts (a) { }
+function f(a: any): Array<a is string> { return null! }
+function f(a: any): [a is string] { return null! }
+function f(a: any): () => a is string { return null! }
+function f(a: any): (b: any) => b is string { return null! }
+function f(a: any): (b: any) => asserts b { return null! }
+function f(a: any): { m(b: any): b is string } { return null! }
+let f = (a: any): a is string => true
+let f = (a: any): asserts a => {}
+type T = (a: any) => a is string
+type T = (a: any) => asserts a
+type T = (a: any) => asserts a is string
+type T = new (a: any) => a is string
+type T = { (a: any): a is string }
+type T = { m(a: any): a is string }
+type T = { new (a: any): a is string }
+type T = { get x(): a is string }
+type T = a is string
+type T = asserts a
+type T = asserts a is string
+type T = [a is string]
+type T = A<a is string>
+type T = A extends B ? a is string : never
+type T = a is string extends B ? 1 : 2
+let v = x as a is string
+let v = x as asserts a
+let v = <a is string>x
+let v = <asserts a>x
+class C { m(): this is D { return true } }
+class C { p: this is D }
+class C { m(a: any): asserts a is D {} }

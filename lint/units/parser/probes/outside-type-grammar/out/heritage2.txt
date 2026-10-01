@@ -1,0 +1,102 @@
+A1  "interface I extends A\n<T> {}"
+     bun: Expected "{" but found "<" @22 | Unexpected > @24
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A1  "interface I extends A.B\n<T> {}"
+     bun: Expected "{" but found "<" @24 | Unexpected > @26
+     tsc check: (noise 2503,2304)
+     tsc emit: "\"use strict\";\n"
+A1  "interface I extends A\n<T>, B\n<U> {}"
+     bun: Expected "{" but found "<" @22 | Unexpected > @24
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+RR  "interface I extends A<T>\n<U> {}"
+     bun: Expected "{" but found "<" @25 | Unexpected > @27
+     tsc parse: TS1005@25+1 ',' expected.
+AA  "interface I extends A\n.B {}"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A.\nB {}"
+     bun: ok ""
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends\nA {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I\nextends A {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A\n{}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A,\nB {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A\n, B {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A1  "class C implements I\n<T> {}"
+     bun: Expected "{" but found "<" @21 | Expected ";" but found ">" @23 | Expected identifier but found "{" @25 | Expected "}" but found end of file @27
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A1  "class C implements I.J\n<T> {}"
+     bun: Expected "{" but found "<" @23 | Expected ";" but found ">" @25 | Expected identifier but found "{" @27 | Expected "}" but found end of file @29
+     tsc check: (noise 2503,2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A1  "class C implements I\n<T>, J\n<U> {}"
+     bun: Expected "{" but found "<" @21 | Expected ";" but found ">" @23 | Expected identifier but found "," @24 | Expected "(" but found "{" @32 | Expected identifier but found "}" @33 | Expected ")" but found end of file @34
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C implements I\n.J {}"
+     bun: ok "class C {\n}\n"
+     tsc check: (noise 2503)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C extends A\n<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+A1  "class C extends A\n<T> implements I\n<U> {}"
+     bun: Expected "{" but found "<" @35 | Expected ";" but found ">" @37 | Expected identifier but found "{" @39 | Expected "}" but found end of file @41
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends A\n.B {}"
+     bun: ok "class C extends A.B {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A\n    .B {\n}\n"
+AA  "class C extends A\n() {}"
+     bun: ok "class C extends A() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A() {\n}\n"
+AA  "class C extends A<T>\n() {}"
+     bun: ok "class C extends A() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A() {\n}\n"
+A1  "var x = class implements I\n<T> {};"
+     bun: Expected "{" but found "<" @27 | Expected ";" but found ">" @29 | Expected identifier but found "{" @31 | Expected "}" but found end of file @34
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = class {\n};\n"
+AA  "interface I extends A /* c */ <T> {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A1  "interface I extends A // c\n<T> {}"
+     bun: Expected "{" but found "<" @27 | Unexpected > @29
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A1  "interface I extends A\n\n\n<T> {}"
+     bun: Expected "{" but found "<" @24 | Unexpected > @26
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+RR  "type T = A\n<B>;"
+     bun: Unexpected ; @14
+     tsc parse: TS1109@14+1 Expression expected.
+AA  "let x: A\n<B>y;"
+     bun: ok "let x;\ny;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nlet x;\ny;\n"

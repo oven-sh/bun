@@ -1,0 +1,31 @@
+diff	(Missing)	Missing
+diff	*
+diff	-0o1	-1
+diff	-0o3	-3
+diff	0.0	0
+diff	0B11010	26
+diff	0O45436	19230
+diff	0b11	3
+diff	0b11010	26
+diff	0o0	0
+diff	0o1	1
+diff	0o123	83
+diff	0o2	2
+diff	0o2343	1251
+diff	0o3	3
+diff	0o45436	19230
+diff	0o5	5
+diff	0o55	45
+diff	0xFF_FF_FF_FF	4294967295
+diff	1.	1
+diff	1.0	1
+diff	2.0	2
+diff	3.0	3
+diff	[public ]	[public]
+diff	\u005F01234	_01234
+diff	\u0078x	xx
+diff	obj. MemberClassComponent	obj.MemberClassComponent
+diff	s 	s
+diff	{ [a() ?? "d"]: c = "" }	{ [a() ?? "d"]: c; }
+diff	{ [a()?.d]: c = "" }	{ [a()?.d]: c; }
+diff	{ [class extends C { static x = 1 }.x]: b = "" }	{ [class extends C {    static x = 1;}.x]: b; }

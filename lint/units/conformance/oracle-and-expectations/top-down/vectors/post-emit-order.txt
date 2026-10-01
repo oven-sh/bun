@@ -1,0 +1,5 @@
+# Instances whose error baseline is not the one of the diagnostics before emit. Measured at typescript-go 89d5d5b with groundtruth/setup.sh.
+# Keys: <suite>/<name>.errors.txt. For each of them the baseline before emit is TypeScript's file of that name, byte for byte.
+compiler/incorrectRecursiveMappedTypeConstraint.errors.txt
+compiler/typeParameterWithInvalidConstraintType.errors.txt
+conformance/recursiveMappedTypes.errors.txt

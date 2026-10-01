@@ -1,0 +1,42 @@
+row1           "x = a ? <T>(b) : c => d;"                           ERR Expected ":" but found ";"
+row1b          "x = a ? <T>(b) : c;"                                OK  x = a ? b : c;
+row1c          "x = a ? <T>(b): U => c : d;"                        OK  x = a ? (b) => c : d;
+row2           "x = a ? async <T>(b) : c => d;"                     ERR Expected ":" but found ";"
+row2b          "x = a ? async <T>(b): U => c : d;"                  OK  x = a ? async (b) => c : d;
+row3-minus     "x = a ? -<T>(b) : c;"                               OK  x = a ? -b : c;
+row3-not       "x = a ? !<T>(b) : c;"                               OK  x = a ? !b : c;
+row3-typeof    "x = a ? typeof <T>(b) : c;"                         OK  x = a ? typeof b : c;
+row3-await     "async function f() { x = a ? await <T>(b) : c; }"   OK  async function f() {   x = a ? await b : c; }
+row3-add       "x = a ? 1 + <T>(b) : c;"                            OK  x = a ? 1 + b : c;
+row3-case      "switch (x) { case -<T>(b): c; }"                    OK  switch (x) {   case -b:     c; }
+row4-add       "x = a ? 1 + async(b) : c;"                          OK  x = a ? 1 + async(b) : c;
+row4-minus     "x = a ? -async(b) : c;"                             OK  x = a ? -async(b) : c;
+row4-not       "x = a ? !async(b) : c;"                             OK  x = a ? !async(b) : c;
+row4-generic   "x = a ? 1 + async<T>(b) : c;"                       OK  x = a ? 1 + async(b) : c;
+row4-case      "switch (x) { case 1 + async(b): c; }"               OK  switch (x) {   case 1 + async(b):     c; }
+keep-1         "x = a ? (b) : c => d;"                              OK  x = a ? b : (c) => d;
+keep-2         "x = a ? (b) : c => d : e;"                          OK  x = a ? (b) => d : e;
+keep-3         "x = a ? - (b) : c => d : e;"                        ERR Expected ";" but found ":"
+keep-4         "x = (a): T => a;"                                   OK  x = (a) => a;
+keep-5         "x = async (a): T => a;"                             OK  x = async (a) => a;
+keep-6         "x = <T>(a: T): T => a;"                             OK  x = (a) => a;
+keep-7         "x = 1 + (a): T => a;"                               ERR Expected ";" but found ":"
+keep-8         "x = 1 + async (a) => a;"                            ERR Unexpected =>
+keep-9         "x = a ? (b, c) : d;"                                OK  x = a ? (b, c) : d;
+keep-10        "x = a ? async (b) : c;"                             OK  x = a ? async(b) : c;
+keep-11        "x = a ? async (b) => c : d;"                        OK  x = a ? async (b) => c : d;
+keep-12        "x = a ? (b): c => d : e;"                           OK  x = a ? (b) => d : e;
+keep-13        "x = -<T>(b);"                                       OK  x = -b;
+keep-14        "x = -<T>(b) => c;"                                  ERR Unexpected =>
+keep-js-1      "x = a ? (b) : c => d;"                              OK  x = a ? b : (c) => d;
+keep-js-2      "x = a ? 1 + async(b) : c;"                          OK  x = a ? 1 + async(b) : c;
+keep-js-3      "x = a ? -async(b) : c;"                             OK  x = a ? -async(b) : c;
+body-1         "x = a ? (b) => (c) : d => e;"                       ERR Expected ":" but found ";"
+body-2         "x = a ? b => (c) : d => e;"                         ERR Expected ":" but found ";"
+body-3         "x = a ? async (b) => (c) : d => e;"                 ERR Expected ":" but found ";"
+body-4         "x = a ? async b => (c) : d => e;"                   ERR Expected ":" but found ";"
+body-5         "x = a ? (b) => (c) : d => e : f;"                   OK  x = a ? (b) => (c) => e : f;
+body-6         "x = a ? (b): T => (c) : d => e;"                    OK  x = a ? b : (T) => (c) => e;
+body-7         "x = a ? (b) => { return (c) } : d => e;"            OK  x = a ? (b) => {   return c; } : (d) => e;
+body-8         "x = a ? <T>(b) => (c) : d => e;"                    ERR Expected ":" but found ";"
+body-js        "x = a ? (b) => (c) : d => e;"                       OK  x = a ? (b) => c : (d) => e;

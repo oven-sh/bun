@@ -1,0 +1,222 @@
+--- lexer:768 unterminated string EOF [ts] "x = 'abc"
+   bun: @4+0 Unterminated string literal
+   tsc: @8+0 TS1002 Unterminated string literal.
+--- lexer:775 unterminated string CR [ts] "x = 'abc\r'"
+   bun: @4+0 Unterminated string literal
+   tsc: @8+0 TS1002 Unterminated string literal.
+   tsc: @10+0 TS1002 Unterminated string literal.
+--- lexer:791 unterminated string LF [ts] "x = 'abc\n'"
+   bun: @4+0 Unterminated string literal
+   tsc: @8+0 TS1002 Unterminated string literal.
+   tsc: @10+0 TS1002 Unterminated string literal.
+--- lexer: unterminated template [ts] "x = `abc"
+   bun: @4+0 Unterminated string literal
+   tsc: @8+0 TS1160 Unterminated template literal.
+--- lexer: unterminated template subst [ts] "x = `abc${"
+   bun: @10+0 Unexpected end of file
+   tsc: @10+0 TS1109 Expression expected.
+--- lexer:2021 unterminated block comment [ts] "x = 1 /* abc"
+   bun: @12+0 Expected "*/" to terminate multi-line comment
+   tsc: @12+0 TS1010 '*/' expected.
+--- lexer:2942 regex newline [ts] "x = /abc\n/"
+   bun: @4+0 Syntax Error
+   tsc: @4+4 TS1161 Unterminated regular expression literal.
+   tsc: @10+0 TS1109 Expression expected.
+--- lexer:2946 regex EOF [ts] "x = /abc"
+   bun: @4+0 Syntax Error
+   tsc: @4+4 TS1161 Unterminated regular expression literal.
+--- lexer:2372 regex dup flag [ts] "x = /a/gg"
+   bun: @9+0 Duplicate flag "g" in regular expression
+   chk: @8+1 TS1500 Duplicate regular expression flag.
+--- lexer:2386 regex invalid flag [ts] "x = /a/z"
+   bun: @8+0 Invalid flag "z" in regular expression
+   chk: @7+1 TS1499 Unknown regular expression flag.
+--- lexer:1306 # non-ident [ts] "x = #5"
+   bun: @4+0 Syntax Error
+   tsc: @4+1 TS1127 Invalid character.
+   tsc: @5+1 TS1005 ';' expected.
+--- lexer:1306 # alone [ts] "class A { # }"
+   bun: @10+0 Syntax Error
+   tsc: @10+1 TS1127 Invalid character.
+--- lexer:1798 TSyntaxError char [ts] "x = \u0001"
+   bun: @4+1 Unexpected 
+   tsc: @4+1 TS1127 Invalid character.
+--- lexer:1798 backslash alone [ts] "x = \\"
+   bun: @4+0 Unexpected escape sequence
+   tsc: @4+0 TS1127 Invalid character.
+--- lexer:1650 <!--  [ts] "x = 1 <!-- c"
+   bun: @7+0 Unsupported syntax: Legacy HTML comments not implemented yet!
+--- lexer:2055 --> warning [js] "x = 1\n--> c"
+   bun: @6+3 Treating "-->" as the start of a legacy HTML single-line comment
+   tsc: @8+1 TS1109 Expression expected.
+--- lexer:1009 ident escape not u [ts] "x = a\\x41"
+   bun: @4+0 Unexpected escape sequence
+   tsc: @5+0 TS1127 Invalid character.
+--- lexer:1028 ident escape bad var hex [ts] "x = a\\u{zz}"
+   bun: @4+0 Syntax Error
+   tsc: @5+0 TS1127 Invalid character.
+   tsc: @6+1 TS1434 Unexpected keyword or identifier.
+--- lexer:1040 ident escape bad fixed hex [ts] "x = a\\u00zz"
+   bun: @4+0 Syntax Error
+   tsc: @5+0 TS1127 Invalid character.
+--- lexer:1078 invalid identifier via escape [ts] "x = a\\u0020b"
+   bun: @4+8 Invalid identifier: "a b"
+   tsc: @5+0 TS1127 Invalid character.
+--- lexer: escaped keyword [ts] "v\\u0061r x = 1"
+   bun: @0+8 Unexpected v\u0061r
+   tsc: @0+8 TS1260 Keywords cannot contain escape characters.
+--- lexer:3092 num double underscore hex [ts] "x = 0x1__2"
+   bun: @4+0 Syntax Error
+   tsc: @8+1 TS6189 Multiple consecutive numeric separators are not permitted.
+--- lexer:3097 num leading underscore hex [ts] "x = 0x_1"
+   bun: @4+0 Syntax Error
+   tsc: @6+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3097 legacy octal underscore [ts] "x = 0_1"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3110 binary digit 2 [ts] "x = 0b12"
+   bun: @4+0 Syntax Error
+   tsc: @7+1 TS1005 ';' expected.
+--- lexer:3118 octal digit 8 [ts] "x = 0o18"
+   bun: @4+0 Syntax Error
+   tsc: @7+1 TS1005 ';' expected.
+--- lexer:3124 hex digit in octal [ts] "x = 0o1A"
+   bun: @4+0 Syntax Error
+   tsc: @7+1 TS1005 ';' expected.
+--- lexer:3139 0x no digits [ts] "x = 0x"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+--- lexer:3139 0b no digits [ts] "x = 0b"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+--- lexer:3139 0o no digits [ts] "x = 0o"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+--- lexer:3158 legacy octal bigint [ts] "x = 017n"
+   bun: @4+0 Syntax Error
+   tsc: @4+3 TS1121 Octal literals are not allowed. Use the syntax '0o17'.
+   tsc: @7+1 TS1005 ';' expected.
+--- lexer: legacy octal [ts] "x = 017"
+   tsc: @4+3 TS1121 Octal literals are not allowed. Use the syntax '0o17'.
+--- lexer: legacy octal 08 [ts] "x = 08"
+   tsc: @4+2 TS1489 Decimals with leading zeros are not allowed.
+--- lexer:3207 dec double underscore [ts] "x = 1__2"
+   bun: @4+0 Syntax Error
+   tsc: @6+1 TS6189 Multiple consecutive numeric separators are not permitted.
+--- lexer:3212 09_1 [ts] "x = 09_1"
+   bun: @4+0 Syntax Error
+   tsc: @4+2 TS1489 Decimals with leading zeros are not allowed.
+   tsc: @6+2 TS1005 ';' expected.
+--- lexer:3226 underscore before dot [ts] "x = 1_.5"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3232 underscore after dot [ts] "x = 1._5"
+   bun: @4+0 Syntax Error
+   tsc: @6+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3242 frac double underscore [ts] "x = 1.5__5"
+   bun: @4+0 Syntax Error
+   tsc: @8+1 TS6189 Multiple consecutive numeric separators are not permitted.
+--- lexer:3257 underscore before e [ts] "x = 1_e5"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3266 exponent no digits [ts] "x = 1e"
+   bun: @4+0 Syntax Error
+   tsc: @6+0 TS1124 Digit expected.
+--- lexer:3266 exponent sign no digits [ts] "x = 1e+"
+   bun: @4+0 Syntax Error
+   tsc: @7+0 TS1124 Digit expected.
+--- lexer:3276 exp double underscore [ts] "x = 1e1__2"
+   bun: @4+0 Syntax Error
+   tsc: @8+1 TS6189 Multiple consecutive numeric separators are not permitted.
+--- lexer:3307 bigint leading zero [ts] "x = 01n"
+   bun: @4+0 Syntax Error
+   tsc: @4+2 TS1121 Octal literals are not allowed. Use the syntax '0o1'.
+   tsc: @6+1 TS1005 ';' expected.
+--- lexer:3335 trailing underscore [ts] "x = 1_"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS6188 Numeric separators are not allowed here.
+--- lexer:3346 ident after number [ts] "x = 1a"
+   bun: @4+0 Syntax Error
+   tsc: @5+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+--- lexer:3346 ident after number 3in [ts] "x = 3in y"
+   bun: @4+0 Syntax Error
+   tsc: @5+2 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+--- lexer: bigint decimal [ts] "x = 1.5n"
+   bun: @4+0 Syntax Error
+   tsc: @4+4 TS1353 A bigint literal must be an integer.
+--- lexer: bigint exponent [ts] "x = 1e5n"
+   bun: @4+0 Syntax Error
+   tsc: @4+4 TS1352 A bigint literal cannot use exponential notation.
+--- lexer:502 string octal escape EOF [ts] "x = '\\1"
+   bun: @4+0 Unterminated string literal
+   tsc: @5+2 TS1487 Octal escape sequences are not allowed. Use the syntax '\x01'.
+   tsc: @7+0 TS1002 Unterminated string literal.
+--- lexer:548 string \8 octal bad [ts] "x = '\\18'"
+   bun: @5+2 Invalid legacy octal literal
+   tsc: @5+2 TS1487 Octal escape sequences are not allowed. Use the syntax '\x01'.
+--- lexer: string legacy octal escape [ts] "x = '\\17'"
+   bun: @4+0 Syntax Error
+   tsc: @5+3 TS1487 Octal escape sequences are not allowed. Use the syntax '\x0f'.
+--- lexer:580 string \x bad [ts] "x = '\\xzz'"
+   bun: @4+0 Syntax Error
+   tsc: @7+0 TS1125 Hexadecimal digit expected.
+--- lexer:594 string \x one digit [ts] "x = '\\x1z'"
+   bun: @4+0 Syntax Error
+   tsc: @8+0 TS1125 Hexadecimal digit expected.
+--- lexer:633 string \u{} empty [ts] "x = '\\u{}'"
+   bun: @4+0 Syntax Error
+   tsc: @8+0 TS1125 Hexadecimal digit expected.
+--- lexer:644 string \u{zz} [ts] "x = '\\u{zz}'"
+   bun: @4+0 Syntax Error
+   tsc: @8+0 TS1125 Hexadecimal digit expected.
+--- lexer:657 string \u{110000} [ts] "x = '\\u{110000}'"
+   bun: @5+9 Unicode escape sequence is out of range
+   tsc: @8+6 TS1198 An extended Unicode escape value must be between 0x0 and 0x10FFFF inclusive.
+--- lexer:683 string \u00zz [ts] "x = '\\u00zz'"
+   bun: @4+0 Syntax Error
+   tsc: @9+0 TS1125 Hexadecimal digit expected.
+--- lexer:625 string \u{12 unterminated [ts] "x = '\\u{12'"
+   bun: @4+0 Syntax Error
+   tsc: @10+0 TS1199 Unterminated Unicode escape sequence.
+--- lexer: template \u bad (allowed tagged) [ts] "x = `\\u00zz`"
+   bun: @4+0 Syntax Error
+   tsc: @9+0 TS1125 Hexadecimal digit expected.
+--- lexer: tagged template \u bad [ts] "x = f`\\u00zz`"
+--- lexer:2554 jsx namespace [tsx] "x = <a:></a:>"
+   bun: @7+0 Expected identifier after "a:" in namespaced JSX name
+   tsc: @7+1 TS1003 Identifier expected.
+   tsc: @12+1 TS1003 Identifier expected.
+--- lexer:2600 jsx string EOF [tsx] "x = <a b='c"
+   bun: @9+0 Syntax Error
+   tsc: @11+0 TS1002 Unterminated string literal.
+--- lexer:2714 jsx child EOF [tsx] "x = <a>text"
+   bun: @7+0 Syntax Error
+   tsc: @5+1 TS17008 JSX element 'a' has no corresponding closing tag.
+   tsc: @11+0 TS1005 '</' expected.
+--- lexer:2850 jsx entity too big [tsx] "x = <a>&#x110000;</a>"
+   bun: @7+0 JSX entity escape is too big: #x110000
+--- lexer:2862 jsx entity invalid [tsx] "x = <a>&#xzz;</a>"
+   bun: @7+0 Invalid JSX entity escape: #xzz
+--- lexer: hashbang not first [ts] "x = 1\n#!/usr/bin/env node"
+   bun: @6+0 Syntax Error
+   tsc: @6+2 TS18026 '#!' can only be used at the start of a file.
+   tsc: @21+4 TS1005 ';' expected.
+--- lexer: conflict marker [ts] "<<<<<<< HEAD\nx = 1\n=======\nx = 2\n>>>>>>> b\n"
+   bun: @0+2 Unexpected <<
+   tsc: @0+7 TS1185 Merge conflict marker encountered.
+   tsc: @19+7 TS1185 Merge conflict marker encountered.
+   tsc: @33+7 TS1185 Merge conflict marker encountered.
+--- lexer: unicode escape keyword used as keyword [ts] "cl\\u0061ss A {}"
+   bun: @0+10 Unexpected cl\u0061ss
+   tsc: @0+10 TS1260 Keywords cannot contain escape characters.
+--- lexer: @ alone [ts] "x = @"
+   bun: @5+0 Expected identifier but found end of file
+   tsc: @5+0 TS1109 Expression expected.
+--- lexer: rescan template close [ts] "x = `a${b c}`"
+   bun: @10+1 Expected "}" but found "c"
+   tsc: @10+1 TS1005 '}' expected.
+   tsc: @11+1 TS1128 Declaration or statement expected.
+   tsc: @13+0 TS1160 Unterminated template literal.
+--- lexer: expect TEndOfFile? [ts] "x = 1 }"
+   bun: @6+1 Unexpected }
+   tsc: @6+1 TS1128 Declaration or statement expected.

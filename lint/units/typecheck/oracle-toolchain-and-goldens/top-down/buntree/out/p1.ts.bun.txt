@@ -1,0 +1,19 @@
+file p1.ts bytes=120 statements=3
+s_class @7
+  e_identifier @23 B
+  e_string @27
+  e_number @31
+  e_string @34
+  e_function @35
+    b_identifier @36 a
+  s_expr @51
+    e_identifier @51 s
+s_class @58
+  e_identifier @74 B
+  e_string @78
+  e_number @82
+s_block @87
+  s_class @89
+    e_identifier @105 B
+    e_string @109
+    e_number @113

@@ -1,0 +1,14 @@
+function f() { class C { [await: string]: T } }
+type /* c */ as = 1
+type as /* c */ = 1
+interface /* c */ as {}
+export default @d class C {}\nexport const v = C
+@d export default class C {}\nexport const v = C
+export const v = a ? b => ({ x: b }) : c => ({ y: c })
+export const v = cond ? x => x + 1 : y => y
+export const v = cond ? x => (x + 1) : y => y
+export const v = cond ? (x) => (x + 1) : (y) => y
+export const v = cond ? x => [x] : y => y
+export const v = cond ? x => `${x}` : y => y
+export const v = cond ? function (x) { return (x) } : y => y
+class C { m() { return a ? b => (c) : d => e } }

@@ -1,0 +1,37 @@
+if (x) const enum E { a }
+if (x) enum E { a }
+if (x) {} else const enum E { a }
+if (x) {} else enum E { a }
+for (;;) const enum E { a }
+for (;;) enum E { a }
+while (x) const enum E { a }
+while (x) enum E { a }
+do const enum E { a } while (x)
+do enum E { a } while (x)
+label: const enum E { a }
+label: enum E { a }
+with (x) const enum E { a }
+for (const k in x) const enum E { a }
+for (const k of x) enum E { a }
+if (x) declare enum E { a }
+if (x) declare const enum E { a }
+if (x) type T = 1
+if (x) interface I {}
+if (x) declare const a: number
+if (x) declare function f(): void
+if (x) declare class C {}
+if (x) abstract class C {}
+if (x) import a = b
+if (x) export const a = 1
+if (x) namespace N {}
+if (x) const a = 1
+if (x) let a = 1
+if (x) class C {}
+if (x) function f() {}
+if (x) async function f() {}
+if (x) function* f() {}
+if (x) function f(): void
+export default interface as {}
+export default interface as { a: 1 }
+export default interface\nFoo {}
+export default interface satisfies<T> extends B {}

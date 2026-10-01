@@ -1,0 +1,96 @@
+namespace as {}
+namespace as { a }
+namespace as { a: 1 }
+namespace as { let x: number }
+namespace as { foo(): void }
+namespace as {} X {}
+namespace as {} X\n{}
+namespace as {}\nfoo()
+namespace as {};
+namespace as { export const a = 1 }
+namespace as {} + 1
+namespace as any
+namespace as any;
+namespace as any X {}
+namespace as.b {}
+namespace as.b.c { export const a = 1 }
+namespace satisfies {}
+namespace satisfies any
+module as {}
+module as { a }
+module as any
+module as.b {}
+export namespace as {}
+export namespace as { a }
+export namespace as any
+export module as {}
+export interface as {}
+export interface as { a: 1 }
+export interface as {}\nfoo()
+export interface as any
+declare namespace as {}
+declare namespace as { a }
+declare module as {}
+declare interface as {}
+declare interface as { a: 1 }
+declare type as = 1
+declare type as any
+declare type as any X = 1
+interface as {}
+interface as {}\nfoo()
+interface as { a: 1 }\nfoo()
+interface as {} Foo {}
+interface as any Foo {}
+interface as any\nfoo()
+interface as any
+interface as any;
+interface as extends B {}
+interface as<T> {}
+interface as<T> extends B<T> { a: T }
+interface as <T>() => void\nfoo()
+interface as <T>() => void Foo {}
+interface satisfies {}
+type as any
+type as any;
+type as any\nfoo()
+type as any X = 1
+type as <T>() => void
+type as <T>() => void X = 1
+type as <T> = T
+type as<T> = T
+type as<in T> = T
+type as<out T> = T
+type as<const T> = T
+type as<T,> = T
+type as<> = 1
+type as = as
+type as = 1\ntype satisfies = as
+type satisfies = 1
+type satisfies<T> = T
+type satisfies any
+type /* c */ as = 1
+type as /* c */ = 1
+type\nas = 1
+type as\n= 1
+let type = 1; type as any;
+let type: any; type as = 1;
+function f() { type as = 1; return 1 as as }
+function f() { namespace as {} }
+function f() { interface as {} }
+{ type as = 1 }
+if (x) type as = 1;
+if (x) type as any;
+label: type as = 1;
+export type as = 1
+export type as any
+export type satisfies = 1
+export default interface as {}
+export declare namespace as {}
+export declare interface as {}
+export declare type satisfies = 1
+abstract as any
+abstract as any class C {}
+declare as any
+declare as any const x = 1
+global as any
+global as {}

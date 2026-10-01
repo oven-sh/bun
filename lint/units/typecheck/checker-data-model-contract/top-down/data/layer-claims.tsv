@@ -1,0 +1,30 @@
+# functions of checker.go: 1497, claimed twice: 26, claimed by no table: 1
+# decl	end	function	claims	layermap.py	callers by merged layer	callees by merged layer
+2398	2457	c.checkSourceElementUnreachable	expr:F-UNREACH | decl:D-DRIVER	F-UNREACH	D-DRIVER=1	D-SINK=1 F-UNREACH=1
+2459	2477	c.isSourceElementUnreachable	expr:F-UNREACH | decl:D-DRIVER	F-UNREACH	F-UNREACH=1	F-REACH=1
+8833	8864	c.resolveDecorator	expr:E-CALL | decl:E-DECOR	E-DECOR	E-CALL=1	D-SINK=2 E-CALL=6 E-CORE=1 E-DECOR=3 K-PRED=1 T-APPARENT=1 T-LOOKUP=1
+8869	8873	c.isPotentiallyUncalledDecorator	expr:E-CALL | decl:E-DECOR	E-DECOR	E-DECOR=1	E-DECOR=1 T-SIGSHAPE=1
+8876	8888	c.getDiagnosticHeadMessageForDecoratorResolution	expr:E-CALL | decl:E-DECOR	E-DECOR	E-DECOR=1	
+9273	9278	c.getDecoratorArgumentCount	expr:E-CALL | decl:E-DECOR	E-DECOR	E-CALL=1 E-DECOR=1	E-DECOR=1 T-SIGSHAPE=1
+9283	9302	c.getLegacyDecoratorArgumentCount	expr:E-CALL | decl:E-DECOR	E-DECOR	E-DECOR=1	
+10171	10197	c.checkClassExpressionExternalHelpers	expr:E-FUNC | decl:D-HELPERS	D-HELPERS	E-FUNC=1	D-HELPERS=1 E-FUNC=1 UTIL=1
+10935	10943	c.checkAwaitExpression	expr:E-OPER | decl:E-AWAIT	E-AWAIT	E-CORE=1	D-SINK=1 E-AWAIT=1 E-CORE=1 G-GRAMMAR=1 K-PRED=1 S-MERGE=1
+11997	12008	c.forEachProperty	expr:E-ACCESS | rel:R-REL	E-ACCESS	E-ACCESS=5	E-ACCESS=1 LINKS=1 T-LOOKUP=1 TYPES=1
+12011	12016	c.getDeclaringClass	expr:E-ACCESS | rel:R-REL	E-ACCESS	E-ACCESS=5 R-REL=1	S-MERGE=1 T-DECLARED=1
+12019	12026	c.isValidOverrideOf	expr:E-ACCESS | rel:R-REL	E-ACCESS	R-REL=1	E-ACCESS=3 UTIL=1
+12030	12038	c.isPropertyInClassDerivedFrom	expr:E-ACCESS | rel:R-REL	E-ACCESS	E-ACCESS=1	E-ACCESS=2 T-BASE=1
+13208	13215	c.getExactOptionalUnassignableProperties	expr:E-OPER | rel:R-REL	E-OPER	R-REL=1	E-OPER=1 T-LOOKUP=2 T-SYMTYPE=1 T-TUPLE=1
+13217	13219	c.isExactOptionalPropertyMismatch	expr:E-OPER | rel:R-REL	E-OPER	E-OPER=2 R-ELAB=1 X-JSX=1	K-PRED=1
+18151	18162	c.getTypeOfPrototypeProperty	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-SYMTYPE=1	K-OBJ=1 S-MERGE=1 T-DECLARED=1 TYPES=2
+18173	18224	c.getWidenedTypeForAssignmentDeclaration	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-SYMTYPE=1	E-ACCESS=1 F-NARROW=1 K-PRED=1 K-UNION=1 T-JSDECL=2 T-SYMTYPE=1 T-TYPENODE=1 T-WIDEN=1 TYPES=1
+18226	18250	c.getAssignmentDeclarationInitializerType	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-JSDECL=1	E-CORE=2 K-LIT=1 T-JSDECL=3 T-SYMTYPE=1 T-TUPLE=1
+18257	18264	c.hasParentWithTypeAnnotation	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-JSDECL=1	S-MERGE=1
+18266	18278	c.containsSameNamedThisProperty	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-JSDECL=1	F-NARROW=1
+18280	18296	c.getTypeFromPropertyDescriptor	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-JSDECL=1	E-CORE=1 T-LOOKUP=1 T-SIGDECL=1 T-SIGINST=1 T-SIGSHAPE=1
+18301	18344	c.isConstructorDeclaredThisProperty	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	K-INDEXED=1 T-JSDECL=1	K-INDEXED=1
+18346	18350	c.isGlobalSymbolConstructor	types:T-SYMTYPE | decl:T-JSDECL	T-JSDECL	T-SYMTYPE=1	S-MERGE=1
+29124	29126	c.getTypeOfFirstParameterOfSignature	types:T-SIGSHAPE | decl:E-AWAIT	T-SIGSHAPE	E-AWAIT=1 T-JSDECL=1	T-SIGSHAPE=1
+29128	29133	c.getTypeOfFirstParameterOfSignatureWithFallback	types:T-SIGSHAPE | decl:E-AWAIT	T-SIGSHAPE	T-SIGSHAPE=1 X-JSX=2	T-SIGSHAPE=1
+29924	29930	c.getContextualTypeForDecorator	expr:E-CTX | decl:E-DECOR	E-DECOR	E-CTX=1	E-DECOR=1 T-SIGINST=1
+# claimed by no table (layermap.py gives):
+24805	24818	c.getGlobalImportMetaExpressionType	checker:checker.go

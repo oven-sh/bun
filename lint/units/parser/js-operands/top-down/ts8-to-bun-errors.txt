@@ -1,0 +1,197 @@
+
+TS1206: 5 inputs
+     2  bun js: accepts
+          "class A { foo(@dec x) {} }"
+          "class A { constructor(@dec x) {} }"
+     1  bun js: Expected "class" but found "abstract_"
+          "@dec abstract_\nclass A {}"
+     1  bun js: Expected "class" but found "["
+          "@a[b] class A {}"
+     1  bun js: Expected "class" but found "<"
+          "@a<b> class A {}"
+
+TS8002: 3 inputs
+     2  bun js: Expected "from" but found "="
+          "import x = require('y')"
+          "import x = y.z"
+     1  bun js: Unexpected import
+          "export import a = b.c"
+
+TS8003: 1 inputs
+     1  bun js: Unexpected =
+          "export = x"
+
+TS8004: 11 inputs
+     3  bun js: Expected "(" but found "<"
+          "function f<T>() {}"
+          "x = function <T>() {}"
+          "function f<const T>() {}"
+     2  bun js: accepts
+          "x = <A extends B>t</A>"
+          "x = <A extends B C>t</A>"
+     2  bun js: Expected "{" but found "<"
+          "class A<T> {}"
+          "class A<in T, out U> {}"
+     1  bun js: Expected ">" but found ","
+          "x = <T,>(y) => z"
+     1  bun js: Expected ";" but found "<"
+          "class A { foo<T>() {} }"
+     1  bun js: Unexpected <
+          "x = <T,>(a) => c"
+     1  bun js: Expected ":" but found "<"
+          "x = { foo<T>() {} }"
+
+TS8005: 1 inputs
+     1  bun js: Expected "{" but found "implements"
+          "class A implements B {}"
+
+TS8006: 17 inputs
+     4  bun js: Expected ";" but found "A"
+          "interface A {}"
+          "namespace A {}"
+          "module A {}"
+          "export default interface A {}"
+     2  bun js: accepts
+          "var declare, global; declare\nglobal\n{}"
+          "var global; global\n{}"
+     2  bun js: Expected "}" but found "x"
+          "import {type x} from 'y'"
+          "export {type x}"
+     2  bun js: Unexpected type
+          "export type {x}"
+          "export type * from 'y'"
+     1  bun js: Expected string but found "from"
+          "import type from from 'x'"
+     1  bun js: Unexpected enum
+          "enum A {}"
+     1  bun js: Expected identifier but found "enum"
+          "const enum A {}"
+     1  bun js: Expected ";" but found "module"
+          "declare module 'm' {}"
+     1  bun js: Expected ";" but found "global"
+          "declare global {}"
+     1  bun js: Expected "from" but found "x"
+          "import type x from 'y'"
+     1  bun js: Expected "from" but found "{"
+          "import type {x} from 'y'"
+
+TS8008: 2 inputs
+     2  bun js: Expected ";" but found "A"
+          "type A = 1"
+          "label: type A = 1"
+
+TS8009: 28 inputs
+     9  bun js: Expected ";" but found "x"
+          "class A { public x }"
+          "class A { private x = 1 }"
+          "class A { readonly x }"
+          "class A { declare x }"
+          ... 5 more
+     3  bun js: Expected ")" but found "?"
+          "function f(a?) {}"
+          "function f(...a?) {}"
+          "function f(a?: number = 1) {}"
+     3  bun js: Expected ";" but found "?"
+          "class A { x?: number }"
+          "class A { foo?() {} }"
+          "class A { static accessor x?: number }"
+     3  bun js: Expected ";" but found "class"
+          "abstract class A {}"
+          "declare class A {}"
+          "export default abstract class A {}"
+     2  bun js: Expected ";" but found "static"
+          "class A { declare static x }"
+          "class A { private static x }"
+     1  bun js: Expected ";" but found "foo"
+          "class A { override foo() {} }"
+     1  bun js: Expected ";" but found "const"
+          "declare const x"
+     1  bun js: Expected ";" but found "function"
+          "declare function f()"
+     1  bun js: Unexpected )
+          "x = (a?) => c"
+     1  bun js: Expected "}" but found "?"
+          "x = { foo?() {} }"
+     1  bun js: Expected "class" but found "declare"
+          "@dec declare class A {}"
+     1  bun js: Unexpected declare
+          "export declare const x: number"
+     1  bun js: Expected ";" but found "readonly"
+          "class A { public readonly x }"
+
+TS8010: 49 inputs
+    20  bun js: accepts
+          "x = a ? b ? (c) : d => e : f"
+          "x = a ? b ? (c) : d => {} : f"
+          "x = a ? b ? (c, d) : e => f : g"
+          "x = a ? b ? ({c}) : d => e : f"
+          ... 16 more
+    11  bun js: Expected ";" but found ":"
+          "x = a ? (b) : c => d : e"
+          "x = a ? (b) => (c) : d => e : f"
+          "let x: number = 1"
+          "class A { x: number }"
+          ... 7 more
+     6  bun js: Expected "{" but found ":"
+          "function f(): void {}"
+          "class A { foo(): void {} }"
+          "class A { async foo(): Promise<void> {} }"
+          "x = function (): void {}"
+          ... 2 more
+     4  bun js: Expected ")" but found ":"
+          "function f(a: number) {}"
+          "x = (a: b) => c"
+          "try {} catch (e: any) {}"
+          "class A { set x(v: number) {} }"
+     2  bun js: Expected ";" but found "?"
+          "class A { x?: number }"
+          "class A { static accessor x?: number }"
+     1  bun js: Expected "=>" but found ":"
+          "x = a ? () : b => c"
+     1  bun js: Expected "]" but found ":"
+          "class A { [k: string]: any }"
+     1  bun js: Expected identifier but found "this"
+          "function f(this: any) {}"
+     1  bun js: Expected ";" but found "!"
+          "var x!: number"
+     1  bun js: Unexpected declare
+          "export declare const x: number"
+     1  bun js: Expected ")" but found "?"
+          "function f(a?: number = 1) {}"
+
+TS8011: 1 inputs
+     1  bun js: Expected "{" but found "<"
+          "class A extends B<T> {}"
+
+TS8012: 3 inputs
+     3  bun js: Expected ")" but found "x"
+          "class A { constructor(public x) {} }"
+          "function f(public x) {}"
+          "x = (public x) => 1"
+
+TS8013: 2 inputs
+     2  bun js: Unexpected !
+          "x = y!"
+          "x = y!.z"
+
+TS8016: 3 inputs
+     3  bun js: Expected ";" but found "as"
+          "x = y as any"
+          "x = y as const"
+          "using x = y as z"
+
+TS8017: 5 inputs
+     3  bun js: Expected "{" but found ";"
+          "function f();"
+          "class A { foo(); foo() {} }"
+          "class A { constructor(); constructor() {} }"
+     1  bun js: Expected "]" but found ":"
+          "class A { [k: string]: any }"
+     1  bun js: Expected ";" but found "function"
+          "declare function f()"
+
+TS8037: 1 inputs
+     1  bun js: Expected ";" but found "satisfies"
+          "x = y satisfies z"
+
+48 distinct messages of bun's JavaScript instantiation stand for these codes

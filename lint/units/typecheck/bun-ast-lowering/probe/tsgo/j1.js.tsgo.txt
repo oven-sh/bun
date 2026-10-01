@@ -1,0 +1,47 @@
+file /j1.js scriptKind=1 variant=1 dts=false textLen=104
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=34 identifiers=9 text=12 reparsedClones=2
+root KindSourceFile [0,104) f=0x10000
+  .Statements: list [0,103) n=3
+    - KindVariableStatement [0,32) f=0x210000
+      .DeclarationList: KindVariableDeclarationList [0,31) f=0x10000
+        .Declarations: list [25,31) n=1
+          - KindVariableDeclaration [25,31) f=0x10000
+            .Initializer: KindNumericLiteral [29,31) f=0x10000 Text="1" TokenFlags=0x0
+            .Type: KindNumberKeyword [11,17) f=0x410008
+            .name: KindIdentifier [25,27) f=0x10000 Text="x"
+      .jsdoc: KindJSDoc [0,21) f=0x410000
+        .Comment: list [0,4) n=0
+        .Tags: list [4,19) n=1
+          - KindJSDocTypeTag [4,19) f=0x410000
+            .TagName: KindIdentifier [5,9) f=0x410000 Text="type"
+            .TypeExpression: KindJSDocTypeExpression [10,18) f=0x410000
+              .Type: KindNumberKeyword [11,17) f=0x410000
+    - KindVariableStatement [32,61) f=0x210000
+      .DeclarationList: KindVariableDeclarationList [32,60) f=0x10000
+        .Declarations: list [54,60) n=1
+          - KindVariableDeclaration [54,60) f=0x10000
+            .Initializer: KindNumericLiteral [58,60) f=0x10000 Text="2" TokenFlags=0x0
+            .name: KindIdentifier [54,56) f=0x10000 Text="y"
+      .jsdoc: KindJSDoc [32,50) f=0x410000
+        .Comment: list [33,48) n=1
+          - KindJSDocText [33,48) f=0x410000 text="plain text"
+    - KindFunctionDeclaration [61,103) f=0x210000
+      .Body: KindBlock [100,103) f=0x10000
+        .Statements: list [102,102) n=0
+      .Parameters: list [98,99) n=1
+        - KindParameter [98,99) f=0x10000
+          .Type: KindStringKeyword [74,80) f=0x410008
+          .name: KindIdentifier [98,99) f=0x10000 Text="a"
+      .name: KindIdentifier [95,97) f=0x10000 Text="f"
+      .jsdoc: KindJSDoc [61,86) f=0x410000
+        .Comment: list [62,66) n=0
+        .Tags: list [66,84) n=1
+          - KindJSDocParameterTag [66,84) f=0x410000
+            .TagName: KindIdentifier [67,72) f=0x410000 Text="param"
+            .TypeExpression: KindJSDocTypeExpression [73,81) f=0x410000
+              .Type: KindStringKeyword [74,80) f=0x410000
+            .name: KindIdentifier [82,83) f=0x410000 Text="a"
+  .EndOfFileToken: KindEndOfFile [103,104) f=0x10000

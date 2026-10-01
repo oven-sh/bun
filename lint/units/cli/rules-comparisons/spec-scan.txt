@@ -1,0 +1,79 @@
+SHARED HELPERS FOR THE FOUR COMPARISON RULES (proposed file: src/lint/scan.rs)
+Validated as a JavaScript prototype against eslint@10.11.0 (oracle/scan.cjs, scan2.cjs, gen-*.cjs): 0 disagreements.
+Every read of a source byte is source.get(i). A failed read, or a literal or comment that runs past `to`, gives None.
+
+1. SPANS (the two token kinds that a scanner cannot classify alone)
+   Collected with a small bun_ast::walk::Visitor run on the operands of the node under test:
+     visit_e_reg_exp(node, loc)      -> (loc.start, loc.start + node.value.len())      E::RegExp.value is the raw text with flags
+     visit_e_jsx_element(node, loc)  -> (loc.start, jsx_end(node.close_tag_loc)); do NOT walk the children
+   jsx_end(at): from `at` go forward, skip `/* */` and `//` comments, stop after the first `>`.
+     close_tag_loc is the `/` of `<a />` (parse_jsx.rs:265), the name of `</a.b>` (:371), the `>` of `</>` (parser.rs:768-774).
+   The collector overrides visit_expr and visit_stmt with bun_core::StackCheck; on overflow the scan answers None.
+   Sort by start; look up by exact start (binary search).
+
+2. scan(source, from, to, spans, operator) -> Option<Scanned { lowest: i32, before_operator: Option<u32> }>
+   `from` is a token boundary in code, `to` is the first own token of the right operand (right.loc).
+   State: i, depth = 0, lowest = 0, newline_before = false, braces = 0, templates: stack of saved `braces`,
+          last_end = from, in_word = false, word_start, word_end, before_word = from, only_open_parens = false.
+   At position i < to, first match wins:
+     a. i is the start of a span            -> i = its end; OTHER
+     b. \n, \r, E2 80 A8, E2 80 A9           -> newline_before = true; in_word = false; step over it
+     c. `//`                                 -> go to the next line terminator (not over it); in_word = false
+     d. `/*`                                 -> bun_core::strings::index_of(rest, b"*/"); newline_before = true when the
+                                                comment holds a line terminator; in_word = false
+     e. `-->` while newline_before           -> as c (lexer.rs:1528-1536, 2052-2068)
+     f. `"` or `'`                           -> string: `\` skips two bytes, the same quote ends it; OTHER
+     g. backtick                             -> TEMPLATE TEXT; OTHER
+     h. `{`                                  -> braces += 1; OTHER
+     i. `}`                                  -> braces > 0: braces -= 1. braces == 0: pop `templates` into braces (None when
+                                                empty), then TEMPLATE TEXT. OTHER
+     j. `(`                                  -> depth += 1; token that does NOT clear only_open_parens
+     k. `)`                                  -> depth -= 1; lowest = min(lowest, depth); OTHER
+     l. space, tab, 0B, 0C                   -> in_word = false
+     m. `\` followed by `u{`                 -> WORD, up to and with the `}`
+     n. ASCII letter, digit, `_`, `$`, `#`, `\` -> WORD
+     o. byte >= 0x80                         -> decode; bun_core::identifier::is_identifier_part, U+200C, U+200D: WORD;
+                                                anything else is blank (U+00A0, U+FEFF): in_word = false
+     p. any other byte                       -> OTHER, one byte
+   WORD:  if !in_word { before_word = last_end; word_start = i; only_open_parens = true; in_word = true }
+          advance; word_end = last_end = i; newline_before = false
+   OTHER: in_word = false; last_end = i; newline_before = false; only_open_parens = false
+   TEMPLATE TEXT: `\` skips two bytes; a backtick ends the template; `${` pushes braces, sets braces = 0 and returns to code.
+   At the end i must equal `to`. before_operator = Some(before_word) when only_open_parens and
+   source[word_start..word_end] == operator, else None.
+   `<!--` needs no rule: Bun's lexer rejects it (lexer.rs:1647-1654).
+
+3. WHY IT IS EXACT
+   The tokens of [after `!`, right.loc) are: the operand (balanced, never below its own start depth), then k `)`, then the
+   operator, then `(`s of the right operand (and the decorators of `@dec class {}`: pfx_t_at gives the class the loc of
+   `class`, parse_prefix.rs:606, so collect spans under BOTH operands). ESLint's isParenthesised(left) is true exactly when
+   k >= 1: a `)` after the operand can only close a `(` that stands right before the `!`, because the left operand of the
+   binary IS the unary. So: lowest < 0  <=>  parenthesised. No look at what stands before the `!` is needed.
+   The test named in the task (character before `!`, then its closing parenthesis) is not exact:
+     (/* c */!a) in b            the character before `!` is `/`: it would report the escape hatch
+     x = // (\n !a /* ) */ in b  it sees `(` and `)`, both inside comments: it would miss a report
+     foo(!f(")") in b)           matching without strings closes too early
+
+4. BACKWARD STEPS (exact because no comment, string, template, regular expression or JSX text can end between a byte
+   and a token when only blanks on one line separate them)
+   open_paren_before(source, at) -> Option<u32>: go back over space and tab; Some(position) when the byte is `(`.
+   case_keyword_before(source, expression) -> Option<u32>: go back over blanks and `(` (repeat open_paren_before), then over
+     blanks; the four bytes must be `case` and the byte before them must not be a word byte (letter, digit, `_`, `$`, `\`,
+     `#`, or >= 0x80).
+
+5. start_of_binary(node, loc) -> u32        (ESLint: first token of the node, a `(` of the left operand included)
+   own = loc.start (a binary has the loc of its left operand's first own token, parse_suffix.rs `let loc = left.loc`).
+   scanned = scan(own, right.loc, spans under left and right, b""); None -> own.
+   Repeat -scanned.lowest times: start = open_paren_before(start), None -> return own. Return start.
+   Prototype: 1932 reports, 1596 exact, 336 fell back (comment or line break after the `(`), 0 wrong.
+
+6. TOKEN ENDS (lengths only)
+   identifier: Source::range_of_identifier(loc).len (src/ast/lib.rs:2611).
+   string: the scan of 2.f from the quote; template without `${`: to the closing backtick.
+   number: `0x` `0b` `0o` + hex digits and `_`; else digits and `_`, one `.` + digits, `e`/`E` + sign + digits; then `n`.
+
+7. REPOSITORY RULES THAT BITE HERE
+   test/internal/source-lints/byte-search.test.ts rejects `.contains(&b'x')` and `.iter().position(|&b| b == b'x')` on
+   bytes: use bun_core::strings::{index_of, index_of_char, index_of_any}. Comments are one line each. unreachable_pub and
+   dead_code are denied: pub(crate), and every helper lands with its caller. `cargo test -p bun_lint` does not link
+   (highway and other native symbols): test through `bun bd test`.

@@ -1,0 +1,168 @@
+A1c	declare	"declare abstract\nclass C {}"	[-]	bun: Unexpected "abstract" @8	tsc: parses
+A1c	declare	"abstract declare class C {}"	[-]	bun: Expected ";" but found "declare" @9	tsc: parses
+A1c	declare	"declare namespace;"	[-]	bun: Unexpected "namespace" @8	tsc: parses
+A1c	declare	"declare module;"	[-]	bun: Unexpected "module" @8	tsc: parses
+A1c	declare	"declare module"	[-]	bun: Unexpected "module" @8	tsc: parses
+A1c	declare	"declare global;"	[-]	bun: Expected "{" but found ";" @14	tsc: parses
+A1c	declare	"declare global"	[-]	bun: Expected "{" but found end of file @14	tsc: parses
+A1c	declare	"declare x;"	[-]	bun: Unexpected "x" @8	tsc: parses
+A1c	declare	"declare x: T;"	[-]	bun: Unexpected "x" @8	tsc: parses
+A1c	declare	"declare 1;"	[-]	bun: Unexpected "1" @8	tsc: parses
+A1c	declare	"declare \"s\";"	[-]	bun: Unexpected "\"s\"" @8	tsc: parses
+A1c	declare	"declare"	[-]	bun: Unexpected end of file @7	tsc: parses
+A1c	declare	"declare as any"	[-]	bun: Unexpected end of file @14	tsc: parses
+A1c	declare	"declare!"	[-]	bun: Unexpected end of file @8	tsc: parses
+A1c	declare	"declare {}"	[-]	bun: Unexpected "{" @8	tsc: parses
+A1c	declare	"declare { x }"	[-]	bun: Unexpected "{" @8	tsc: parses
+A1c	declare	"declare if (a) {}"	[-]	bun: Unexpected "if" @8	tsc: parses
+A1c	declare	"declare for (;;) {}"	[-]	bun: Unexpected "for" @8	tsc: parses
+A1c	declare	"declare label: x;"	[-]	bun: Unexpected "label" @8	tsc: parses
+A1c	declare	"declare try {} catch {}"	[-]	bun: Unexpected "try" @8	tsc: parses
+A1c	declare	"declare throw x;"	[-]	bun: Unexpected "throw" @8	tsc: parses
+A1c	declare	"declare debugger;"	[-]	bun: Unexpected "debugger" @8	tsc: parses
+A1c	declare	"declare async () => {};"	[-]	bun: Unexpected "async" @8	tsc: parses
+A1c	declare	"declare new C;"	[-]	bun: Unexpected "new" @8	tsc: parses
+A1c	declare	"declare this;"	[-]	bun: Unexpected "this" @8	tsc: parses
+A1c	declare	"declare import(\"x\");"	[-]	bun: Unexpected "import" @8	tsc: parses
+A1c	declare	"declare import.meta;"	[-]	bun: Unexpected "import" @8	tsc: parses
+A1c	declare	"declare abstract;"	[-]	bun: Unexpected "abstract" @8	tsc: parses
+A1c	declare	"declare async;"	[-]	bun: Unexpected "async" @8	tsc: parses
+A1c	enum	"enum E { [\"x\"] }"	[-]	bun: Expected identifier but found "[" @9	tsc: parses
+A1c	enum	"enum E { [\"x\"] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: parses
+A1c	enum	"enum E { ['x'] = 1, B = E.x }"	[-]	bun: Expected identifier but found "[" @9	tsc: parses
+A1c	enum	"enum E { [`x`] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: parses
+A1c	declName	"as"	[namespaceDotted,namespaceBody,declareNamespace]	bun: Unexpected . @2	tsc: parses
+A1c	declName	"satisfies"	[namespaceDotted,namespaceBody,declareNamespace]	bun: Unexpected . @9	tsc: parses
+A1c	declName	"in"	[declareNamespace,declareModule]	bun: Unexpected "namespace" @-10	tsc: parses
+A1c	declName	"await"	[declareVar,declareConst,declareLet,declareClass,abstractClass,keywordAsStmt,keywordAssign,varNamed]	bun: Cannot use "yield" or "await" here. @0	tsc: parses
+A1s	declare	"declare async\nfunction f(): Promise<void>;"	[-]	bun: Unexpected "async" @8	tsc: parses also TS2391
+A1s	declare	"declare function f(public a: A): void;"	[-]	bun: Expected ")" but found "a" @26	tsc: parses also TS2369
+A1s	declare	"declare\nglobal {}"	[-]	bun: Expected ";" but found "{" @15	tsc: parses also TS2669 TS2670
+A1s	declare	"global {}"	[-]	bun: Expected ";" but found "{" @7	tsc: parses also TS2669 TS2670
+A1s	declare	"global { var x: T; }"	[-]	bun: Expected ";" but found "{" @7	tsc: parses also TS2669 TS2670
+A1s	declare	"namespace N { global {} }"	[-]	bun: Expected ";" but found "{" @21	tsc: parses also TS2669 TS2670
+A1s	namespace	"namespace N { this.x }"	[-]	bun: Cannot use "this" here @14	tsc: parses also TS2331
+A1s	namespace	"namespace N { super.x }"	[-]	bun: Unexpected "super" @14	tsc: parses also TS2660
+A1s	enum	"enum E { A = this }"	[-]	bun: Cannot use "this" here @13	tsc: parses also TS2332
+A1s	enum	"enum E { A = super.x }"	[-]	bun: Unexpected "super" @13	tsc: parses also TS2660
+A1s	enum	"enum E { A = 1, 2 }"	[-]	bun: Expected identifier but found "2" @16	tsc: parses also TS2452
+A1s	enum	"enum E { \"a\", \"a\" }"	[-]	bun: "a" has already been declared @14	tsc: parses also TS2300
+A1s	enum	"enum E { A, A }"	[-]	bun: "A" has already been declared @12	tsc: parses also TS2300
+A1s	enum	"enum E { 1 }"	[-]	bun: Expected identifier but found "1" @9	tsc: parses also TS2452
+A1s	enum	"enum E { 1 = 1 }"	[-]	bun: Expected identifier but found "1" @9	tsc: parses also TS2452
+A1s	enum	"enum E { 1.5 }"	[-]	bun: Expected identifier but found "1.5" @9	tsc: parses also TS2452
+A1s	enum	"enum E { 0x10 }"	[-]	bun: Expected identifier but found "0x10" @9	tsc: parses also TS2452
+A1s	enum	"enum E { 1n }"	[-]	bun: Expected identifier but found "1n" @9	tsc: parses also TS2452
+A1s	enum	"enum E { [1] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: parses also TS2452
+A1s	overload	"function f(public a: A): void; function f(a: any) {}"	[-]	bun: Expected ")" but found "a" @18	tsc: parses also TS2369
+A1s	declName	"let"	[declareConst,declareLet]	bun: Cannot use "let" as an identifier here @0	tsc: parses also TS2480
+A1s	declName	"null"	[keywordAssign]	bun: Invalid assignment target @0	tsc: parses also TS2364
+A1s	declName	"this"	[keywordAssign]	bun: Invalid assignment target @0	tsc: parses also TS2364
+A1s	declName	"true"	[keywordAssign]	bun: Invalid assignment target @0	tsc: parses also TS2364
+A1s	declName	"super"	[keywordCall]	bun: Unexpected "super" @0	tsc: parses also TS2337
+A2	declare	"declare using x: T;"	[-]	bun: Cannot use "declare" with a "using" declaration @8	tsc: TS1491 @0+7 'declare' modifier cannot appear on a 'using' declaration.
+A2	declare	"declare await using x: T;"	[-]	bun: Cannot use "declare" with an "await using" declaration @8	tsc: TS1495 @0+7 'declare' modifier cannot appear on an 'await using' declaration.
+A2	declare	"declare function f(...a: A[], b: B): void;"	[-]	bun: Expected ")" but found "b" @30	tsc: TS1014 @19+3 A rest parameter must be last in a parameter list.
+A2	declare	"declare function f(@d a: A): void;"	[-]	bun: Expected identifier but found "@" @19	tsc: TS1206 @19+1 Decorators are not valid here.
+A2	declare	"declare class {}"	[-]	bun: Expected identifier but found "{" @14	tsc: TS1211 @0+7 A class declaration without the 'default' modifier must have a name.
+A2	declare	"declare namespace N { return; }"	[-]	bun: A return statement cannot be used here @22	tsc: TS1036 @22+6 Statements are not allowed in ambient contexts.
+A2	declare	"declare namespace N { using x: T; }"	[-]	bun: Cannot use "declare" with a "using" declaration @22	tsc: TS1545 @22+10 'using' declarations are not allowed in ambient contexts.
+A2	declare	"declare\nmodule \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @15	tsc: TS1035 @15+3 Only ambient modules can use quoted names.
+A2	declare	"declare import a from \"b\";"	[-]	bun: Unexpected "import" @8	tsc: TS1079 @0+7 A 'declare' modifier cannot be used with an import declaration.
+A2	declare	"declare export default x;"	[-]	bun: Unexpected "export" @8	tsc: TS1120 @0+7 An export assignment cannot have modifiers.
+A2	declare	"declare return;"	[-]	bun: Unexpected "return" @8	tsc: TS1108 @8+6 A 'return' statement can only be used within a function body.
+A2	declare	"declare export {};"	[-]	bun: Unexpected "export" @8	tsc: TS1193 @0+7 An export declaration cannot have modifiers.
+A2	declare	"declare export * from \"x\";"	[-]	bun: Unexpected "export" @8	tsc: TS1193 @0+7 An export declaration cannot have modifiers.
+A2	declare	"declare interface;"	[-]	bun: Expected identifier but found ";" @17	tsc: TS1212 @8+9 Identifier expected. 'interface' is a reserved word in strict mode.
+A2	declare	"declare const;"	[-]	bun: Expected identifier but found ";" @13	tsc: TS1123 @13+0 Variable declaration list cannot be empty.
+A2	declare	"declare let;"	[-]	bun: Unexpected "let" @8	tsc: TS1123 @11+0 Variable declaration list cannot be empty.
+A2	declare	"declare var;"	[-]	bun: Expected identifier but found ";" @11	tsc: TS1123 @11+0 Variable declaration list cannot be empty.
+A2	declare	"function f() { declare namespace N {} }"	[-]	bun: Expected ";" but found "N" @33	tsc: TS1235 @15+7 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"namespace N { export default 1 }"	[-]	bun: Unexpected default @21	tsc: TS1319 @14+16 A default export can only be used in an ECMAScript-style module.
+A2	namespace	"namespace N { export default x }"	[-]	bun: Unexpected default @21	tsc: TS1319 @14+16 A default export can only be used in an ECMAScript-style module.
+A2	namespace	"namespace N { export default class {} }"	[-]	bun: Unexpected default @21	tsc: TS1319 @21+7 A default export can only be used in an ECMAScript-style module.
+A2	namespace	"namespace N { export default function () {} }"	[-]	bun: Unexpected default @21	tsc: TS1319 @21+7 A default export can only be used in an ECMAScript-style module.
+A2	namespace	"namespace N { export * from \"x\" }"	[-]	bun: Unexpected * @21	tsc: TS1194 @28+3 Export declarations are not permitted in a namespace.
+A2	namespace	"namespace N { export * as a from \"x\" }"	[-]	bun: Unexpected * @21	tsc: TS1194 @33+3 Export declarations are not permitted in a namespace.
+A2	namespace	"namespace N { export { x } }"	[-]	bun: Unexpected { @21	tsc: TS1194 @14+12 Export declarations are not permitted in a namespace.
+A2	namespace	"namespace N { export { x } from \"y\" }"	[-]	bun: Unexpected { @21	tsc: TS1194 @32+3 Export declarations are not permitted in a namespace.
+A2	namespace	"namespace N { export {} }"	[-]	bun: Unexpected { @21	tsc: TS1194 @14+9 Export declarations are not permitted in a namespace.
+A2	namespace	"namespace N { import x from \"y\" }"	[-]	bun: Expected "=" but found "from" @23	tsc: TS1147 @28+3 Import declarations in a namespace cannot reference a module.
+A2	namespace	"namespace N { import \"y\" }"	[-]	bun: Expected identifier but found ""y"" @21	tsc: TS1147 @21+3 Import declarations in a namespace cannot reference a module.
+A2	namespace	"namespace N { return }"	[-]	bun: A return statement cannot be used here @14	tsc: TS1108 @14+6 A 'return' statement can only be used within a function body.
+A2	namespace	"namespace N { await x }"	[-]	bun: "await" can only be used inside an "async" function @20	tsc: TS1308 @14+5 'await' expressions are only allowed within async functions and at the top levels of modules.
+A2	namespace	"namespace N { break }"	[-]	bun: Cannot use "break" here @14	tsc: TS1105 @14+5 A 'break' statement can only be used within an enclosing iteration or switch statement.
+A2	namespace	"namespace N { export using x = y }"	[-]	bun: Unexpected using @21	tsc: TS1491 @14+6 'export' modifier cannot appear on a 'using' declaration.
+A2	namespace	"module \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	namespace	"module 'm' {}"	[-]	bun: Expected ";" but found "'m'" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	namespace	"module \"m\";"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	namespace	"export module \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @14	tsc: TS1035 @14+3 Only ambient modules can use quoted names.
+A2	namespace	"async namespace N {}"	[-]	bun: Expected ";" but found "namespace" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	namespace	"abstract namespace N {}"	[-]	bun: Expected ";" but found "namespace" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	namespace	"public namespace N {}"	[-]	bun: Expected ";" but found "namespace" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	namespace	"static namespace N {}"	[-]	bun: Expected ";" but found "namespace" @7	tsc: TS1044 @0+6 'static' modifier cannot appear on a module or namespace element.
+A2	namespace	"@d namespace N {}"	[-]	bun: Expected "class" but found "namespace" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	namespace	"function f() { namespace N {} }"	[-]	bun: Expected ";" but found "N" @25	tsc: TS1235 @15+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"function f() { module N {} }"	[-]	bun: Expected ";" but found "N" @22	tsc: TS1235 @15+6 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"if (a) namespace N {}"	[-]	bun: Expected ";" but found "N" @17	tsc: TS1235 @7+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"if (a) { namespace N {} }"	[-]	bun: Expected ";" but found "N" @19	tsc: TS1235 @9+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"{ namespace N {} }"	[-]	bun: Expected ";" but found "N" @12	tsc: TS1235 @2+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"{ module N {} }"	[-]	bun: Expected ";" but found "N" @9	tsc: TS1235 @2+6 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"for (;;) namespace N {}"	[-]	bun: Expected ";" but found "N" @19	tsc: TS1235 @9+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"label: namespace N {}"	[-]	bun: Expected ";" but found "N" @17	tsc: TS1344 @0+5 'A label is not allowed here.
+A2	namespace	"class C { static { namespace N {} } }"	[-]	bun: Expected ";" but found "N" @29	tsc: TS1235 @19+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"() => { namespace N {} }"	[-]	bun: Expected ";" but found "N" @18	tsc: TS1235 @8+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"switch (a) { case 1: namespace N {} }"	[-]	bun: Expected ";" but found "N" @31	tsc: TS1235 @21+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"try { namespace N {} } catch {}"	[-]	bun: Expected ";" but found "N" @16	tsc: TS1235 @6+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"namespace N { { namespace M {} } }"	[-]	bun: Expected ";" but found "M" @26	tsc: TS1235 @16+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"namespace N { function f() { namespace M {} } }"	[-]	bun: Expected ";" but found "M" @39	tsc: TS1235 @29+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	namespace	"namespace N { if (a) namespace M {} }"	[-]	bun: Expected ";" but found "M" @31	tsc: TS1235 @21+9 A namespace declaration is only allowed at the top level of a namespace or module.
+A2	enum	"enum E { A = await x }"	[-]	bun: "await" can only be used inside an "async" function @19	tsc: TS1308 @13+5 'await' expressions are only allowed within async functions and at the top levels of modules.
+A2	enum	"enum E { [x] }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1164 @9+3 Computed property names are not allowed in enums.
+A2	enum	"enum E { [x] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1164 @9+3 Computed property names are not allowed in enums.
+A2	enum	"enum E { [\"x\" + \"y\"] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1164 @9+11 Computed property names are not allowed in enums.
+A2	enum	"enum E { [Symbol.iterator] = 1 }"	[-]	bun: Expected identifier but found "[" @9	tsc: TS1164 @9+17 Computed property names are not allowed in enums.
+A2	enum	"enum E { #a }"	[-]	bun: Expected identifier but found "#a" @9	tsc: TS18024 @9+2 An enum member cannot be named with a private identifier.
+A2	enum	"enum E { #a = 1 }"	[-]	bun: Expected identifier but found "#a" @9	tsc: TS18024 @9+2 An enum member cannot be named with a private identifier.
+A2	enum	"async enum E {}"	[-]	bun: Expected ";" but found "enum" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	enum	"abstract enum E {}"	[-]	bun: Expected ";" but found "enum" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	enum	"static enum E {}"	[-]	bun: Expected ";" but found "enum" @7	tsc: TS1044 @0+6 'static' modifier cannot appear on a module or namespace element.
+A2	enum	"public enum E {}"	[-]	bun: Expected ";" but found "enum" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	enum	"readonly enum E {}"	[-]	bun: Expected ";" but found "enum" @9	tsc: TS1024 @0+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	enum	"@d enum E {}"	[-]	bun: Expected "class" but found "enum" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	overload	"function f(@d a: A): void; function f(a: any) {}"	[-]	bun: Expected identifier but found "@" @11	tsc: TS1206 @11+1 Decorators are not valid here.
+A2	overload	"const o = { m(): void; };"	[-]	bun: Expected "{" but found ";" @21	tsc: TS1005 @21+1 '{' expected.
+A2	fnSyntax	"function f(...a: T[] = []) {}"	[-]	bun: Expected ")" but found "=" @21	tsc: TS1048 @14+1 A rest parameter cannot have an initializer.
+A2	fnSyntax	"function f(...a = []) {}"	[-]	bun: Expected ")" but found "=" @16	tsc: TS1048 @14+1 A rest parameter cannot have an initializer.
+A2	fnSyntax	"function f(...a, b) {}"	[-]	bun: Expected ")" but found "," @15	tsc: TS1014 @11+3 A rest parameter must be last in a parameter list.
+A2	fnSyntax	"function f(...a: T[], b: U) {}"	[-]	bun: Expected ")" but found "," @20	tsc: TS1014 @11+3 A rest parameter must be last in a parameter list.
+A2	fnSyntax	"function f(...a,) {}"	[-]	bun: Expected ")" but found "," @15	tsc: TS1013 @15+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	fnSyntax	"function f(...a: T[],) {}"	[-]	bun: Expected ")" but found "," @20	tsc: TS1013 @20+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	fnSyntax	"function f(): ?A {}"	[-]	bun: Unexpected ? @14	tsc: TS17020 @14+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	fnSyntax	"function f(): * {}"	[-]	bun: Unexpected * @14	tsc: TS8020 @14+1 JSDoc types can only be used inside documentation comments.
+A2	fnSyntax	"function f<>() {}"	[-]	bun: Expected identifier but found ">" @11	tsc: TS1098 @10+2 Type parameter list cannot be empty.
+A2	fnSyntax	"function f<in T>() {}"	[-]	bun: The modifier "in" is not valid here @11	tsc: TS1274 @11+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	fnSyntax	"function f<out T>() {}"	[-]	bun: The modifier "out" is not valid here @11	tsc: TS1274 @11+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	declName	"as"	[declareModule]	bun: Unexpected "module" @-7	tsc: TS1540 @0+2 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+A2	declName	"satisfies"	[declareModule]	bun: Unexpected "module" @-7	tsc: TS1540 @0+9 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+A2	declName	"extends"	[declareClass,abstractClass]	bun: Expected identifier but found "extends" @0	tsc: TS1211 @-14+7 A class declaration without the 'default' modifier must have a name.
+A2	declName	"interface"	[keywordAsStmt]	bun: Expected identifier but found ";" @9	tsc: TS1212 @0+9 Identifier expected. 'interface' is a reserved word in strict mode.
+A2	declName	"var"	[keywordAsStmt]	bun: Expected identifier but found ";" @3	tsc: TS1123 @3+0 Variable declaration list cannot be empty.
+A2	declName	"const"	[keywordAsStmt,keywordNewlineIdent,keywordNewlineBlock]	bun: Expected identifier but found ";" @5	tsc: TS1123 @5+0 Variable declaration list cannot be empty.
+A2	declName	"arguments"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1100 @0+9 Invalid use of 'arguments' in strict mode.
+A2	declName	"eval"	[keywordAssign]	bun: Invalid assignment target @0	tsc: TS1100 @0+4 Invalid use of 'eval' in strict mode.
+A2	declName	"class"	[keywordNewlineBlock]	bun: Expected identifier but found "{" @6	tsc: TS1211 @0+5 A class declaration without the 'default' modifier must have a name.
+B	declare	"declare namespace N;"	[-]	bun: accepts	tsc: TS1005 @19+1 '{' expected.
+B	declare	"declare namespace N"	[-]	bun: accepts	tsc: TS1005 @19+0 '{' expected.
+B	declare	"declare namespace N.M;"	[-]	bun: accepts	tsc: TS1005 @21+1 '{' expected.
+B	declare	"declare namespace \"N\" {}"	[-]	bun: accepts	tsc: TS1003 @18+3 Identifier expected.
+B	declare	"declare module \"m\".n {}"	[-]	bun: accepts	tsc: TS1005 @18+1 ';' expected.
+B	namespace	"namespace N.\"M\" {}"	[-]	bun: accepts	tsc: TS1003 @12+3 Identifier expected.
+B	namespace	"module as any"	[-]	bun: accepts	tsc: TS1005 @10+3 '{' expected.
+B	namespace	"export namespace;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	enum	"enum E { a; b }"	[-]	bun: accepts	tsc: TS1357 @10+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a = 1; b = 2 }"	[-]	bun: accepts	tsc: TS1357 @14+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a, b; c }"	[-]	bun: accepts	tsc: TS1357 @13+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a; }"	[-]	bun: accepts	tsc: TS1357 @10+1 An enum member name must be followed by a ',', '=', or '}'.
+B	enum	"enum E { a = 1; }"	[-]	bun: accepts	tsc: TS1357 @14+1 An enum member name must be followed by a ',', '=', or '}'.
+B	declName	"in"	[exportNamespace]	bun: accepts	tsc: TS1128 @-17+6 Declaration or statement expected.

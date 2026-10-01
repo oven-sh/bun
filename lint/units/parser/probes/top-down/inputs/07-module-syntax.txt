@@ -1,0 +1,1511 @@
+# Module syntax.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== file import.001
+import type A from "m";
+=== file import.002
+import type { A } from "m";
+=== file import.003
+import type * as A from "m";
+=== file import.004
+import type A, { B } from "m";
+=== file import.005
+import type A, * as B from "m";
+=== file import.006
+import type from "m";
+=== file import.007
+import type, { A } from "m";
+=== file import.008
+import type, * as A from "m";
+=== file import.009
+import type type from "m";
+=== file import.010
+import type from from "m";
+=== file import.011
+import type as from "m";
+=== file import.012
+import type * as from from "m";
+=== file import.013
+import type * as type from "m";
+=== file import.014
+import type * as as from "m";
+=== file import.015
+import type { type } from "m";
+=== file import.016
+import type { type A } from "m";
+=== file import.017
+import type { A as B } from "m";
+=== file import.018
+import type { default as A } from "m";
+=== file import.019
+import type { "a" as b } from "m";
+=== file import.020
+import type {} from "m";
+=== file import.021
+import type { A, } from "m";
+=== file import.022
+import type { A, B as C, } from "m";
+=== file import.023
+import type { , } from "m";
+=== file import.024
+import type { A B } from "m";
+=== file import.025
+import type "m";
+=== file import.026
+import type;
+=== file import.027
+import type
+=== file import.028
+import type A;
+=== file import.029
+import type A from;
+=== file import.030
+import type { A };
+=== file import.031
+import type * from "m";
+=== file import.032
+import type * as from "m";
+=== file import.033
+import type A, B from "m";
+=== file import.034
+import type { A }, B from "m";
+=== file import.035
+import type A from "m" with { type: "json" };
+=== file import.036
+import type { A } from "m" with { "resolution-mode": "import" };
+=== file import.037
+import type { A } from "m" assert { "resolution-mode": "import" };
+=== file import.038
+import type A from "m"
+import type B from "n"
+=== file import.039
+import type
+A from "m";
+=== file import.040
+import
+type A from "m";
+=== file import.041
+import type A
+from "m";
+=== file import.042
+import type A from
+"m";
+=== file import.043
+import type
+{ A } from "m";
+=== file import.044
+import type
+* as A from "m";
+=== file import.045
+import type
+from "m";
+=== file import.046
+import type A = require("m");
+=== file import.047
+import type A = B.C;
+=== file import.048
+import type A = B;
+=== file import.049
+import type type = require("m");
+=== file import.050
+import type = B;
+=== file import.051
+import type = require("m");
+=== file import.052
+import type from = B;
+=== file import.053
+import type from = require("m");
+=== file import.054
+import type as = B;
+=== file import.055
+import A = require("m");
+=== file import.056
+import A = B.C.D;
+=== file import.057
+import A = B;
+=== file import.058
+import A = B.default;
+=== file import.059
+import A = B.class;
+=== file import.060
+import A = class;
+=== file import.061
+import A = require("m").B;
+=== file import.062
+import A = require(m);
+=== file import.063
+import A = require();
+=== file import.064
+import A = require("m", "n");
+=== file import.065
+import A = require;
+=== file import.066
+import A = require.B;
+=== file import.067
+import A = B<C>;
+=== file import.068
+import A = B[0];
+=== file import.069
+import A = B();
+=== file import.070
+import A = typeof B;
+=== file import.071
+import A = import('m');
+=== file import.072
+import A = 1;
+=== file import.073
+import A = "m";
+=== file import.074
+import A =
+=== file import.075
+import A = B.;
+=== file import.076
+import A = B.#c;
+=== file import.077
+import A = this;
+=== file import.078
+import A = this.B;
+=== file import.079
+import A
+= B;
+=== file import.080
+import A =
+B;
+=== file import.081
+import A = B
+.C;
+=== file import.082
+import { A } = require("m");
+=== file import.083
+import * as A = B;
+=== file import.084
+import A, B = require("m");
+=== file import.085
+export import A = B.C;
+=== file import.086
+export import A = require("m");
+=== file import.087
+export import type A = B;
+=== file import.088
+export import type A = require("m");
+=== file import.089
+export import A = B;
+export import C = D.E;
+=== file import.090
+export default import A = B;
+=== file import.091
+declare import A = B;
+=== file import.092
+export declare import A = B;
+=== file import.093
+import { type A } from "m";
+=== file import.094
+import { type A as B } from "m";
+=== file import.095
+import { type } from "m";
+=== file import.096
+import { type as } from "m";
+=== file import.097
+import { type as as } from "m";
+=== file import.098
+import { type as as as } from "m";
+=== file import.099
+import { type as as as as } from "m";
+=== file import.100
+import { type type } from "m";
+=== file import.101
+import { type type as type } from "m";
+=== file import.102
+import { type as type } from "m";
+=== file import.103
+import { type "a" as b } from "m";
+=== file import.104
+import { type "a" } from "m";
+=== file import.105
+import { type default as A } from "m";
+=== file import.106
+import { type default } from "m";
+=== file import.107
+import { type if as A } from "m";
+=== file import.108
+import { type A as if } from "m";
+=== file import.109
+import { type A, B, type C as D } from "m";
+=== file import.110
+import { type, A } from "m";
+=== file import.111
+import { A, type } from "m";
+=== file import.112
+import { type as, A } from "m";
+=== file import.113
+import { type
+A } from "m";
+=== file import.114
+import { type A, } from "m";
+=== file import.115
+import { type A B } from "m";
+=== file import.116
+import { type type type } from "m";
+=== file import.117
+import { type as B } from "m";
+=== file import.118
+import { type as as B } from "m";
+=== file import.119
+import { type as as as B } from "m";
+=== file import.120
+import { type from } from "m";
+=== file import.121
+import { type from as from } from "m";
+=== file import.122
+import { type of } from "m";
+=== file import.123
+import { type await } from "m";
+=== file import.124
+import { type yield } from "m";
+=== file import.125
+import { type 1 } from "m";
+=== file import.126
+import { type * as A } from "m";
+=== file import.127
+import { type { A } } from "m";
+=== file import.128
+import { type A.B } from "m";
+=== file import.129
+import { "a" as type } from "m";
+=== file import.130
+import { a as type } from "m";
+=== file import.131
+import { type as "a" } from "m";
+=== file import.132
+import { type A as "b" } from "m";
+=== file import.133
+import A, { type B } from "m";
+=== file import.134
+import A, type { B } from "m";
+=== file import.135
+import A, type B from "m";
+=== file import.136
+import { A }, type { B } from "m";
+=== file import.137
+import a from "m" with { type: "json" };
+=== file import.138
+import a from "m" assert { type: "json" };
+=== file import.139
+import a from "m"
+assert { type: "json" };
+=== file import.140
+import a from "m"
+with { type: "json" };
+=== file import.141
+import "m" with {};
+=== file import.142
+import "m" with { type: "json", };
+=== file import.143
+import "m" with { "type": "json" };
+=== file import.144
+import "m" with { type: 1 };
+=== file import.145
+import "m" with { type };
+=== file import.146
+import "m" with { [type]: "json" };
+=== file import.147
+import "m" with { 1: "json" };
+=== file import.148
+import "m" with
+=== file import.149
+import "m" with { type: "json" } with { a: "b" };
+=== file import.150
+import "m" as A;
+=== file import.151
+import a from "m" as A;
+=== file import.152
+import defer * as a from "m";
+=== file import.153
+import defer from "m";
+=== file import.154
+import defer a from "m";
+=== file import.155
+import defer { a } from "m";
+=== file import.156
+import defer, { a } from "m";
+=== file import.157
+import defer = B;
+=== file import.158
+import defer from from "m";
+=== file import.159
+import defer * as defer from "m";
+=== file import.160
+import source a from "m";
+=== file import.161
+import source from "m";
+=== file import.162
+import("m");
+=== file import.163
+import("m") as A;
+=== file import.164
+import<A>("m");
+=== file import.165
+import.meta as A;
+=== file import.166
+import.meta!;
+=== file import.167
+import("m")!;
+=== file import.168
+import("m", { with: { type: "json" } });
+=== file import.169
+var v = import("m") as Promise<A>;
+=== file import.170
+var v = <A>import("m");
+=== file import.171
+var v = await import("m") as A;
+=== file import.172
+import type('m');
+=== file import.173
+import type.a;
+=== file import.174
+import type of from "m";
+=== file import.175
+import type async from "m";
+=== file import.176
+import type await from "m";
+=== file import.177
+import type yield from "m";
+=== file import.178
+import type let from "m";
+=== file import.179
+import type static from "m";
+=== file import.180
+import type default from "m";
+=== file import.181
+import type if from "m";
+=== file import.182
+import type class from "m";
+=== file import.183
+import type function from "m";
+=== file import.184
+import type defer from "m";
+=== file import.185
+import type source from "m";
+=== file import.186
+import type module from "m";
+=== file import.187
+import type namespace from "m";
+=== file import.188
+import type global from "m";
+=== file import.189
+import type declare from "m";
+=== file import.190
+import type abstract from "m";
+=== file import.191
+import type interface from "m";
+=== file import.192
+import type enum from "m";
+=== file import.193
+import type any from "m";
+=== file import.194
+import type string from "m";
+=== file import.195
+import type undefined from "m";
+=== file import.196
+import type arguments from "m";
+=== file import.197
+import type eval from "m";
+=== file import.198
+import type implements from "m";
+=== file import.199
+import type package from "m";
+=== file import.200
+import type public from "m";
+=== file import.201
+import type { as } from "m";
+=== file import.202
+import type { from } from "m";
+=== file import.203
+import type { of } from "m";
+=== file import.204
+import type { async } from "m";
+=== file import.205
+import type { await } from "m";
+=== file import.206
+import type { yield } from "m";
+=== file import.207
+import type { let } from "m";
+=== file import.208
+import type { static } from "m";
+=== file import.209
+import type { default } from "m";
+=== file import.210
+import type { if } from "m";
+=== file import.211
+import type { class } from "m";
+=== file import.212
+import type { function } from "m";
+=== file import.213
+import type { defer } from "m";
+=== file import.214
+import type { source } from "m";
+=== file import.215
+import type { module } from "m";
+=== file import.216
+import type { namespace } from "m";
+=== file import.217
+import type { global } from "m";
+=== file import.218
+import type { declare } from "m";
+=== file import.219
+import type { abstract } from "m";
+=== file import.220
+import type { interface } from "m";
+=== file import.221
+import type { enum } from "m";
+=== file import.222
+import type { any } from "m";
+=== file import.223
+import type { string } from "m";
+=== file import.224
+import type { undefined } from "m";
+=== file import.225
+import type { arguments } from "m";
+=== file import.226
+import type { eval } from "m";
+=== file import.227
+import type { implements } from "m";
+=== file import.228
+import type { package } from "m";
+=== file import.229
+import type { public } from "m";
+=== file import.230
+import { type async } from "m";
+=== file import.231
+import { type let } from "m";
+=== file import.232
+import { type static } from "m";
+=== file import.233
+import { type if } from "m";
+=== file import.234
+import { type class } from "m";
+=== file import.235
+import { type function } from "m";
+=== file import.236
+import { type defer } from "m";
+=== file import.237
+import { type source } from "m";
+=== file import.238
+import { type module } from "m";
+=== file import.239
+import { type namespace } from "m";
+=== file import.240
+import { type global } from "m";
+=== file import.241
+import { type declare } from "m";
+=== file import.242
+import { type abstract } from "m";
+=== file import.243
+import { type interface } from "m";
+=== file import.244
+import { type enum } from "m";
+=== file import.245
+import { type any } from "m";
+=== file import.246
+import { type string } from "m";
+=== file import.247
+import { type undefined } from "m";
+=== file import.248
+import { type arguments } from "m";
+=== file import.249
+import { type eval } from "m";
+=== file import.250
+import { type implements } from "m";
+=== file import.251
+import { type package } from "m";
+=== file import.252
+import { type public } from "m";
+=== file import.253
+import { type type as A } from "m";
+=== file import.254
+import { type as as A } from "m";
+=== file import.255
+import { type from as A } from "m";
+=== file import.256
+import { type of as A } from "m";
+=== file import.257
+import { type async as A } from "m";
+=== file import.258
+import { type await as A } from "m";
+=== file import.259
+import { type yield as A } from "m";
+=== file import.260
+import { type let as A } from "m";
+=== file import.261
+import { type static as A } from "m";
+=== file import.262
+import { type class as A } from "m";
+=== file import.263
+import { type function as A } from "m";
+=== file import.264
+import { type defer as A } from "m";
+=== file import.265
+import { type source as A } from "m";
+=== file import.266
+import { type module as A } from "m";
+=== file import.267
+import { type namespace as A } from "m";
+=== file import.268
+import { type global as A } from "m";
+=== file import.269
+import { type declare as A } from "m";
+=== file import.270
+import { type abstract as A } from "m";
+=== file import.271
+import { type interface as A } from "m";
+=== file import.272
+import { type enum as A } from "m";
+=== file import.273
+import { type any as A } from "m";
+=== file import.274
+import { type string as A } from "m";
+=== file import.275
+import { type undefined as A } from "m";
+=== file import.276
+import { type arguments as A } from "m";
+=== file import.277
+import { type eval as A } from "m";
+=== file import.278
+import { type implements as A } from "m";
+=== file import.279
+import { type package as A } from "m";
+=== file import.280
+import { type public as A } from "m";
+=== file import.281
+import { type A as type } from "m";
+=== file import.282
+import { type A as as } from "m";
+=== file import.283
+import { type A as from } from "m";
+=== file import.284
+import { type A as of } from "m";
+=== file import.285
+import { type A as async } from "m";
+=== file import.286
+import { type A as await } from "m";
+=== file import.287
+import { type A as yield } from "m";
+=== file import.288
+import { type A as let } from "m";
+=== file import.289
+import { type A as static } from "m";
+=== file import.290
+import { type A as default } from "m";
+=== file import.291
+import { type A as class } from "m";
+=== file import.292
+import { type A as function } from "m";
+=== file import.293
+import { type A as defer } from "m";
+=== file import.294
+import { type A as source } from "m";
+=== file import.295
+import { type A as module } from "m";
+=== file import.296
+import { type A as namespace } from "m";
+=== file import.297
+import { type A as global } from "m";
+=== file import.298
+import { type A as declare } from "m";
+=== file import.299
+import { type A as abstract } from "m";
+=== file import.300
+import { type A as interface } from "m";
+=== file import.301
+import { type A as enum } from "m";
+=== file import.302
+import { type A as any } from "m";
+=== file import.303
+import { type A as string } from "m";
+=== file import.304
+import { type A as undefined } from "m";
+=== file import.305
+import { type A as arguments } from "m";
+=== file import.306
+import { type A as eval } from "m";
+=== file import.307
+import { type A as implements } from "m";
+=== file import.308
+import { type A as package } from "m";
+=== file import.309
+import { type A as public } from "m";
+=== file import.310
+import type = A.B;
+=== file import.311
+import as = A.B;
+=== file import.312
+import from = A.B;
+=== file import.313
+import of = A.B;
+=== file import.314
+import async = A.B;
+=== file import.315
+import await = A.B;
+=== file import.316
+import yield = A.B;
+=== file import.317
+import let = A.B;
+=== file import.318
+import static = A.B;
+=== file import.319
+import default = A.B;
+=== file import.320
+import if = A.B;
+=== file import.321
+import class = A.B;
+=== file import.322
+import function = A.B;
+=== file import.323
+import defer = A.B;
+=== file import.324
+import source = A.B;
+=== file import.325
+import module = A.B;
+=== file import.326
+import namespace = A.B;
+=== file import.327
+import global = A.B;
+=== file import.328
+import declare = A.B;
+=== file import.329
+import abstract = A.B;
+=== file import.330
+import interface = A.B;
+=== file import.331
+import enum = A.B;
+=== file import.332
+import any = A.B;
+=== file import.333
+import string = A.B;
+=== file import.334
+import undefined = A.B;
+=== file import.335
+import arguments = A.B;
+=== file import.336
+import eval = A.B;
+=== file import.337
+import implements = A.B;
+=== file import.338
+import package = A.B;
+=== file import.339
+import public = A.B;
+=== file import.340
+import type type = A.B;
+=== file import.341
+import type as = A.B;
+=== file import.342
+import type from = A.B;
+=== file import.343
+import type of = A.B;
+=== file import.344
+import type async = A.B;
+=== file import.345
+import type await = A.B;
+=== file import.346
+import type yield = A.B;
+=== file import.347
+import type let = A.B;
+=== file import.348
+import type static = A.B;
+=== file import.349
+import type default = A.B;
+=== file import.350
+import type if = A.B;
+=== file import.351
+import type class = A.B;
+=== file import.352
+import type function = A.B;
+=== file import.353
+import type defer = A.B;
+=== file import.354
+import type source = A.B;
+=== file import.355
+import type module = A.B;
+=== file import.356
+import type namespace = A.B;
+=== file import.357
+import type global = A.B;
+=== file import.358
+import type declare = A.B;
+=== file import.359
+import type abstract = A.B;
+=== file import.360
+import type interface = A.B;
+=== file import.361
+import type enum = A.B;
+=== file import.362
+import type any = A.B;
+=== file import.363
+import type string = A.B;
+=== file import.364
+import type undefined = A.B;
+=== file import.365
+import type arguments = A.B;
+=== file import.366
+import type eval = A.B;
+=== file import.367
+import type implements = A.B;
+=== file import.368
+import type package = A.B;
+=== file import.369
+import type public = A.B;
+=== file import.370
+import A = type.B;
+=== file import.371
+import A = as.B;
+=== file import.372
+import A = from.B;
+=== file import.373
+import A = of.B;
+=== file import.374
+import A = async.B;
+=== file import.375
+import A = await.B;
+=== file import.376
+import A = yield.B;
+=== file import.377
+import A = let.B;
+=== file import.378
+import A = static.B;
+=== file import.379
+import A = default.B;
+=== file import.380
+import A = if.B;
+=== file import.381
+import A = class.B;
+=== file import.382
+import A = function.B;
+=== file import.383
+import A = defer.B;
+=== file import.384
+import A = source.B;
+=== file import.385
+import A = module.B;
+=== file import.386
+import A = namespace.B;
+=== file import.387
+import A = global.B;
+=== file import.388
+import A = declare.B;
+=== file import.389
+import A = abstract.B;
+=== file import.390
+import A = interface.B;
+=== file import.391
+import A = enum.B;
+=== file import.392
+import A = any.B;
+=== file import.393
+import A = string.B;
+=== file import.394
+import A = undefined.B;
+=== file import.395
+import A = arguments.B;
+=== file import.396
+import A = eval.B;
+=== file import.397
+import A = implements.B;
+=== file import.398
+import A = package.B;
+=== file import.399
+import A = public.B;
+=== file import.400
+import A = B.type;
+=== file import.401
+import A = B.as;
+=== file import.402
+import A = B.from;
+=== file import.403
+import A = B.of;
+=== file import.404
+import A = B.async;
+=== file import.405
+import A = B.await;
+=== file import.406
+import A = B.yield;
+=== file import.407
+import A = B.let;
+=== file import.408
+import A = B.static;
+=== file import.409
+import A = B.if;
+=== file import.410
+import A = B.function;
+=== file import.411
+import A = B.defer;
+=== file import.412
+import A = B.source;
+=== file import.413
+import A = B.module;
+=== file import.414
+import A = B.namespace;
+=== file import.415
+import A = B.global;
+=== file import.416
+import A = B.declare;
+=== file import.417
+import A = B.abstract;
+=== file import.418
+import A = B.interface;
+=== file import.419
+import A = B.enum;
+=== file import.420
+import A = B.any;
+=== file import.421
+import A = B.string;
+=== file import.422
+import A = B.undefined;
+=== file import.423
+import A = B.arguments;
+=== file import.424
+import A = B.eval;
+=== file import.425
+import A = B.implements;
+=== file import.426
+import A = B.package;
+=== file import.427
+import A = B.public;
+=== file export.001
+export type { A };
+=== file export.002
+export type { A } from "m";
+=== file export.003
+export type { A as B } from "m";
+=== file export.004
+export type { A as default } from "m";
+=== file export.005
+export type { default } from "m";
+=== file export.006
+export type { default as A } from "m";
+=== file export.007
+export type { "a" as b } from "m";
+=== file export.008
+export type { A as "b" } from "m";
+=== file export.009
+export type * from "m";
+=== file export.010
+export type * as A from "m";
+=== file export.011
+export type * as default from "m";
+=== file export.012
+export type * as "a" from "m";
+=== file export.013
+export type * as type from "m";
+=== file export.014
+export type * as from from "m";
+=== file export.015
+export type * as as from "m";
+=== file export.016
+export type *;
+=== file export.017
+export type * as A;
+=== file export.018
+export type * from;
+=== file export.019
+export type * as from "m";
+=== file export.020
+export type * as A, { B } from "m";
+=== file export.021
+export type *, { A } from "m";
+=== file export.022
+export type * from "m" with { type: "json" };
+=== file export.023
+export type { A } from "m" with { "resolution-mode": "import" };
+=== file export.024
+export type {};
+=== file export.025
+export type {} from "m";
+=== file export.026
+export type { A, B as C, };
+=== file export.027
+export type { , };
+=== file export.028
+export type { A B };
+=== file export.029
+export type { type A };
+=== file export.030
+export type { type };
+=== file export.031
+export type { A }
+export type { B }
+=== file export.032
+export type
+{ A };
+=== file export.033
+export type
+A = B;
+=== file export.034
+export type
+* from 'm';
+=== file export.035
+export type
+=== file export.036
+export type;
+=== file export.037
+export type = 1;
+=== file export.038
+export type A;
+=== file export.039
+export type A
+=== file export.040
+export type { A } from;
+=== file export.041
+export type { A } "m";
+=== file export.042
+export type A from "m";
+=== file export.043
+export type A, { B } from "m";
+=== file export.044
+export type { default };
+=== file export.045
+export type { if };
+=== file export.046
+export type { A as if };
+=== file export.047
+export type { if as A };
+=== file export.048
+export type { if } from "m";
+=== file export.049
+export type { "a" };
+=== file export.050
+export type { "a" } from "m";
+=== file export.051
+export { type A };
+=== file export.052
+export { type A as B };
+=== file export.053
+export { type A } from "m";
+=== file export.054
+export { type };
+=== file export.055
+export { type as };
+=== file export.056
+export { type as as };
+=== file export.057
+export { type as as as };
+=== file export.058
+export { type as as as as };
+=== file export.059
+export { type type };
+=== file export.060
+export { type type as type };
+=== file export.061
+export { type "a" } from "m";
+=== file export.062
+export { type "a" as b } from "m";
+=== file export.063
+export { type A as "b" };
+=== file export.064
+export { type A as "b" } from "m";
+=== file export.065
+export { type default } from "m";
+=== file export.066
+export { type default as A } from "m";
+=== file export.067
+export { type A as default };
+=== file export.068
+export { type as default };
+=== file export.069
+export { type A, B, type C as D };
+=== file export.070
+export { type, A };
+=== file export.071
+export { A, type };
+=== file export.072
+export { type
+A };
+=== file export.073
+export { type A, };
+=== file export.074
+export { type A B };
+=== file export.075
+export { type if };
+=== file export.076
+export { type if } from "m";
+=== file export.077
+export { type A as if };
+=== file export.078
+export { type * };
+=== file export.079
+export { type { A } };
+=== file export.080
+export { type A.B };
+=== file export.081
+export { type 1 };
+=== file export.082
+export { A as type };
+=== file export.083
+export { type as type };
+=== file export.084
+export { type from } from "m";
+=== file export.085
+export { type from };
+=== file export.086
+export { type of };
+=== file export.087
+export { type await };
+=== file export.088
+export { type yield };
+=== file export.089
+export {};
+=== file export.090
+export {} from "m";
+=== file export.091
+export { A, };
+=== file export.092
+export { , };
+=== file export.093
+export { A as B, C as default };
+=== file export.094
+export { default } from "m";
+=== file export.095
+export { default as default } from "m";
+=== file export.096
+export * from "m";
+=== file export.097
+export * as A from "m";
+=== file export.098
+export * as default from "m";
+=== file export.099
+export * as "a" from "m";
+=== file export.100
+export * from "m" with { type: "json" };
+=== file export.101
+export { a } from "m" with { type: "json" };
+=== file export.102
+export { a } from "m" assert { type: "json" };
+=== file export.103
+export { a } "m";
+=== file export.104
+export { a } from;
+=== file export.105
+export * as A;
+=== file export.106
+export *;
+=== file export.107
+export * as;
+=== file export.108
+export = A;
+=== file export.109
+export = A.B;
+=== file export.110
+export = { a: 1 };
+=== file export.111
+export = class {};
+=== file export.112
+export = class C<T> {};
+=== file export.113
+export = function () {};
+=== file export.114
+export = function f<T>(a: T): T { return a };
+=== file export.115
+export = <T>(a: T) => a;
+=== file export.116
+export = a as A;
+=== file export.117
+export = <A>a;
+=== file export.118
+export = a!;
+=== file export.119
+export = 1;
+=== file export.120
+export = "s";
+=== file export.121
+export = [a];
+=== file export.122
+export = a, b;
+=== file export.123
+export = a = b;
+=== file export.124
+export =
+=== file export.125
+export =;
+=== file export.126
+export = A
+export = B
+=== file export.127
+export
+= A;
+=== file export.128
+export =
+A;
+=== file export.129
+export = A; export default B;
+=== file export.130
+export = interface I {}
+=== file export.131
+export = type X = 1
+=== file export.132
+export = enum E {}
+=== file export.133
+export = namespace N {}
+=== file export.134
+export = declare class C {}
+=== file export.135
+export = abstract class C {}
+=== file export.136
+export = async function () {}
+=== file export.137
+export = await a;
+=== file export.138
+export = yield;
+=== file export.139
+export = import('m');
+=== file export.140
+export = new A();
+=== file export.141
+export = typeof a;
+=== file export.142
+export = a ? b : c;
+=== file export.143
+declare export = A;
+=== file export.144
+export declare = A;
+=== file export.145
+export default = A;
+=== file export.146
+@d export = A;
+=== file export.147
+namespace N { export = A }
+=== file export.148
+{ export = A }
+=== file export.149
+function f() { export = A }
+=== file export.150
+if (a) export = A;
+=== file export.151
+export as namespace A;
+=== file export.152
+export as namespace A
+=== file export.153
+export as namespace A.B;
+=== file export.154
+export as namespace;
+=== file export.155
+export as namespace
+=== file export.156
+export as namespace default;
+=== file export.157
+export as namespace type;
+=== file export.158
+export as namespace as;
+=== file export.159
+export as namespace namespace;
+=== file export.160
+export as namespace "A";
+=== file export.161
+export as namespace A, B;
+=== file export.162
+export as namespace A = B;
+=== file export.163
+export as namespace A {}
+=== file export.164
+export as A;
+=== file export.165
+export as;
+=== file export.166
+export as
+=== file export.167
+export as module A;
+=== file export.168
+export as
+namespace A;
+=== file export.169
+export as namespace
+A;
+=== file export.170
+export
+as namespace A;
+=== file export.171
+export as namespace A;
+export as namespace B;
+=== file export.172
+declare export as namespace A;
+=== file export.173
+export declare as namespace A;
+=== file export.174
+@d export as namespace A;
+=== file export.175
+export default as namespace A;
+=== file export.176
+namespace N { export as namespace A }
+=== file export.177
+{ export as namespace A }
+=== file export.178
+export as namespace if;
+=== file export.179
+export as namespace await;
+=== file export.180
+export as namespace yield;
+=== file export.181
+export as namespace 1;
+=== file export.182
+export default A;
+=== file export.183
+export default interface I {}
+=== file export.184
+export default interface I<T> extends J<T> { a: A }
+=== file export.185
+export default interface {}
+=== file export.186
+export default interface
+I {}
+=== file export.187
+export default abstract class C {}
+=== file export.188
+export default abstract
+class C {}
+=== file export.189
+export default enum E {}
+=== file export.190
+export default const enum E {}
+=== file export.191
+export default namespace N {}
+=== file export.192
+export default module M {}
+=== file export.193
+export default type X = A;
+=== file export.194
+export default declare class C {}
+=== file export.195
+export default declare function f(): void;
+=== file export.196
+export default async function f<T>() {}
+=== file export.197
+export default function <T>(a: T): T { return a }
+=== file export.198
+export default class<T> {}
+=== file export.199
+export default class implements I {}
+=== file export.200
+export default class C<T> extends D<T> implements I<T> {}
+=== file export.201
+export default (a: A): B => a;
+=== file export.202
+export default a as A;
+=== file export.203
+export default <A>a;
+=== file export.204
+export default a!;
+=== file export.205
+export default a satisfies A;
+=== file export.206
+export default { a: 1 } as const;
+=== file export.207
+export default type;
+=== file export.208
+export default type
+=== file export.209
+export default interface;
+=== file export.210
+export default abstract;
+=== file export.211
+export default declare;
+=== file export.212
+export default namespace;
+=== file export.213
+export default module;
+=== file export.214
+export default async;
+=== file export.215
+export default of;
+=== file export.216
+export default as;
+=== file export.217
+export default from;
+=== file export.218
+export default function f(): void;
+=== file export.219
+export default function (): void;
+=== file export.220
+export default var a: A;
+=== file export.221
+export default let a;
+=== file export.222
+export default const a = 1;
+=== file export.223
+export default a, b;
+=== file export.224
+export default;
+=== file export.225
+export default
+=== file export.226
+export default default;
+=== file export.227
+export default export default a;
+=== file export.228
+export default import a from 'm';
+=== file export.229
+export default @d class {}
+=== file export.230
+@d export default class {}
+=== file export.231
+export default @d abstract class {}
+=== file export.232
+export default abstract @d class {}
+=== file export.233
+export default async <T>(a: T) => a;
+=== file export.234
+export default async (a: A): Promise<B> => a;
+=== file export.235
+export default class { a: A; m(): void {} }
+=== file export.236
+export default function f(this: A) {}
+=== file export.237
+export declare const a: A;
+=== file export.238
+export declare let a: A, b: B;
+=== file export.239
+export declare var a;
+=== file export.240
+export declare function f(): void;
+=== file export.241
+export declare function f(): void
+=== file export.242
+export declare class C {}
+=== file export.243
+export declare enum E {}
+=== file export.244
+export declare const enum E {}
+=== file export.245
+export declare namespace N {}
+=== file export.246
+export declare module M {}
+=== file export.247
+export declare module "m" {}
+=== file export.248
+export declare global {}
+=== file export.249
+export declare type X = A;
+=== file export.250
+export declare interface I {}
+=== file export.251
+export declare abstract class C {}
+=== file export.252
+export declare async function f(): void;
+=== file export.253
+export declare function* f(): void;
+=== file export.254
+export declare default class {}
+=== file export.255
+export declare;
+=== file export.256
+export declare
+=== file export.257
+export declare a;
+=== file export.258
+export declare { a };
+=== file export.259
+export declare * from 'm';
+=== file export.260
+export declare export const a: A;
+=== file export.261
+export declare declare const a: A;
+=== file export.262
+export declare
+const a: A;
+=== file export.263
+export
+declare const a: A;
+=== file export.264
+declare export const a: A;
+=== file export.265
+declare export function f(): void;
+=== file export.266
+declare export class C {}
+=== file export.267
+declare export default class {}
+=== file export.268
+declare export { a };
+=== file export.269
+declare export * from 'm';
+=== file export.270
+export abstract class C {}
+=== file export.271
+export const enum E {}
+=== file export.272
+export enum E {}
+=== file export.273
+export namespace N {}
+=== file export.274
+export module M {}
+=== file export.275
+export interface I {}
+=== file export.276
+export async function f<T>() {}
+=== file export.277
+export function f<T>(a: T): T { return a }
+=== file export.278
+export class C<T> {}
+=== file export.279
+export const a: A = 1;
+=== file export.280
+export let a: A, b: B = 2;
+=== file export.281
+export var a: A;
+=== file export.282
+export const f = <T>(a: T) => a;
+=== file export.283
+export const f = (a: A): B => a;
+=== file export.284
+export const a = b as A;
+=== file export.285
+export const a = <A>b;
+=== file export.286
+export const a = b!;
+=== file export.287
+export const { a, b }: A = c;
+=== file export.288
+export const [a, b]: A = c;
+=== file export.289
+export let a!: A;
+=== file export.290
+export using a: A = b;
+=== file export.291
+export async;
+=== file export.292
+export interface;
+=== file export.293
+export abstract;
+=== file export.294
+export namespace;
+=== file export.295
+export a;
+=== file export.296
+export A.B;
+=== file export.297
+export 1;
+=== file export.298
+export;
+=== file export.299
+export
+=== file export.300
+export export const a = 1;
+=== file export.301
+export public class C {}
+=== file export.302
+export static a;
+=== file export.303
+export readonly a;
+=== file export.304
+export import a from 'm';
+=== file export.305
+export import 'm';
+=== file export.306
+export import * as a from 'm';
+=== file export.307
+export import { a } from 'm';
+=== file export.308
+export function f(): void;
+=== file export.309
+export function f(): void; export function f(a?: any) {}
+=== file export.310
+export async function f(): Promise<void>;
+=== file export.311
+export class C { m(): void; m(a?: any) {} }
+=== file export.312
+export abstract class C { abstract m(): void }

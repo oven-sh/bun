@@ -1,0 +1,15 @@
+PARSE other.ts parse=[] js=[] bind=[]
+PARSE jsdoc1.js parse=[] js=[] bind=[]
+jsdoc1.js(3,20)+7: error TS8024: JSDoc '@param' tag has name 'missing', but there is no parameter with that name.
+jsdoc1.js(4,20)+3: error TS8032: Qualified name 'b.c' is not allowed without a leading '@param {object} b'.
+jsdoc1.js(6,15)+1: error TS7006: Parameter 'b' implicitly has an 'any' type.
+jsdoc1.js(8,17)+4: error TS2449: Class 'Base' used before its declaration.
+  related jsdoc1.js(9,7)+4: message TS2728: 'Base' is declared here.
+jsdoc1.js(15,19)+4: error TS2683: 'this' implicitly has type 'any' because it does not have a type annotation.
+SUGGEST jsdoc1.js(6,15)+1: suggestion TS6133: 'b' is declared but its value is never read. [unnecessary]
+SUGGEST jsdoc1.js(8,7)+1: suggestion TS6196: 'K' is declared but never used. [unnecessary]
+SUGGEST jsdoc1.js(12,5)+1: suggestion TS6133: 'n' is declared but its value is never read. [unnecessary]
+SUGGEST jsdoc1.js(17,5)+1: suggestion TS6133: 'r' is declared but its value is never read. [unnecessary]
+RESOLUTIONDEPTH 3 [symbol:exports symbol:module symbol:exports]
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=12 GetModeForUsageLocation=1 GetResolvedModule=1 GetSourceFile=1 GetSourceFileForResolvedModule=1 Options=1 SourceFiles=1
+COUNTS TypeCount=110 SymbolCount=6 SignatureCount=10 TotalInstantiationCount=0

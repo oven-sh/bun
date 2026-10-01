@@ -1,0 +1,269 @@
+== newly accepted, tsc OK same reading: 132
+== error message changed: 109
+== newly accepted, tsc GRAM same reading: 12
+== newly accepted, tsc rejects: 8
+== newly accepted, tsc OK same reading: 132
+    "x = a ? <T>(b) : c => d;"                               | ERR Expected ":" but found ";"           | OK  x = a ? b : (c) => d;                          | tsc: "use strict"; x = a ? (b) : c => d;
+    "x = a ? async <T>(b) : c => d;"                         | ERR Expected ":" but found ";"           | OK  x = a ? async(b) : (c) => d;                   | tsc: "use strict"; x = a ? async(b) : c => d;
+    "x = a ? y => (b) : c => d;"                             | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? y => (b) : c => d;
+    "x = a ? y => (b, c) : c => d;"                          | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (b, c) : (c) => d;              | tsc: "use strict"; x = a ? y => (b, c) : c => d;
+    "x = a ? y => ((b)) : c => d;"                           | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? y => ((b)) : c => d;
+    "x = a ? y => (b = 1) : c => d;"                         | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b = 1 : (c) => d;               | tsc: "use strict"; x = a ? y => (b = 1) : c => d;
+    "x = a ? y => ([b]) : c => d;"                           | ERR Expected ":" but found ";"           | OK  x = a ? (y) => [b] : (c) => d;                 | tsc: "use strict"; x = a ? y => ([b]) : c => d;
+    "x = a ? y => async (b) : c => d;"                       | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? y => async(b) : c => d;
+    "x = a ? y => <T>(b) : c => d;"                          | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? y => (b) : c => d;
+    "x = a ? y => async <T>(b) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? y => async(b) : c => d;
+    "x = a ? (y) => (b) : c => d;"                           | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => (b) : c => d;
+    "x = a ? (y) => (b, c) : c => d;"                        | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (b, c) : (c) => d;              | tsc: "use strict"; x = a ? (y) => (b, c) : c => d;
+    "x = a ? (y) => ((b)) : c => d;"                         | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => ((b)) : c => d;
+    "x = a ? (y) => (b = 1) : c => d;"                       | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b = 1 : (c) => d;               | tsc: "use strict"; x = a ? (y) => (b = 1) : c => d;
+    "x = a ? (y) => ([b]) : c => d;"                         | ERR Expected ":" but found ";"           | OK  x = a ? (y) => [b] : (c) => d;                 | tsc: "use strict"; x = a ? (y) => ([b]) : c => d;
+    "x = a ? (y) => async (b) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? (y) => async(b) : c => d;
+    "x = a ? (y) => <T>(b) : c => d;"                        | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => (b) : c => d;
+    "x = a ? (y) => async <T>(b) : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? (y) => async(b) : c => d;
+    "x = a ? async y => (b) : c => d;"                       | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => (b) : c => d;
+    "x = a ? async y => (b, c) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => (b, c) : (c) => d;        | tsc: "use strict"; x = a ? async (y) => (b, c) : c => d;
+    "x = a ? async y => ((b)) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => ((b)) : c => d;
+    "x = a ? async y => (b = 1) : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b = 1 : (c) => d;         | tsc: "use strict"; x = a ? async (y) => (b = 1) : c => d;
+    "x = a ? async y => ([b]) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => [b] : (c) => d;           | tsc: "use strict"; x = a ? async (y) => ([b]) : c => d;
+    "x = a ? async y => async (b) : c => d;"                 | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async(b) : (c) => d;      | tsc: "use strict"; x = a ? async (y) => async(b) : c => d;
+    "x = a ? async y => <T>(b) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => (b) : c => d;
+    "x = a ? async y => async <T>(b) : c => d;"              | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async(b) : (c) => d;      | tsc: "use strict"; x = a ? async (y) => async(b) : c => d;
+    "x = a ? async (y) => (b) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => (b) : c => d;
+    "x = a ? async (y) => (b, c) : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => (b, c) : (c) => d;        | tsc: "use strict"; x = a ? async (y) => (b, c) : c => d;
+    "x = a ? async (y) => ((b)) : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => ((b)) : c => d;
+    "x = a ? async (y) => (b = 1) : c => d;"                 | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b = 1 : (c) => d;         | tsc: "use strict"; x = a ? async (y) => (b = 1) : c => d;
+    "x = a ? async (y) => ([b]) : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => [b] : (c) => d;           | tsc: "use strict"; x = a ? async (y) => ([b]) : c => d;
+    "x = a ? async (y) => async (b) : c => d;"               | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async(b) : (c) => d;      | tsc: "use strict"; x = a ? async (y) => async(b) : c => d;
+    "x = a ? async (y) => <T>(b) : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => b : (c) => d;             | tsc: "use strict"; x = a ? async (y) => (b) : c => d;
+    "x = a ? async (y) => async <T>(b) : c => d;"            | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async(b) : (c) => d;      | tsc: "use strict"; x = a ? async (y) => async(b) : c => d;
+    "x = a ? <T>(y) => (b) : c => d;"                        | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => (b) : c => d;
+    "x = a ? <T>(y) => (b, c) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (b, c) : (c) => d;              | tsc: "use strict"; x = a ? (y) => (b, c) : c => d;
+    "x = a ? <T>(y) => ((b)) : c => d;"                      | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => ((b)) : c => d;
+    "x = a ? <T>(y) => (b = 1) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b = 1 : (c) => d;               | tsc: "use strict"; x = a ? (y) => (b = 1) : c => d;
+    "x = a ? <T>(y) => ([b]) : c => d;"                      | ERR Expected ":" but found ";"           | OK  x = a ? (y) => [b] : (c) => d;                 | tsc: "use strict"; x = a ? (y) => ([b]) : c => d;
+    "x = a ? <T>(y) => async (b) : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? (y) => async(b) : c => d;
+    "x = a ? <T>(y) => <T>(b) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? (y) => b : (c) => d;                   | tsc: "use strict"; x = a ? (y) => (b) : c => d;
+    "x = a ? <T>(y) => async <T>(b) : c => d;"               | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async(b) : (c) => d;            | tsc: "use strict"; x = a ? (y) => async(b) : c => d;
+    "x = a ? -async (b) : c => d;"                           | ERR Unexpected :                         | OK  x = a ? -async(b) : (c) => d;                  | tsc: "use strict"; x = a ? -async(b) : c => d;
+    "x = a ? -async (b) : c;"                                | ERR Unexpected :                         | OK  x = a ? -async(b) : c;                         | tsc: "use strict"; x = a ? -async(b) : c;
+    "x = a ? -async () : c => d;"                            | ERR Unexpected :                         | OK  x = a ? -async() : (c) => d;                   | tsc: "use strict"; x = a ? -async() : c => d;
+    "x = a ? -async () : c;"                                 | ERR Unexpected :                         | OK  x = a ? -async() : c;                          | tsc: "use strict"; x = a ? -async() : c;
+    "x = a ? -<T>(b) : c => d;"                              | ERR Unexpected :                         | OK  x = a ? -b : (c) => d;                         | tsc: "use strict"; x = a ? -(b) : c => d;
+    "x = a ? -<T>(b) : c;"                                   | ERR Unexpected :                         | OK  x = a ? -b : c;                                | tsc: "use strict"; x = a ? -(b) : c;
+    "x = a ? -async <T>(b) : c => d;"                        | ERR Unexpected :                         | OK  x = a ? -async(b) : (c) => d;                  | tsc: "use strict"; x = a ? -async(b) : c => d;
+    "x = a ? -async <T>(b) : c;"                             | ERR Unexpected :                         | OK  x = a ? -async(b) : c;                         | tsc: "use strict"; x = a ? -async(b) : c;
+    "x = a ? !async (b) : c => d;"                           | ERR Unexpected :                         | OK  x = a ? !async(b) : (c) => d;                  | tsc: "use strict"; x = a ? !async(b) : c => d;
+    "x = a ? !async (b) : c;"                                | ERR Unexpected :                         | OK  x = a ? !async(b) : c;                         | tsc: "use strict"; x = a ? !async(b) : c;
+    "x = a ? !async () : c => d;"                            | ERR Unexpected :                         | OK  x = a ? !async() : (c) => d;                   | tsc: "use strict"; x = a ? !async() : c => d;
+    "x = a ? !async () : c;"                                 | ERR Unexpected :                         | OK  x = a ? !async() : c;                          | tsc: "use strict"; x = a ? !async() : c;
+    "x = a ? !<T>(b) : c => d;"                              | ERR Unexpected :                         | OK  x = a ? !b : (c) => d;                         | tsc: "use strict"; x = a ? !(b) : c => d;
+    "x = a ? !<T>(b) : c;"                                   | ERR Unexpected :                         | OK  x = a ? !b : c;                                | tsc: "use strict"; x = a ? !(b) : c;
+    "x = a ? !async <T>(b) : c => d;"                        | ERR Unexpected :                         | OK  x = a ? !async(b) : (c) => d;                  | tsc: "use strict"; x = a ? !async(b) : c => d;
+    "x = a ? !async <T>(b) : c;"                             | ERR Unexpected :                         | OK  x = a ? !async(b) : c;                         | tsc: "use strict"; x = a ? !async(b) : c;
+    "x = a ? typeof async (b) : c => d;"                     | ERR Unexpected :                         | OK  x = a ? typeof async(b) : (c) => d;            | tsc: "use strict"; x = a ? typeof async(b) : c => d;
+    "x = a ? typeof async (b) : c;"                          | ERR Unexpected :                         | OK  x = a ? typeof async(b) : c;                   | tsc: "use strict"; x = a ? typeof async(b) : c;
+    "x = a ? typeof async () : c => d;"                      | ERR Unexpected :                         | OK  x = a ? typeof async() : (c) => d;             | tsc: "use strict"; x = a ? typeof async() : c => d;
+    "x = a ? typeof async () : c;"                           | ERR Unexpected :                         | OK  x = a ? typeof async() : c;                    | tsc: "use strict"; x = a ? typeof async() : c;
+    "x = a ? typeof <T>(b) : c => d;"                        | ERR Unexpected :                         | OK  x = a ? typeof b : (c) => d;                   | tsc: "use strict"; x = a ? typeof (b) : c => d;
+    "x = a ? typeof <T>(b) : c;"                             | ERR Unexpected :                         | OK  x = a ? typeof b : c;                          | tsc: "use strict"; x = a ? typeof (b) : c;
+    "x = a ? typeof async <T>(b) : c => d;"                  | ERR Unexpected :                         | OK  x = a ? typeof async(b) : (c) => d;            | tsc: "use strict"; x = a ? typeof async(b) : c => d;
+    "x = a ? typeof async <T>(b) : c;"                       | ERR Unexpected :                         | OK  x = a ? typeof async(b) : c;                   | tsc: "use strict"; x = a ? typeof async(b) : c;
+    "x = a ? void async (b) : c => d;"                       | ERR Unexpected :                         | OK  x = a ? void async(b) : (c) => d;              | tsc: "use strict"; x = a ? void async(b) : c => d;
+    "x = a ? void async (b) : c;"                            | ERR Unexpected :                         | OK  x = a ? void async(b) : c;                     | tsc: "use strict"; x = a ? void async(b) : c;
+    "x = a ? void async () : c => d;"                        | ERR Unexpected :                         | OK  x = a ? void async() : (c) => d;               | tsc: "use strict"; x = a ? void async() : c => d;
+    "x = a ? void async () : c;"                             | ERR Unexpected :                         | OK  x = a ? void async() : c;                      | tsc: "use strict"; x = a ? void async() : c;
+    "x = a ? void <T>(b) : c => d;"                          | ERR Unexpected :                         | OK  x = a ? void b : (c) => d;                     | tsc: "use strict"; x = a ? void (b) : c => d;
+    "x = a ? void <T>(b) : c;"                               | ERR Unexpected :                         | OK  x = a ? void b : c;                            | tsc: "use strict"; x = a ? void (b) : c;
+    "x = a ? void async <T>(b) : c => d;"                    | ERR Unexpected :                         | OK  x = a ? void async(b) : (c) => d;              | tsc: "use strict"; x = a ? void async(b) : c => d;
+    "x = a ? void async <T>(b) : c;"                         | ERR Unexpected :                         | OK  x = a ? void async(b) : c;                     | tsc: "use strict"; x = a ? void async(b) : c;
+    "x = a ? await <T>(b) : c => d;"                         | ERR Unexpected :                         | OK  x = a ? await b : (c) => d;                    | tsc: "use strict"; x = a ? await(b) : c => d;
+    "x = a ? await <T>(b) : c;"                              | ERR Unexpected :                         | OK  x = a ? await b : c;                           | tsc: "use strict"; x = a ? await(b) : c;
+    "x = a ? 1 + async (b) : c => d;"                        | ERR Unexpected :                         | OK  x = a ? 1 + async(b) : (c) => d;               | tsc: "use strict"; x = a ? 1 + async(b) : c => d;
+    "x = a ? 1 + async (b) : c;"                             | ERR Unexpected :                         | OK  x = a ? 1 + async(b) : c;                      | tsc: "use strict"; x = a ? 1 + async(b) : c;
+    "x = a ? 1 + async () : c => d;"                         | ERR Unexpected :                         | OK  x = a ? 1 + async() : (c) => d;                | tsc: "use strict"; x = a ? 1 + async() : c => d;
+    "x = a ? 1 + async () : c;"                              | ERR Unexpected :                         | OK  x = a ? 1 + async() : c;                       | tsc: "use strict"; x = a ? 1 + async() : c;
+    "x = a ? 1 + <T>(b) : c => d;"                           | ERR Unexpected :                         | OK  x = a ? 1 + b : (c) => d;                      | tsc: "use strict"; x = a ? 1 + (b) : c => d;
+    "x = a ? 1 + <T>(b) : c;"                                | ERR Unexpected :                         | OK  x = a ? 1 + b : c;                             | tsc: "use strict"; x = a ? 1 + (b) : c;
+    "x = a ? 1 + async <T>(b) : c => d;"                     | ERR Unexpected :                         | OK  x = a ? 1 + async(b) : (c) => d;               | tsc: "use strict"; x = a ? 1 + async(b) : c => d;
+    "x = a ? 1 + async <T>(b) : c;"                          | ERR Unexpected :                         | OK  x = a ? 1 + async(b) : c;                      | tsc: "use strict"; x = a ? 1 + async(b) : c;
+    "x = a ? y || async (b) : c => d;"                       | ERR Unexpected :                         | OK  x = a ? y || async(b) : (c) => d;              | tsc: "use strict"; x = a ? y || async(b) : c => d;
+    "x = a ? y || async (b) : c;"                            | ERR Unexpected :                         | OK  x = a ? y || async(b) : c;                     | tsc: "use strict"; x = a ? y || async(b) : c;
+    "x = a ? y || async () : c => d;"                        | ERR Unexpected :                         | OK  x = a ? y || async() : (c) => d;               | tsc: "use strict"; x = a ? y || async() : c => d;
+    "x = a ? y || async () : c;"                             | ERR Unexpected :                         | OK  x = a ? y || async() : c;                      | tsc: "use strict"; x = a ? y || async() : c;
+    "x = a ? y || <T>(b) : c => d;"                          | ERR Unexpected :                         | OK  x = a ? y || b : (c) => d;                     | tsc: "use strict"; x = a ? y || (b) : c => d;
+    "x = a ? y || <T>(b) : c;"                               | ERR Unexpected :                         | OK  x = a ? y || b : c;                            | tsc: "use strict"; x = a ? y || (b) : c;
+    "x = a ? y || async <T>(b) : c => d;"                    | ERR Unexpected :                         | OK  x = a ? y || async(b) : (c) => d;              | tsc: "use strict"; x = a ? y || async(b) : c => d;
+    "x = a ? y || async <T>(b) : c;"                         | ERR Unexpected :                         | OK  x = a ? y || async(b) : c;                     | tsc: "use strict"; x = a ? y || async(b) : c;
+    "x = a ? y ?? async (b) : c => d;"                       | ERR Unexpected :                         | OK  x = a ? y ?? async(b) : (c) => d;              | tsc: "use strict"; x = a ? y ?? async(b) : c => d;
+    "x = a ? y ?? async (b) : c;"                            | ERR Unexpected :                         | OK  x = a ? y ?? async(b) : c;                     | tsc: "use strict"; x = a ? y ?? async(b) : c;
+    "x = a ? y ?? async () : c => d;"                        | ERR Unexpected :                         | OK  x = a ? y ?? async() : (c) => d;               | tsc: "use strict"; x = a ? y ?? async() : c => d;
+    "x = a ? y ?? async () : c;"                             | ERR Unexpected :                         | OK  x = a ? y ?? async() : c;                      | tsc: "use strict"; x = a ? y ?? async() : c;
+    "x = a ? y ?? <T>(b) : c => d;"                          | ERR Unexpected :                         | OK  x = a ? y ?? b : (c) => d;                     | tsc: "use strict"; x = a ? y ?? (b) : c => d;
+    "x = a ? y ?? <T>(b) : c;"                               | ERR Unexpected :                         | OK  x = a ? y ?? b : c;                            | tsc: "use strict"; x = a ? y ?? (b) : c;
+    "x = a ? y ?? async <T>(b) : c => d;"                    | ERR Unexpected :                         | OK  x = a ? y ?? async(b) : (c) => d;              | tsc: "use strict"; x = a ? y ?? async(b) : c => d;
+    "x = a ? y ?? async <T>(b) : c;"                         | ERR Unexpected :                         | OK  x = a ? y ?? async(b) : c;                     | tsc: "use strict"; x = a ? y ?? async(b) : c;
+    "x = a ? y && async (b) : c => d;"                       | ERR Unexpected :                         | OK  x = a ? y && async(b) : (c) => d;              | tsc: "use strict"; x = a ? y && async(b) : c => d;
+    "x = a ? y && async (b) : c;"                            | ERR Unexpected :                         | OK  x = a ? y && async(b) : c;                     | tsc: "use strict"; x = a ? y && async(b) : c;
+    "x = a ? y && async () : c => d;"                        | ERR Unexpected :                         | OK  x = a ? y && async() : (c) => d;               | tsc: "use strict"; x = a ? y && async() : c => d;
+    "x = a ? y && async () : c;"                             | ERR Unexpected :                         | OK  x = a ? y && async() : c;                      | tsc: "use strict"; x = a ? y && async() : c;
+    "x = a ? y && <T>(b) : c => d;"                          | ERR Unexpected :                         | OK  x = a ? y && b : (c) => d;                     | tsc: "use strict"; x = a ? y && (b) : c => d;
+    "x = a ? y && <T>(b) : c;"                               | ERR Unexpected :                         | OK  x = a ? y && b : c;                            | tsc: "use strict"; x = a ? y && (b) : c;
+    "x = a ? y && async <T>(b) : c => d;"                    | ERR Unexpected :                         | OK  x = a ? y && async(b) : (c) => d;              | tsc: "use strict"; x = a ? y && async(b) : c => d;
+    "x = a ? y && async <T>(b) : c;"                         | ERR Unexpected :                         | OK  x = a ? y && async(b) : c;                     | tsc: "use strict"; x = a ? y && async(b) : c;
+    "x = a ? q ? r : <T>(b) : c => d;"                       | ERR Expected ":" but found ";"           | OK  x = a ? q ? r : b : (c) => d;                  | tsc: "use strict"; x = a ? q ? r : (b) : c => d;
+    "x = a ? q ? r : async <T>(b) : c => d;"                 | ERR Expected ":" but found ";"           | OK  x = a ? q ? r : async(b) : (c) => d;           | tsc: "use strict"; x = a ? q ? r : async(b) : c => d;
+    "x = a ? y => z => (b) : c => d;"                        | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => b : (c) => d;            | tsc: "use strict"; x = a ? y => z => (b) : c => d;
+    "x = a ? y => z => (b, c) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => (b, c) : (c) => d;       | tsc: "use strict"; x = a ? y => z => (b, c) : c => d;
+    "x = a ? y => z => ((b)) : c => d;"                      | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => b : (c) => d;            | tsc: "use strict"; x = a ? y => z => ((b)) : c => d;
+    "x = a ? y => z => (b = 1) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => b = 1 : (c) => d;        | tsc: "use strict"; x = a ? y => z => (b = 1) : c => d;
+    "x = a ? y => z => ([b]) : c => d;"                      | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => [b] : (c) => d;          | tsc: "use strict"; x = a ? y => z => ([b]) : c => d;
+    "x = a ? y => z => async (b) : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => async(b) : (c) => d;     | tsc: "use strict"; x = a ? y => z => async(b) : c => d;
+    "x = a ? y => z => <T>(b) : c => d;"                     | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => b : (c) => d;            | tsc: "use strict"; x = a ? y => z => (b) : c => d;
+    "x = a ? y => z => async <T>(b) : c => d;"               | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => async(b) : (c) => d;     | tsc: "use strict"; x = a ? y => z => async(b) : c => d;
+    "switch (x) { case -async (b): c; }"                     | ERR Unexpected :                         | OK  switch (x) { case -async(b): c; }              | tsc: "use strict"; switch (x) { case -async(b): c; }
+    "switch (x) { case 1 + async (b): c; }"                  | ERR Unexpected :                         | OK  switch (x) { case 1 + async(b): c; }           | tsc: "use strict"; switch (x) { case 1 + async(b): c; }
+    "switch (x) { case -async (): c; }"                      | ERR Unexpected :                         | OK  switch (x) { case -async(): c; }               | tsc: "use strict"; switch (x) { case -async(): c; }
+    "switch (x) { case 1 + async (): c; }"                   | ERR Unexpected :                         | OK  switch (x) { case 1 + async(): c; }            | tsc: "use strict"; switch (x) { case 1 + async(): c; }
+    "switch (x) { case -<T>(b): c; }"                        | ERR Unexpected :                         | OK  switch (x) { case -b: c; }                     | tsc: "use strict"; switch (x) { case -(b): c; }
+    "switch (x) { case 1 + <T>(b): c; }"                     | ERR Unexpected :                         | OK  switch (x) { case 1 + b: c; }                  | tsc: "use strict"; switch (x) { case 1 + (b): c; }
+    "x = a ? b ? c : <T>(b) : e => f;"                       | ERR Expected ":" but found ";"           | OK  x = a ? b ? c : b : (e) => f;                  | tsc: "use strict"; x = a ? b ? c : (b) : e => f;
+    "for (const k of a ? <T>(b) : c => d) {}"                | ERR Expected ":" but found ")"           | OK  for (const k of a ? b : (c) => d) {}           | tsc: "use strict"; for (const k of a ? (b) : c => d) { }
+    "x = { [a ? <T>(b) : c => d]: 1 };"                      | ERR Expected ":" but found "]"           | OK  x = { [a ? b : (c) => d]: 1 };                 | tsc: "use strict"; x = { [a ? (b) : c => d]: 1 };
+    "switch (x) { case -async <T>(b): c; }"                  | ERR Unexpected :                         | OK  switch (x) { case -async(b): c; }              | tsc: "use strict"; switch (x) { case -async(b): c; }
+    "switch (x) { case 1 + async <T>(b): c; }"               | ERR Unexpected :                         | OK  switch (x) { case 1 + async(b): c; }           | tsc: "use strict"; switch (x) { case 1 + async(b): c; }
+    "x = a ? b ? c : async <T>(b) : e => f;"                 | ERR Expected ":" but found ";"           | OK  x = a ? b ? c : async(b) : (e) => f;           | tsc: "use strict"; x = a ? b ? c : async(b) : e => f;
+    "for (const k of a ? async <T>(b) : c => d) {}"          | ERR Expected ":" but found ")"           | OK  for (const k of a ? async(b) : (c) => d) {}    | tsc: "use strict"; for (const k of a ? async(b) : c => d) { }
+    "x = { [a ? async <T>(b) : c => d]: 1 };"                | ERR Expected ":" but found "]"           | OK  x = { [a ? async(b) : (c) => d]: 1 };          | tsc: "use strict"; x = { [a ? async(b) : c => d]: 1 };
+== error message changed: 109
+    "x = a ? <T,>(b) : c => d;"                              | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? y => (...b) : c => d;"                          | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? y => () : c => d;"                              | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? y => (b?) : c => d;"                            | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? y => (b: B) : c => d;"                          | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? y => <T,>(b) : c => d;"                         | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? (y) => (...b) : c => d;"                        | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? (y) => () : c => d;"                            | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? (y) => (b?) : c => d;"                          | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? (y) => (b: B) : c => d;"                        | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? (y) => <T,>(b) : c => d;"                       | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? async y => (...b) : c => d;"                    | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? async y => () : c => d;"                        | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? async y => (b?) : c => d;"                      | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? async y => (b: B) : c => d;"                    | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? async y => <T,>(b) : c => d;"                   | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? async (y) => (...b) : c => d;"                  | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? async (y) => () : c => d;"                      | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? async (y) => (b?) : c => d;"                    | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? async (y) => (b: B) : c => d;"                  | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? async (y) => <T,>(b) : c => d;"                 | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? <T>(y) => (...b) : c => d;"                     | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? <T>(y) => () : c => d;"                         | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? <T>(y) => (b?) : c => d;"                       | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? <T>(y) => (b: B) : c => d;"                     | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? <T>(y) => <T,>(b) : c => d;"                    | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? -async (b) : c => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -async (b): C => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -async () : c => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -async (): C => d : e;"                         | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -<T>(b) : c => d : e;"                          | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -<T>(b): C => d : e;"                           | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -async <T>(b) : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? -async <T>(b): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async (b) : c => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async (b): C => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async () : c => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async (): C => d : e;"                         | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !<T>(b) : c => d : e;"                          | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !<T>(b): C => d : e;"                           | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async <T>(b) : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? !async <T>(b): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async (b) : c => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async (b): C => d : e;"                  | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async () : c => d : e;"                  | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async (): C => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof <T>(b) : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof <T>(b): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async <T>(b) : c => d : e;"              | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? typeof async <T>(b): C => d : e;"               | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async (b) : c => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async (b): C => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async () : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async (): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void <T>(b) : c => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void <T>(b): C => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async <T>(b) : c => d : e;"                | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? void async <T>(b): C => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async (b) : c => d : e;"                  | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async (b): C => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async () : c => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async (): C => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await <T>(b) : c => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await <T>(b): C => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async <T>(b) : c => d : e;"               | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? await async <T>(b): C => d : e;"                | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async (b) : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async (b): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async () : c => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async (): C => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + <T>(b) : c => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + <T>(b): C => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async <T>(b) : c => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? 1 + async <T>(b): C => d : e;"                  | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async (b) : c => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async (b): C => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async () : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async (): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || <T>(b) : c => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || <T>(b): C => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async <T>(b) : c => d : e;"                | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y || async <T>(b): C => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async (b) : c => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async (b): C => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async () : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async (): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? <T>(b) : c => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? <T>(b): C => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async <T>(b) : c => d : e;"                | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y ?? async <T>(b): C => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async (b) : c => d : e;"                   | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async (b): C => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async () : c => d : e;"                    | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async (): C => d : e;"                     | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && <T>(b) : c => d : e;"                      | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && <T>(b): C => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async <T>(b) : c => d : e;"                | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? y && async <T>(b): C => d : e;"                 | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? new <T>(b) : c => d : e;"                       | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? new <T>(b): C => d : e;"                        | ERR Unexpected :                         | ERR Expected ";" but found ":"                     | tsc: 
+    "x = a ? q ? r : <T,>(b) : c => d;"                      | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? y => z => (...b) : c => d;"                     | ERR Expected ":" but found ";"           | ERR Unexpected "..."                               | tsc: 
+    "x = a ? y => z => () : c => d;"                         | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? y => z => (b?) : c => d;"                       | ERR Expected ":" but found ";"           | ERR Unexpected )                                   | tsc: 
+    "x = a ? y => z => (b: B) : c => d;"                     | ERR Expected ":" but found ";"           | ERR Unexpected ":"                                 | tsc: 
+    "x = a ? y => z => <T,>(b) : c => d;"                    | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = a ? b ? c : <T,>(b) : e => f;"                      | ERR Expected ":" but found ";"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "for (const k of a ? <T,>(b) : c => d) {}"               | ERR Expected ":" but found ")"           | ERR Expected "=>" but found ":"                    | tsc: 
+    "x = { [a ? <T,>(b) : c => d]: 1 };"                     | ERR Expected ":" but found "]"           | ERR Expected "=>" but found ":"                    | tsc: 
+== newly accepted, tsc GRAM same reading: 12
+    "x = a ? y => ({ b }) : c => d;"                         | ERR Expected ":" but found ";"           | OK  x = a ? (y) => ({ b }) : (c) => d;             | tsc: "use strict"; x = a ? y => ({ b }) : c => d;
+    "x = a ? (y) => ({ b }) : c => d;"                       | ERR Expected ":" but found ";"           | OK  x = a ? (y) => ({ b }) : (c) => d;             | tsc: "use strict"; x = a ? (y) => ({ b }) : c => d;
+    "x = a ? async y => ({ b }) : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => ({ b }) : (c) => d;       | tsc: "use strict"; x = a ? async (y) => ({ b }) : c => d;
+    "x = a ? async (y) => ({ b }) : c => d;"                 | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => ({ b }) : (c) => d;       | tsc: "use strict"; x = a ? async (y) => ({ b }) : c => d;
+    "x = a ? <T>(y) => ({ b }) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? (y) => ({ b }) : (c) => d;             | tsc: "use strict"; x = a ? (y) => ({ b }) : c => d;
+    "x = a ? await async (b) : c => d;"                      | ERR Unexpected :                         | OK  x = a ? await async(b) : (c) => d;             | tsc: "use strict"; x = a ? await async(b) : c => d;
+    "x = a ? await async (b) : c;"                           | ERR Unexpected :                         | OK  x = a ? await async(b) : c;                    | tsc: "use strict"; x = a ? await async(b) : c;
+    "x = a ? await async () : c => d;"                       | ERR Unexpected :                         | OK  x = a ? await async() : (c) => d;              | tsc: "use strict"; x = a ? await async() : c => d;
+    "x = a ? await async () : c;"                            | ERR Unexpected :                         | OK  x = a ? await async() : c;                     | tsc: "use strict"; x = a ? await async() : c;
+    "x = a ? await async <T>(b) : c => d;"                   | ERR Unexpected :                         | OK  x = a ? await async(b) : (c) => d;             | tsc: "use strict"; x = a ? await async(b) : c => d;
+    "x = a ? await async <T>(b) : c;"                        | ERR Unexpected :                         | OK  x = a ? await async(b) : c;                    | tsc: "use strict"; x = a ? await async(b) : c;
+    "x = a ? y => z => ({ b }) : c => d;"                    | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => ({ b }) : (c) => d;      | tsc: "use strict"; x = a ? y => z => ({ b }) : c => d;
+== newly accepted, tsc rejects: 8
+    "x = a ? y => async () : c => d;"                        | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async() : (c) => d;             | tsc: 
+    "x = a ? (y) => async () : c => d;"                      | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async() : (c) => d;             | tsc: 
+    "x = a ? async y => async () : c => d;"                  | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async() : (c) => d;       | tsc: 
+    "x = a ? async (y) => async () : c => d;"                | ERR Expected ":" but found ";"           | OK  x = a ? async (y) => async() : (c) => d;       | tsc: 
+    "x = a ? <T>(y) => async () : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? (y) => async() : (c) => d;             | tsc: 
+    "x = a ? new <T>(b) : c => d;"                           | ERR Unexpected :                         | OK  x = a ? new b : (c) => d;                      | tsc: 
+    "x = a ? new <T>(b) : c;"                                | ERR Unexpected :                         | OK  x = a ? new b : c;                             | tsc: 
+    "x = a ? y => z => async () : c => d;"                   | ERR Expected ":" but found ";"           | OK  x = a ? (y) => (z) => async() : (c) => d;      | tsc: 

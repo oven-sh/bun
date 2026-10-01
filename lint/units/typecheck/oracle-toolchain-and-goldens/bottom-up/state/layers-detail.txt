@@ -1,0 +1,369 @@
+# init.nolib
+  02: NewDiagnosticForNode@utilities.go:22 isConstTypeReferenceName@utilities.go:134 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.lookup@nameresolver.go:418 *Checker.getSymbol@checker.go:2182
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# init.es5
+  02: isTypeAlias@utilities.go:261 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# init.es5.nostrict
+  02: isTypeAlias@utilities.go:261 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.lookup@nameresolver.go:418 *Checker.getSymbol@checker.go:2182
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# lit.nolib
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.lookup@nameresolver.go:418 *Checker.getSymbol@checker.go:2182
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268 *Checker.getTemplateStringForType@checker.go:29336
+# lit
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268 *Checker.getTemplateStringForType@checker.go:29336
+# tuple.nolib
+  02: NewDiagnosticForNode@utilities.go:22 isConstTypeReferenceName@utilities.go:134 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.lookup@nameresolver.go:418 *Checker.getSymbol@checker.go:2182
+  15: *Checker.getNamedMembers@checker.go:22163
+  20: *Checker.addOptionalityEx@checker.go:18747 *Checker.getOptionalType@checker.go:18754
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# tuple
+  02: isTypeAlias@utilities.go:261 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.resolveEntityName@checker.go:15866
+  15: *Checker.getNamedMembers@checker.go:22163
+  20: *Checker.addOptionalityEx@checker.go:18747 *Checker.getOptionalType@checker.go:18754
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.01-declared
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.02-typenodes
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  13: *Checker.getMinTypeArgumentCount@checker.go:22052 *Checker.hasTypeParameterDefault@checker.go:22062 *Checker.fillMissingTypeArguments@checker.go:22068
+  15: *Checker.getNamedMembers@checker.go:22163
+  18: *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  23: *Relation.size@relater.go:113
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.03-constraints
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  18: *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.04-bases
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680
+  15: *Checker.getNamedMembers@checker.go:22163
+  17: *Checker.getReducedType@checker.go:21933
+  18: *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.05-members
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.06-lookup
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.07-apparent
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.08-signatures
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.09-proptypes
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.10-symtypes
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950 *Checker.isContextSensitiveFunctionOrObjectLiteralMethod@checker.go:29619
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# interfaces.11-widen
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.isValidBaseType@checker.go:19651 *Checker.hasBaseType@checker.go:19665 getTargetType@checker.go:19680 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.isInAmbientOrTypeNode@checker.go:11328 *Checker.isReadonlyAssignmentDeclaration@checker.go:13930 *Checker.isReadonlySymbol@checker.go:13950 *Checker.isContextSensitiveFunctionOrObjectLiteralMethod@checker.go:29619
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+# typenodes.01-typenodes
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  15: *Checker.getNamedMembers@checker.go:22163
+  18: *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  20: *Checker.addOptionalityEx@checker.go:18747 *Checker.getOptionalType@checker.go:18754
+  23: *Relation.size@relater.go:113
+  25: *Checker.checkExpression@checker.go:7643 *Checker.checkExpressionEx@checker.go:7647 *Checker.instantiateTypeWithSingleGenericCallSignature@checker.go:7689 *Checker.checkExpressionWorker@checker.go:7821 *Checker.isSkipDirectInferenceNode@inference.go:1621
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.02-signatures
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  15: *Checker.getNamedMembers@checker.go:22163
+  20: *Checker.addOptionalityEx@checker.go:18747 *Checker.getOptionalType@checker.go:18754
+  23: *Relation.size@relater.go:113
+  25: *Checker.checkExpression@checker.go:7643 *Checker.checkExpressionEx@checker.go:7647 *Checker.instantiateTypeWithSingleGenericCallSignature@checker.go:7689 *Checker.checkExpressionWorker@checker.go:7821 *Checker.isSkipDirectInferenceNode@inference.go:1621
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.03-symtypes
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  15: *Checker.getNamedMembers@checker.go:22163
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: *Relation.size@relater.go:113
+  25: *Checker.checkExpression@checker.go:7643 *Checker.checkExpressionEx@checker.go:7647 *Checker.instantiateTypeWithSingleGenericCallSignature@checker.go:7689 *Checker.checkExpressionWorker@checker.go:7821 *Checker.isSkipDirectInferenceNode@inference.go:1621 *Checker.isContextSensitiveFunctionOrObjectLiteralMethod@checker.go:29619
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.04-members
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  14: *Checker.isMixinConstructorType@checker.go:17120 *Checker.getBaseTypes@checker.go:19281 *Checker.getTupleBaseType@checker.go:19320 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  25: *Checker.checkExpression@checker.go:7643 *Checker.checkExpressionEx@checker.go:7647 *Checker.instantiateTypeWithSingleGenericCallSignature@checker.go:7689 *Checker.checkExpressionWorker@checker.go:7821 *Checker.isSkipDirectInferenceNode@inference.go:1621 *Checker.isContextSensitiveFunctionOrObjectLiteralMethod@checker.go:29619
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.05-lookup
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  14: *Checker.isMixinConstructorType@checker.go:17120 *Checker.getBaseTypes@checker.go:19281 *Checker.getTupleBaseType@checker.go:19320 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.06-proptypes
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  14: *Checker.isMixinConstructorType@checker.go:17120 *Checker.getBaseTypes@checker.go:19281 *Checker.getTupleBaseType@checker.go:19320 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.07-widen
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  14: *Checker.isMixinConstructorType@checker.go:17120 *Checker.getBaseTypes@checker.go:19281 *Checker.getTupleBaseType@checker.go:19320 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  27: *Checker.getSimplifiedType@checker.go:28025 *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# typenodes.08-keyof
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  14: *Checker.isMixinConstructorType@checker.go:17120 *Checker.getBaseTypes@checker.go:19281 *Checker.getTupleBaseType@checker.go:19320 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059 *Checker.checkGrammarBigIntLiteral@grammarchecks.go:2087
+# generic.01-declared
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getPropertyOfType@checker.go:19001 *Checker.getPropertyOfTypeEx@checker.go:19013 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  18: *Checker.getSignaturesOfSymbol@checker.go:19920 *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: asRecursionId@relater.go:94 *Relation.size@relater.go:113 getRecursionIdentity@relater.go:810 getRecursionIdentityTarget@relater.go:820 getRecursionIdentityFromTarget@relater.go:840
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.02-typenodes
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getPropertyOfType@checker.go:19001 *Checker.getPropertyOfTypeEx@checker.go:19013 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  18: *Checker.getSignaturesOfSymbol@checker.go:19920 *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.03-symtypes
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getPropertyOfType@checker.go:19001 *Checker.getPropertyOfTypeEx@checker.go:19013 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  18: *Checker.getSignaturesOfSymbol@checker.go:19920 *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.04-members
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.05-lookup
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.isMappedTypeGenericIndexedAccess@checker.go:21829 *Checker.getApparentType@checker.go:21843 *Checker.getApparentTypeOfMappedType@checker.go:21878 *Checker.getResolvedApparentTypeOfMappedType@checker.go:21886 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.06-proptypes
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.isMappedTypeGenericIndexedAccess@checker.go:21829 *Checker.getApparentType@checker.go:21843 *Checker.getApparentTypeOfMappedType@checker.go:21878 *Checker.getResolvedApparentTypeOfMappedType@checker.go:21886 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.07-apparent
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.isMappedTypeGenericIndexedAccess@checker.go:21829 *Checker.getApparentType@checker.go:21843 *Checker.getApparentTypeOfMappedType@checker.go:21878 *Checker.getResolvedApparentTypeOfMappedType@checker.go:21886 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.08-constraints
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.isMappedTypeGenericIndexedAccess@checker.go:21829 *Checker.getApparentType@checker.go:21843 *Checker.getApparentTypeOfMappedType@checker.go:21878 *Checker.getResolvedApparentTypeOfMappedType@checker.go:21886 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# generic.09-keyof
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: *Checker.createNormalizedTypeReference@checker.go:23410 isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612 *Checker.getTypeWithThisArgument@checker.go:19687
+  17: *Checker.isMappedTypeGenericIndexedAccess@checker.go:21829 *Checker.getApparentType@checker.go:21843 *Checker.getApparentTypeOfMappedType@checker.go:21878 *Checker.getResolvedApparentTypeOfMappedType@checker.go:21886 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# classes.01-declared
+  02: isTypeAlias@utilities.go:261 CompareTypes@utilities.go:415 getSortOrderFlags@utilities.go:581 compareTypeNames@utilities.go:589 getTypeNameSymbol@utilities.go:607
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  15: *Checker.getNamedMembers@checker.go:22163
+  23: *Relation.size@relater.go:113
+  27: *Checker.getTemplateLiteralType@checker.go:29268
+# classes.02-symtypes
+  08: *Checker.resolveAliasWithDeprecationCheck@checker.go:16405 *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  14: *Checker.getBaseTypeVariableOfClass@checker.go:17030 *Checker.getBaseConstructorTypeOfClass@checker.go:17051 *Checker.isConstructorType@checker.go:17107 getBaseTypeNodeOfClass@checker.go:19381
+  16: *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: *Relation.size@relater.go:113
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  31: *Checker.markLinkedReferences@checker.go:28312 shouldMarkIdentifierAliasReferenced@checker.go:28494
+# classes.03-bases
+  08: *Checker.resolveAliasWithDeprecationCheck@checker.go:16405 *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  16: *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: *Relation.size@relater.go:113
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  31: *Checker.markLinkedReferences@checker.go:28312 shouldMarkIdentifierAliasReferenced@checker.go:28494
+# classes.04-members
+  08: *Checker.resolveAliasWithDeprecationCheck@checker.go:16405 *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  13: *Checker.getMinTypeArgumentCount@checker.go:22052
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: *Relation.size@relater.go:113
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  31: *Checker.markLinkedReferences@checker.go:28312 shouldMarkIdentifierAliasReferenced@checker.go:28494
+# classes.05-proptypes
+  08: *Checker.resolveAliasWithDeprecationCheck@checker.go:16405 *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  13: *Checker.getMinTypeArgumentCount@checker.go:22052
+  16: *Checker.getPropertiesOfType@checker.go:18960 *Checker.getPropertiesOfObjectType@checker.go:18968 *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077 *Checker.getIndexInfosOfType@checker.go:19088 *Checker.getIndexInfosOfStructuredType@checker.go:19092
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  23: *Relation.size@relater.go:113
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  31: *Checker.markLinkedReferences@checker.go:28312 shouldMarkIdentifierAliasReferenced@checker.go:28494
+# rel
+  08: *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866 *Checker.resolveQualifiedName@checker.go:15922
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566 *Checker.getRegularTypeOfObjectLiteral@checker.go:28282
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 isPartialMappedType@checker.go:29183 *Checker.getTemplateLiteralType@checker.go:29268
+  33: *Checker.checkGrammarNumericLiteral@grammarchecks.go:2059
+# check.min
+  06: *Checker.newSymbol@checker.go:14170 *Checker.newSymbolEx@checker.go:14178 *Checker.combineSymbolTables@checker.go:14196 *Checker.getMergedSymbol@checker.go:14449 *Checker.getSymbolOfDeclaration@checker.go:14484 *Checker.getLateBoundSymbol@checker.go:14502
+  07: *NameResolver.Resolve@nameresolver.go:25 *NameResolver.getSymbolOfDeclaration@nameresolver.go:409 *NameResolver.lookup@nameresolver.go:418 getIsDeferredContext@nameresolver.go:459 isSelfReferenceLocation@nameresolver.go:489 *Checker.getSymbol@checker.go:2182
+  08: *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866
+  10: isTupleType@checker.go:23603 *Checker.createTypeFromGenericGlobalType@checker.go:24791 *Checker.getGlobalStrictFunctionType@checker.go:24798 *Checker.createArrayType@checker.go:24824 *Checker.createArrayTypeEx@checker.go:24828
+  12: *Checker.tryGetTypeFromTypeNode@checker.go:22913 *Checker.getTypeFromTypeNode@checker.go:22921 *Checker.getTypeFromTypeNodeWorker@checker.go:22925
+  14: *Checker.getBaseTypes@checker.go:19281 *Checker.resolveBaseTypesOfInterface@checker.go:19612
+  16: *Checker.getSignaturesOfType@checker.go:19073 *Checker.getSignaturesOfStructuredType@checker.go:19077
+  17: *Checker.getApparentType@checker.go:21843 *Checker.getReducedType@checker.go:21933 *Checker.getReducedApparentType@checker.go:21974
+  18: *Checker.getSignaturesOfSymbol@checker.go:19920 *Checker.hasLateBindableName@checker.go:20062 *Checker.isLateBindableName@checker.go:20075 *Checker.hasLateBindableIndexSignature@checker.go:20085 *Checker.isLateBindableIndexSignature@checker.go:20090 isLateBindableAST@checker.go:20104
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.reportErrorsFromWidening@checker.go:20566
+  24: *Checker.checkTypeAssignableToAndOptionallyElaborate@relater.go:424 *Checker.checkTypeRelatedToAndOptionallyElaborate@relater.go:428 *Checker.elaborateError@relater.go:438 *Checker.isOrHasGenericConditional@relater.go:474 *Checker.elaborateDidYouMeanToCallOrConstruct@relater.go:478
+  26: *Checker.getFlowState@flow.go:52 *Checker.putFlowState@flow.go:61 *Checker.isReachableFlowNode@flow.go:2513 *Checker.isReachableFlowNodeWorker@flow.go:2522
+  27: *Checker.getConditionalFlowTypeOfType@checker.go:25075 *Checker.getTemplateLiteralType@checker.go:29268
+  30: *Checker.checkDecorators@checker.go:6112
+  32: *Checker.checkUnusedRenamedBindingElements@checker.go:7404 *Checker.checkSourceElementUnreachable@checker.go:2398 *Checker.isSourceElementUnreachable@checker.go:2459
+# check.rich
+  08: *Checker.resolveAliasWithDeprecationCheck@checker.go:16405 *Checker.getExportsOfSymbol@checker.go:16014 *Checker.getResolvedMembersOrExportsOfSymbol@checker.go:16024 *Checker.getMembersOfSymbol@checker.go:16218 *Checker.resolveEntityName@checker.go:15866 *Checker.resolveQualifiedName@checker.go:15922
+  21: *Checker.getWidenedType@checker.go:18469 *Checker.getWidenedTypeWithContext@checker.go:18473 *Checker.getWidenedTypeOfObjectLiteral@checker.go:18514 *Checker.getWidenedProperty@checker.go:18546 *Checker.reportErrorsFromWidening@checker.go:20566 *Checker.getRegularTypeOfObjectLiteral@checker.go:28282
+  28: *Checker.getIteratedTypeOrElementType@checker.go:6196
+  30: *Checker.checkDecorators@checker.go:6112
+  32: *Checker.registerForUnusedIdentifiersCheck@checker.go:7130 *Checker.checkUnusedRenamedBindingElements@checker.go:7404 *Checker.checkSourceElementUnreachable@checker.go:2398 *Checker.isSourceElementUnreachable@checker.go:2459

@@ -1,0 +1,12 @@
+@d p: (a = 1) => void
+@d p: { [a + b]: 1 }
+@d p: { [Symbol.iterator](): void }
+@d p: { get x() { return 1 } }
+@d p: { a: number = 1 }
+@d p: new (a = 1) => C
+@d p: { m(@d a): void }
+@d p: <T extends -a>() => void
+@d p: import("x", { with: { type: f() } })
+@d m(x: (a = 1) => void, y: { [a + b]: 1 }): { get z() { return 1 } } { return null as any }
+@d p: ({ a = 1 }: any) => void
+@d p: { [+1]: 1 }

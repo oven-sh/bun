@@ -1,0 +1,72 @@
+scanner	DeclarationNameToString	D-TYPENODE	c.checkTypeParameters@7105
+scanner	DeclarationNameToString	D-VAR	c.checkVariableLikeDeclaration@6012, c.checkVariableLikeDeclaration@6026, c.errorNextVariableOrPropertyDeclarationMustHaveSameType@6044
+scanner	DeclarationNameToString	D-FUNC	c.checkPropertyDeclaration@2719, c.checkMethodDeclaration@2817, c.checkFunctionOrConstructorSymbolWorker@3594
+scanner	DeclarationNameToString	D-CLASS	c.checkPropertyInitialization@5024
+scanner	DeclarationNameToString	D-IMPEXP	c.checkImportEqualsDeclaration@5564, c.checkExportsOnMergedDeclarations@7043, c.checkExportsOnMergedDeclarations@7045
+scanner	DeclarationNameToString	D-UNUSED	c.checkUnusedRenamedBindingElements@7409, c.checkUnusedRenamedBindingElements@7412
+scanner	DeclarationNameToString	E-COLLIDE	c.checkCollisionWithRequireExportsInGeneratedCode@10569, c.checkCollisionWithGlobalObjectInGeneratedCode@10585, c.checkCollisionWithGlobalPromiseInGeneratedCode@10660, c.checkReflectCollision@10696
+scanner	GetRangeOfTokenAtPosition	G-GRAMMAR	c.grammarErrorOnFirstToken@22, c.checkGrammarAwaitOrAwaitUsing@1679, c.checkGrammarAwaitOrAwaitUsing@1699, c.checkGrammarAwaitOrAwaitUsing@1716, c.checkGrammarAwaitOrAwaitUsing@1732
+scanner	GetTextOfNode	E-DECOR	c.resolveDecorator@8848
+scanner	GetTextOfNode	G-GRAMMAR	c.checkGrammarObjectLiteralExpression@1053, c.checkGrammarObjectLiteralExpression@1059, c.checkGrammarObjectLiteralExpression@1119, c.checkGrammarObjectLiteralExpression@1121, c.checkGrammarNumericLiteral@2060
+scanner	GetTextOfNode	X-JSX	c.checkJsxOpeningLikeElementOrOpeningFragment@152, c.checkJsxReturnAssignableToAppropriateBound@194, c.elaborateJsxComponents@334, c.resolveJsxOpeningLikeElement@578, c.resolveJsxOpeningLikeElement@580
+scanner	GetTokenPosOfNode	D-DRIVER	c.checkSourceElementUnreachable@2451
+scanner	IsIdentifierPart	Z-SERVICES	getPossibleSymbolReferencePositions@670, getPossibleSymbolReferencePositions@671
+scanner	IsIntrinsicJsxName	G-GRAMMAR	c.checkGrammarJsxName@1167
+scanner	NewScanner	G-GRAMMAR	c.checkGrammarRegularExpressionLiteral@74
+scanner	ScanTokenAtPosition	D-TYPENODE	c.checkTypeReferenceNode@2997
+scanner	SkipTrivia	D-TYPENODE	c.checkTypeReferenceNode@2998
+scanner	SkipTrivia	D-STMT	c.checkWithStatement@4173
+scanner	SkipTrivia	G-GRAMMAR	c.checkGrammarTypeParameterList@681, c.checkGrammarForAtLeastOneTypeArgument@849, c.checkGrammarConstructorTypeParameters@1848
+scanner	SkipTrivia	X-JSX	c.resolveJsxOpeningLikeElement@558
+scanner	TokenToString	G-GRAMMAR	c.checkGrammarModifiers@289, c.checkGrammarModifiers@292, c.checkGrammarModifiers@297, c.checkGrammarModifiers@303, c.checkGrammarModifiers@311, c.checkGrammarHeritageClause@872, c.checkGrammarTypeOperatorNode@1355, c.checkGrammarTypeOperatorNode@1384, c.checkGrammarMetaProperty@1820, c.checkGrammarMetaProperty@1833
+nodeflag	Ambient	D-TYPENODE	c.checkObjectTypeForDuplicateDeclarations@3154
+nodeflag	Ambient	D-FUNC	c.checkAccessorDeclaration@2950, c.checkFunctionOrConstructorSymbolWorker@3613, c.getEffectiveDeclarationFlags@3713
+nodeflag	Ambient	D-CLASS	c.checkClassLikeDeclaration@4317, c.checkKindsOfPropertyMemberOverrides@4674, c.checkMemberForOverrideModifierWorker@4827, c.checkPropertyInitialization@5010
+nodeflag	Ambient	D-ENUMNS	c.checkEnumDeclaration@5154, c.checkModuleDeclaration@5216, getFirstNonAmbientClassOrFunctionDeclaration@5305
+nodeflag	Ambient	D-IMPEXP	c.checkImportEqualsDeclaration@5549, c.checkImportEqualsDeclaration@5575, c.checkExportDeclaration@5604, c.checkExportAssignment@5685, c.checkExportAssignment@5700, c.checkExportAssignment@5710, c.checkExportAssignment@5716, c.checkExportAssignment@5722, c.checkExportAssignment@5756, c.checkExportAssignment@5761, c.checkExportAssignment@5764, c.checkAliasSymbol@6890, c.checkAliasSymbol@6938, c.checkAliasSymbol@6941
+nodeflag	Ambient	U-ALIASMARK	c.markLinkedReferences@28316
+nodeflag	Ambient	D-UNUSED	c.reportUnused@7182, c.checkUnusedClassMembers@7213
+nodeflag	Ambient	D-HELPERS	c.checkExternalEmitHelpers@28704
+nodeflag	Ambient	E-COLLIDE	c.checkCollisionsForDeclarationName@10545, c.needCollisionCheckForIdentifier@10599
+nodeflag	Ambient	G-GRAMMAR	c.checkGrammarModifiers@402, c.checkGrammarModifiers@458, c.checkGrammarModifiers@508, c.checkGrammarParameterList@697, c.checkGrammarForGenerator@979, c.checkGrammarAccessor@1291, c.checkGrammarMethod@1448, c.checkGrammarVariableDeclaration@1552, c.checkGrammarVariableDeclaration@1569, c.checkGrammarVariableDeclaration@1582, c.checkGrammarVariableDeclarationList@1643, c.checkGrammarProperty@1903, c.checkGrammarProperty@1916, c.checkGrammarSourceFile@2026, c.checkGrammarStatementInAmbientContext@2030, c.checkGrammarBigIntLiteral@2091
+nodeflag	Ambient	Z-SERVICES	EmitResolver.determineIfDeclarationIsVisible@166
+nodeflag	AwaitContext	D-STMT	c.checkWithStatement@4166
+nodeflag	AwaitContext	G-GRAMMAR	c.checkGrammarForInOrForOfStatement@1189, c.checkGrammarForInOrForOfStatement@1233, c.checkGrammarAwaitOrAwaitUsing@1672
+nodeflag	AwaitUsing	D-VAR	c.checkVariableDeclarationList@5865, c.checkVariableLikeDeclaration@5991
+nodeflag	AwaitUsing	G-GRAMMAR	c.checkGrammarModifiers@419, c.checkGrammarModifiers@434, c.checkGrammarModifiers@456, c.checkGrammarVariableDeclaration@1544, c.checkGrammarVariableDeclaration@1559, c.checkGrammarVariableDeclarationList@1639, c.checkGrammarVariableDeclarationList@1651, c.checkGrammarForDisallowedBlockScopedVariableStatement@1784
+nodeflag	BlockScoped	D-VAR	c.checkVariableDeclarationList@5864, c.checkVariableLikeDeclaration@5990, c.checkVarDeclaredNamesNotShadowed@6078, c.checkVarDeclaredNamesNotShadowed@6091
+nodeflag	BlockScoped	G-GRAMMAR	c.checkGrammarModifiers@226, c.checkGrammarVariableDeclaration@1541, c.checkGrammarVariableDeclarationList@1638, c.checkGrammarForDisallowedBlockScopedVariableStatement@1774
+nodeflag	Const	G-GRAMMAR	c.checkGrammarTypeOperatorNode@1367, c.checkGrammarVariableDeclaration@1563, c.checkGrammarForDisallowedBlockScopedVariableStatement@1780
+nodeflag	ExportContext	D-FUNC	c.getEffectiveDeclarationFlags@3715
+nodeflag	HasAsyncFunctions	E-COLLIDE	c.checkCollisionWithGlobalPromiseInGeneratedCode@10658
+nodeflag	HasExplicitReturn	D-FUNC	c.checkAccessorDeclaration@2951, c.checkAllCodePathsInNonVoidFunctionReturnOrThrow@3752
+nodeflag	HasImplicitReturn	D-FUNC	c.checkAccessorDeclaration@2950
+nodeflag	InWithStatement	U-ALIASMARK	c.markLinkedReferences@28337
+nodeflag	InWithStatement	Z-SERVICES	c.getSymbolsInScope@22, c.getSymbolAtLocation@31727, c.getTypeOfNode@32058
+nodeflag	JSDoc	D-TYPENODE	c.checkTypeReferenceNode@2992
+nodeflag	JSDoc	G-GRAMMAR	c.checkGrammarImportClause@2103
+nodeflag	JSDoc	D-JSDOC	getAllJSDocTags@87
+nodeflag	JSDoc	Z-SERVICES	EmitResolver.IsImplementationOfOverload@500
+nodeflag	JavaScriptFile	D-FUNC	c.checkFunctionOrMethodDeclaration@3438
+nodeflag	Let	G-GRAMMAR	c.checkGrammarForDisallowedBlockScopedVariableStatement@1778
+nodeflag	None	D-CLASS	c.isPropertyInitializedInStaticBlocks@5040, c.isPropertyInitializedInConstructor@5056, c.isPropertyInitializedInConstructor@5058
+nodeflag	None	G-GRAMMAR	c.checkGrammarModifiers@224
+nodeflag	OptionalChain	G-GRAMMAR	c.checkGrammarTaggedTemplateChain@860
+nodeflag	Reparsed	D-FUNC	c.checkFunctionOrConstructorSymbolWorker@3642
+nodeflag	Reparsed	G-GRAMMAR	c.checkGrammarModifiers@320, c.checkGrammarModifiers@322, c.checkGrammarModifiers@324, c.checkGrammarModifiers@337, c.checkGrammarModifiers@339, c.checkGrammarModifiers@341, c.checkGrammarModifiers@343, c.checkGrammarModifiers@345, c.checkGrammarModifiers@352, c.checkGrammarModifiers@362, c.checkGrammarModifiers@364, c.checkGrammarModifiers@366, c.checkGrammarModifiers@374, c.checkGrammarModifiers@407, c.checkGrammarModifiers@409, c.checkGrammarModifiers@411, c.checkGrammarModifiers@436, c.checkGrammarModifiers@493, c.checkGrammarModifiers@496, c.checkGrammarParameterList@711
+nodeflag	ThisNodeOrAnySubNodesHasError	D-UNUSED	c.reportUnused@7182
+nodeflag	Unreachable	D-DRIVER	c.isSourceElementUnreachable@2461
+nodeflag	Unreachable	D-STMT	c.checkLabeledStatement@4227
+nodeflag	Using	D-VAR	c.checkVariableDeclarationList@5865, c.checkVariableLikeDeclaration@5999
+nodeflag	Using	D-UNUSED	c.isUnreferencedVariableDeclaration@7330
+nodeflag	Using	G-GRAMMAR	c.checkGrammarModifiers@417, c.checkGrammarModifiers@432, c.checkGrammarModifiers@454, c.findFirstIllegalModifier@630, c.checkGrammarVariableDeclaration@1546, c.checkGrammarVariableDeclaration@1561, c.checkGrammarVariableDeclarationList@1639, c.checkGrammarVariableDeclarationList@1641, c.checkGrammarVariableDeclarationList@1644, c.checkGrammarVariableDeclarationList@1647, c.checkGrammarForDisallowedBlockScopedVariableStatement@1782
+nodeflag	YieldContext	G-GRAMMAR	c.checkGrammarYieldExpression@1761
+combined	GetCombinedNodeFlags	D-VAR	c.checkVariableDeclarationList@5864
+combined	getCombinedModifierFlagsCached	D-FUNC	c.getEffectiveDeclarationFlags@3710
+combined	getCombinedModifierFlagsCached	Z-SERVICES	EmitResolver.determineIfDeclarationIsVisible@165
+combined	getCombinedNodeFlagsCached	D-VAR	c.checkVariableLikeDeclaration@5990, c.checkVarDeclaredNamesNotShadowed@6078
+combined	getCombinedNodeFlagsCached	D-UNUSED	c.isUnreferencedVariableDeclaration@7330
+combined	getCombinedNodeFlagsCached	G-GRAMMAR	c.checkGrammarVariableDeclaration@1540, c.checkGrammarForDisallowedBlockScopedVariableStatement@1774
+tokenflag	None	Z-SERVICES	EmitResolver.CreateLiteralConstValue@1018, EmitResolver.CreateLiteralConstValue@1033, EmitResolver.CreateLiteralConstValue@1036, EmitResolver.CreateLiteralConstValue@1038
+tokenflag	Scientific	G-GRAMMAR	c.checkGrammarNumericLiteral@2066
+listfact	HasTrailingComma	G-GRAMMAR	c.checkGrammarForDisallowedTrailingComma@672, c.checkGrammarArrowFunction@782

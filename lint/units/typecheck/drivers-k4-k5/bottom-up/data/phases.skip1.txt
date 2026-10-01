@@ -1,0 +1,9 @@
+0-startup: 114 functions, 1687 lines: tsoptions 26/656, tspath 13/263, execute 7/247, collections 12/103, execute/tsc 7/67, semver 3/63, core 8/47, compiler 3/44, vfs/internal 5/38, bundled 7/25, transformers 1/25, vfs/osvfs 4/20, fswatch 3/19, k4snap 1/17, osutil 4/12, scanner 1/9, pseudochecker 2/7, ast 2/6, api/encoder 1/5, locale 1/5, vfs/cachedvfs 1/5, parser 1/3, diagnostics 1/1
+1-parse: 710 functions, 10390 lines: parser 273/4648, ast 211/1705, scanner 57/1429, compiler 42/1092, tspath 27/520, core 35/265, jsnum 10/200, module 7/142, vfs/internal 8/84, tsoptions 9/80, stringutil 6/65, collections 6/39, vfs/cachedvfs 4/36, bundled 5/26, packagejson 4/21, k4snap 1/17, vfs/osvfs 4/15, debug 1/6
+2-program: 29 functions, 747 lines: compiler 12/601, core 12/81, outputpaths 1/23, k4snap 1/17, collections 1/16, tsoptions 2/9
+3a-prebind: 28 functions, 443 lines: compiler 12/191, execute/tsc 2/97, core 6/61, execute 1/48, ast 5/22, k4snap 1/17, tsoptions 1/7
+3b-bind: 287 functions, 2912 lines: ast 197/1398, binder 68/1336, core 13/104, compiler 3/20, k4snap 1/17, tspath 1/10, scanner 1/9, collections 1/6, debug 1/6, tsoptions 1/6
+4a-preinit: 26 functions, 532 lines: compiler 13/222, checker 1/217, core 8/64, k4snap 1/17, ast 2/6, tsoptions 1/6
+4b-init: 195 functions, 2677 lines: checker 115/1733, binder 7/383, ast 46/240, core 19/168, evaluator 1/99, stringutil 1/20, k4snap 1/17, debug 1/6, tsoptions 1/6, jsnum 1/3, compiler 2/2
+5-check: 609 functions, 10643 lines: checker 268/6511, ast 201/1588, printer 43/1051, compiler 35/497, binder 6/380, core 29/254, scanner 4/163, execute/tsc 1/70, collections 7/47, diagnostics 7/21, k4snap 1/17, tspath 2/11, module 1/9, stringutil 1/9, debug 1/6, tsoptions 1/6, pseudochecker 1/3
+9-report: 62 functions, 883 lines: tspath 13/252, compiler 5/140, execute/tsc 4/131, diagnosticwriter 9/80, core 6/75, diagnostics 4/71, ast 12/70, scanner 3/25, stringutil 3/14, spanmap 1/11, execute 1/8, tsoptions 1/6

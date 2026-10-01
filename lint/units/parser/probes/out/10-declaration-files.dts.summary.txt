@@ -1,0 +1,387 @@
+group 10-declaration-files  dialect dts  config plain  inputs 380
+counts A1=27 A1c=27 A2=17 AA=222 AAg=112 B=1 RR=1
+
+calls of Bun that differ from transformSync without tsconfig: 6 inputs
+  "break;"  base="Cannot use \"break\" here"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "continue;"  base="Cannot use \"continue\" here"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "export class C { accessor x: T; }"  base=ok  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "export class C { static accessor x: T; }"  base=ok  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "export class C { accessor #x: T; }"  base=ok  ts.plain.scanImports="Expected \";\" but found \"#x\"" ts.deco.transformSync="Expected \";\" but found \"#x\"" ts.deco.scan="Expected \";\" but found \"#x\"" ts.deco.scanImports="Expected \";\" but found \"#x\"" tsx.plain.scanImports="Expected \";\" but found \"#x\"" tsx.deco.transformSync="Expected \";\" but found \"#x\"" tsx.deco.scan="Expected \";\" but found \"#x\"" tsx.deco.scanImports="Expected \";\" but found \"#x\""
+  "#!/usr/bin/env node\n/// <reference types=\"node\" />\nexport {};"  base=ok  ts.plain.scanImports="Unexpected #!/usr/bin/env node" ts.deco.scanImports="Unexpected #!/usr/bin/env node" tsx.plain.scanImports="Unexpected #!/usr/bin/env node" tsx.deco.scanImports="Unexpected #!/usr/bin/env node"
+
+==== family topLevel  (229 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1978-2014 parse_stmt: no ambient context exists outside "declare" (opts.is_typescript_declare is set only at src/js_parser/parse/parse_stmt.rs:1866 and src/js_parser/parse/parse_stmt.rs:1576)
+  ref: parser.go:431 parseSourceFileWorker sets NodeFlagsAmbient for a declaration file, 1063 parseStatement, 1124 parseDeclaration
+  counts A1=8 A2=11 AA=119 AAg=91
+  -- A1: 8 distinct
+    "export const x: number;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: 1;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x, y: number;"
+        bun x1: The constant "x" must be initialized @13
+    "export const { a }: T;"
+        bun x1: This constant must be initialized @13
+    "export const [a]: T;"
+        bun x1: This constant must be initialized @13
+    "export const x: unique symbol;"
+        bun x1: The constant "x" must be initialized @13
+    "export namespace N { const x: T; function f(): void; class C {} }"
+        bun x1: The constant "x" must be initialized @27
+    "export namespace N { export const x: T; }"
+        bun x1: The constant "x" must be initialized @34
+  -- A2: 11 distinct
+    "export using x: T;"
+        bun x1: Unexpected using @7
+        tsc x1: TS1491 @0 len 6 "'export' modifier cannot appear on a 'using' declaration."
+    "const x: number;"
+        bun x1: The constant "x" must be initialized @6
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "const x;"
+        bun x1: The constant "x" must be initialized @6
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "namespace N { const x: T; }"
+        bun x1: The constant "x" must be initialized @20
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "module \"m\" {}"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "module \"m\";"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "global {}"
+        bun x1: Expected ";" but found "{" @7
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "using x: T;"
+        bun x1: The declaration "x" must be initialized @6
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1545 @0 len 10 "'using' declarations are not allowed in ambient contexts."
+    "break;"
+        bun x1: Cannot use "break" here @0
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+    "continue;"
+        bun x1: Cannot use "continue" here @0
+        tsc x1: TS1036 @0 len 8 "Statements are not allowed in ambient contexts."
+    "{ const x: T; }"
+        bun x1: The constant "x" must be initialized @8
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+  -- AAg: 91 distinct
+    "export const x = E.A;"
+        tsc x1: TS1254 @17 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export const x = 1 + 1;"
+        tsc x1: TS1254 @17 len 5 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export const x = f();"
+        tsc x1: TS1254 @17 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export const x = {};"
+        tsc x1: TS1254 @17 len 2 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export const x: number = 1;"
+        tsc x1: TS1039 @25 len 1 "Initializers are not allowed in ambient contexts."
+    "export let x = 1;"
+        tsc x1: TS1039 @15 len 1 "Initializers are not allowed in ambient contexts."
+    "export var x = 1;"
+        tsc x1: TS1039 @15 len 1 "Initializers are not allowed in ambient contexts."
+    "export let x: unique symbol;"
+        tsc x1: TS1332 @11 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "export function f() {}"
+        tsc x1: TS1183 @20 len 1 "An implementation cannot be declared in ambient contexts."
+    "export function f(): void {}"
+        tsc x1: TS1183 @26 len 1 "An implementation cannot be declared in ambient contexts."
+    "export async function f(): Promise<void>;"
+        tsc x1: TS1040 @7 len 5 "'async' modifier cannot be used in an ambient context."
+    "export function* f(): any;"
+        tsc x1: TS1221 @15 len 1 "Generators are not allowed in an ambient context."
+    "export default function f() {}"
+        tsc x1: TS1183 @28 len 1 "An implementation cannot be declared in ambient contexts."
+    "export default async function f(): Promise<void>;"
+        tsc x1: TS1040 @15 len 5 "'async' modifier cannot be used in an ambient context."
+    "export class C { m() {} }"
+        tsc x1: TS1183 @21 len 1 "An implementation cannot be declared in ambient contexts."
+    "export class C { x = 1; }"
+        tsc x1: TS1039 @21 len 1 "Initializers are not allowed in ambient contexts."
+    "export enum E { A = f() }"
+        tsc x1: TS1066 @20 len 3 "In ambient enum declarations member initializer must be constant expression."
+    "export module N {}"
+        tsc x1: TS1540 @14 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "export as namespace X;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "let x: number;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "var x: number;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "const x = 1;"
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "let x = 1;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1039 @8 len 1 "Initializers are not allowed in ambient contexts."
+    "var x = 1;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1039 @8 len 1 "Initializers are not allowed in ambient contexts."
+    "let x;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "var x;"
+        tsc x1: TS1046 @0 len 3 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "function f(): void;"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "function f();"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "function f() {}"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1183 @13 len 1 "An implementation cannot be declared in ambient contexts."
+    "function f(): void; function f(a: A): void;"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "async function f(): Promise<void>;"
+        tsc x1: TS1040 @0 len 5 "'async' modifier cannot be used in an ambient context."
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "function* f(): any;"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1221 @8 len 1 "Generators are not allowed in an ambient context."
+    "class C {}"
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "class C { x: T; m(): void; }"
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "class C { m() {} }"
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1183 @14 len 1 "An implementation cannot be declared in ambient contexts."
+    "abstract class C {}"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "abstract class C { abstract m(): void; }"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "enum E { A }"
+        tsc x1: TS1046 @0 len 4 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "const enum E { A }"
+        tsc x1: TS1046 @0 len 5 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "namespace N {}"
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "module N {}"
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "x;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "x = 1;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "f();"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "1;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "\"use strict\";"
+        tsc x1: TS1036 @0 len 12 "Statements are not allowed in ambient contexts."
+    "if (a) {}"
+        tsc x1: TS1036 @0 len 2 "Statements are not allowed in ambient contexts."
+    "for (;;) {}"
+        tsc x1: TS1036 @0 len 3 "Statements are not allowed in ambient contexts."
+    "while (a) {}"
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+    "do {} while (a)"
+        tsc x1: TS1036 @0 len 2 "Statements are not allowed in ambient contexts."
+    "switch (a) {}"
+        tsc x1: TS1036 @0 len 6 "Statements are not allowed in ambient contexts."
+    "try {} catch {}"
+        tsc x1: TS1036 @0 len 3 "Statements are not allowed in ambient contexts."
+    "throw x;"
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+    "return;"
+        tsc x1: TS1036 @0 len 6 "Statements are not allowed in ambient contexts."
+    "debugger;"
+        tsc x1: TS1036 @0 len 8 "Statements are not allowed in ambient contexts."
+    "label: x;"
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+    "{}"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    ";"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "with (a) {}"
+        tsc x1: TS1036 @0 len 4 "Statements are not allowed in ambient contexts."
+    "new C;"
+        tsc x1: TS1036 @0 len 3 "Statements are not allowed in ambient contexts."
+    "() => {};"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+        tsc x1: TS1183 @6 len 1 "An implementation cannot be declared in ambient contexts."
+    "(function () {});"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+        tsc x1: TS1183 @13 len 1 "An implementation cannot be declared in ambient contexts."
+    "(class {});"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "await x;"
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+        tsc x1: TS1375 @0 len 5 "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "yield;"
+        tsc x1: TS1036 @0 len 5 "Statements are not allowed in ambient contexts."
+    "x as T;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "<T>x;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "x!;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "x satisfies T;"
+        tsc x1: TS1036 @0 len 1 "Statements are not allowed in ambient contexts."
+    "declare const x: number = 1;"
+        tsc x1: TS1039 @26 len 1 "Initializers are not allowed in ambient contexts."
+    "declare let x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare var x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare function f() {}"
+        tsc x1: TS1183 @21 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { m() {} }"
+        tsc x1: TS1183 @22 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { x = 1; }"
+        tsc x1: TS1039 @22 len 1 "Initializers are not allowed in ambient contexts."
+    "declare enum E { A = f() }"
+        tsc x1: TS1066 @21 len 3 "In ambient enum declarations member initializer must be constant expression."
+    "declare namespace N { let x = 1; }"
+        tsc x1: TS1039 @30 len 1 "Initializers are not allowed in ambient contexts."
+    "declare namespace N { function f() {} }"
+        tsc x1: TS1183 @35 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare namespace N { x; }"
+        tsc x1: TS1036 @22 len 1 "Statements are not allowed in ambient contexts."
+    "declare namespace N { declare const x: T; }"
+        tsc x1: TS1038 @22 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare namespace N { export declare const x: T; }"
+        tsc x1: TS1038 @29 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare module \"m\" { declare const x: T; }"
+        tsc x1: TS1038 @21 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare global { declare const x: T; }"
+        tsc x1: TS1038 @17 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare declare const x: T;"
+        tsc x1: TS1030 @8 len 7 "'declare' modifier already seen."
+    "export declare declare const x: T;"
+        tsc x1: TS1030 @15 len 7 "'declare' modifier already seen."
+    "declare export const x: T;"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "declare async function f(): Promise<void>;"
+        tsc x1: TS1040 @8 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare function* f(): any;"
+        tsc x1: TS1221 @16 len 1 "Generators are not allowed in an ambient context."
+    "@d class C {}"
+        tsc x1: TS1046 @0 len 1 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "declare class C { @d m(): void; }"
+        tsc x1: TS1249 @18 len 1 "A decorator can only decorate a method implementation, not an overload."
+    "export class C { m(@d a: A): void; }"
+        tsc x1: TS1206 @19 len 1 "Decorators are not valid here."
+
+==== family bodyless  (84 inputs)
+  bun: src/js_parser/parse/parse_fn.rs:395-400 (function without body: allow_missing_body_for_type_script), src/js_parser/parse/parse_property.rs:759-802 (method without body), src/js_parser/parse/parse_stmt.rs:184-186 (const without initializer needs declare)
+  ref: parser.go:3530 parseFunctionBlockOrSemicolon, 1715 parseFunctionDeclaration, 1554 parseVariableDeclarationList
+  counts A1=17 A2=1 AA=53 AAg=12 RR=1
+  -- A1: 17 distinct
+    "export function f(): void\nexport const x: T\nexport class C {}"
+        bun x1: The constant "x" must be initialized @39
+    "export const x: T, y: U, z: V;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: T\nexport const y: U"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: { a: A; b(): B; [k: string]: C };"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: () => void;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: new () => A;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: typeof y;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: import(\"y\").Z;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: typeof import(\"y\");"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: A<B<C>>;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: A extends B ? C : D;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: keyof typeof y;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: readonly A[];"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: [a: A, b?: B, ...c: C[]];"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: `a${string}`;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: -1;"
+        bun x1: The constant "x" must be initialized @13
+    "export const x: 1n;"
+        bun x1: The constant "x" must be initialized @13
+  -- A2: 1 distinct
+    "export const x: asserts y;"
+        bun x1: Expected ";" but found "y" @24
+        tsc x1: TS1228 @16 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- AAg: 12 distinct
+    "export class C { async m(): Promise<void>; }"
+        tsc x1: TS1040 @17 len 5 "'async' modifier cannot be used in an ambient context."
+    "export class C { *m(): any; }"
+        tsc x1: TS1221 @17 len 1 "Generators are not allowed in an ambient context."
+    "export class C { abstract m(): void; }"
+        tsc x1: TS1244 @17 len 8 "Abstract methods can only appear within an abstract class."
+    "export class C { readonly x = E.A; }"
+        tsc x1: TS1254 @30 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export class C { readonly x = f(); }"
+        tsc x1: TS1254 @30 len 3 "A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference."
+    "export class C { readonly x: T = 1; }"
+        tsc x1: TS1039 @33 len 1 "Initializers are not allowed in ambient contexts."
+    "export class C { static x = 1; }"
+        tsc x1: TS1039 @28 len 1 "Initializers are not allowed in ambient contexts."
+    "export class C { x!: T; }"
+        tsc x1: TS1255 @18 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "export class C { constructor() {} }"
+        tsc x1: TS1183 @31 len 1 "An implementation cannot be declared in ambient contexts."
+    "export class C { get x() { return 1 } }"
+        tsc x1: TS1183 @25 len 1 "An implementation cannot be declared in ambient contexts."
+    "export class C { m(): void {} }"
+        tsc x1: TS1183 @27 len 1 "An implementation cannot be declared in ambient contexts."
+    "function f(): void\nfunction g(): void"
+        tsc x1: TS1046 @0 len 8 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+
+==== family directive  (27 inputs)
+  bun: src/js_parser/lexer.rs comment scanning (triple-slash directives are comments; none is recorded)
+  ref: internal/parser/references.go (processCommentPragmas, processPragmasIntoFields)
+  counts A1=2 AA=23 AAg=1 B=1
+  -- A1: 2 distinct
+    "// @ts-ignore\nexport const x: T;"
+        bun x1: The constant "x" must be initialized @27
+    "// @ts-expect-error\nexport const x: T;"
+        bun x1: The constant "x" must be initialized @33
+  -- B: 1 distinct
+    "/// <reference />\nexport {};"
+        tsc x1: TS1084 @0 len 17 "Invalid 'reference' directive syntax."
+  -- AAg: 1 distinct
+    "\"use strict\";\n/// <reference types=\"node\" />\nexport {};"
+        tsc x1: TS1036 @0 len 12 "Statements are not allowed in ambient contexts."
+
+==== family module  (40 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1794-1807, src/js_parser/parse/parse_stmt.rs:1843-1854, src/js_parser/parse/parse_typescript.rs:205-481
+  ref: parser.go:2202 parseModuleDeclaration, 2218 parseAmbientExternalModuleDeclaration
+  counts A2=5 AA=27 AAg=8
+  -- A2: 5 distinct
+    "module \"m\" { export const x: T; }"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "namespace N { export const x: T; function f(): void; }"
+        bun x1: The constant "x" must be initialized @27
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "namespace N.M { const x: T; }"
+        bun x1: The constant "x" must be initialized @22
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "module N { const x: T; }"
+        bun x1: The constant "x" must be initialized @17
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "global { var x: T; }"
+        bun x1: Expected ";" but found "{" @7
+        tsc x1: TS1046 @0 len 6 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+  -- AAg: 8 distinct
+    "declare namespace N { export default x; }"
+        tsc x1: TS1319 @22 len 17 "A default export can only be used in an ECMAScript-style module."
+    "declare namespace N { export = x; }"
+        tsc x1: TS1063 @22 len 11 "An export assignment cannot be used in a namespace."
+    "declare namespace N { import x from \"y\"; }"
+        tsc x1: TS1147 @36 len 3 "Import declarations in a namespace cannot reference a module."
+    "declare namespace N { export * from \"y\"; }"
+        tsc x1: TS1194 @36 len 3 "Export declarations are not permitted in a namespace."
+    "namespace N { const x = 1; }"
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+    "namespace N { function f() {} }"
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1183 @27 len 1 "An implementation cannot be declared in ambient contexts."
+    "namespace N { x; }"
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1036 @14 len 1 "Statements are not allowed in ambient contexts."
+    "namespace N { export declare const x: T; }"
+        tsc x1: TS1046 @0 len 9 "Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier."
+        tsc x1: TS1038 @21 len 7 "A 'declare' modifier cannot be used in an already ambient context."

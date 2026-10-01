@@ -1,0 +1,21 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+variance.ts(7,12): error TS2322: Type 'Co<string>' is not assignable to type 'Co<"a">'.
+  Type 'string' is not assignable to type '"a"'.
+variance.ts(9,1): error TS2322: Type 'Contra<"a">' is not assignable to type 'Contra<string>'.
+  Type 'string' is not assignable to type '"a"'.
+variance.ts(11,1): error TS2322: Type 'Inv<"a">' is not assignable to type 'Inv<string>'.
+  Types of property 'set' are incompatible.
+    Type '(v: "a") => void' is not assignable to type '(v: string) => void'.
+      Types of parameters 'v' and 'v' are incompatible.
+        Type 'string' is not assignable to type '"a"'.
+variance.ts(11,12): error TS2322: Type 'Inv<string>' is not assignable to type 'Inv<"a">'.
+  The types returned by 'get()' are incompatible between these types.
+    Type 'string' is not assignable to type '"a"'.
+variance.ts(18,1): error TS2322: Type 'Un<{ a: number; }>' is not assignable to type 'Un<{ a?: string | undefined; }>'.
+  Types of property 'a' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+variance.ts(21,1): error TS2322: Type 'List<number>' is not assignable to type 'List<string>'.
+  Type 'number' is not assignable to type 'string'.
+variance.ts(24,1): error TS2322: Type 'Box<number>' is not assignable to type 'Box<string>'.
+  Type 'number' is not assignable to type 'string'.
+SIZES after check: identity=1 assignable=58 comparable=0 subtype=0 strictSubtype=0 enum=0 types=188

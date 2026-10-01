@@ -1,0 +1,131 @@
+file /mod1.ts scriptKind=3 variant=0 dts=false textLen=458
+externalModuleIndicator KindImportDeclaration[0,14)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=92 identifiers=25 text=38 reparsedClones=0
+import KindStringLiteral[6,13) "side"
+import KindStringLiteral[30,35) "m1"
+import KindStringLiteral[56,61) "m2"
+import KindStringLiteral[102,107) "m3"
+import KindStringLiteral[132,137) "m4"
+import KindStringLiteral[165,170) "m5"
+import KindStringLiteral[185,196) "./x.json"
+import KindStringLiteral[274,279) "m6"
+import KindStringLiteral[294,299) "m7"
+import KindStringLiteral[321,326) "m8"
+root KindSourceFile [0,458) f=0x0
+  .Statements: list [0,457) n=16
+    - KindImportDeclaration [0,14) f=0x0
+      .ModuleSpecifier: KindStringLiteral [6,13) f=0x0 Text="side" TokenFlags=0x0
+    - KindImportDeclaration [14,36) f=0x0
+      .ImportClause: KindImportClause [21,25) f=0x0 PhaseModifier=KindUnknown
+        .name: KindIdentifier [21,25) f=0x0 Text="def"
+      .ModuleSpecifier: KindStringLiteral [30,35) f=0x0 Text="m1" TokenFlags=0x0
+    - KindImportDeclaration [36,62) f=0x0
+      .ImportClause: KindImportClause [43,51) f=0x0 PhaseModifier=KindUnknown
+        .NamedBindings: KindNamespaceImport [43,51) f=0x0
+          .name: KindIdentifier [48,51) f=0x0 Text="ns"
+      .ModuleSpecifier: KindStringLiteral [56,61) f=0x0 Text="m2" TokenFlags=0x0
+    - KindImportDeclaration [62,108) f=0x0
+      .ImportClause: KindImportClause [69,97) f=0x0 PhaseModifier=KindUnknown
+        .NamedBindings: KindNamedImports [69,97) f=0x0
+          .Elements: list [71,95) n=3
+            - KindImportSpecifier [71,73) f=0x0
+              .name: KindIdentifier [71,73) f=0x0 Text="a"
+            - KindImportSpecifier [74,81) f=0x0
+              .PropertyName: KindIdentifier [74,76) f=0x0 Text="b"
+              .name: KindIdentifier [79,81) f=0x0 Text="c"
+            - KindImportSpecifier [82,95) f=0x0
+              .PropertyName: KindIdentifier [82,90) f=0x0 Text="default"
+              .name: KindIdentifier [93,95) f=0x0 Text="d"
+      .ModuleSpecifier: KindStringLiteral [102,107) f=0x0 Text="m3" TokenFlags=0x0
+    - KindImportDeclaration [108,138) f=0x0
+      .ImportClause: KindImportClause [115,127) f=0x0 PhaseModifier=KindUnknown
+        .NamedBindings: KindNamedImports [121,127) f=0x0
+          .Elements: list [123,125) n=1
+            - KindImportSpecifier [123,125) f=0x0
+              .name: KindIdentifier [123,125) f=0x0 Text="e"
+        .name: KindIdentifier [115,120) f=0x0 Text="def2"
+      .ModuleSpecifier: KindStringLiteral [132,137) f=0x0 Text="m4" TokenFlags=0x0
+    - KindImportDeclaration [138,171) f=0x0
+      .ImportClause: KindImportClause [145,160) f=0x0 PhaseModifier=KindUnknown
+        .NamedBindings: KindNamespaceImport [151,160) f=0x0
+          .name: KindIdentifier [156,160) f=0x0 Text="ns2"
+        .name: KindIdentifier [145,150) f=0x0 Text="def3"
+      .ModuleSpecifier: KindStringLiteral [165,170) f=0x0 Text="m5" TokenFlags=0x0
+    - KindImportDeclaration [171,219) f=0x0
+      .Attributes: KindImportAttributes [196,218) f=0x0 Token=KindWithKeyword
+        .Attributes: list [203,216) n=1
+          - KindImportAttribute [203,216) f=0x0
+            .Value: KindStringLiteral [209,216) f=0x0 Text="json" TokenFlags=0x0
+            .name: KindIdentifier [203,208) f=0x0 Text="type"
+      .ImportClause: KindImportClause [178,180) f=0x0 PhaseModifier=KindUnknown
+        .name: KindIdentifier [178,180) f=0x0 Text="j"
+      .ModuleSpecifier: KindStringLiteral [185,196) f=0x0 Text="./x.json" TokenFlags=0x0
+    - KindExportDeclaration [219,242) f=0x0
+      .ExportClause: KindNamedExports [226,241) f=0x2000
+        .Elements: list [228,239) n=2
+          - KindExportSpecifier [228,230) f=0x2000
+            .name: KindIdentifier [228,230) f=0x2000 Text="a"
+          - KindExportSpecifier [231,239) f=0x2000
+            .PropertyName: KindIdentifier [231,233) f=0x2000 Text="c"
+            .name: KindIdentifier [236,239) f=0x2000 Text="cc"
+    - KindExportDeclaration [242,280) f=0x0
+      .ExportClause: KindNamedExports [249,269) f=0x2000
+        .Elements: list [251,267) n=2
+          - KindExportSpecifier [251,258) f=0x2000
+            .PropertyName: KindIdentifier [251,253) f=0x2000 Text="x"
+            .name: KindIdentifier [256,258) f=0x2000 Text="y"
+          - KindExportSpecifier [259,267) f=0x2000
+            .name: KindIdentifier [259,267) f=0x2000 Text="default"
+      .ModuleSpecifier: KindStringLiteral [274,279) f=0x2000 Text="m6" TokenFlags=0x0
+    - KindExportDeclaration [280,300) f=0x0
+      .ModuleSpecifier: KindStringLiteral [294,299) f=0x2000 Text="m7" TokenFlags=0x0
+    - KindExportDeclaration [300,327) f=0x0
+      .ExportClause: KindNamespaceExport [307,316) f=0x2000
+        .name: KindIdentifier [312,316) f=0x2000 Text="ns3"
+      .ModuleSpecifier: KindStringLiteral [321,326) f=0x2000 Text="m8" TokenFlags=0x0
+    - KindVariableStatement [327,354) f=0x0
+      .DeclarationList: KindVariableDeclarationList [334,353) f=0x2
+        .Declarations: list [340,353) n=2
+          - KindVariableDeclaration [340,346) f=0x0
+            .Initializer: KindNumericLiteral [344,346) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [340,342) f=0x0 Text="k"
+          - KindVariableDeclaration [347,353) f=0x0
+            .Initializer: KindNumericLiteral [351,353) f=0x0 Text="2" TokenFlags=0x0
+            .name: KindIdentifier [347,349) f=0x0 Text="l"
+      .modifiers.flags=0x20
+      .modifiers: list [327,334) n=1
+        - KindExportKeyword [327,334) f=0x0
+    - KindFunctionDeclaration [354,378) f=0x0
+      .Body: KindBlock [375,378) f=0x0
+        .Statements: list [377,377) n=0
+      .Parameters: list [374,374) n=0
+      .modifiers.flags=0x20
+      .modifiers: list [354,361) n=1
+        - KindExportKeyword [354,361) f=0x0
+      .name: KindIdentifier [370,373) f=0x0 Text="f1"
+    - KindFunctionDeclaration [378,408) f=0x0
+      .Body: KindBlock [405,408) f=0x2000
+        .Statements: list [407,407) n=0
+      .Parameters: list [404,404) n=0
+      .modifiers.flags=0x420
+      .modifiers: list [378,391) n=2
+        - KindExportKeyword [378,385) f=0x0
+        - KindAsyncKeyword [385,391) f=0x0
+      .name: KindIdentifier [400,403) f=0x0 Text="f2"
+    - KindClassDeclaration [408,427) f=0x0
+      .Members: list [426,426) n=0
+      .modifiers.flags=0x20
+      .modifiers: list [408,415) n=1
+        - KindExportKeyword [408,415) f=0x0
+      .name: KindIdentifier [421,424) f=0x0 Text="K1"
+    - KindFunctionDeclaration [427,457) f=0x0
+      .Body: KindBlock [454,457) f=0x0
+        .Statements: list [456,456) n=0
+      .Parameters: list [453,453) n=0
+      .modifiers.flags=0x820
+      .modifiers: list [427,442) n=2
+        - KindExportKeyword [427,434) f=0x0
+        - KindDefaultKeyword [434,442) f=0x0
+  .EndOfFileToken: KindEndOfFile [457,458) f=0x0

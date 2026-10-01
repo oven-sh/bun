@@ -1,0 +1,10 @@
+bun side: 1.4.3 e3566be889995ffff8b08823b9233617f979c889   tsc 6.0.2
+rows with a decorator that both sides accept and where a side emits metadata: 39731
+  differ: 5454
+  no metadata on either side: 855
+  same: 34173
+  tsc-none: 43
+  bun-none: 61
+  tsc emit threw: 94
+rows where tsc with its defaults (strict) emits other metadata than with strictNullChecks off: 2041
+distinct (key, bun value, tsc value) differences: 417

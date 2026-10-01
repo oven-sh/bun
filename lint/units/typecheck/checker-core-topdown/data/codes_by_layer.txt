@@ -1,0 +1,139 @@
+== C-INIT
+  1320	initializeIterationResolvers
+  2316	getGlobalType
+  2317	getGlobalType, getGlobalTypeAliasSymbol
+  2318	getGlobalType, getGlobalTypeAliasSymbol, getGlobalTypeSymbolResolver
+  2397	addUndefinedToGlobalsOrErrorOnRedeclaration, initializeChecker
+  2468	getGlobalValueSymbolResolver
+  2489	initializeIterationResolvers
+  2490	initializeIterationResolvers
+  2519	initializeIterationResolvers
+  2547	initializeIterationResolvers
+  2664	mergeModuleAugmentation
+  2671	mergeModuleAugmentation
+  2767	initializeIterationResolvers
+  2768	initializeIterationResolvers
+== N-DIAG
+  1361	onSuccessfullyResolvedSymbol
+  1362	onSuccessfullyResolvedSymbol
+  1376	addTypeOnlyDeclarationRelatedInfo
+  1377	addTypeOnlyDeclarationRelatedInfo
+  2301	checkAndReportErrorForInvalidInitializer
+  2372	onSuccessfullyResolvedSymbol
+  2373	onSuccessfullyResolvedSymbol
+  2448	checkResolvedBlockScopedVariable
+  2449	checkResolvedBlockScopedVariable
+  2450	checkResolvedBlockScopedVariable
+  2552	onFailedToResolveSymbol
+  2570	onFailedToResolveSymbol
+  2585	checkAndReportErrorForUsingTypeAsValue
+  2661	checkAndReportErrorForExportingPrimitiveType
+  2662	checkAndReportErrorForMissingPrefix
+  2663	checkAndReportErrorForMissingPrefix
+  2686	onSuccessfullyResolvedSymbol
+  2690	checkAndReportErrorForUsingTypeAsValue
+  2693	checkAndReportErrorForUsingTypeAsValue
+  2702	checkAndReportErrorForUsingTypeAsNamespace
+  2708	checkAndReportErrorForUsingNamespaceAsTypeOrValue
+  2709	checkAndReportErrorForUsingNamespaceAsTypeOrValue
+  2713	checkAndReportErrorForUsingTypeAsNamespace
+  2728	checkResolvedBlockScopedVariable, onFailedToResolveSymbol
+  2749	checkAndReportErrorForUsingValueAsType
+  2833	onFailedToResolveSymbol
+  2840	checkAndReportErrorForUsingTypeAsValue
+  2844	checkAndReportErrorForInvalidInitializer
+  2863	checkAndReportErrorForUsingTypeAsValue
+  2864	checkAndReportErrorForUsingTypeAsValue
+  2866	onSuccessfullyResolvedSymbol
+== N-RESOLVE
+  1281	Resolve
+  2302	Resolve
+  2304	getCannotFindNameDiagnosticForName
+  2311	getCannotFindNameDiagnosticForName
+  2467	Resolve
+  2562	Resolve
+  2580	getCannotFindNameDiagnosticForName
+  2581	getCannotFindNameDiagnosticForName
+  2582	getCannotFindNameDiagnosticForName
+  2583	getCannotFindNameDiagnosticForName
+  2584	getCannotFindNameDiagnosticForName
+  2591	getCannotFindNameDiagnosticForName
+  2592	getCannotFindNameDiagnosticForName
+  2593	getCannotFindNameDiagnosticForName
+  2867	getCannotFindNameDiagnosticForName
+  2868	getCannotFindNameDiagnosticForName
+  18004	getCannotFindNameDiagnosticForName
+== D-SINK
+  2773	errorAndMaybeSuggestAwait
+  2798	addDeprecatedSuggestionWorker
+  6385	addDeprecatedSuggestion
+== S-MERGE
+  2300	reportMergeSymbolError
+  2451	reportMergeSymbolError
+  2567	reportMergeSymbolError
+  2649	mergeSymbol
+  6203	addDuplicateDeclarationError
+  6204	addDuplicateDeclarationError
+== A-ALIAS
+  1192	reportNonDefaultExport
+  1195	reportNonDefaultExport
+  1376	checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol
+  1377	checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol
+  1379	checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol
+  1380	checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol
+  1544	getExternalModuleMember
+  2303	resolveAlias
+  2305	reportNonExportedMember
+  2459	reportNonExportedMember
+  2460	reportNonExportedMember
+  2595	reportInvalidImportEqualsExportMember
+  2597	reportInvalidImportEqualsExportMember
+  2613	reportNonDefaultExport
+  2614	errorNoModuleMemberSymbol
+  2616	reportInvalidImportEqualsExportMember
+  2724	errorNoModuleMemberSymbol
+  2728	errorNoModuleMemberSymbol, reportNonExportedMember
+  6204	reportNonExportedMember
+== M-MODULE
+  1471	resolveExternalModule
+  1479	resolveExternalModule
+  1541	resolveExternalModule
+  1542	resolveExternalModule
+  2300	lateBindMember
+  2306	resolveExternalModule
+  2307	resolveExternalModuleName
+  2308	getExportsOfModuleWorker
+  2580	getCannotResolveModuleNameErrorForSpecificModule
+  2591	getCannotResolveModuleNameErrorForSpecificModule
+  2665	resolveExternalModule
+  2732	resolveExternalModule
+  2834	resolveExternalModule
+  2835	resolveExternalModule
+  2846	resolveExternalModule
+  2876	resolveExternalModule
+  2877	resolveExternalModule
+  2878	resolveExternalModule
+  5097	resolveExternalModule
+  6137	resolveExternalModule
+  6142	resolveExternalModule
+  6305	resolveExternalModule
+  7016	errorOnImplicitAnyModule, resolveExternalModule
+== Q-ENTITY
+  2503	resolveEntityName
+  2694	resolveQualifiedName
+  2713	resolveQualifiedName
+  2724	resolveQualifiedName
+  2749	resolveQualifiedName
+== T-RSTACK
+  2303	reportCircularityError
+  2502	reportCircularityError
+  7022	reportCircularityError
+== UTIL
+  1480	CreateModeMismatchDetails
+  1481	CreateModeMismatchDetails
+  1482	CreateModeMismatchDetails
+  1483	CreateModeMismatchDetails
+  6278	CreateModuleNotFoundChain
+  7035	CreateModuleNotFoundChain
+  7040	CreateModuleNotFoundChain
+  7058	CreateModuleNotFoundChain

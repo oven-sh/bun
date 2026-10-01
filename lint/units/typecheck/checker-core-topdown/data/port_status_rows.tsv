@@ -1,0 +1,68 @@
+upstream path	lines	group	Rust module	state	commit
+internal/checker/types.go	1-1474	TYPES: flags, links records, Type, TypeData variants, Signature, TypePredicate, IndexInfo, Ternary, LanguageFeatureMinimumTarget	checker/types.rs	not started	89d5d5b
+internal/checker/links.go	1-50	LINKS: nodeLinkStore, symbolArenaLinkStore	checker/links.rs	not started	89d5d5b
+internal/core/linkstore.go	1-94	LinkStore, PagedLinkStore	core/linkstore.rs	not started	89d5d5b
+internal/core/arena.go	1-67	Arena	core/arena.rs	not started	89d5d5b
+internal/checker/mapper.go	1-326	MAPPER: nine mapper kinds, combine, merge, prepend, append	checker/mapper.rs	not started	89d5d5b
+internal/checker/utilities.go	1-1868	UTIL: 150 functions, orderedSet, getFeatureMap, DiagnosticDetails	checker/utilities.rs	not started	89d5d5b
+internal/binder/nameresolver.go	1-498	N-RESOLVE: NameResolver.Resolve and helpers	binder/nameresolver.rs	not started	89d5d5b
+internal/module/types.go	19-79	ModeAwareCacheKey, PackageId, ResolvedModule	module/types.rs	not started	89d5d5b
+internal/module/util.go	58-79,125-185	MangleScopedPackageName, GetTypesPackageName, GetResolutionDiagnostic	module/util.rs	not started	89d5d5b
+internal/compiler/fileloader.go	1006-1085	getDefaultResolutionModeForFile, getModeForUsageLocation, importSyntaxAffectsModuleResolution, getEmitSyntaxForUsageLocationWorker	compiler/fileloader.rs	not started	89d5d5b
+internal/ast/utilities.go	2584-2610	GetEmitModuleFormatOfFileWorker, GetImpliedNodeFormatForEmitWorker	ast/utilities.rs	not started	89d5d5b
+internal/parser/references.go	1-71	collectExternalModuleReferences: Imports, ModuleAugmentations, AmbientModuleNames	parser/references.rs	not started	89d5d5b
+internal/checker/checker.go	1-552	CheckMode .. maxSerializationLevel	checker/c01_data.rs	not started	89d5d5b
+internal/checker/checker.go	553-907	Program .. Checker	checker/c02_program_checker.rs	not started	89d5d5b
+internal/checker/checker.go	908-1503	C-INIT	checker/c03_init.rs	not started	89d5d5b
+internal/checker/checker.go	1505-2180	N-DIAG	checker/c04_name_resolution_hooks.rs	not started	89d5d5b
+internal/checker/checker.go	2182-2200	N-RESOLVE	checker/c04_name_resolution_hooks.rs	not started	89d5d5b
+internal/checker/checker.go	2202-2661	Checker.checkSourceFile .. Checker.shouldCheckErasableSyntax	checker/c05_check_source_file.rs	not started	89d5d5b
+internal/checker/checker.go	2662-3411	Checker.checkParameter .. Checker.checkMappedType	checker/c06_check_members_type_nodes.rs	not started	89d5d5b
+internal/checker/checker.go	3412-3792	Checker.checkFunctionDeclaration .. Checker.isUnwrappedReturnTypeUndefinedVoidOrAny	checker/c07_check_functions.rs	not started	89d5d5b
+internal/checker/checker.go	3793-4285	Checker.checkBlock .. Checker.checkBindingElement	checker/c08_check_statements.rs	not started	89d5d5b
+internal/checker/checker.go	4286-5147	Checker.checkClassDeclaration .. Checker.isPropertyIdenticalTo	checker/c09_check_classes_interfaces.rs	not started	89d5d5b
+internal/checker/checker.go	5148-5853	Checker.checkEnumDeclaration .. Checker.checkMissingDeclaration	checker/c10_check_enums_modules_imports.rs	not started	89d5d5b
+internal/checker/checker.go	5854-6184	Checker.checkVariableStatement .. Checker.checkDecorator	checker/c11_check_variables_decorators.rs	not started	89d5d5b
+internal/checker/checker.go	6185-6825	Checker.checkIteratedTypeOrElementType .. isES2015OrLaterIterable	checker/c12_iteration_types.rs	not started	89d5d5b
+internal/checker/checker.go	6826-7418	Checker.checkAliasSymbol .. Checker.checkUnusedRenamedBindingElements	checker/c13_check_aliases_unused.rs	not started	89d5d5b
+internal/checker/checker.go	7419-8406	Checker.checkExpressionStatement .. Checker.checkImportCallExpression	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	8407-10132	Checker.checkCallExpression .. Checker.checkTaggedTemplateExpression	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	10133-10706	Checker.checkParenthesizedExpression .. Checker.checkClassNameCollisionWithObject	checker/c16_function_expressions_collisions.rs	not started	89d5d5b
+internal/checker/checker.go	10707-11131	Checker.checkTypeOfExpression .. Checker.checkSyntheticExpression	checker/c17_unary_meta_yield.rs	not started	89d5d5b
+internal/checker/checker.go	11132-12377	Checker.checkIdentifier .. Checker.classDeclarationExtendsNull	checker/c18_identifiers_property_access_this.rs	not started	89d5d5b
+internal/checker/checker.go	12378-13234	Checker.checkAssertion .. Checker.checkReferenceExpression	checker/c19_assertions_binary_operators.rs	not started	89d5d5b
+internal/checker/checker.go	13235-13990	Checker.checkObjectLiteral .. Checker.checkExpressionForMutableLocation	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	13991-14050	N-RESOLVE	checker/c21_resolved_symbols_diagnostics.rs	not started	89d5d5b
+internal/checker/checker.go	14052-14168	D-SINK	checker/c21_resolved_symbols_diagnostics.rs	not started	89d5d5b
+internal/checker/checker.go	14170-14531	S-MERGE	checker/c22_symbols_merge.rs	not started	89d5d5b
+internal/checker/checker.go	14533-15193	A-ALIAS	checker/c23_alias_targets.rs	not started	89d5d5b
+internal/checker/checker.go	15195-15828	M-MODULE	checker/c24_external_modules.rs	not started	89d5d5b
+internal/checker/checker.go	15830-15861	A-ALIAS	checker/c25_entity_names.rs	not started	89d5d5b
+internal/checker/checker.go	15863-16012	Q-ENTITY	checker/c25_entity_names.rs	not started	89d5d5b
+internal/checker/checker.go	16014-16347	M-MODULE	checker/c26_exports_late_binding.rs	not started	89d5d5b
+internal/checker/checker.go	16349-16493	A-ALIAS	checker/c27_resolve_alias.rs	not started	89d5d5b
+internal/checker/checker.go	16495-17140	Checker.getTypeOfSymbolWithDeferredType .. Checker.getTypeOfParameter	checker/c28_types_of_symbols.rs	not started	89d5d5b
+internal/checker/checker.go	17141-17470	Checker.getConstraintOfType .. Checker.isThislessInterface	checker/c29_constraints.rs	not started	89d5d5b
+internal/checker/checker.go	17471-17775	T-KEYS	checker/c30_type_keys.rs	not started	89d5d5b
+internal/checker/checker.go	17777-18860	Checker.isNullOrUndefined .. Checker.getCombinedModifierFlagsCached	checker/c31_binding_patterns_widening.rs	not started	89d5d5b
+internal/checker/checker.go	18861-18958	T-RSTACK	checker/c32_type_resolution.rs	not started	89d5d5b
+internal/checker/checker.go	18960-20114	Checker.getPropertiesOfType .. isLateBindableAST	checker/c33_members_base_types_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	20115-20728	Checker.getReturnTypeOfSignature .. Checker.addOptionalTypeMarker	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20729-21512	Checker.instantiateSignature .. Checker.includeMixinType	checker/c35_resolve_members.rs	not started	89d5d5b
+internal/checker/checker.go	21513-22213	Checker.getPropertyOfObjectType .. Checker.symbolIsValueEx	checker/c36_properties_apparent_types.rs	not started	89d5d5b
+internal/checker/checker.go	22214-22912	Checker.instantiateType .. instantiateList	checker/c37_instantiation.rs	not started	89d5d5b
+internal/checker/checker.go	22913-23877	Checker.tryGetTypeFromTypeNode .. Checker.canGetTypeParametersOfClassOrInterface	checker/c38_type_nodes_references.rs	not started	89d5d5b
+internal/checker/checker.go	23878-24224	Checker.getOuterTypeParameters .. Checker.getDeclaredTypeOfAlias	checker/c39_declared_types_enums.rs	not started	89d5d5b
+internal/checker/checker.go	24225-25125	Checker.getTypeFromTypeQueryNode .. isUnaryTupleTypeNode	checker/c40_type_nodes_conditional_tuples.rs	not started	89d5d5b
+internal/checker/checker.go	25126-25394	K-OBJ	checker/c41_new_types.rs	not started	89d5d5b
+internal/checker/checker.go	25396-25724	Checker.getRegularTypeOfLiteralType .. Checker.mapTypeEx	checker/c42_literal_types.rs	not started	89d5d5b
+internal/checker/checker.go	25725-26802	UnionReduction .. Checker.getCrossProductUnionSize	checker/c43_unions_intersections.rs	not started	89d5d5b
+internal/checker/checker.go	26803-27550	Checker.getIndexType .. Checker.getOrCreateSubstitutionType	checker/c44_index_indexed_access.rs	not started	89d5d5b
+internal/checker/checker.go	27551-28311	Checker.getBaseConstraintOrType .. Checker.transformTypeOfMembers	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28312-29041	Checker.markLinkedReferences .. Checker.markTypeNodeAsReferenced	checker/c46_mark_references.rs	not started	89d5d5b
+internal/checker/checker.go	29042-29448	Checker.GetPromisedTypeOfPromise .. Checker.getTypeOfPropertyOrIndexSignatureOfType	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29449-30163	Checker.getContextualType .. Checker.getContextualImportAttributeType	checker/c48_contextual_types.rs	not started	89d5d5b
+internal/checker/checker.go	30164-30673	Checker.getEffectiveCallArguments .. Checker.getClassElementPropertyKeyType	checker/c49_call_arguments_decorator_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	30674-31096	Checker.getTypeOfPropertyOfContextualType .. Checker.getInferenceContext	checker/c50_contextual_properties_inference_context.rs	not started	89d5d5b
+internal/checker/checker.go	31097-31703	Checker.getTypeFacts .. Checker.getActualTypeVariable	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/checker.go	31704-32296	Checker.GetSymbolAtLocation .. Checker.GetAliasedSymbol	checker/c52_symbol_at_location.rs	not started	89d5d5b

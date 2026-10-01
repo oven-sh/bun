@@ -1,0 +1,32 @@
+file p3.ts bytes=119 statements=3
+s_expr @0
+  e_binary @1
+    e_identifier @11 x
+    e_object @1
+      e_string @2
+      e_identifier @2 a
+      e_number @6
+s_expr @15
+  e_binary @15
+    e_identifier @28 y
+    e_array @15
+      e_identifier @16 a
+      e_binary @19
+        e_number @23
+        e_identifier @19 b
+s_expr @31
+  e_object @32
+    e_string @40
+    e_function @41
+    e_string @52
+    e_function @55
+      s_return @60
+        e_number @67
+    e_number @77
+    e_function @78
+      b_identifier @79 v
+    e_string @87
+    e_function @90
+    e_identifier @98 k
+    e_function @100
+    e_identifier @110 rest

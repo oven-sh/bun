@@ -1,0 +1,56 @@
+layer	where	signature	depth grows with	value when the stack test fails
+E-CORE	checker.go:7427	getTypeOfExpression(node *ast.Node) *Type	expression nesting, as checkExpressionEx	the default of the conventions: errorType; flowTypeCache is not written
+E-CORE	checker.go:7607	checkExpressionCachedEx(node *ast.Node, checkMode CheckMode) *Type	expression nesting, as checkExpressionEx	the default of the conventions: errorType; links.resolvedType is not written
+E-CORE	checker.go:7647	checkExpressionEx(node *ast.Node, checkMode CheckMode) *Type	expression nesting: 4 calls per nested binary expression (checkExpressionEx, checkExpressionWorker, checkBinaryExpression, checkBinaryLikeExpression); 4953 levels in the corpus	the default of the conventions: errorType; currentNode is not touched
+E-OPER	checker.go:12643	checkDestructuringAssignment(node *ast.Node, sourceType *Type, checkMode CheckMode, rightIsThis bool) *Type	nesting of destructuring targets	the default of the conventions: errorType
+E-ACCESS	checker.go:11348	checkPropertyAccessExpressionOrQualifiedName(node *ast.Node, left *ast.Node, leftType *Type, right *ast.Node, checkMode CheckMode, writeOnly bool) *Type	length of an access chain; it is also on the cycle through the type printer (symbolToString, isPropertyAccessible)	the default of the conventions: errorType
+E-FACTS	checker.go:31097	getTypeFacts(t *Type, mask TypeFacts) TypeFacts	as getTypeFactsWorker	EXCEPTION: TypeFactsUnknownFacts & mask (0 would make getTypeWithFacts drop every constituent)
+E-FACTS	checker.go:31105	getTypeFactsWorker(t *Type, callerOnlyNeeds TypeFacts) TypeFacts	nesting of unions, intersections and base constraints	EXCEPTION: TypeFactsUnknownFacts, the value of its last line (31238)
+E-FACTS	checker.go:31273	getTypeWithFacts(t *Type, include TypeFacts) *Type	as getTypeFactsWorker	the default of the conventions: errorType
+T-RETINFER	checker.go:20462	createPromiseType(promisedType *Type) *Type	on the cycle through getAwaitedTypeNoAlias and the type printer	the default of the conventions: errorType (unknownType would make createPromiseReturnType report TS2697 or TS2711)
+E-CALL	checker.go:30165	getEffectiveCallArguments(node *ast.Node) []*ast.Node	on the cycle through decorator signatures and the type printer	the default of the conventions: the nil list
+E-CTX	checker.go:29466	getContextualType(node *ast.Node, contextFlags ContextFlags) *Type	parent chain of parenthesized, non-null, spread and const assertion nodes; re-entry through call resolution	the default of the conventions: errorType (nil, no contextual type, is as good)
+E-CTX	checker.go:29561	getContextualTypeForVariableLikeDeclaration(declaration *ast.Node, contextFlags ContextFlags) *Type	nesting of binding patterns	the default of the conventions: errorType
+E-CTX	checker.go:30043	getContextualTypeForObjectLiteralElement(element *ast.Node, contextFlags ContextFlags) *Type	object literals inside object literals	the default of the conventions: errorType
+E-CTX	checker.go:31020	isContextSensitive(node *ast.Node) bool	expression nesting (literals, conditional, ||, ??, parentheses, function bodies)	the default of the conventions: false
+F-NARROW	flow.go:81	getFlowTypeOfReferenceEx(reference *ast.Node, declaredType *Type, initialType *Type, flowContainer *ast.Node, flowNode *ast.FlowNode) *Type	flow analyses nested through narrowing expressions	the default of the conventions: errorType, as its exits at flow.go:83 and :126; no FlowState is taken
+F-NARROW	flow.go:117	getTypeAtFlowNode(f *FlowState, flow *ast.FlowNode) FlowType	flow graph; its own counter stops at 2000 per FlowState; 2 calls or more per level	the default of the conventions: FlowType{errorType}; flowAnalysisDisabled is not set and TS2563 is not reported; the stack test comes before the test of f.depth
+F-NARROW	flow.go:377	narrowType(f *FlowState, t *Type, expr *ast.Node, assumeTrue bool) *Type	nesting of the condition, plus at most 5 inlined aliases	the default of the conventions: errorType
+F-NARROW	flow.go:859	getNarrowedTypeWorker(t *Type, candidate *Type, assumeTrue bool, checkDerived bool) *Type	unions inside the candidate	the default of the conventions: errorType; getNarrowedType then stores it in narrowedTypes
+F-NARROW	flow.go:2155	getExplicitTypeOfSymbol(symbol *ast.Symbol, diagnostic *ast.Diagnostic) *Type	origins of mapped symbols, for-of declarations	the default of the conventions: errorType; the symbol is not added to resolvingExplicitTypeOfSymbol
+F-NARROW	flow.go:2273	getInitialTypeOfBindingElement(node *ast.Node) *Type	nesting of binding patterns	the default of the conventions: errorType
+F-NARROW	flow.go:2288	getAssignedType(node *ast.Node) *Type	nesting of destructuring targets, upwards	the default of the conventions: errorType (also its own last line, flow.go:2311)
+F-NARROW	flow.go:2703	markNodeAssignmentsWorker(node *ast.Node) bool	the tree of a whole function or file through the field c.markNodeAssignments: 2 calls per level of the tree	the default of the conventions: false: the walk goes on with the siblings
+F-REACH	flow.go:2522	isReachableFlowNodeWorker(f *FlowState, flow *ast.FlowNode, noCacheCheck bool) bool	nested branch labels and reduce labels of one function, no limit upstream	EXCEPTION: true (false would report TS7027 and give unreachableNeverType)
+F-REACH	flow.go:2611	isPostSuperFlowNodeWorker(f *FlowState, flow *ast.FlowNode, noCacheCheck bool) bool	nested branch labels and reduce labels of one function, no limit upstream	EXCEPTION: true (false would report TS17009 or TS17011)
+E-CORE	checker.go:7451	getQuickTypeOfExpression(node *ast.Node) *Type	chain of await expressions and parentheses	the default of the conventions: errorType
+E-LITERAL	checker.go:8093	isTemplateLiteralContext(node *ast.Node) bool	chain of parentheses	the default of the conventions: false
+E-LITERAL	checker.go:13488	getSpreadType(left *Type, right *Type, symbol *ast.Symbol, objectFlags ObjectFlags, readonly bool) *Type	unions on both sides, last member of an intersection	the default of the conventions: errorType, as its exits at 13508 and 13517
+E-LITERAL	checker.go:13605	isValidSpreadType(t *Type) bool	unions and intersections	EXCEPTION: true (false would report TS2698)
+E-LITERAL	checker.go:13709	hasDefaultValue(node *ast.Node) bool	property assignments	the default of the conventions: false
+E-LITERAL	checker.go:13716	isConstContext(node *ast.Node) bool	parent chain of literals, spreads, property assignments, template spans	the default of the conventions: false
+E-LITERAL	checker.go:13724	isValidConstAssertionArgument(node *ast.Node) bool	parentheses	EXCEPTION: true (false would report TS1355)
+E-LITERAL	checker.go:13746	isConstTypeVariable(t *Type, depth int) bool	its own depth argument stops at 5 (13747)	the default of the conventions: false
+E-OPER	checker.go:12977	getSyntacticTruthySemantics(node *ast.Node) PredicateSemantics	both arms of nested conditional expressions	EXCEPTION: PredicateSemanticsSometimes (0 would report TS2872 or TS2873 at 12962-12963)
+E-OPER	checker.go:13039	getSyntacticNullishnessSemantics(node *ast.Node) PredicateSemantics	expression nesting	EXCEPTION: PredicateSemanticsSometimes (0 would report TS2869 or TS2871)
+E-OPER	checker.go:13102	isSideEffectFree(node *ast.Node) bool	both operands of nested binary and conditional expressions	the default of the conventions: false (no TS2695)
+E-ACCESS	checker.go:11768	getEntityNameForExtendingInterface(node *ast.Node) *ast.Node	length of an access chain	the default of the conventions: the nil node
+E-ACCESS	checker.go:11997	forEachProperty(prop *ast.Symbol, callback func(p *ast.Symbol) bool) bool	properties of unions and intersections	the default of the conventions: false
+E-FUNC	checker.go:10520	assignBindingElementTypes(pattern *ast.Node, parentType *Type)	nesting of binding patterns	return
+E-CALL	checker.go:8770	typeHasProtectedAccessibleBase(target *ast.Symbol, t *Type) bool	base class chain and intersection members	EXCEPTION: true (false would report TS2674)
+E-CTX	checker.go:29694	getMutableArrayOrTupleType(t *Type) *Type	depth 2 (a union has no union members)	the default of the conventions: errorType
+E-CTX	checker.go:30747	isExcludedMappedPropertyName(t *Type, propertyNameType *Type) bool	nesting of unions	the default of the conventions: false
+E-CTX	checker.go:30925	isPossiblyDiscriminantValue(node *ast.Node) bool	access chain and parentheses	the default of the conventions: false
+E-CTX	checker.go:30978	instantiateInstantiableTypes(t *Type, mapper *TypeMapper) *Type	nesting of unions and intersections	the default of the conventions: errorType
+F-NARROW	checker.go:31598	isSomeSymbolAssignedWorker(node *ast.Node) bool	nesting of binding patterns	the default of the conventions: false
+F-NARROW	checker.go:31642	isGenericTypeWithUnionConstraint(t *Type) bool	nesting of intersections	the default of the conventions: false
+F-NARROW	checker.go:31649	isGenericTypeWithoutNullableConstraint(t *Type) bool	nesting of intersections	the default of the conventions: false
+F-NARROW	flow.go:338	narrowTypeByAssertion(f *FlowState, t *Type, expr *ast.Node) *Type	nesting of && and || in an asserted condition	the default of the conventions: errorType
+F-NARROW	flow.go:1597	isMatchingReference(source *ast.Node, target *ast.Node) bool	access chains, parentheses, assignment and comma chains	the default of the conventions: false
+F-NARROW	flow.go:1665	writeFlowCacheKey(b *keyBuilder, node *ast.Node, declaredType *Type, initialType *Type, flowContainer *ast.Node) bool	length of an access chain	the default of the conventions: false: the key is nonDottedNameCacheKey and a loop label gives the declared type
+F-NARROW	flow.go:1814	isConstantReference(node *ast.Node) bool	length of an access chain	the default of the conventions: false
+F-NARROW	flow.go:1861	getReferenceCandidate(node *ast.Node) *ast.Node	parentheses, assignment and comma chains	the default of the conventions: the nil node
+F-NARROW	flow.go:1876	getReferenceRoot(node *ast.Node) *ast.Node	parent chain of accesses, parentheses, non-null and comma	the default of the conventions: the nil node
+F-NARROW	flow.go:2122	getTypeOfDottedName(node *ast.Node, diagnostic *ast.Diagnostic) *Type	length of a dotted name	the default of the conventions: errorType
+F-REACH	flow.go:2589	isFalseExpression(expr *ast.Node) bool	nesting of && and ||	the default of the conventions: false
+E-CORE	checker.go:10773	the local closures getInstantiatedType and getInstantiatedTypePart of getInstantiationExpressionType (10773-10814)	they call each other through mapType, the constraint chain and intersections; closures are not in the call graph, so this entry is not in recursion.txt	t: the type is returned as it came in

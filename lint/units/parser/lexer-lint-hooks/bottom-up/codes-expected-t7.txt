@@ -1,0 +1,72 @@
+--- octal escape at end [js] "x = '\\17'"
+   bun: @4+0 Syntax Error
+   tsc: @5+3 TS1487 Octal escape sequences are not allowed. Use the syntax '\x0f'.
+--- octal escape then char [js] "x = '\\17a'"
+   tsc: @5+3 TS1487 Octal escape sequences are not allowed. Use the syntax '\x0f'.
+--- octal escape single at end [js] "x = '\\1'"
+   bun: @4+0 Syntax Error
+   tsc: @5+2 TS1487 Octal escape sequences are not allowed. Use the syntax '\x01'.
+--- octal escape 3 digits [js] "x = '\\101'"
+   tsc: @5+4 TS1487 Octal escape sequences are not allowed. Use the syntax '\x41'.
+--- nul escape [js] "x = '\\0'"
+--- html open comment expr [js] "x = 1 <!-- c"
+   bun: @7+0 Unsupported syntax: Legacy HTML comments not implemented yet!
+--- html open comment expr ts [ts] "x = 1 <!-- c;"
+   bun: @7+0 Unsupported syntax: Legacy HTML comments not implemented yet!
+--- jsx attr element [tsx] "x = <b c=<i /> />"
+   bun: @9+1 Expected "{" but found "<"
+   bun: @13+1 Unexpected >
+--- jsx entity too big [tsx] "x = <a>&#x110000;</a>"
+   bun: @7+0 JSX entity escape is too big: #x110000
+--- async arrow high level [ts] "x = 1 + async (a) => 1"
+   bun: @18+2 Unexpected =>
+   tsc: @18+2 TS1005 ';' expected.
+--- generic arrow high level [ts] "x = 1 + <T,>(a: T) => 1"
+   bun: @19+2 Unexpected =>
+   tsc: @10+1 TS1005 '>' expected.
+   tsc: @11+1 TS1109 Expression expected.
+   tsc: @14+1 TS1005 ')' expected.
+   tsc: @16+1 TS1434 Unexpected keyword or identifier.
+   tsc: @17+1 TS1128 Declaration or statement expected.
+   tsc: @19+2 TS1128 Declaration or statement expected.
+--- default top-level [ts] "default"
+   bun: @0+7 Unexpected default
+   tsc: @0+7 TS1005 'export' expected.
+--- case stmt garbage [ts] "switch (x) { case 1: ) }"
+   bun: @21+1 Unexpected )
+   tsc: @21+1 TS1129 Statement expected.
+--- let decl missing comma [ts] "let x = 1 2"
+   bun: @10+1 Expected ";" but found "2"
+   tsc: @10+1 TS1005 ',' expected.
+--- expr stmt missing semi [ts] "x = 1 2"
+   bun: @6+1 Expected ";" but found "2"
+   tsc: @6+1 TS1005 ';' expected.
+--- unknown keyword stmt [ts] "foo bar"
+   bun: @4+3 Expected ";" but found "bar"
+   tsc: @0+3 TS1434 Unexpected keyword or identifier.
+--- var keyword typo [ts] "cosnt x = 1"
+   bun: @6+1 Expected ";" but found "x"
+   bun: @8+1 Unexpected =
+   tsc: @0+5 TS1435 Unknown keyword or identifier. Did you mean 'const'?
+--- block then = [ts] "{ a } = b"
+   bun: @6+1 Unexpected =
+   tsc: @6+1 TS2809 Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.
+--- ts-only in js: annotation [js] "let x: number = 1"
+   bun: @5+1 Expected ";" but found ":"
+   syn: @7+6 TS8010 Type annotations can only be used in TypeScript files.
+--- ts-only in js: interface [js] "interface A {}"
+   bun: @10+1 Expected ";" but found "A"
+   syn: @10+1 TS8006 'interface' declarations can only be used in TypeScript files.
+--- ts-only in js: as [js] "x = y as any"
+   bun: @6+2 Expected ";" but found "as"
+   syn: @9+3 TS8016 Type assertion expressions can only be used in TypeScript files.
+--- empty file error-free [ts] ""
+--- method sig paren backtrack [ts] "type X = { m( }"
+   bun: @0+0 Backtrack
+   tsc: @14+1 TS1138 Parameter declaration expected.
+--- 0x then semicolon [ts] "x = 0x;"
+   bun: @4+0 Syntax Error
+   tsc: @6+0 TS1125 Hexadecimal digit expected.
+--- 0b then semicolon [ts] "x = 0b;"
+   bun: @4+0 Syntax Error
+   tsc: @6+0 TS1177 Binary digit expected.

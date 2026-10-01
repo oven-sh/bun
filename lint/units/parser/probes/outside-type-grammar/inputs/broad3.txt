@@ -1,0 +1,191 @@
+class C { m(): void; m() {} }
+class C { m(): void\nm() {} }
+class C { m(): void, m() {} }
+class C { m(): void }
+class C { m() }
+class C { m(); }
+class C { constructor(); constructor() {} }
+class C { constructor() }
+class C { constructor(): void {} }
+class C { constructor<T>() {} }
+class C { "constructor"() {} }
+class C { "constructor"(): void; }
+class C { get x(): number; }
+class C { get x() }
+class C { set x(v: number); }
+class C { get x(): number; set x(v: number); }
+class C { get x<T>() { return 1 } }
+class C { set x(v): void {} }
+class C { set x(v?) {} }
+class C { set x(v = 1) {} }
+class C { set x(...v) {} }
+class C { static get x(): number; }
+abstract class C { abstract get x(): number; }
+abstract class C { abstract set x(v: number); }
+abstract class C { abstract get x(): number { return 1 } }
+abstract class C { abstract m() {} }
+abstract class C { abstract m(): void; }
+abstract class C { abstract m?(): void; }
+abstract class C { abstract x: number; }
+abstract class C { abstract x = 1; }
+abstract class C { abstract x?: number; }
+abstract class C { abstract x!: number; }
+abstract class C { abstract static x: number; }
+abstract class C { static abstract x: number; }
+abstract class C { abstract constructor(); }
+abstract class C { abstract [k: string]: number; }
+abstract class C { abstract "x": number; }
+abstract class C { abstract 1: number; }
+abstract class C { abstract [x]: number; }
+abstract class C { abstract #x: number; }
+abstract class C { abstract async m(): Promise<void>; }
+abstract class C { async abstract m(): Promise<void>; }
+abstract class C { abstract *m(): void; }
+abstract class C { abstract\nm(): void; }
+abstract class C { abstract; }
+abstract class C { abstract = 1; }
+abstract class C { abstract: number; }
+abstract class C { abstract() {} }
+abstract class C { abstract<T>() {} }
+abstract class C { abstract?: number; }
+abstract class C { abstract!: number; }
+abstract class C { abstract abstract m(): void; }
+abstract class C { abstract declare x: number; }
+abstract class C { declare abstract x: number; }
+abstract class C { private abstract x: number; }
+abstract class C { abstract private x: number; }
+abstract class C { abstract override x: number; }
+abstract class C { abstract readonly x: number; }
+abstract class C { abstract accessor x: number; }
+class C { declare x: number; }
+class C { declare x; }
+class C { declare x = 1; }
+class C { declare x?: number; }
+class C { declare x!: number; }
+class C { declare static x: number; }
+class C { static declare x: number; }
+class C { declare readonly x: number; }
+class C { readonly declare x: number; }
+class C { declare public x: number; }
+class C { public declare x: number; }
+class C { declare m(): void; }
+class C { declare m() {} }
+class C { declare get x(): number; }
+class C { declare constructor(); }
+class C { declare [k: string]: number; }
+class C { declare "x": number; }
+class C { declare #x: number; }
+class C { declare\nx: number; }
+class C { declare; }
+class C { declare = 1; }
+class C { declare: number; }
+class C { declare() {} }
+class C { declare declare x: number; }
+class C { declare static { } }
+class C { public x; private y; protected z; }
+class C { public public x; }
+class C { public private x; }
+class C { private #x; }
+class C { public static x; }
+class C { static public x; }
+class C { static static x; }
+class C { readonly readonly x; }
+class C { readonly x; }
+class C { readonly m() {} }
+class C { readonly get x() { return 1 } }
+class C { readonly static x; }
+class C { static readonly x; }
+class C { override x; }
+class C { override m() {} }
+class C { override static m() {} }
+class C { static override m() {} }
+class C { override override m() {} }
+class C { public override m() {} }
+class C { override public m() {} }
+class C { override constructor() {} }
+class C { override get x() { return 1 } }
+class C { override async m() {} }
+class C { async override m() {} }
+class C { override *m() {} }
+class C { override [k: string]: number }
+class C { override; }
+class C { override = 1 }
+class C { override() {} }
+class C { override\nm() {} }
+class C { public\nm() {} }
+class C { static\nm() {} }
+class C { readonly\nx }
+class C { async\nm() {} }
+class C { get\nx() { return 1 } }
+class C { in x; }
+class C { out x; }
+class C { in out x; }
+class C { const x = 1; }
+class C { export x; }
+class C { export m() {} }
+class C { default x; }
+class C { async x; }
+class C { async x = 1; }
+class C { async get x() { return 1 } }
+class C { async constructor() {} }
+class C { static constructor() {} }
+class C { public constructor() {} }
+class C { private constructor() {} }
+class C { protected constructor(); constructor() {} }
+class C { readonly constructor() {} }
+class C { get constructor() { return 1 } }
+class C { constructor = 1 }
+class C { constructor; }
+class C { constructor?() {} }
+class C { static prototype = 1 }
+class C { static prototype() {} }
+class C { static { } }
+class C { static {} static {} }
+class C { public static { } }
+class C { static async { } }
+class C { static\n{ } }
+class C { x: number }
+class C { x: number = 1 }
+class C { x?: number }
+class C { x: number; y: string }
+class C { x: number, y: string }
+class C { x = 1, y = 2 }
+class C { x: number y: string }
+class C { x; y }
+class C { x\ny }
+class C { x\n= 1 }
+class C { x\n: number }
+class C { x\n?: number }
+class C { x\n!: number }
+class C { x\n() {} }
+class C { x\n<T>() {} }
+class C { x<T> }
+class C { x<T>: number }
+class C { x: () => void }
+class C { x: number () {} }
+class C { x: number { } }
+class C { 1: number }
+class C { 1n: number }
+class C { 1.5() {} }
+class C { "a b": number }
+class C { [x]: number }
+class C { [x]?: number }
+class C { [x]!: number }
+class C { [x]<T>() {} }
+class C { [x]?<T>() {} }
+class C { [x, y]: number }
+class C { [x as any]() {} }
+class C { [x!]() {} }
+class C { [<any>x]() {} }
+class C { [x satisfies any]() {} }
+class C { #x: number }
+class C { #x?: number }
+class C { #x!: number }
+class C { #m(): void; #m() {} }
+class C { static #x: number }
+class C { public #x: number }
+class C { readonly #x: number }
+class C { declare #x: number }
+class C { accessor #x: number }
+class C { #constructor() {} }
+class C { @dec #x }

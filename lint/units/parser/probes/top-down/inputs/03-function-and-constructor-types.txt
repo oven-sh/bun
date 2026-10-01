@@ -1,0 +1,2856 @@
+# Function and constructor types with signature parameters.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== atype sig.001
+() => R
+=== atype sig.002
+(a) => R
+=== atype sig.003
+(a: A) => R
+=== atype sig.004
+(a, b) => R
+=== atype sig.005
+(a: A, b: B) => R
+=== atype sig.006
+(a?) => R
+=== atype sig.007
+(a?: A) => R
+=== atype sig.008
+(a?, b?) => R
+=== atype sig.009
+(a?, b) => R
+=== atype sig.010
+(a??) => R
+=== atype sig.011
+(a?: A?) => R
+=== atype sig.012
+(...a) => R
+=== atype sig.013
+(...a: A[]) => R
+=== atype sig.014
+(a, ...b) => R
+=== atype sig.015
+(a: A, ...b: B[]) => R
+=== atype sig.016
+(...a, b) => R
+=== atype sig.017
+(...a,) => R
+=== atype sig.018
+(...a: A[],) => R
+=== atype sig.019
+(...a?) => R
+=== atype sig.020
+(...a?: A[]) => R
+=== atype sig.021
+(...a = []) => R
+=== atype sig.022
+(...a: A[] = []) => R
+=== atype sig.023
+(......a) => R
+=== atype sig.024
+(...) => R
+=== atype sig.025
+(a,) => R
+=== atype sig.026
+(a: A,) => R
+=== atype sig.027
+(,) => R
+=== atype sig.028
+(,a) => R
+=== atype sig.029
+(a,,b) => R
+=== atype sig.030
+(a b) => R
+=== atype sig.031
+(a: A b: B) => R
+=== atype sig.032
+(a;) => R
+=== atype sig.033
+(a: ) => R
+=== atype sig.034
+(a?: ) => R
+=== atype sig.035
+(: A) => R
+=== atype sig.036
+(a: A: B) => R
+=== atype sig.037
+(a = 1) => R
+=== atype sig.038
+(a: A = 1) => R
+=== atype sig.039
+(a?: A = 1) => R
+=== atype sig.040
+(a? = 1) => R
+=== atype sig.041
+(a = 1, b = 2) => R
+=== atype sig.042
+(a = b ? c : d) => R
+=== atype sig.043
+(a = (b, c)) => R
+=== atype sig.044
+(a = () => {}) => R
+=== atype sig.045
+(a = function () {}) => R
+=== atype sig.046
+(a = class {}) => R
+=== atype sig.047
+(a = <T>b) => R
+=== atype sig.048
+(a = b as T) => R
+=== atype sig.049
+(a = [1, 2]) => R
+=== atype sig.050
+(a = { b: 1 }) => R
+=== atype sig.051
+(a = await b) => R
+=== atype sig.052
+(a = yield) => R
+=== atype sig.053
+(a = b = c) => R
+=== atype sig.054
+(a = ) => R
+=== atype sig.055
+(a == 1) => R
+=== atype sig.056
+({ a }) => R
+=== atype sig.057
+({ a }: A) => R
+=== atype sig.058
+({ a, b }: A) => R
+=== atype sig.059
+({ a: b }: A) => R
+=== atype sig.060
+({ a: { b } }: A) => R
+=== atype sig.061
+({ a = 1 }: A) => R
+=== atype sig.062
+({ a: b = 1 }: A) => R
+=== atype sig.063
+({ ...a }: A) => R
+=== atype sig.064
+({ a, ...b }: A) => R
+=== atype sig.065
+({ "a": b }: A) => R
+=== atype sig.066
+({ 1: b }: A) => R
+=== atype sig.067
+({ [k]: b }: A) => R
+=== atype sig.068
+({ [k]: b = 1 }: A) => R
+=== atype sig.069
+({ a, }: A) => R
+=== atype sig.070
+({ , }: A) => R
+=== atype sig.071
+({}: A) => R
+=== atype sig.072
+({}) => R
+=== atype sig.073
+({ a }?: A) => R
+=== atype sig.074
+({ a } = {}) => R
+=== atype sig.075
+({ a }: A = {}) => R
+=== atype sig.076
+({ a: b.c }: A) => R
+=== atype sig.077
+({ a: 1 }) => R
+=== atype sig.078
+({ "a" }) => R
+=== atype sig.079
+({ 1 }) => R
+=== atype sig.080
+({ if }) => R
+=== atype sig.081
+({ if: a }) => R
+=== atype sig.082
+({ a: if }) => R
+=== atype sig.083
+({ ...{ a } }) => R
+=== atype sig.084
+({ ...[a] }) => R
+=== atype sig.085
+({ ...a, b }) => R
+=== atype sig.086
+({ ...a = 1 }) => R
+=== atype sig.087
+({ a b }) => R
+=== atype sig.088
+({ a: }) => R
+=== atype sig.089
+({ a) => R
+=== atype sig.090
+([a]) => R
+=== atype sig.091
+([a]: A) => R
+=== atype sig.092
+([a, b]: A) => R
+=== atype sig.093
+([, a]: A) => R
+=== atype sig.094
+([a, , b]: A) => R
+=== atype sig.095
+([...a]: A) => R
+=== atype sig.096
+([a, ...b]: A) => R
+=== atype sig.097
+([a = 1]: A) => R
+=== atype sig.098
+([[a], { b }]: A) => R
+=== atype sig.099
+([]: A) => R
+=== atype sig.100
+([]) => R
+=== atype sig.101
+([a]?: A) => R
+=== atype sig.102
+([a] = []) => R
+=== atype sig.103
+([a,]: A) => R
+=== atype sig.104
+([...a, b]: A) => R
+=== atype sig.105
+([...a,]: A) => R
+=== atype sig.106
+([...[a]]: A) => R
+=== atype sig.107
+([...{ a }]: A) => R
+=== atype sig.108
+([a.b]: A) => R
+=== atype sig.109
+([1]) => R
+=== atype sig.110
+([a) => R
+=== atype sig.111
+(...[a, b]: A) => R
+=== atype sig.112
+(...{ a }: A) => R
+=== atype sig.113
+(...[a] = []) => R
+=== atype sig.114
+(this) => R
+=== atype sig.115
+(this: A) => R
+=== atype sig.116
+(this: A, b: B) => R
+=== atype sig.117
+(this, a) => R
+=== atype sig.118
+(a, this: A) => R
+=== atype sig.119
+(this?: A) => R
+=== atype sig.120
+(this?) => R
+=== atype sig.121
+(this = 1) => R
+=== atype sig.122
+(this: A = 1) => R
+=== atype sig.123
+(...this) => R
+=== atype sig.124
+(...this: A) => R
+=== atype sig.125
+(this.a) => R
+=== atype sig.126
+(this: A,) => R
+=== atype sig.127
+({ this: a }) => R
+=== atype sig.128
+([this]) => R
+=== atype sig.129
+(public this) => R
+=== atype sig.130
+(@d this) => R
+=== atype sig.131
+(this this) => R
+=== atype sig.132
+(@d a) => R
+=== atype sig.133
+(@d a: A) => R
+=== atype sig.134
+(@d() a: A) => R
+=== atype sig.135
+(@d @e a: A) => R
+=== atype sig.136
+(@d.e a) => R
+=== atype sig.137
+(@(d) a) => R
+=== atype sig.138
+(a @d) => R
+=== atype sig.139
+(@d ...a) => R
+=== atype sig.140
+(@d { a }) => R
+=== atype sig.141
+(@d public a: A) => R
+=== atype sig.142
+(public @d a: A) => R
+=== atype sig.143
+(@d) => R
+=== atype sig.144
+(@ a) => R
+=== atype sig.145
+(public a: A) => R
+=== atype sig.146
+(private a: A) => R
+=== atype sig.147
+(protected a: A) => R
+=== atype sig.148
+(readonly a: A) => R
+=== atype sig.149
+(override a: A) => R
+=== atype sig.150
+(static a: A) => R
+=== atype sig.151
+(declare a: A) => R
+=== atype sig.152
+(abstract a: A) => R
+=== atype sig.153
+(async a: A) => R
+=== atype sig.154
+(accessor a: A) => R
+=== atype sig.155
+(export a: A) => R
+=== atype sig.156
+(default a: A) => R
+=== atype sig.157
+(const a: A) => R
+=== atype sig.158
+(in a: A) => R
+=== atype sig.159
+(out a: A) => R
+=== atype sig.160
+(public) => R
+=== atype sig.161
+(private) => R
+=== atype sig.162
+(protected) => R
+=== atype sig.163
+(readonly) => R
+=== atype sig.164
+(override) => R
+=== atype sig.165
+(static) => R
+=== atype sig.166
+(declare) => R
+=== atype sig.167
+(abstract) => R
+=== atype sig.168
+(async) => R
+=== atype sig.169
+(accessor) => R
+=== atype sig.170
+(export) => R
+=== atype sig.171
+(default) => R
+=== atype sig.172
+(const) => R
+=== atype sig.173
+(in) => R
+=== atype sig.174
+(out) => R
+=== atype sig.175
+(public: A) => R
+=== atype sig.176
+(private: A) => R
+=== atype sig.177
+(protected: A) => R
+=== atype sig.178
+(readonly: A) => R
+=== atype sig.179
+(override: A) => R
+=== atype sig.180
+(static: A) => R
+=== atype sig.181
+(declare: A) => R
+=== atype sig.182
+(abstract: A) => R
+=== atype sig.183
+(async: A) => R
+=== atype sig.184
+(accessor: A) => R
+=== atype sig.185
+(public?: A) => R
+=== atype sig.186
+(private?: A) => R
+=== atype sig.187
+(readonly?: A) => R
+=== atype sig.188
+(static?: A) => R
+=== atype sig.189
+(async?: A) => R
+=== atype sig.190
+(public = 1) => R
+=== atype sig.191
+(private = 1) => R
+=== atype sig.192
+(readonly = 1) => R
+=== atype sig.193
+(static = 1) => R
+=== atype sig.194
+(async = 1) => R
+=== atype sig.195
+(public,b) => R
+=== atype sig.196
+(readonly,b) => R
+=== atype sig.197
+(static,b) => R
+=== atype sig.198
+(async,b) => R
+=== atype sig.199
+(public readonly a: A) => R
+=== atype sig.200
+(readonly public a: A) => R
+=== atype sig.201
+(public private a: A) => R
+=== atype sig.202
+(public public a: A) => R
+=== atype sig.203
+(readonly readonly a: A) => R
+=== atype sig.204
+(public override readonly a: A) => R
+=== atype sig.205
+(override public a: A) => R
+=== atype sig.206
+(public a) => R
+=== atype sig.207
+(public a?) => R
+=== atype sig.208
+(public a?: A) => R
+=== atype sig.209
+(public a = 1) => R
+=== atype sig.210
+(public a: A = 1) => R
+=== atype sig.211
+(public ...a: A[]) => R
+=== atype sig.212
+(public { a }: A) => R
+=== atype sig.213
+(public [a]: A) => R
+=== atype sig.214
+(public a!: A) => R
+=== atype sig.215
+(public
+a: A) => R
+=== atype sig.216
+(public a, private b) => R
+=== atype sig.217
+(public static a) => R
+=== atype sig.218
+(public async) => R
+=== atype sig.219
+(readonly async a) => R
+=== atype sig.220
+(string: A) => R
+=== atype sig.221
+(number: A) => R
+=== atype sig.222
+(any: A) => R
+=== atype sig.223
+(type: A) => R
+=== atype sig.224
+(of: A) => R
+=== atype sig.225
+(as: A) => R
+=== atype sig.226
+(is: A) => R
+=== atype sig.227
+(await: A) => R
+=== atype sig.228
+(yield: A) => R
+=== atype sig.229
+(let: A) => R
+=== atype sig.230
+(keyof: A) => R
+=== atype sig.231
+(infer: A) => R
+=== atype sig.232
+(unique: A) => R
+=== atype sig.233
+(asserts: A) => R
+=== atype sig.234
+(arguments: A) => R
+=== atype sig.235
+(eval: A) => R
+=== atype sig.236
+(get: A) => R
+=== atype sig.237
+(set: A) => R
+=== atype sig.238
+(from: A) => R
+=== atype sig.239
+(global: A) => R
+=== atype sig.240
+(module: A) => R
+=== atype sig.241
+(namespace: A) => R
+=== atype sig.242
+(require: A) => R
+=== atype sig.243
+(undefined: A) => R
+=== atype sig.244
+(constructor: A) => R
+=== atype sig.245
+(implements: A) => R
+=== atype sig.246
+(interface: A) => R
+=== atype sig.247
+(package: A) => R
+=== atype sig.248
+(in: A) => R
+=== atype sig.249
+(class: A) => R
+=== atype sig.250
+(new: A) => R
+=== atype sig.251
+(function: A) => R
+=== atype sig.252
+(void: A) => R
+=== atype sig.253
+(null: A) => R
+=== atype sig.254
+(true: A) => R
+=== atype sig.255
+(typeof: A) => R
+=== atype sig.256
+(delete: A) => R
+=== atype sig.257
+(if: A) => R
+=== atype sig.258
+(var: A) => R
+=== atype sig.259
+(enum: A) => R
+=== atype sig.260
+(import: A) => R
+=== atype sig.261
+(export: A) => R
+=== atype sig.262
+(super: A) => R
+=== atype sig.263
+(with: A) => R
+=== atype sig.264
+(const: A) => R
+=== atype sig.265
+(default: A) => R
+=== atype sig.266
+(extends: A) => R
+=== atype sig.267
+(instanceof: A) => R
+=== atype sig.268
+(class) => R
+=== atype sig.269
+(new) => R
+=== atype sig.270
+(function) => R
+=== atype sig.271
+(void) => R
+=== atype sig.272
+(null) => R
+=== atype sig.273
+(typeof) => R
+=== atype sig.274
+(enum) => R
+=== atype sig.275
+(super) => R
+=== atype sig.276
+(a!) => R
+=== atype sig.277
+(a!: A) => R
+=== atype sig.278
+(a: A!) => R
+=== atype sig.279
+(#a) => R
+=== atype sig.280
+(#a: A) => R
+=== atype sig.281
+(a.b) => R
+=== atype sig.282
+(a.b: A) => R
+=== atype sig.283
+(a[0]) => R
+=== atype sig.284
+(a()) => R
+=== atype sig.285
+("a") => R
+=== atype sig.286
+("a": A) => R
+=== atype sig.287
+(1) => R
+=== atype sig.288
+(1: A) => R
+=== atype sig.289
+(`a`) => R
+=== atype sig.290
+(-a) => R
+=== atype sig.291
+(!a) => R
+=== atype sig.292
+(a | b) => R
+=== atype sig.293
+(a as A) => R
+=== atype sig.294
+(a is A) => R
+=== atype sig.295
+(a: b is A) => R
+=== atype sig.296
+(a: asserts b) => R
+=== atype sig.297
+(a extends A) => R
+=== atype sig.298
+(a: A extends B ? C : D) => R
+=== atype sig.299
+(a: A | B) => R
+=== atype sig.300
+(a: () => void) => R
+=== atype sig.301
+(a: (b: B) => C) => R
+=== atype sig.302
+(a: (b = 1) => C) => R
+=== atype sig.303
+(a: new () => A) => R
+=== atype sig.304
+(a: typeof b) => R
+=== atype sig.305
+(a: A<B>) => R
+=== atype sig.306
+(a: A<B<C>>) => R
+=== atype sig.307
+(a: A<B>=c) => R
+=== atype sig.308
+(a: A<B<C>>=d) => R
+=== atype sig.309
+(a: { b: B }) => R
+=== atype sig.310
+(a: [A, B]) => R
+=== atype sig.311
+(a: A[]) => R
+=== atype sig.312
+(a: this) => R
+=== atype sig.313
+(a: void) => R
+=== atype sig.314
+(a: unique symbol) => R
+=== atype sig.315
+(a: `t${A}`) => R
+=== atype sig.316
+(a: import('m').A) => R
+=== atype sig.317
+(a: any) => void
+=== atype sig.318
+(a: any) => A
+=== atype sig.319
+(a: any) => A | B
+=== atype sig.320
+(a: any) => A & B
+=== atype sig.321
+(a: any) => A[]
+=== atype sig.322
+(a: any) => A extends B ? C : D
+=== atype sig.323
+(a: any) => keyof A
+=== atype sig.324
+(a: any) => typeof a
+=== atype sig.325
+(a: any) => () => void
+=== atype sig.326
+(a: any) => (a: A) => (b: B) => C
+=== atype sig.327
+(a: any) => new () => A
+=== atype sig.328
+(a: any) => { a: A }
+=== atype sig.329
+(a: any) => {}
+=== atype sig.330
+(a: any) => [A]
+=== atype sig.331
+(a: any) => (A)
+=== atype sig.332
+(a: any) => (A | B)
+=== atype sig.333
+(a: any) => this
+=== atype sig.334
+(a: any) => a is A
+=== atype sig.335
+(a: any) => a is A | B
+=== atype sig.336
+(a: any) => this is A
+=== atype sig.337
+(a: any) => asserts a
+=== atype sig.338
+(a: any) => asserts a is A
+=== atype sig.339
+(a: any) => asserts this
+=== atype sig.340
+(a: any) => asserts this is A
+=== atype sig.341
+(a: any) => asserts
+=== atype sig.342
+(a: any) => asserts | A
+=== atype sig.343
+(a: any) => a is
+=== atype sig.344
+(a: any) => asserts a is
+=== atype sig.345
+(a: any) => is A
+=== atype sig.346
+(a: any) => a
+is A
+=== atype sig.347
+(a: any) => asserts
+a
+=== atype sig.348
+(a: any) => unique symbol
+=== atype sig.349
+(a: any) => `t${A}`
+=== atype sig.350
+(a: any) => import('m')
+=== atype sig.351
+(a: any) => -1
+=== atype sig.352
+(a: any) => A<B>
+=== atype sig.353
+(a: any) => A<B<C>>
+=== atype sig.354
+(a: any) => infer A
+=== atype sig.355
+(a: any) => A?
+=== atype sig.356
+(a: any) => ?A
+=== atype sig.357
+(a: any) => A!
+=== atype sig.358
+(a: any) => 
+=== atype sig.359
+(a: any) => ;
+=== atype sig.360
+(a: any) => => A
+=== atype sig.361
+new (a: any) => void
+=== atype sig.362
+new (a: any) => A
+=== atype sig.363
+new (a: any) => A | B
+=== atype sig.364
+new (a: any) => A & B
+=== atype sig.365
+new (a: any) => A[]
+=== atype sig.366
+new (a: any) => A extends B ? C : D
+=== atype sig.367
+new (a: any) => keyof A
+=== atype sig.368
+new (a: any) => typeof a
+=== atype sig.369
+new (a: any) => () => void
+=== atype sig.370
+new (a: any) => (a: A) => (b: B) => C
+=== atype sig.371
+new (a: any) => new () => A
+=== atype sig.372
+new (a: any) => { a: A }
+=== atype sig.373
+new (a: any) => {}
+=== atype sig.374
+new (a: any) => [A]
+=== atype sig.375
+new (a: any) => (A)
+=== atype sig.376
+new (a: any) => (A | B)
+=== atype sig.377
+new (a: any) => this
+=== atype sig.378
+new (a: any) => a is A
+=== atype sig.379
+new (a: any) => a is A | B
+=== atype sig.380
+new (a: any) => this is A
+=== atype sig.381
+new (a: any) => asserts a
+=== atype sig.382
+new (a: any) => asserts a is A
+=== atype sig.383
+new (a: any) => asserts this
+=== atype sig.384
+new (a: any) => asserts this is A
+=== atype sig.385
+new (a: any) => asserts
+=== atype sig.386
+new (a: any) => asserts | A
+=== atype sig.387
+new (a: any) => a is
+=== atype sig.388
+new (a: any) => asserts a is
+=== atype sig.389
+new (a: any) => is A
+=== atype sig.390
+new (a: any) => a
+is A
+=== atype sig.391
+new (a: any) => asserts
+a
+=== atype sig.392
+new (a: any) => unique symbol
+=== atype sig.393
+new (a: any) => `t${A}`
+=== atype sig.394
+new (a: any) => import('m')
+=== atype sig.395
+new (a: any) => -1
+=== atype sig.396
+new (a: any) => A<B>
+=== atype sig.397
+new (a: any) => A<B<C>>
+=== atype sig.398
+new (a: any) => infer A
+=== atype sig.399
+new (a: any) => A?
+=== atype sig.400
+new (a: any) => ?A
+=== atype sig.401
+new (a: any) => A!
+=== atype sig.402
+new (a: any) => 
+=== atype sig.403
+new (a: any) => ;
+=== atype sig.404
+new (a: any) => => A
+=== atype sig.405
+() =>
+=== atype sig.406
+() = > A
+=== atype sig.407
+() -> A
+=== atype sig.408
+(): A
+=== atype sig.409
+(a: A): B
+=== atype sig.410
+() => A => B
+=== atype sig.411
+()
+=> A
+=== atype sig.412
+() =>
+A
+=== atype sig.413
+(
+) => A
+=== atype sig.414
+(a: A)
+=> B
+=== atype sig.415
+(a) =>
+=== atype sig.416
+(a)
+=> A
+=== atype sig.417
+(a,
+b) => A
+=== atype sig.418
+() => () => () => A
+=== atype sig.419
+(() => A)
+=== atype sig.420
+((a: A) => B)[]
+=== atype sig.421
+(a: A) => B[]
+=== atype sig.422
+(a: A) => B | C
+=== atype sig.423
+((a: A) => B) | C
+=== atype sig.424
+(a: A) => B extends C ? D : E
+=== atype sig.425
+(a: A) => (B)
+=== atype sig.426
+((a)) => A
+=== atype sig.427
+((a: A)) => B
+=== atype sig.428
+(a)(b) => A
+=== atype sig.429
+<T>() => T
+=== atype sig.430
+<T>(a: T) => T
+=== atype sig.431
+<T,>() => T
+=== atype sig.432
+<T, U>() => T
+=== atype sig.433
+<T extends A>() => T
+=== atype sig.434
+<T = A>() => T
+=== atype sig.435
+<T extends A = B>() => T
+=== atype sig.436
+<const T>() => T
+=== atype sig.437
+<const T extends A>() => T
+=== atype sig.438
+<in T>() => T
+=== atype sig.439
+<out T>() => T
+=== atype sig.440
+<in out T>() => T
+=== atype sig.441
+<const in T>() => T
+=== atype sig.442
+<public T>() => T
+=== atype sig.443
+<>() => A
+=== atype sig.444
+<,>() => A
+=== atype sig.445
+<T U>() => A
+=== atype sig.446
+<T>
+=== atype sig.447
+<T>A
+=== atype sig.448
+<T>(a: T)
+=== atype sig.449
+<T>() =>
+=== atype sig.450
+<T>()
+=== atype sig.451
+<T>
+() => T
+=== atype sig.452
+<T>() =>
+T
+=== atype sig.453
+<
+T
+>() => T
+=== atype sig.454
+<T extends () => void>() => T
+=== atype sig.455
+<T extends (a: A) => B>() => T
+=== atype sig.456
+<T extends A<B>>() => T
+=== atype sig.457
+<T extends A<B<C>>>() => T
+=== atype sig.458
+<T = A<B>>() => T
+=== atype sig.459
+<T extends A<B> = C<D>>() => T
+=== atype sig.460
+<T>() => A<T>
+=== atype sig.461
+<T>() => A<B<T>>
+=== atype sig.462
+<T extends keyof U, U>() => T
+=== atype sig.463
+<T extends A extends B ? C : D>() => T
+=== atype sig.464
+<T extends infer U>() => T
+=== atype sig.465
+<T[]>() => A
+=== atype sig.466
+<T.U>() => A
+=== atype sig.467
+<"T">() => A
+=== atype sig.468
+<this>() => A
+=== atype sig.469
+<void>() => A
+=== atype sig.470
+<in>() => A
+=== atype sig.471
+<out>() => A
+=== atype sig.472
+<const>() => A
+=== atype sig.473
+<T extends>() => A
+=== atype sig.474
+<T =>() => A
+=== atype sig.475
+<T = >() => A
+=== atype sig.476
+<<T>() => T>() => A
+=== atype sig.477
+new () => A
+=== atype sig.478
+new (a: A) => B
+=== atype sig.479
+new <T>() => T
+=== atype sig.480
+new <T>(a: T) => A<T>
+=== atype sig.481
+new <const T>() => T
+=== atype sig.482
+new () => A | B
+=== atype sig.483
+new () => new () => A
+=== atype sig.484
+new () =>
+=== atype sig.485
+new ()
+=== atype sig.486
+new A
+=== atype sig.487
+new
+=== atype sig.488
+new (): A
+=== atype sig.489
+new () = > A
+=== atype sig.490
+new
+() => A
+=== atype sig.491
+new ()
+=> A
+=== atype sig.492
+new <>() => A
+=== atype sig.493
+new new () => A
+=== atype sig.494
+new (a) => A
+=== atype sig.495
+new (...a: A[]) => B
+=== atype sig.496
+new (public a: A) => B
+=== atype sig.497
+new (this: A) => B
+=== atype sig.498
+new.target
+=== atype sig.499
+new.A
+=== atype sig.500
+new A()
+=== atype sig.501
+new A.B
+=== atype sig.502
+new[]
+=== atype sig.503
+new | A
+=== atype sig.504
+abstract new () => A
+=== atype sig.505
+abstract new (a: A) => B
+=== atype sig.506
+abstract new <T>() => T
+=== atype sig.507
+abstract
+new () => A
+=== atype sig.508
+abstract new
+() => A
+=== atype sig.509
+abstract
+=== atype sig.510
+abstract A
+=== atype sig.511
+abstract.A
+=== atype sig.512
+abstract<A>
+=== atype sig.513
+abstract[]
+=== atype sig.514
+abstract | A
+=== atype sig.515
+abstract new
+=== atype sig.516
+abstract new A
+=== atype sig.517
+abstract abstract new () => A
+=== atype sig.518
+new abstract () => A
+=== atype sig.519
+abstract () => A
+=== atype sig.520
+abstract <T>() => T
+=== atype sig.521
+abstract new () =>
+=== atype sig.522
+abstract new (): A
+=== atype sig.523
+(abstract new () => A)
+=== atype sig.524
+(abstract new () => A)[]
+=== atype sig.525
+abstract new () => A | B
+=== atype sig.526
+keyof abstract new () => A
+=== atype sig.527
+abstract keyof A
+=== atype sig.528
+abstract typeof a
+=== atype sig.529
+public new () => A
+=== atype sig.530
+private new () => A
+=== atype sig.531
+protected new () => A
+=== atype sig.532
+static new () => A
+=== atype sig.533
+readonly new () => A
+=== atype sig.534
+declare new () => A
+=== atype sig.535
+override new () => A
+=== atype sig.536
+async new () => A
+=== atype sig.537
+accessor new () => A
+=== type sigctx.001
+() => void
+=== type sigctx.002
+(a: A) => B
+=== type sigctx.003
+(a) => B
+=== type sigctx.004
+(a, b) => C
+=== type sigctx.005
+(a?: A) => B
+=== type sigctx.006
+(...a: A[]) => B
+=== type sigctx.007
+(a = 1) => void
+=== type sigctx.008
+(a: A = 1) => void
+=== type sigctx.009
+({ a, b }: A) => B
+=== type sigctx.010
+([a, b]: A) => B
+=== type sigctx.011
+({ a = 1 }) => B
+=== type sigctx.012
+([a = 1]) => B
+=== type sigctx.013
+(this: A) => B
+=== type sigctx.014
+(this) => B
+=== type sigctx.015
+(a: ) => void
+=== type sigctx.016
+(a?: ) => void
+=== type sigctx.017
+(: A) => void
+=== type sigctx.018
+(a,) => B
+=== type sigctx.019
+(,) => B
+=== type sigctx.020
+(a: A) => a is B
+=== type sigctx.021
+(a: A) => asserts a
+=== type sigctx.022
+<T>() => T
+=== type sigctx.023
+<T>(a: T) => T
+=== type sigctx.024
+<const T>(a: T) => T
+=== type sigctx.025
+<in T>() => T
+=== type sigctx.026
+<T extends A<B>>() => T
+=== type sigctx.027
+new () => A
+=== type sigctx.028
+new <T>(a: T) => A<T>
+=== type sigctx.029
+abstract new () => A
+=== type sigctx.030
+new (a = 1) => A
+=== type sigctx.031
+(a: A) => (b: B) => C
+=== type sigctx.032
+(a: A) => B | C
+=== type sigctx.033
+(a: A) => B extends C ? D : E
+=== type sigctx.034
+(public a: A) => B
+=== type sigctx.035
+(@d a: A) => B
+=== type sigctx.036
+(a?: A = 1) => B
+=== type sigctx.037
+(...a?: A[]) => B
+=== type sigctx.038
+(...a, b) => C
+=== type sigctx.039
+(a?, b) => C
+=== file decl.001
+function f() {}
+=== file decl.002
+function f(a) {}
+=== file decl.003
+function f(a: A) {}
+=== file decl.004
+function f(a, b) {}
+=== file decl.005
+function f(a: A, b: B) {}
+=== file decl.006
+function f(a?) {}
+=== file decl.007
+function f(a?: A) {}
+=== file decl.008
+function f(a?, b?) {}
+=== file decl.009
+function f(a?, b) {}
+=== file decl.010
+function f(a??) {}
+=== file decl.011
+function f(a?: A?) {}
+=== file decl.012
+function f(...a) {}
+=== file decl.013
+function f(...a: A[]) {}
+=== file decl.014
+function f(a, ...b) {}
+=== file decl.015
+function f(a: A, ...b: B[]) {}
+=== file decl.016
+function f(...a, b) {}
+=== file decl.017
+function f(...a,) {}
+=== file decl.018
+function f(...a: A[],) {}
+=== file decl.019
+function f(...a?) {}
+=== file decl.020
+function f(...a?: A[]) {}
+=== file decl.021
+function f(...a = []) {}
+=== file decl.022
+function f(...a: A[] = []) {}
+=== file decl.023
+function f(......a) {}
+=== file decl.024
+function f(...) {}
+=== file decl.025
+function f(a,) {}
+=== file decl.026
+function f(a: A,) {}
+=== file decl.027
+function f(,) {}
+=== file decl.028
+function f(,a) {}
+=== file decl.029
+function f(a,,b) {}
+=== file decl.030
+function f(a b) {}
+=== file decl.031
+function f(a: A b: B) {}
+=== file decl.032
+function f(a;) {}
+=== file decl.033
+function f(a: ) {}
+=== file decl.034
+function f(a?: ) {}
+=== file decl.035
+function f(: A) {}
+=== file decl.036
+function f(a: A: B) {}
+=== file decl.037
+function f(a = 1) {}
+=== file decl.038
+function f(a: A = 1) {}
+=== file decl.039
+function f(a?: A = 1) {}
+=== file decl.040
+function f(a? = 1) {}
+=== file decl.041
+function f(a = 1, b = 2) {}
+=== file decl.042
+function f(a = b ? c : d) {}
+=== file decl.043
+function f(a = (b, c)) {}
+=== file decl.044
+function f(a = () => {}) {}
+=== file decl.045
+function f(a = function () {}) {}
+=== file decl.046
+function f(a = class {}) {}
+=== file decl.047
+function f(a = <T>b) {}
+=== file decl.048
+function f(a = b as T) {}
+=== file decl.049
+function f(a = [1, 2]) {}
+=== file decl.050
+function f(a = { b: 1 }) {}
+=== file decl.051
+function f(a = await b) {}
+=== file decl.052
+function f(a = yield) {}
+=== file decl.053
+function f(a = b = c) {}
+=== file decl.054
+function f(a = ) {}
+=== file decl.055
+function f(a == 1) {}
+=== file decl.056
+function f({ a }) {}
+=== file decl.057
+function f({ a }: A) {}
+=== file decl.058
+function f({ a, b }: A) {}
+=== file decl.059
+function f({ a: b }: A) {}
+=== file decl.060
+function f({ a: { b } }: A) {}
+=== file decl.061
+function f({ a = 1 }: A) {}
+=== file decl.062
+function f({ a: b = 1 }: A) {}
+=== file decl.063
+function f({ ...a }: A) {}
+=== file decl.064
+function f({ a, ...b }: A) {}
+=== file decl.065
+function f({ "a": b }: A) {}
+=== file decl.066
+function f({ 1: b }: A) {}
+=== file decl.067
+function f({ [k]: b }: A) {}
+=== file decl.068
+function f({ [k]: b = 1 }: A) {}
+=== file decl.069
+function f({ a, }: A) {}
+=== file decl.070
+function f({ , }: A) {}
+=== file decl.071
+function f({}: A) {}
+=== file decl.072
+function f({}) {}
+=== file decl.073
+function f({ a }?: A) {}
+=== file decl.074
+function f({ a } = {}) {}
+=== file decl.075
+function f({ a }: A = {}) {}
+=== file decl.076
+function f({ a: b.c }: A) {}
+=== file decl.077
+function f({ a: 1 }) {}
+=== file decl.078
+function f({ "a" }) {}
+=== file decl.079
+function f({ 1 }) {}
+=== file decl.080
+function f({ if }) {}
+=== file decl.081
+function f({ if: a }) {}
+=== file decl.082
+function f({ a: if }) {}
+=== file decl.083
+function f({ ...{ a } }) {}
+=== file decl.084
+function f({ ...[a] }) {}
+=== file decl.085
+function f({ ...a, b }) {}
+=== file decl.086
+function f({ ...a = 1 }) {}
+=== file decl.087
+function f({ a b }) {}
+=== file decl.088
+function f({ a: }) {}
+=== file decl.089
+function f({ a) {}
+=== file decl.090
+function f([a]) {}
+=== file decl.091
+function f([a]: A) {}
+=== file decl.092
+function f([a, b]: A) {}
+=== file decl.093
+function f([, a]: A) {}
+=== file decl.094
+function f([a, , b]: A) {}
+=== file decl.095
+function f([...a]: A) {}
+=== file decl.096
+function f([a, ...b]: A) {}
+=== file decl.097
+function f([a = 1]: A) {}
+=== file decl.098
+function f([[a], { b }]: A) {}
+=== file decl.099
+function f([]: A) {}
+=== file decl.100
+function f([]) {}
+=== file decl.101
+function f([a]?: A) {}
+=== file decl.102
+function f([a] = []) {}
+=== file decl.103
+function f([a,]: A) {}
+=== file decl.104
+function f([...a, b]: A) {}
+=== file decl.105
+function f([...a,]: A) {}
+=== file decl.106
+function f([...[a]]: A) {}
+=== file decl.107
+function f([...{ a }]: A) {}
+=== file decl.108
+function f([a.b]: A) {}
+=== file decl.109
+function f([1]) {}
+=== file decl.110
+function f([a) {}
+=== file decl.111
+function f(...[a, b]: A) {}
+=== file decl.112
+function f(...{ a }: A) {}
+=== file decl.113
+function f(...[a] = []) {}
+=== file decl.114
+function f(this) {}
+=== file decl.115
+function f(this: A) {}
+=== file decl.116
+function f(this: A, b: B) {}
+=== file decl.117
+function f(this, a) {}
+=== file decl.118
+function f(a, this: A) {}
+=== file decl.119
+function f(this?: A) {}
+=== file decl.120
+function f(this?) {}
+=== file decl.121
+function f(this = 1) {}
+=== file decl.122
+function f(this: A = 1) {}
+=== file decl.123
+function f(...this) {}
+=== file decl.124
+function f(...this: A) {}
+=== file decl.125
+function f(this.a) {}
+=== file decl.126
+function f(this: A,) {}
+=== file decl.127
+function f({ this: a }) {}
+=== file decl.128
+function f([this]) {}
+=== file decl.129
+function f(public this) {}
+=== file decl.130
+function f(@d this) {}
+=== file decl.131
+function f(this this) {}
+=== file decl.132
+function f(@d a) {}
+=== file decl.133
+function f(@d a: A) {}
+=== file decl.134
+function f(@d() a: A) {}
+=== file decl.135
+function f(@d @e a: A) {}
+=== file decl.136
+function f(@d.e a) {}
+=== file decl.137
+function f(@(d) a) {}
+=== file decl.138
+function f(a @d) {}
+=== file decl.139
+function f(@d ...a) {}
+=== file decl.140
+function f(@d { a }) {}
+=== file decl.141
+function f(@d public a: A) {}
+=== file decl.142
+function f(public @d a: A) {}
+=== file decl.143
+function f(@d) {}
+=== file decl.144
+function f(@ a) {}
+=== file decl.145
+function f(public a: A) {}
+=== file decl.146
+function f(private a: A) {}
+=== file decl.147
+function f(protected a: A) {}
+=== file decl.148
+function f(readonly a: A) {}
+=== file decl.149
+function f(override a: A) {}
+=== file decl.150
+function f(static a: A) {}
+=== file decl.151
+function f(declare a: A) {}
+=== file decl.152
+function f(abstract a: A) {}
+=== file decl.153
+function f(async a: A) {}
+=== file decl.154
+function f(accessor a: A) {}
+=== file decl.155
+function f(export a: A) {}
+=== file decl.156
+function f(default a: A) {}
+=== file decl.157
+function f(const a: A) {}
+=== file decl.158
+function f(in a: A) {}
+=== file decl.159
+function f(out a: A) {}
+=== file decl.160
+function f(public) {}
+=== file decl.161
+function f(private) {}
+=== file decl.162
+function f(protected) {}
+=== file decl.163
+function f(readonly) {}
+=== file decl.164
+function f(override) {}
+=== file decl.165
+function f(static) {}
+=== file decl.166
+function f(declare) {}
+=== file decl.167
+function f(abstract) {}
+=== file decl.168
+function f(async) {}
+=== file decl.169
+function f(accessor) {}
+=== file decl.170
+function f(export) {}
+=== file decl.171
+function f(default) {}
+=== file decl.172
+function f(const) {}
+=== file decl.173
+function f(in) {}
+=== file decl.174
+function f(out) {}
+=== file decl.175
+function f(public: A) {}
+=== file decl.176
+function f(private: A) {}
+=== file decl.177
+function f(protected: A) {}
+=== file decl.178
+function f(readonly: A) {}
+=== file decl.179
+function f(override: A) {}
+=== file decl.180
+function f(static: A) {}
+=== file decl.181
+function f(declare: A) {}
+=== file decl.182
+function f(abstract: A) {}
+=== file decl.183
+function f(async: A) {}
+=== file decl.184
+function f(accessor: A) {}
+=== file decl.185
+function f(public?: A) {}
+=== file decl.186
+function f(private?: A) {}
+=== file decl.187
+function f(readonly?: A) {}
+=== file decl.188
+function f(static?: A) {}
+=== file decl.189
+function f(async?: A) {}
+=== file decl.190
+function f(public = 1) {}
+=== file decl.191
+function f(private = 1) {}
+=== file decl.192
+function f(readonly = 1) {}
+=== file decl.193
+function f(static = 1) {}
+=== file decl.194
+function f(async = 1) {}
+=== file decl.195
+function f(public,b) {}
+=== file decl.196
+function f(readonly,b) {}
+=== file decl.197
+function f(static,b) {}
+=== file decl.198
+function f(async,b) {}
+=== file decl.199
+function f(public readonly a: A) {}
+=== file decl.200
+function f(readonly public a: A) {}
+=== file decl.201
+function f(public private a: A) {}
+=== file decl.202
+function f(public public a: A) {}
+=== file decl.203
+function f(readonly readonly a: A) {}
+=== file decl.204
+function f(public override readonly a: A) {}
+=== file decl.205
+function f(override public a: A) {}
+=== file decl.206
+function f(public a) {}
+=== file decl.207
+function f(public a?) {}
+=== file decl.208
+function f(public a?: A) {}
+=== file decl.209
+function f(public a = 1) {}
+=== file decl.210
+function f(public a: A = 1) {}
+=== file decl.211
+function f(public ...a: A[]) {}
+=== file decl.212
+function f(public { a }: A) {}
+=== file decl.213
+function f(public [a]: A) {}
+=== file decl.214
+function f(public a!: A) {}
+=== file decl.215
+function f(public
+a: A) {}
+=== file decl.216
+function f(public a, private b) {}
+=== file decl.217
+function f(public static a) {}
+=== file decl.218
+function f(public async) {}
+=== file decl.219
+function f(readonly async a) {}
+=== file decl.220
+function f(string: A) {}
+=== file decl.221
+function f(number: A) {}
+=== file decl.222
+function f(any: A) {}
+=== file decl.223
+function f(type: A) {}
+=== file decl.224
+function f(of: A) {}
+=== file decl.225
+function f(as: A) {}
+=== file decl.226
+function f(is: A) {}
+=== file decl.227
+function f(await: A) {}
+=== file decl.228
+function f(yield: A) {}
+=== file decl.229
+function f(let: A) {}
+=== file decl.230
+function f(keyof: A) {}
+=== file decl.231
+function f(infer: A) {}
+=== file decl.232
+function f(unique: A) {}
+=== file decl.233
+function f(asserts: A) {}
+=== file decl.234
+function f(arguments: A) {}
+=== file decl.235
+function f(eval: A) {}
+=== file decl.236
+function f(get: A) {}
+=== file decl.237
+function f(set: A) {}
+=== file decl.238
+function f(from: A) {}
+=== file decl.239
+function f(global: A) {}
+=== file decl.240
+function f(module: A) {}
+=== file decl.241
+function f(namespace: A) {}
+=== file decl.242
+function f(require: A) {}
+=== file decl.243
+function f(undefined: A) {}
+=== file decl.244
+function f(constructor: A) {}
+=== file decl.245
+function f(implements: A) {}
+=== file decl.246
+function f(interface: A) {}
+=== file decl.247
+function f(package: A) {}
+=== file decl.248
+function f(in: A) {}
+=== file decl.249
+function f(class: A) {}
+=== file decl.250
+function f(new: A) {}
+=== file decl.251
+function f(function: A) {}
+=== file decl.252
+function f(void: A) {}
+=== file decl.253
+function f(null: A) {}
+=== file decl.254
+function f(true: A) {}
+=== file decl.255
+function f(typeof: A) {}
+=== file decl.256
+function f(delete: A) {}
+=== file decl.257
+function f(if: A) {}
+=== file decl.258
+function f(var: A) {}
+=== file decl.259
+function f(enum: A) {}
+=== file decl.260
+function f(import: A) {}
+=== file decl.261
+function f(export: A) {}
+=== file decl.262
+function f(super: A) {}
+=== file decl.263
+function f(with: A) {}
+=== file decl.264
+function f(const: A) {}
+=== file decl.265
+function f(default: A) {}
+=== file decl.266
+function f(extends: A) {}
+=== file decl.267
+function f(instanceof: A) {}
+=== file decl.268
+function f(class) {}
+=== file decl.269
+function f(new) {}
+=== file decl.270
+function f(function) {}
+=== file decl.271
+function f(void) {}
+=== file decl.272
+function f(null) {}
+=== file decl.273
+function f(typeof) {}
+=== file decl.274
+function f(enum) {}
+=== file decl.275
+function f(super) {}
+=== file decl.276
+function f(a!) {}
+=== file decl.277
+function f(a!: A) {}
+=== file decl.278
+function f(a: A!) {}
+=== file decl.279
+function f(#a) {}
+=== file decl.280
+function f(#a: A) {}
+=== file decl.281
+function f(a.b) {}
+=== file decl.282
+function f(a.b: A) {}
+=== file decl.283
+function f(a[0]) {}
+=== file decl.284
+function f(a()) {}
+=== file decl.285
+function f("a") {}
+=== file decl.286
+function f("a": A) {}
+=== file decl.287
+function f(1) {}
+=== file decl.288
+function f(1: A) {}
+=== file decl.289
+function f(`a`) {}
+=== file decl.290
+function f(-a) {}
+=== file decl.291
+function f(!a) {}
+=== file decl.292
+function f(a | b) {}
+=== file decl.293
+function f(a as A) {}
+=== file decl.294
+function f(a is A) {}
+=== file decl.295
+function f(a: b is A) {}
+=== file decl.296
+function f(a: asserts b) {}
+=== file decl.297
+function f(a extends A) {}
+=== file decl.298
+function f(a: A extends B ? C : D) {}
+=== file decl.299
+function f(a: A | B) {}
+=== file decl.300
+function f(a: () => void) {}
+=== file decl.301
+function f(a: (b: B) => C) {}
+=== file decl.302
+function f(a: (b = 1) => C) {}
+=== file decl.303
+function f(a: new () => A) {}
+=== file decl.304
+function f(a: typeof b) {}
+=== file decl.305
+function f(a: A<B>) {}
+=== file decl.306
+function f(a: A<B<C>>) {}
+=== file decl.307
+function f(a: A<B>=c) {}
+=== file decl.308
+function f(a: A<B<C>>=d) {}
+=== file decl.309
+function f(a: { b: B }) {}
+=== file decl.310
+function f(a: [A, B]) {}
+=== file decl.311
+function f(a: A[]) {}
+=== file decl.312
+function f(a: this) {}
+=== file decl.313
+function f(a: void) {}
+=== file decl.314
+function f(a: unique symbol) {}
+=== file decl.315
+function f(a: `t${A}`) {}
+=== file decl.316
+function f(a: import('m').A) {}
+=== file decl.317
+function f(a: any): void {}
+=== file decl.318
+function f(a: any): A {}
+=== file decl.319
+function f(a: any): A | B {}
+=== file decl.320
+function f(a: any): A & B {}
+=== file decl.321
+function f(a: any): A[] {}
+=== file decl.322
+function f(a: any): A extends B ? C : D {}
+=== file decl.323
+function f(a: any): keyof A {}
+=== file decl.324
+function f(a: any): typeof a {}
+=== file decl.325
+function f(a: any): () => void {}
+=== file decl.326
+function f(a: any): (a: A) => (b: B) => C {}
+=== file decl.327
+function f(a: any): new () => A {}
+=== file decl.328
+function f(a: any): { a: A } {}
+=== file decl.329
+function f(a: any): {} {}
+=== file decl.330
+function f(a: any): [A] {}
+=== file decl.331
+function f(a: any): (A) {}
+=== file decl.332
+function f(a: any): (A | B) {}
+=== file decl.333
+function f(a: any): this {}
+=== file decl.334
+function f(a: any): a is A {}
+=== file decl.335
+function f(a: any): a is A | B {}
+=== file decl.336
+function f(a: any): this is A {}
+=== file decl.337
+function f(a: any): asserts a {}
+=== file decl.338
+function f(a: any): asserts a is A {}
+=== file decl.339
+function f(a: any): asserts this {}
+=== file decl.340
+function f(a: any): asserts this is A {}
+=== file decl.341
+function f(a: any): asserts {}
+=== file decl.342
+function f(a: any): asserts | A {}
+=== file decl.343
+function f(a: any): a is {}
+=== file decl.344
+function f(a: any): asserts a is {}
+=== file decl.345
+function f(a: any): is A {}
+=== file decl.346
+function f(a: any): a
+is A {}
+=== file decl.347
+function f(a: any): asserts
+a {}
+=== file decl.348
+function f(a: any): unique symbol {}
+=== file decl.349
+function f(a: any): `t${A}` {}
+=== file decl.350
+function f(a: any): import('m') {}
+=== file decl.351
+function f(a: any): -1 {}
+=== file decl.352
+function f(a: any): A<B> {}
+=== file decl.353
+function f(a: any): A<B<C>> {}
+=== file decl.354
+function f(a: any): infer A {}
+=== file decl.355
+function f(a: any): A? {}
+=== file decl.356
+function f(a: any): ?A {}
+=== file decl.357
+function f(a: any): A! {}
+=== file decl.358
+function f(a: any):  {}
+=== file decl.359
+function f(a: any): ; {}
+=== file decl.360
+function f(a: any): => A {}
+=== file decl.361
+class C { m() {} }
+=== file decl.362
+class C { m(a) {} }
+=== file decl.363
+class C { m(a: A) {} }
+=== file decl.364
+class C { m(a, b) {} }
+=== file decl.365
+class C { m(a: A, b: B) {} }
+=== file decl.366
+class C { m(a?) {} }
+=== file decl.367
+class C { m(a?: A) {} }
+=== file decl.368
+class C { m(a?, b?) {} }
+=== file decl.369
+class C { m(a?, b) {} }
+=== file decl.370
+class C { m(a??) {} }
+=== file decl.371
+class C { m(a?: A?) {} }
+=== file decl.372
+class C { m(...a) {} }
+=== file decl.373
+class C { m(...a: A[]) {} }
+=== file decl.374
+class C { m(a, ...b) {} }
+=== file decl.375
+class C { m(a: A, ...b: B[]) {} }
+=== file decl.376
+class C { m(...a, b) {} }
+=== file decl.377
+class C { m(...a,) {} }
+=== file decl.378
+class C { m(...a: A[],) {} }
+=== file decl.379
+class C { m(...a?) {} }
+=== file decl.380
+class C { m(...a?: A[]) {} }
+=== file decl.381
+class C { m(...a = []) {} }
+=== file decl.382
+class C { m(...a: A[] = []) {} }
+=== file decl.383
+class C { m(......a) {} }
+=== file decl.384
+class C { m(...) {} }
+=== file decl.385
+class C { m(a,) {} }
+=== file decl.386
+class C { m(a: A,) {} }
+=== file decl.387
+class C { m(,) {} }
+=== file decl.388
+class C { m(,a) {} }
+=== file decl.389
+class C { m(a,,b) {} }
+=== file decl.390
+class C { m(a b) {} }
+=== file decl.391
+class C { m(a: A b: B) {} }
+=== file decl.392
+class C { m(a;) {} }
+=== file decl.393
+class C { m(a: ) {} }
+=== file decl.394
+class C { m(a?: ) {} }
+=== file decl.395
+class C { m(: A) {} }
+=== file decl.396
+class C { m(a: A: B) {} }
+=== file decl.397
+class C { m(a = 1) {} }
+=== file decl.398
+class C { m(a: A = 1) {} }
+=== file decl.399
+class C { m(a?: A = 1) {} }
+=== file decl.400
+class C { m(a? = 1) {} }
+=== file decl.401
+class C { m(a = 1, b = 2) {} }
+=== file decl.402
+class C { m(a = b ? c : d) {} }
+=== file decl.403
+class C { m(a = (b, c)) {} }
+=== file decl.404
+class C { m(a = () => {}) {} }
+=== file decl.405
+class C { m(a = function () {}) {} }
+=== file decl.406
+class C { m(a = class {}) {} }
+=== file decl.407
+class C { m(a = <T>b) {} }
+=== file decl.408
+class C { m(a = b as T) {} }
+=== file decl.409
+class C { m(a = [1, 2]) {} }
+=== file decl.410
+class C { m(a = { b: 1 }) {} }
+=== file decl.411
+class C { m(a = await b) {} }
+=== file decl.412
+class C { m(a = yield) {} }
+=== file decl.413
+class C { m(a = b = c) {} }
+=== file decl.414
+class C { m(a = ) {} }
+=== file decl.415
+class C { m(a == 1) {} }
+=== file decl.416
+class C { m({ a }) {} }
+=== file decl.417
+class C { m({ a }: A) {} }
+=== file decl.418
+class C { m({ a, b }: A) {} }
+=== file decl.419
+class C { m({ a: b }: A) {} }
+=== file decl.420
+class C { m({ a: { b } }: A) {} }
+=== file decl.421
+class C { m({ a = 1 }: A) {} }
+=== file decl.422
+class C { m({ a: b = 1 }: A) {} }
+=== file decl.423
+class C { m({ ...a }: A) {} }
+=== file decl.424
+class C { m({ a, ...b }: A) {} }
+=== file decl.425
+class C { m({ "a": b }: A) {} }
+=== file decl.426
+class C { m({ 1: b }: A) {} }
+=== file decl.427
+class C { m({ [k]: b }: A) {} }
+=== file decl.428
+class C { m({ [k]: b = 1 }: A) {} }
+=== file decl.429
+class C { m({ a, }: A) {} }
+=== file decl.430
+class C { m({ , }: A) {} }
+=== file decl.431
+class C { m({}: A) {} }
+=== file decl.432
+class C { m({}) {} }
+=== file decl.433
+class C { m({ a }?: A) {} }
+=== file decl.434
+class C { m({ a } = {}) {} }
+=== file decl.435
+class C { m({ a }: A = {}) {} }
+=== file decl.436
+class C { m({ a: b.c }: A) {} }
+=== file decl.437
+class C { m({ a: 1 }) {} }
+=== file decl.438
+class C { m({ "a" }) {} }
+=== file decl.439
+class C { m({ 1 }) {} }
+=== file decl.440
+class C { m({ if }) {} }
+=== file decl.441
+class C { m({ if: a }) {} }
+=== file decl.442
+class C { m({ a: if }) {} }
+=== file decl.443
+class C { m({ ...{ a } }) {} }
+=== file decl.444
+class C { m({ ...[a] }) {} }
+=== file decl.445
+class C { m({ ...a, b }) {} }
+=== file decl.446
+class C { m({ ...a = 1 }) {} }
+=== file decl.447
+class C { m({ a b }) {} }
+=== file decl.448
+class C { m({ a: }) {} }
+=== file decl.449
+class C { m({ a) {} }
+=== file decl.450
+class C { m([a]) {} }
+=== file decl.451
+class C { m([a]: A) {} }
+=== file decl.452
+class C { m([a, b]: A) {} }
+=== file decl.453
+class C { m([, a]: A) {} }
+=== file decl.454
+class C { m([a, , b]: A) {} }
+=== file decl.455
+class C { m([...a]: A) {} }
+=== file decl.456
+class C { m([a, ...b]: A) {} }
+=== file decl.457
+class C { m([a = 1]: A) {} }
+=== file decl.458
+class C { m([[a], { b }]: A) {} }
+=== file decl.459
+class C { m([]: A) {} }
+=== file decl.460
+class C { m([]) {} }
+=== file decl.461
+class C { m([a]?: A) {} }
+=== file decl.462
+class C { m([a] = []) {} }
+=== file decl.463
+class C { m([a,]: A) {} }
+=== file decl.464
+class C { m([...a, b]: A) {} }
+=== file decl.465
+class C { m([...a,]: A) {} }
+=== file decl.466
+class C { m([...[a]]: A) {} }
+=== file decl.467
+class C { m([...{ a }]: A) {} }
+=== file decl.468
+class C { m([a.b]: A) {} }
+=== file decl.469
+class C { m([1]) {} }
+=== file decl.470
+class C { m([a) {} }
+=== file decl.471
+class C { m(...[a, b]: A) {} }
+=== file decl.472
+class C { m(...{ a }: A) {} }
+=== file decl.473
+class C { m(...[a] = []) {} }
+=== file decl.474
+class C { m(this) {} }
+=== file decl.475
+class C { m(this: A) {} }
+=== file decl.476
+class C { m(this: A, b: B) {} }
+=== file decl.477
+class C { m(this, a) {} }
+=== file decl.478
+class C { m(a, this: A) {} }
+=== file decl.479
+class C { m(this?: A) {} }
+=== file decl.480
+class C { m(this?) {} }
+=== file decl.481
+class C { constructor() {} }
+=== file decl.482
+class C { constructor(a) {} }
+=== file decl.483
+class C { constructor(a: A) {} }
+=== file decl.484
+class C { constructor(a, b) {} }
+=== file decl.485
+class C { constructor(a: A, b: B) {} }
+=== file decl.486
+class C { constructor(a?) {} }
+=== file decl.487
+class C { constructor(a?: A) {} }
+=== file decl.488
+class C { constructor(a?, b?) {} }
+=== file decl.489
+class C { constructor(a?, b) {} }
+=== file decl.490
+class C { constructor(a??) {} }
+=== file decl.491
+class C { constructor(a?: A?) {} }
+=== file decl.492
+class C { constructor(...a) {} }
+=== file decl.493
+class C { constructor(...a: A[]) {} }
+=== file decl.494
+class C { constructor(a, ...b) {} }
+=== file decl.495
+class C { constructor(a: A, ...b: B[]) {} }
+=== file decl.496
+class C { constructor(...a, b) {} }
+=== file decl.497
+class C { constructor(...a,) {} }
+=== file decl.498
+class C { constructor(...a: A[],) {} }
+=== file decl.499
+class C { constructor(...a?) {} }
+=== file decl.500
+class C { constructor(...a?: A[]) {} }
+=== file decl.501
+class C { constructor(...a = []) {} }
+=== file decl.502
+class C { constructor(...a: A[] = []) {} }
+=== file decl.503
+class C { constructor(......a) {} }
+=== file decl.504
+class C { constructor(...) {} }
+=== file decl.505
+class C { constructor(a,) {} }
+=== file decl.506
+class C { constructor(a: A,) {} }
+=== file decl.507
+class C { constructor(,) {} }
+=== file decl.508
+class C { constructor(,a) {} }
+=== file decl.509
+class C { constructor(a,,b) {} }
+=== file decl.510
+class C { constructor(a b) {} }
+=== file decl.511
+class C { constructor(a: A b: B) {} }
+=== file decl.512
+class C { constructor(a;) {} }
+=== file decl.513
+class C { constructor(a: ) {} }
+=== file decl.514
+class C { constructor(a?: ) {} }
+=== file decl.515
+class C { constructor(: A) {} }
+=== file decl.516
+class C { constructor(a: A: B) {} }
+=== file decl.517
+class C { constructor(a = 1) {} }
+=== file decl.518
+class C { constructor(a: A = 1) {} }
+=== file decl.519
+class C { constructor(a?: A = 1) {} }
+=== file decl.520
+class C { constructor(a? = 1) {} }
+=== file decl.521
+class C { constructor(a = 1, b = 2) {} }
+=== file decl.522
+class C { constructor(a = b ? c : d) {} }
+=== file decl.523
+class C { constructor(a = (b, c)) {} }
+=== file decl.524
+class C { constructor(a = () => {}) {} }
+=== file decl.525
+class C { constructor(a = function () {}) {} }
+=== file decl.526
+class C { constructor(a = class {}) {} }
+=== file decl.527
+class C { constructor(a = <T>b) {} }
+=== file decl.528
+class C { constructor(a = b as T) {} }
+=== file decl.529
+class C { constructor(a = [1, 2]) {} }
+=== file decl.530
+class C { constructor(a = { b: 1 }) {} }
+=== file decl.531
+class C { constructor(a = await b) {} }
+=== file decl.532
+class C { constructor(a = yield) {} }
+=== file decl.533
+class C { constructor(a = b = c) {} }
+=== file decl.534
+class C { constructor(a = ) {} }
+=== file decl.535
+class C { constructor(a == 1) {} }
+=== file decl.536
+class C { constructor({ a }) {} }
+=== file decl.537
+class C { constructor({ a }: A) {} }
+=== file decl.538
+class C { constructor({ a, b }: A) {} }
+=== file decl.539
+class C { constructor({ a: b }: A) {} }
+=== file decl.540
+class C { constructor({ a: { b } }: A) {} }
+=== file decl.541
+class C { constructor({ a = 1 }: A) {} }
+=== file decl.542
+class C { constructor({ a: b = 1 }: A) {} }
+=== file decl.543
+class C { constructor({ ...a }: A) {} }
+=== file decl.544
+class C { constructor({ a, ...b }: A) {} }
+=== file decl.545
+class C { constructor({ "a": b }: A) {} }
+=== file decl.546
+class C { constructor({ 1: b }: A) {} }
+=== file decl.547
+class C { constructor({ [k]: b }: A) {} }
+=== file decl.548
+class C { constructor({ [k]: b = 1 }: A) {} }
+=== file decl.549
+class C { constructor({ a, }: A) {} }
+=== file decl.550
+class C { constructor({ , }: A) {} }
+=== file decl.551
+class C { constructor({}: A) {} }
+=== file decl.552
+class C { constructor({}) {} }
+=== file decl.553
+class C { constructor({ a }?: A) {} }
+=== file decl.554
+class C { constructor({ a } = {}) {} }
+=== file decl.555
+class C { constructor({ a }: A = {}) {} }
+=== file decl.556
+class C { constructor({ a: b.c }: A) {} }
+=== file decl.557
+class C { constructor({ a: 1 }) {} }
+=== file decl.558
+class C { constructor({ "a" }) {} }
+=== file decl.559
+class C { constructor({ 1 }) {} }
+=== file decl.560
+class C { constructor({ if }) {} }
+=== file decl.561
+class C { constructor({ if: a }) {} }
+=== file decl.562
+class C { constructor({ a: if }) {} }
+=== file decl.563
+class C { constructor({ ...{ a } }) {} }
+=== file decl.564
+class C { constructor({ ...[a] }) {} }
+=== file decl.565
+class C { constructor({ ...a, b }) {} }
+=== file decl.566
+class C { constructor({ ...a = 1 }) {} }
+=== file decl.567
+class C { constructor({ a b }) {} }
+=== file decl.568
+class C { constructor({ a: }) {} }
+=== file decl.569
+class C { constructor({ a) {} }
+=== file decl.570
+class C { constructor([a]) {} }
+=== file decl.571
+class C { constructor([a]: A) {} }
+=== file decl.572
+class C { constructor([a, b]: A) {} }
+=== file decl.573
+class C { constructor([, a]: A) {} }
+=== file decl.574
+class C { constructor([a, , b]: A) {} }
+=== file decl.575
+class C { constructor([...a]: A) {} }
+=== file decl.576
+class C { constructor([a, ...b]: A) {} }
+=== file decl.577
+class C { constructor([a = 1]: A) {} }
+=== file decl.578
+class C { constructor([[a], { b }]: A) {} }
+=== file decl.579
+class C { constructor([]: A) {} }
+=== file decl.580
+class C { constructor([]) {} }
+=== file decl.581
+class C { constructor([a]?: A) {} }
+=== file decl.582
+class C { constructor([a] = []) {} }
+=== file decl.583
+class C { constructor([a,]: A) {} }
+=== file decl.584
+class C { constructor([...a, b]: A) {} }
+=== file decl.585
+class C { constructor([...a,]: A) {} }
+=== file decl.586
+class C { constructor([...[a]]: A) {} }
+=== file decl.587
+class C { constructor([...{ a }]: A) {} }
+=== file decl.588
+class C { constructor([a.b]: A) {} }
+=== file decl.589
+class C { constructor([1]) {} }
+=== file decl.590
+class C { constructor([a) {} }
+=== file decl.591
+class C { constructor(...[a, b]: A) {} }
+=== file decl.592
+class C { constructor(...{ a }: A) {} }
+=== file decl.593
+class C { constructor(...[a] = []) {} }
+=== file decl.594
+class C { constructor(this) {} }
+=== file decl.595
+class C { constructor(this: A) {} }
+=== file decl.596
+class C { constructor(this: A, b: B) {} }
+=== file decl.597
+class C { constructor(this, a) {} }
+=== file decl.598
+class C { constructor(a, this: A) {} }
+=== file decl.599
+class C { constructor(this?: A) {} }
+=== file decl.600
+class C { constructor(this?) {} }
+=== file decl.601
+var v = { m() {} };
+=== file decl.602
+var v = { m(a) {} };
+=== file decl.603
+var v = { m(a: A) {} };
+=== file decl.604
+var v = { m(a, b) {} };
+=== file decl.605
+var v = { m(a: A, b: B) {} };
+=== file decl.606
+var v = { m(a?) {} };
+=== file decl.607
+var v = { m(a?: A) {} };
+=== file decl.608
+var v = { m(a?, b?) {} };
+=== file decl.609
+var v = { m(a?, b) {} };
+=== file decl.610
+var v = { m(a??) {} };
+=== file decl.611
+var v = { m(a?: A?) {} };
+=== file decl.612
+var v = { m(...a) {} };
+=== file decl.613
+var v = { m(...a: A[]) {} };
+=== file decl.614
+var v = { m(a, ...b) {} };
+=== file decl.615
+var v = { m(a: A, ...b: B[]) {} };
+=== file decl.616
+var v = { m(...a, b) {} };
+=== file decl.617
+var v = { m(...a,) {} };
+=== file decl.618
+var v = { m(...a: A[],) {} };
+=== file decl.619
+var v = { m(...a?) {} };
+=== file decl.620
+var v = { m(...a?: A[]) {} };
+=== file decl.621
+var v = { m(...a = []) {} };
+=== file decl.622
+var v = { m(...a: A[] = []) {} };
+=== file decl.623
+var v = { m(......a) {} };
+=== file decl.624
+var v = { m(...) {} };
+=== file decl.625
+var v = { m(a,) {} };
+=== file decl.626
+var v = { m(a: A,) {} };
+=== file decl.627
+var v = { m(,) {} };
+=== file decl.628
+var v = { m(,a) {} };
+=== file decl.629
+var v = { m(a,,b) {} };
+=== file decl.630
+var v = { m(a b) {} };
+=== file decl.631
+var v = { m(a: A b: B) {} };
+=== file decl.632
+var v = { m(a;) {} };
+=== file decl.633
+var v = { m(a: ) {} };
+=== file decl.634
+var v = { m(a?: ) {} };
+=== file decl.635
+var v = { m(: A) {} };
+=== file decl.636
+var v = { m(a: A: B) {} };
+=== file decl.637
+var v = { m(a = 1) {} };
+=== file decl.638
+var v = { m(a: A = 1) {} };
+=== file decl.639
+var v = { m(a?: A = 1) {} };
+=== file decl.640
+var v = { m(a? = 1) {} };
+=== file decl.641
+var v = { m(a = 1, b = 2) {} };
+=== file decl.642
+var v = { m(a = b ? c : d) {} };
+=== file decl.643
+var v = { m(a = (b, c)) {} };
+=== file decl.644
+var v = { m(a = () => {}) {} };
+=== file decl.645
+var v = { m(a = function () {}) {} };
+=== file decl.646
+var v = { m(a = class {}) {} };
+=== file decl.647
+var v = { m(a = <T>b) {} };
+=== file decl.648
+var v = { m(a = b as T) {} };
+=== file decl.649
+var v = { m(a = [1, 2]) {} };
+=== file decl.650
+var v = { m(a = { b: 1 }) {} };
+=== file decl.651
+var v = { m(a = await b) {} };
+=== file decl.652
+var v = { m(a = yield) {} };
+=== file decl.653
+var v = { m(a = b = c) {} };
+=== file decl.654
+var v = { m(a = ) {} };
+=== file decl.655
+var v = { m(a == 1) {} };
+=== file decl.656
+var v = { m({ a }) {} };
+=== file decl.657
+var v = { m({ a }: A) {} };
+=== file decl.658
+var v = { m({ a, b }: A) {} };
+=== file decl.659
+var v = { m({ a: b }: A) {} };
+=== file decl.660
+var v = { m({ a: { b } }: A) {} };
+=== file decl.661
+var v = { m({ a = 1 }: A) {} };
+=== file decl.662
+var v = { m({ a: b = 1 }: A) {} };
+=== file decl.663
+var v = { m({ ...a }: A) {} };
+=== file decl.664
+var v = { m({ a, ...b }: A) {} };
+=== file decl.665
+var v = { m({ "a": b }: A) {} };
+=== file decl.666
+var v = { m({ 1: b }: A) {} };
+=== file decl.667
+var v = { m({ [k]: b }: A) {} };
+=== file decl.668
+var v = { m({ [k]: b = 1 }: A) {} };
+=== file decl.669
+var v = { m({ a, }: A) {} };
+=== file decl.670
+var v = { m({ , }: A) {} };
+=== file decl.671
+var v = { m({}: A) {} };
+=== file decl.672
+var v = { m({}) {} };
+=== file decl.673
+var v = { m({ a }?: A) {} };
+=== file decl.674
+var v = { m({ a } = {}) {} };
+=== file decl.675
+var v = { m({ a }: A = {}) {} };
+=== file decl.676
+var v = { m({ a: b.c }: A) {} };
+=== file decl.677
+var v = { m({ a: 1 }) {} };
+=== file decl.678
+var v = { m({ "a" }) {} };
+=== file decl.679
+var v = { m({ 1 }) {} };
+=== file decl.680
+var v = { m({ if }) {} };
+=== file decl.681
+var v = { m({ if: a }) {} };
+=== file decl.682
+var v = { m({ a: if }) {} };
+=== file decl.683
+var v = { m({ ...{ a } }) {} };
+=== file decl.684
+var v = { m({ ...[a] }) {} };
+=== file decl.685
+var v = { m({ ...a, b }) {} };
+=== file decl.686
+var v = { m({ ...a = 1 }) {} };
+=== file decl.687
+var v = { m({ a b }) {} };
+=== file decl.688
+var v = { m({ a: }) {} };
+=== file decl.689
+var v = { m({ a) {} };
+=== file decl.690
+var v = { m([a]) {} };
+=== file decl.691
+var v = { m([a]: A) {} };
+=== file decl.692
+var v = { m([a, b]: A) {} };
+=== file decl.693
+var v = { m([, a]: A) {} };
+=== file decl.694
+var v = { m([a, , b]: A) {} };
+=== file decl.695
+var v = { m([...a]: A) {} };
+=== file decl.696
+var v = { m([a, ...b]: A) {} };
+=== file decl.697
+var v = { m([a = 1]: A) {} };
+=== file decl.698
+var v = { m([[a], { b }]: A) {} };
+=== file decl.699
+var v = { m([]: A) {} };
+=== file decl.700
+var v = { m([]) {} };
+=== file decl.701
+var v = { m([a]?: A) {} };
+=== file decl.702
+var v = { m([a] = []) {} };
+=== file decl.703
+var v = { m([a,]: A) {} };
+=== file decl.704
+var v = { m([...a, b]: A) {} };
+=== file decl.705
+var v = { m([...a,]: A) {} };
+=== file decl.706
+var v = { m([...[a]]: A) {} };
+=== file decl.707
+var v = { m([...{ a }]: A) {} };
+=== file decl.708
+var v = { m([a.b]: A) {} };
+=== file decl.709
+var v = { m([1]) {} };
+=== file decl.710
+var v = { m([a) {} };
+=== file decl.711
+var v = { m(...[a, b]: A) {} };
+=== file decl.712
+var v = { m(...{ a }: A) {} };
+=== file decl.713
+var v = { m(...[a] = []) {} };
+=== file decl.714
+var v = { m(this) {} };
+=== file decl.715
+var v = { m(this: A) {} };
+=== file decl.716
+var v = { m(this: A, b: B) {} };
+=== file decl.717
+var v = { m(this, a) {} };
+=== file decl.718
+var v = { m(a, this: A) {} };
+=== file decl.719
+var v = { m(this?: A) {} };
+=== file decl.720
+var v = { m(this?) {} };
+=== file decl.721
+var v = function () {};
+=== file decl.722
+var v = function (a) {};
+=== file decl.723
+var v = function (a: A) {};
+=== file decl.724
+var v = function (a, b) {};
+=== file decl.725
+var v = function (a: A, b: B) {};
+=== file decl.726
+var v = function (a?) {};
+=== file decl.727
+var v = function (a?: A) {};
+=== file decl.728
+var v = function (a?, b?) {};
+=== file decl.729
+var v = function (a?, b) {};
+=== file decl.730
+var v = function (a??) {};
+=== file decl.731
+var v = function (a?: A?) {};
+=== file decl.732
+var v = function (...a) {};
+=== file decl.733
+var v = function (...a: A[]) {};
+=== file decl.734
+var v = function (a, ...b) {};
+=== file decl.735
+var v = function (a: A, ...b: B[]) {};
+=== file decl.736
+var v = function (...a, b) {};
+=== file decl.737
+var v = function (...a,) {};
+=== file decl.738
+var v = function (...a: A[],) {};
+=== file decl.739
+var v = function (...a?) {};
+=== file decl.740
+var v = function (...a?: A[]) {};
+=== file decl.741
+var v = function (...a = []) {};
+=== file decl.742
+var v = function (...a: A[] = []) {};
+=== file decl.743
+var v = function (......a) {};
+=== file decl.744
+var v = function (...) {};
+=== file decl.745
+var v = function (a,) {};
+=== file decl.746
+var v = function (a: A,) {};
+=== file decl.747
+var v = function (,) {};
+=== file decl.748
+var v = function (,a) {};
+=== file decl.749
+var v = function (a,,b) {};
+=== file decl.750
+var v = function (a b) {};
+=== file decl.751
+var v = function (a: A b: B) {};
+=== file decl.752
+var v = function (a;) {};
+=== file decl.753
+var v = function (a: ) {};
+=== file decl.754
+var v = function (a?: ) {};
+=== file decl.755
+var v = function (: A) {};
+=== file decl.756
+var v = function (a: A: B) {};
+=== file decl.757
+var v = function (a = 1) {};
+=== file decl.758
+var v = function (a: A = 1) {};
+=== file decl.759
+var v = function (a?: A = 1) {};
+=== file decl.760
+var v = function (a? = 1) {};
+=== file decl.761
+var v = function (a = 1, b = 2) {};
+=== file decl.762
+var v = function (a = b ? c : d) {};
+=== file decl.763
+var v = function (a = (b, c)) {};
+=== file decl.764
+var v = function (a = () => {}) {};
+=== file decl.765
+var v = function (a = function () {}) {};
+=== file decl.766
+var v = function (a = class {}) {};
+=== file decl.767
+var v = function (a = <T>b) {};
+=== file decl.768
+var v = function (a = b as T) {};
+=== file decl.769
+var v = function (a = [1, 2]) {};
+=== file decl.770
+var v = function (a = { b: 1 }) {};
+=== file decl.771
+var v = function (a = await b) {};
+=== file decl.772
+var v = function (a = yield) {};
+=== file decl.773
+var v = function (a = b = c) {};
+=== file decl.774
+var v = function (a = ) {};
+=== file decl.775
+var v = function (a == 1) {};
+=== file decl.776
+var v = function ({ a }) {};
+=== file decl.777
+var v = function ({ a }: A) {};
+=== file decl.778
+var v = function ({ a, b }: A) {};
+=== file decl.779
+var v = function ({ a: b }: A) {};
+=== file decl.780
+var v = function ({ a: { b } }: A) {};
+=== file decl.781
+var v = function ({ a = 1 }: A) {};
+=== file decl.782
+var v = function ({ a: b = 1 }: A) {};
+=== file decl.783
+var v = function ({ ...a }: A) {};
+=== file decl.784
+var v = function ({ a, ...b }: A) {};
+=== file decl.785
+var v = function ({ "a": b }: A) {};
+=== file decl.786
+var v = function ({ 1: b }: A) {};
+=== file decl.787
+var v = function ({ [k]: b }: A) {};
+=== file decl.788
+var v = function ({ [k]: b = 1 }: A) {};
+=== file decl.789
+var v = function ({ a, }: A) {};
+=== file decl.790
+var v = function ({ , }: A) {};
+=== file decl.791
+var v = function ({}: A) {};
+=== file decl.792
+var v = function ({}) {};
+=== file decl.793
+var v = function ({ a }?: A) {};
+=== file decl.794
+var v = function ({ a } = {}) {};
+=== file decl.795
+var v = function ({ a }: A = {}) {};
+=== file decl.796
+var v = function ({ a: b.c }: A) {};
+=== file decl.797
+var v = function ({ a: 1 }) {};
+=== file decl.798
+var v = function ({ "a" }) {};
+=== file decl.799
+var v = function ({ 1 }) {};
+=== file decl.800
+var v = function ({ if }) {};
+=== file decl.801
+var v = function ({ if: a }) {};
+=== file decl.802
+var v = function ({ a: if }) {};
+=== file decl.803
+var v = function ({ ...{ a } }) {};
+=== file decl.804
+var v = function ({ ...[a] }) {};
+=== file decl.805
+var v = function ({ ...a, b }) {};
+=== file decl.806
+var v = function ({ ...a = 1 }) {};
+=== file decl.807
+var v = function ({ a b }) {};
+=== file decl.808
+var v = function ({ a: }) {};
+=== file decl.809
+var v = function ({ a) {};
+=== file decl.810
+var v = function ([a]) {};
+=== file decl.811
+var v = function ([a]: A) {};
+=== file decl.812
+var v = function ([a, b]: A) {};
+=== file decl.813
+var v = function ([, a]: A) {};
+=== file decl.814
+var v = function ([a, , b]: A) {};
+=== file decl.815
+var v = function ([...a]: A) {};
+=== file decl.816
+var v = function ([a, ...b]: A) {};
+=== file decl.817
+var v = function ([a = 1]: A) {};
+=== file decl.818
+var v = function ([[a], { b }]: A) {};
+=== file decl.819
+var v = function ([]: A) {};
+=== file decl.820
+var v = function ([]) {};
+=== file decl.821
+var v = function ([a]?: A) {};
+=== file decl.822
+var v = function ([a] = []) {};
+=== file decl.823
+var v = function ([a,]: A) {};
+=== file decl.824
+var v = function ([...a, b]: A) {};
+=== file decl.825
+var v = function ([...a,]: A) {};
+=== file decl.826
+var v = function ([...[a]]: A) {};
+=== file decl.827
+var v = function ([...{ a }]: A) {};
+=== file decl.828
+var v = function ([a.b]: A) {};
+=== file decl.829
+var v = function ([1]) {};
+=== file decl.830
+var v = function ([a) {};
+=== file decl.831
+var v = function (...[a, b]: A) {};
+=== file decl.832
+var v = function (...{ a }: A) {};
+=== file decl.833
+var v = function (...[a] = []) {};
+=== file decl.834
+var v = function (this) {};
+=== file decl.835
+var v = function (this: A) {};
+=== file decl.836
+var v = function (this: A, b: B) {};
+=== file decl.837
+var v = function (this, a) {};
+=== file decl.838
+var v = function (a, this: A) {};
+=== file decl.839
+var v = function (this?: A) {};
+=== file decl.840
+var v = function (this?) {};

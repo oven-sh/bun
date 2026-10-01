@@ -1,0 +1,3328 @@
+[
+ {
+  "name": "reference test",
+  "decoded": "// @strict: true\n// @noEmit: true\n// @filename: firstFile.ts\nfunction foo() { return \"a\"; }\n// normal comment\n// @filename: secondFile.ts\n// some other comment\nfunction bar() { return \"b\"; }",
+  "lines": [
+   "// @strict: true",
+   "// @noEmit: true",
+   "// @filename: firstFile.ts",
+   "function foo() { return \"a\"; }",
+   "// normal comment",
+   "// @filename: secondFile.ts",
+   "// some other comment",
+   "function bar() { return \"b\"; }"
+  ],
+  "settings": {
+   "filename": "secondFile.ts",
+   "noemit": "true",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "firstFile.ts",
+    "content": "function foo() { return \"a\"; }\n// normal comment",
+    "fileOptions": {}
+   },
+   {
+    "name": "secondFile.ts",
+    "content": "// some other comment\nfunction bar() { return \"b\"; }",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "noemit": "true",
+   "strict": "true"
+  },
+  "skipTrivia": 61,
+  "error": "",
+  "decodedByteLen": 190
+ },
+ {
+  "name": "ws: NBSP between slashes and at-sign",
+  "decoded": "// @filename: a.ts\nx",
+  "lines": [
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @filename: a.ts\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 20,
+  "error": "",
+  "decodedByteLen": 21
+ },
+ {
+  "name": "ws: VT between slashes and at-sign",
+  "decoded": "//\u000b@strict: true\nx",
+  "lines": [
+   "//\u000b@strict: true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "//\u000b@strict: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 17,
+  "error": "",
+  "decodedByteLen": 18
+ },
+ {
+  "name": "ws: FF and TAB are in the class",
+  "decoded": "//\f\t@strict\t:\ftrue\nx",
+  "lines": [
+   "//\f\t@strict\t:\ftrue",
+   "x"
+  ],
+  "settings": {
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 20
+ },
+ {
+  "name": "ws: U+FEFF before at-sign",
+  "decoded": "//﻿@strict: true\nx",
+  "lines": [
+   "//﻿@strict: true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "//﻿@strict: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 20
+ },
+ {
+  "name": "ws: U+2028 inside directive",
+  "decoded": "//\u2028@strict: true\nx",
+  "lines": [
+   "//\u2028@strict: true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "//\u2028@strict: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 5,
+  "error": "",
+  "decodedByteLen": 20
+ },
+ {
+  "name": "ws: U+3000 before colon",
+  "decoded": "// @strict　: true\nx",
+  "lines": [
+   "// @strict　: true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @strict　: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 20,
+  "error": "",
+  "decodedByteLen": 21
+ },
+ {
+  "name": "word: non-ascii letter in name",
+  "decoded": "// @striéct: true\nx",
+  "lines": [
+   "// @striéct: true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @striéct: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 20
+ },
+ {
+  "name": "word: long s and kelvin",
+  "decoded": "// @ſtrict: 1\n// @K: 2\nx",
+  "lines": [
+   "// @ſtrict: 1",
+   "// @K: 2",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @ſtrict: 1\n// @K: 2\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 26,
+  "error": "",
+  "decodedByteLen": 27
+ },
+ {
+  "name": "word: digits and underscore",
+  "decoded": "// @_a1_B: v\nx",
+  "lines": [
+   "// @_a1_B: v",
+   "x"
+  ],
+  "settings": {
+   "_a1_b": "v"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "_a1_b": "v"
+  },
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 14
+ },
+ {
+  "name": "word: dot ends the name",
+  "decoded": "// @a.b: c\nx",
+  "lines": [
+   "// @a.b: c",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @a.b: c\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 11,
+  "error": "",
+  "decodedByteLen": 12
+ },
+ {
+  "name": "word: upper case name is lowered",
+  "decoded": "// @FileName: A.ts\n// @NoEmit: TRUE\nx",
+  "lines": [
+   "// @FileName: A.ts",
+   "// @NoEmit: TRUE",
+   "x"
+  ],
+  "settings": {
+   "filename": "A.ts",
+   "noemit": "TRUE"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "A.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "noemit": "TRUE"
+  },
+  "skipTrivia": 36,
+  "error": "",
+  "decodedByteLen": 37
+ },
+ {
+  "name": "word: proto and constructor as names",
+  "decoded": "// @__proto__: p\n// @constructor: c\n// @toString: t\nx",
+  "lines": [
+   "// @__proto__: p",
+   "// @constructor: c",
+   "// @toString: t",
+   "x"
+  ],
+  "settings": {
+   "__proto__": "p",
+   "constructor": "c",
+   "tostring": "t"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "__proto__": "p",
+   "constructor": "c",
+   "tostring": "t"
+  },
+  "skipTrivia": 52,
+  "error": "",
+  "decodedByteLen": 53
+ },
+ {
+  "name": "anchor: lone CR before directive",
+  "decoded": "x\r// @filename: a.ts\ny",
+  "lines": [
+   "x\r// @filename: a.ts",
+   "y"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x\r// @filename: a.ts\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "anchor: U+2028 before directive",
+  "decoded": "x\u2028// @strict: true\ny",
+  "lines": [
+   "x\u2028// @strict: true",
+   "y"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x\u2028// @strict: true\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "anchor: U+2029 before directive",
+  "decoded": "x\u2029// @strict: true\ny",
+  "lines": [
+   "x\u2029// @strict: true",
+   "y"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x\u2029// @strict: true\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "anchor: leading spaces",
+  "decoded": "  // @filename: a.ts\nx",
+  "lines": [
+   "  // @filename: a.ts",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "  // @filename: a.ts\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 21,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "anchor: four slashes",
+  "decoded": "//// @filename: a.ts\nx",
+  "lines": [
+   "//// @filename: a.ts",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "//// @filename: a.ts\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 21,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "anchor: three slashes",
+  "decoded": "/// @filename: a.ts\nx",
+  "lines": [
+   "/// @filename: a.ts",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "/// @filename: a.ts\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 20,
+  "error": "",
+  "decodedByteLen": 21
+ },
+ {
+  "name": "anchor: directive after code on the line",
+  "decoded": "var x; // @strict: true\ny",
+  "lines": [
+   "var x; // @strict: true",
+   "y"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var x; // @strict: true\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 25
+ },
+ {
+  "name": "span: value on the next line",
+  "decoded": "// @target:\nvar x = 1;\n",
+  "lines": [
+   "// @target:",
+   "var x = 1;",
+   ""
+  ],
+  "settings": {
+   "target": "var x = 1"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var x = 1;\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "target": ""
+  },
+  "skipTrivia": 12,
+  "error": "",
+  "decodedByteLen": 23
+ },
+ {
+  "name": "span: value after CRLF and blank lines",
+  "decoded": "// @target:\r\n\r\n  es5 ;\r\nvar x;",
+  "lines": [
+   "// @target:",
+   "",
+   "  es5 ;",
+   "var x;"
+  ],
+  "settings": {
+   "target": "es5 "
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "  es5 ;\nvar x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "target": ""
+  },
+  "skipTrivia": 17,
+  "error": "",
+  "decodedByteLen": 30
+ },
+ {
+  "name": "span: at-sign on the next line",
+  "decoded": "//\n@strict: true\nx",
+  "lines": [
+   "//",
+   "@strict: true",
+   "x"
+  ],
+  "settings": {
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "//\n@strict: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 3,
+  "error": "",
+  "decodedByteLen": 18
+ },
+ {
+  "name": "span: colon on the next line",
+  "decoded": "// @strict\n: true\nx",
+  "lines": [
+   "// @strict",
+   ": true",
+   "x"
+  ],
+  "settings": {
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @strict\n: true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 11,
+  "error": "",
+  "decodedByteLen": 19
+ },
+ {
+  "name": "span: directive swallowed by an empty one",
+  "decoded": "// @a:\n// @b: 1\nx",
+  "lines": [
+   "// @a:",
+   "// @b: 1",
+   "x"
+  ],
+  "settings": {
+   "a": "// @b: 1"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "a": "",
+   "b": "1"
+  },
+  "skipTrivia": 16,
+  "error": "",
+  "decodedByteLen": 17
+ },
+ {
+  "name": "value: one trailing semicolon trimmed in settings only",
+  "decoded": "// @declaration: true;\n// @strict: true ;\n// @x: a;;\n// @y: ;\nz",
+  "lines": [
+   "// @declaration: true;",
+   "// @strict: true ;",
+   "// @x: a;;",
+   "// @y: ;",
+   "z"
+  ],
+  "settings": {
+   "declaration": "true",
+   "strict": "true ",
+   "x": "a;",
+   "y": ""
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "z",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "declaration": "true;",
+   "strict": "true ;",
+   "x": "a;;",
+   "y": ";"
+  },
+  "skipTrivia": 62,
+  "error": "",
+  "decodedByteLen": 63
+ },
+ {
+  "name": "value: trailing comment kept",
+  "decoded": "// @strict: true // why\nx",
+  "lines": [
+   "// @strict: true // why",
+   "x"
+  ],
+  "settings": {
+   "strict": "true // why"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true // why"
+  },
+  "skipTrivia": 24,
+  "error": "",
+  "decodedByteLen": 25
+ },
+ {
+  "name": "value: lone CR ends the value",
+  "decoded": "// @noEmit: true\rrest\n// @filename: a.ts\rrest\nx",
+  "lines": [
+   "// @noEmit: true\rrest",
+   "// @filename: a.ts\rrest",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts",
+   "noemit": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "noemit": "true"
+  },
+  "skipTrivia": 17,
+  "error": "",
+  "decodedByteLen": 47
+ },
+ {
+  "name": "value: CR CR LF",
+  "decoded": "// @noEmit: true\r\r\nx\r\r\ny",
+  "lines": [
+   "// @noEmit: true\r",
+   "x\r",
+   "y"
+  ],
+  "settings": {
+   "noemit": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x\r\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "noemit": "true"
+  },
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 24
+ },
+ {
+  "name": "value: last occurrence wins",
+  "decoded": "// @target: es5\nx\n// @target: es2015\n// @TARGET: esnext\ny",
+  "lines": [
+   "// @target: es5",
+   "x",
+   "// @target: es2015",
+   "// @TARGET: esnext",
+   "y"
+  ],
+  "settings": {
+   "target": "esnext"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x\ny",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "target": "esnext"
+  },
+  "skipTrivia": 16,
+  "error": "",
+  "decodedByteLen": 57
+ },
+ {
+  "name": "value: empty value",
+  "decoded": "// @strict:\n\nx",
+  "lines": [
+   "// @strict:",
+   "",
+   "x"
+  ],
+  "settings": {
+   "strict": "x"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": ""
+  },
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 14
+ },
+ {
+  "name": "value: no colon",
+  "decoded": "// @strict true\nx",
+  "lines": [
+   "// @strict true",
+   "x"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "// @strict true\nx",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 16,
+  "error": "",
+  "decodedByteLen": 17
+ },
+ {
+  "name": "value: comma list with spaces",
+  "decoded": "// @target: es5 , es2015,, esnext\nx",
+  "lines": [
+   "// @target: es5 , es2015,, esnext",
+   "x"
+  ],
+  "settings": {
+   "target": "es5 , es2015,, esnext"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "target": "es5 , es2015,, esnext"
+  },
+  "skipTrivia": 34,
+  "error": "",
+  "decodedByteLen": 35
+ },
+ {
+  "name": "trim: U+0085 is trimmed",
+  "decoded": "// @filename: a.ts\n// @strict:true\nx",
+  "lines": [
+   "// @filename: a.ts",
+   "// @strict:true",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 41,
+  "error": "",
+  "decodedByteLen": 42
+ },
+ {
+  "name": "trim: U+FEFF is kept",
+  "decoded": "// @filename: ﻿a.ts﻿\n// @strict: ﻿true﻿\nx",
+  "lines": [
+   "// @filename: ﻿a.ts﻿",
+   "// @strict: ﻿true﻿",
+   "x"
+  ],
+  "settings": {
+   "filename": "﻿a.ts﻿",
+   "strict": "﻿true﻿"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "﻿a.ts﻿",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "﻿true﻿"
+  },
+  "skipTrivia": 48,
+  "error": "",
+  "decodedByteLen": 49
+ },
+ {
+  "name": "trim: NBSP and U+2003 and U+3000 are trimmed",
+  "decoded": "// @filename:   a.ts　\nx",
+  "lines": [
+   "// @filename:   a.ts　",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 27,
+  "error": "",
+  "decodedByteLen": 28
+ },
+ {
+  "name": "trim: U+200B and U+180E are kept",
+  "decoded": "// @filename: ​a.ts᠎\nx",
+  "lines": [
+   "// @filename: ​a.ts᠎",
+   "x"
+  ],
+  "settings": {
+   "filename": "​a.ts᠎"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "​a.ts᠎",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 25,
+  "error": "",
+  "decodedByteLen": 26
+ },
+ {
+  "name": "trim: VT and FF are trimmed",
+  "decoded": "// @filename: \u000ba.ts\f\nx",
+  "lines": [
+   "// @filename: \u000ba.ts\f",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 21,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "link: simple",
+  "decoded": "// @link: /a -> /b\nx",
+  "lines": [
+   "// @link: /a -> /b",
+   "x"
+  ],
+  "settings": {
+   "link": "/a -> /b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "/b": "/a"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 20
+ },
+ {
+  "name": "link: last arrow splits",
+  "decoded": "// @link: a -> b -> c\nx",
+  "lines": [
+   "// @link: a -> b -> c",
+   "x"
+  ],
+  "settings": {
+   "link": "a -> b -> c"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "c": "a -> b"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 22,
+  "error": "",
+  "decodedByteLen": 23
+ },
+ {
+  "name": "link: upper case is an option",
+  "decoded": "// @Link: a -> b\nx",
+  "lines": [
+   "// @Link: a -> b",
+   "x"
+  ],
+  "settings": {
+   "link": "a -> b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "link": "a -> b"
+  },
+  "skipTrivia": 17,
+  "error": "",
+  "decodedByteLen": 18
+ },
+ {
+  "name": "link: no arrow is an option",
+  "decoded": "// @link: a b\nx",
+  "lines": [
+   "// @link: a b",
+   "x"
+  ],
+  "settings": {
+   "link": "a b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "link": "a b"
+  },
+  "skipTrivia": 14,
+  "error": "",
+  "decodedByteLen": 15
+ },
+ {
+  "name": "link: empty sides",
+  "decoded": "// @link: ->\n// @link:->x\nx",
+  "lines": [
+   "// @link: ->",
+   "// @link:->x",
+   "x"
+  ],
+  "settings": {
+   "link": "->x"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "": "",
+   "x": ""
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 26,
+  "error": "",
+  "decodedByteLen": 27
+ },
+ {
+  "name": "link: no spaces",
+  "decoded": "//@link:a->b\nx",
+  "lines": [
+   "//@link:a->b",
+   "x"
+  ],
+  "settings": {
+   "link": "a->b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "b": "a"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 14
+ },
+ {
+  "name": "link: later target wins",
+  "decoded": "// @link: a -> p\n// @link: b -> p\nx",
+  "lines": [
+   "// @link: a -> p",
+   "// @link: b -> p",
+   "x"
+  ],
+  "settings": {
+   "link": "b -> p"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "p": "b"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 34,
+  "error": "",
+  "decodedByteLen": 35
+ },
+ {
+  "name": "link: line is tried before options",
+  "decoded": "// @filename: a.ts\nx\n// @link: /a -> /b\ny\n// @filename: b.ts\nz",
+  "lines": [
+   "// @filename: a.ts",
+   "x",
+   "// @link: /a -> /b",
+   "y",
+   "// @filename: b.ts",
+   "z"
+  ],
+  "settings": {
+   "filename": "b.ts",
+   "link": "/a -> /b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x\ny",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "z",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "/b": "/a"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 62
+ },
+ {
+  "name": "link: arrow in a filename directive is not a link",
+  "decoded": "// @filename: a->b.ts\nx",
+  "lines": [
+   "// @filename: a->b.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a->b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a->b.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 22,
+  "error": "",
+  "decodedByteLen": 23
+ },
+ {
+  "name": "symlink: bound to the current file",
+  "decoded": "// @filename: /a.ts\n// @symlink: /x.ts, /y.ts,, \nvar a;\n// @filename: /b.ts\n// @symlink: /x.ts\nvar b;",
+  "lines": [
+   "// @filename: /a.ts",
+   "// @symlink: /x.ts, /y.ts,, ",
+   "var a;",
+   "// @filename: /b.ts",
+   "// @symlink: /x.ts",
+   "var b;"
+  ],
+  "settings": {
+   "filename": "/b.ts",
+   "symlink": "/x.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/a.ts",
+    "content": "var a;",
+    "fileOptions": {}
+   },
+   {
+    "name": "/b.ts",
+    "content": "var b;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "/x.ts": "/b.ts",
+   "/y.ts": "/a.ts"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 49,
+  "error": "",
+  "decodedByteLen": 101
+ },
+ {
+  "name": "symlink: before any file is a global option",
+  "decoded": "// @symlink: /x.ts\n// @filename: /a.ts\nvar a;",
+  "lines": [
+   "// @symlink: /x.ts",
+   "// @filename: /a.ts",
+   "var a;"
+  ],
+  "settings": {
+   "filename": "/a.ts",
+   "symlink": "/x.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/a.ts",
+    "content": "var a;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "symlink": "/x.ts"
+  },
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 45
+ },
+ {
+  "name": "currentDirectory: last wins and no semicolon trim",
+  "decoded": "// @currentDirectory: /a;\n// @CurrentDirectory: /b;\nx",
+  "lines": [
+   "// @currentDirectory: /a;",
+   "// @CurrentDirectory: /b;",
+   "x"
+  ],
+  "settings": {
+   "currentdirectory": "/b"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "/b;",
+  "globalOptions": {
+   "currentdirectory": "/b;"
+  },
+  "skipTrivia": 52,
+  "error": "",
+  "decodedByteLen": 53
+ },
+ {
+  "name": "fourslash options are per file",
+  "decoded": "// @emitThisFile: true\n// @filename: a.ts\n// @noOpen: 1\nx\n// @filename: b.ts\ny",
+  "lines": [
+   "// @emitThisFile: true",
+   "// @filename: a.ts",
+   "// @noOpen: 1",
+   "x",
+   "// @filename: b.ts",
+   "y"
+  ],
+  "settings": {
+   "emitthisfile": "true",
+   "filename": "b.ts",
+   "noopen": "1"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {
+     "noopen": "1"
+    }
+   },
+   {
+    "name": "b.ts",
+    "content": "y",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 56,
+  "error": "",
+  "decodedByteLen": 78
+ },
+ {
+  "name": "units: no filename directive",
+  "decoded": "var x;\n",
+  "lines": [
+   "var x;",
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "single.ts",
+    "content": "var x;\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 7
+ },
+ {
+  "name": "units: no filename directive, backslash path",
+  "decoded": "var x;",
+  "lines": [
+   "var x;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "single.tsx",
+    "content": "var x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 6
+ },
+ {
+  "name": "units: leading blank lines vanish",
+  "decoded": "\n\n\r\n// @strict: true\n\n\nvar x;\n\nvar y;\n\n",
+  "lines": [
+   "",
+   "",
+   "",
+   "// @strict: true",
+   "",
+   "",
+   "var x;",
+   "",
+   "var y;",
+   "",
+   ""
+  ],
+  "settings": {
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var x;\n\nvar y;\n\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 23,
+  "error": "",
+  "decodedByteLen": 39
+ },
+ {
+  "name": "units: whitespace-only line is content",
+  "decoded": "\n \n\nvar x;",
+  "lines": [
+   "",
+   " ",
+   "",
+   "var x;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": " \n\nvar x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 4,
+  "error": "",
+  "decodedByteLen": 10
+ },
+ {
+  "name": "units: blank lines between directive and content",
+  "decoded": "// @filename: a.ts\n\n\nvar a;\n\n// @filename: b.ts\n\nvar b;\n",
+  "lines": [
+   "// @filename: a.ts",
+   "",
+   "",
+   "var a;",
+   "",
+   "// @filename: b.ts",
+   "",
+   "var b;",
+   ""
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "var a;\n",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "var b;\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 21,
+  "error": "",
+  "decodedByteLen": 56
+ },
+ {
+  "name": "units: empty unit",
+  "decoded": "// @filename: a.ts\n// @filename: b.ts\nvar b;",
+  "lines": [
+   "// @filename: a.ts",
+   "// @filename: b.ts",
+   "var b;"
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "var b;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 38,
+  "error": "",
+  "decodedByteLen": 44
+ },
+ {
+  "name": "units: file ends with directive",
+  "decoded": "// @filename: a.ts\nvar a;\n// @filename: b.ts",
+  "lines": [
+   "// @filename: a.ts",
+   "var a;",
+   "// @filename: b.ts"
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "var a;",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 44
+ },
+ {
+  "name": "units: empty file",
+  "decoded": "",
+  "lines": [
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 0
+ },
+ {
+  "name": "units: only newline",
+  "decoded": "\n",
+  "lines": [
+   "",
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 1,
+  "error": "",
+  "decodedByteLen": 1
+ },
+ {
+  "name": "units: duplicate names stay",
+  "decoded": "// @filename: a.ts\n1\n// @filename: a.ts\n2",
+  "lines": [
+   "// @filename: a.ts",
+   "1",
+   "// @filename: a.ts",
+   "2"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "1",
+    "fileOptions": {}
+   },
+   {
+    "name": "a.ts",
+    "content": "2",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 41
+ },
+ {
+  "name": "units: filename value with spaces and comment",
+  "decoded": "// @filename:   my file.ts  // note  \nx",
+  "lines": [
+   "// @filename:   my file.ts  // note  ",
+   "x"
+  ],
+  "settings": {
+   "filename": "my file.ts  // note"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "my file.ts  // note",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 38,
+  "error": "",
+  "decodedByteLen": 39
+ },
+ {
+  "name": "units: empty filename then filename",
+  "decoded": "// @filename:\n// c\n// @filename: b.ts\nx",
+  "lines": [
+   "// @filename:",
+   "// c",
+   "// @filename: b.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "b.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 38,
+  "error": "",
+  "decodedByteLen": 39
+ },
+ {
+  "name": "units: empty filename with code then filename",
+  "decoded": "// @filename:\nvar a;\n// @filename: b.ts\nx",
+  "lines": [
+   "// @filename:",
+   "var a;",
+   "// @filename: b.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 14,
+  "error": "",
+  "decodedByteLen": 41
+ },
+ {
+  "name": "units: empty filename at the end",
+  "decoded": "// @filename: a.ts\nx\n// @filename:\ny",
+  "lines": [
+   "// @filename: a.ts",
+   "x",
+   "// @filename:",
+   "y"
+  ],
+  "settings": {
+   "filename": "y"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   },
+   {
+    "name": "",
+    "content": "y",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 36
+ },
+ {
+  "name": "units: only an empty filename",
+  "decoded": "// @filename:\ny",
+  "lines": [
+   "// @filename:",
+   "y"
+  ],
+  "settings": {
+   "filename": "y"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "y",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 14,
+  "error": "",
+  "decodedByteLen": 15
+ },
+ {
+  "name": "units: lone CR stays in its line",
+  "decoded": "var a = `x\ry`;\r\nvar b;",
+  "lines": [
+   "var a = `x\ry`;",
+   "var b;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var a = `x\ry`;\nvar b;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "units: NUL byte",
+  "decoded": "// @filename: a.ts\nvar a = '\u0000';\n",
+  "lines": [
+   "// @filename: a.ts",
+   "var a = '\u0000';",
+   ""
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "var a = '\u0000';\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 32
+ },
+ {
+  "name": "units: astral and U+2028 content",
+  "decoded": "// @filename: a.ts\nvar a = '😀\u2028';\n",
+  "lines": [
+   "// @filename: a.ts",
+   "var a = '😀\u2028';",
+   ""
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "var a = '😀\u2028';\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "",
+  "decodedByteLen": 38
+ },
+ {
+  "name": "config: first tsconfig is taken out",
+  "decoded": "// @filename: /a.ts\n1\n// @filename: /tsconfig.json\n{}\n// @filename: /sub/jsconfig.json\n{ }\n// @filename: /b.ts\n2",
+  "lines": [
+   "// @filename: /a.ts",
+   "1",
+   "// @filename: /tsconfig.json",
+   "{}",
+   "// @filename: /sub/jsconfig.json",
+   "{ }",
+   "// @filename: /b.ts",
+   "2"
+  ],
+  "settings": {
+   "filename": "/b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/a.ts",
+    "content": "1",
+    "fileOptions": {}
+   },
+   {
+    "name": "/sub/jsconfig.json",
+    "content": "{ }",
+    "fileOptions": {}
+   },
+   {
+    "name": "/b.ts",
+    "content": "2",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": {
+   "name": "/tsconfig.json",
+   "content": "{}",
+   "fileOptions": {}
+  },
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 20,
+  "error": "",
+  "decodedByteLen": 112
+ },
+ {
+  "name": "config: case-insensitive base name, backslashes, trailing slash",
+  "decoded": "// @filename: c:\\x\\TSConfig.JSON\\\n{}\n// @filename: /b.ts\n2",
+  "lines": [
+   "// @filename: c:\\x\\TSConfig.JSON\\",
+   "{}",
+   "// @filename: /b.ts",
+   "2"
+  ],
+  "settings": {
+   "filename": "/b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/b.ts",
+    "content": "2",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": {
+   "name": "c:\\x\\TSConfig.JSON\\",
+   "content": "{}",
+   "fileOptions": {}
+  },
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 34,
+  "error": "",
+  "decodedByteLen": 58
+ },
+ {
+  "name": "config: jsconfig only",
+  "decoded": "// @filename: jsconfig.json\n{}",
+  "lines": [
+   "// @filename: jsconfig.json",
+   "{}"
+  ],
+  "settings": {
+   "filename": "jsconfig.json"
+  },
+  "panic": "",
+  "units": [],
+  "configUnit": {
+   "name": "jsconfig.json",
+   "content": "{}",
+   "fileOptions": {}
+  },
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 28,
+  "error": "",
+  "decodedByteLen": 30
+ },
+ {
+  "name": "config: not a config name",
+  "decoded": "// @filename: tsconfig.base.json\n{}\n// @filename: /a/tsconfig.json.ts\n1",
+  "lines": [
+   "// @filename: tsconfig.base.json",
+   "{}",
+   "// @filename: /a/tsconfig.json.ts",
+   "1"
+  ],
+  "settings": {
+   "filename": "/a/tsconfig.json.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "tsconfig.base.json",
+    "content": "{}",
+    "fileOptions": {}
+   },
+   {
+    "name": "/a/tsconfig.json.ts",
+    "content": "1",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 33,
+  "error": "",
+  "decodedByteLen": 71
+ },
+ {
+  "name": "config: dotted I lowers to i",
+  "decoded": "// @filename: /TSCONFİG.JSON\n{}\n// @filename: /b.ts\n2",
+  "lines": [
+   "// @filename: /TSCONFİG.JSON",
+   "{}",
+   "// @filename: /b.ts",
+   "2"
+  ],
+  "settings": {
+   "filename": "/b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/b.ts",
+    "content": "2",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": {
+   "name": "/TSCONFİG.JSON",
+   "content": "{}",
+   "fileOptions": {}
+  },
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 30,
+  "error": "",
+  "decodedByteLen": 54
+ },
+ {
+  "name": "config: url and unc roots",
+  "decoded": "// @filename: file:///c:/tsconfig.json\n{}\n// @filename: //server/tsconfig.json\n1\n// @filename: //server/share/jsconfig.json\n2",
+  "lines": [
+   "// @filename: file:///c:/tsconfig.json",
+   "{}",
+   "// @filename: //server/tsconfig.json",
+   "1",
+   "// @filename: //server/share/jsconfig.json",
+   "2"
+  ],
+  "settings": {
+   "filename": "//server/share/jsconfig.json"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "//server/tsconfig.json",
+    "content": "1",
+    "fileOptions": {}
+   },
+   {
+    "name": "//server/share/jsconfig.json",
+    "content": "2",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": {
+   "name": "file:///c:/tsconfig.json",
+   "content": "{}",
+   "fileOptions": {}
+  },
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 125
+ },
+ {
+  "name": "pre: comments and blank lines only",
+  "decoded": "// a comment\n\n  /* block\n comment */\t\n// @filename: a.ts\nx",
+  "lines": [
+   "// a comment",
+   "",
+   "  /* block",
+   " comment */\t",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 57,
+  "error": "",
+  "decodedByteLen": 58
+ },
+ {
+  "name": "pre: code",
+  "decoded": "var early;\n// @filename: a.ts\nx",
+  "lines": [
+   "var early;",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 31
+ },
+ {
+  "name": "pre: code after comment",
+  "decoded": "// c\n/* d */ var early;\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "/* d */ var early;",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 44
+ },
+ {
+  "name": "pre: unterminated block comment",
+  "decoded": "/* never closed\n// @filename: a.ts\nx",
+  "lines": [
+   "/* never closed",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 36,
+  "error": "",
+  "decodedByteLen": 36
+ },
+ {
+  "name": "pre: shebang",
+  "decoded": "#!/usr/bin/env node\n// c\n// @filename: a.ts\nx",
+  "lines": [
+   "#!/usr/bin/env node",
+   "// c",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 44,
+  "error": "",
+  "decodedByteLen": 45
+ },
+ {
+  "name": "pre: shebang not at start",
+  "decoded": "// c\n#!/usr/bin/env node\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "#!/usr/bin/env node",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 5,
+  "error": "",
+  "decodedByteLen": 45
+ },
+ {
+  "name": "pre: conflict marker",
+  "decoded": "<<<<<<< HEAD\n// c\n// @filename: a.ts\nx",
+  "lines": [
+   "<<<<<<< HEAD",
+   "// c",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 37,
+  "error": "",
+  "decodedByteLen": 38
+ },
+ {
+  "name": "pre: conflict markers with bodies",
+  "decoded": "// c\n<<<<<<< HEAD\nvar a;\n=======\nvar b;\n>>>>>>> other\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "<<<<<<< HEAD",
+   "var a;",
+   "=======",
+   "var b;",
+   ">>>>>>> other",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 18,
+  "error": "",
+  "decodedByteLen": 74
+ },
+ {
+  "name": "pre: bar conflict marker",
+  "decoded": "||||||| base\nvar a;\n=======\nvar b;\n>>>>>>> other\n// @filename: a.ts\nx",
+  "lines": [
+   "||||||| base",
+   "var a;",
+   "=======",
+   "var b;",
+   ">>>>>>> other",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 68,
+  "error": "",
+  "decodedByteLen": 69
+ },
+ {
+  "name": "pre: conflict marker two bytes after a line break",
+  "decoded": "// c\n  <<<<<<< HEAD\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "  <<<<<<< HEAD",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 40
+ },
+ {
+  "name": "pre: conflict marker after NBSP after a line break",
+  "decoded": "// c\n <<<<<<< HEAD\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   " <<<<<<< HEAD",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 40
+ },
+ {
+  "name": "pre: conflict marker after two NBSP",
+  "decoded": "// c\n  <<<<<<< HEAD\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "  <<<<<<< HEAD",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 9,
+  "error": "",
+  "decodedByteLen": 42
+ },
+ {
+  "name": "pre: conflict marker after one space",
+  "decoded": "// c\n <<<<<<< HEAD\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   " <<<<<<< HEAD",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 6,
+  "error": "",
+  "decodedByteLen": 39
+ },
+ {
+  "name": "pre: six less-than signs",
+  "decoded": "<<<<<< HEAD\n// @filename: a.ts\nx",
+  "lines": [
+   "<<<<<< HEAD",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 32
+ },
+ {
+  "name": "pre: equals marker at the very end",
+  "decoded": "// c\n=======\n// @filename: a.ts\nx",
+  "lines": [
+   "// c",
+   "=======",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 33,
+  "error": "",
+  "decodedByteLen": 33
+ },
+ {
+  "name": "pre: unicode white space",
+  "decoded": "  　﻿​\u2028\u2029// c\n// @filename: a.ts\nx",
+  "lines": [
+   "  　﻿​\u2028\u2029// c",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 46,
+  "error": "",
+  "decodedByteLen": 47
+ },
+ {
+  "name": "pre: U+180E is not white space",
+  "decoded": "᠎// c\n// @filename: a.ts\nx",
+  "lines": [
+   "᠎// c",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 28
+ },
+ {
+  "name": "pre: star is not trivia",
+  "decoded": "/** doc\n */\n * x\n// @filename: a.ts\nx",
+  "lines": [
+   "/** doc",
+   " */",
+   " * x",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 37
+ },
+ {
+  "name": "pre: lone slash",
+  "decoded": "/\n// @filename: a.ts\nx",
+  "lines": [
+   "/",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "Non-comment test content appears before the first '// @Filename' directive",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 22
+ },
+ {
+  "name": "pre: comment with astral and U+2028",
+  "decoded": "// 😀\u2028// more\n// @filename: a.ts\nx",
+  "lines": [
+   "// 😀\u2028// more",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 37,
+  "error": "",
+  "decodedByteLen": 38
+ },
+ {
+  "name": "pre: lone CR and CRLF",
+  "decoded": "// c\r// d\r\n\r\r\n// @filename: a.ts\nx",
+  "lines": [
+   "// c\r// d",
+   "\r",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 33,
+  "error": "",
+  "decodedByteLen": 34
+ },
+ {
+  "name": "pre: option lines do not count as content",
+  "decoded": "// @strict: true\n// @link: a -> b\n// @filename: a.ts\nx",
+  "lines": [
+   "// @strict: true",
+   "// @link: a -> b",
+   "// @filename: a.ts",
+   "x"
+  ],
+  "settings": {
+   "filename": "a.ts",
+   "link": "a -> b",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "x",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "b": "a"
+  },
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 53,
+  "error": "",
+  "decodedByteLen": 54
+ },
+ {
+  "name": "decode: utf-8 BOM",
+  "decoded": "// @strict: true\nvar x;",
+  "lines": [
+   "// @strict: true",
+   "var x;"
+  ],
+  "settings": {
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 17,
+  "error": "",
+  "decodedByteLen": 23
+ },
+ {
+  "name": "decode: two utf-8 BOMs",
+  "decoded": "﻿// @strict: true\nvar x;",
+  "lines": [
+   "﻿// @strict: true",
+   "var x;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "﻿// @strict: true\nvar x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 20,
+  "error": "",
+  "decodedByteLen": 26
+ },
+ {
+  "name": "decode: utf-16 LE",
+  "decoded": "// @strict: true\r\n// @filename: é.ts\r\nvar x = '😀';\r\n",
+  "lines": [
+   "// @strict: true",
+   "// @filename: é.ts",
+   "var x = '😀';",
+   ""
+  ],
+  "settings": {
+   "filename": "é.ts",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "é.ts",
+    "content": "var x = '😀';\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 56
+ },
+ {
+  "name": "decode: utf-16 BE",
+  "decoded": "// @strict: true\r\n// @filename: é.ts\r\nvar x = '😀';\r\n",
+  "lines": [
+   "// @strict: true",
+   "// @filename: é.ts",
+   "var x = '😀';",
+   ""
+  ],
+  "settings": {
+   "filename": "é.ts",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "é.ts",
+    "content": "var x = '😀';\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 39,
+  "error": "",
+  "decodedByteLen": 56
+ },
+ {
+  "name": "decode: utf-16 LE odd length",
+  "decoded": "var x;",
+  "lines": [
+   "var x;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "var x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 6
+ },
+ {
+  "name": "decode: utf-16 LE lone surrogates",
+  "decoded": "a�b�c�",
+  "lines": [
+   "a�b�c�"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "a�b�c�",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 12
+ },
+ {
+  "name": "decode: utf-16 LE BOM only",
+  "decoded": "",
+  "lines": [
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 0
+ },
+ {
+  "name": "decode: utf-16 BE BOM and one byte",
+  "decoded": "",
+  "lines": [
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 0
+ },
+ {
+  "name": "decode: utf-16 LE with inner BOM and NUL",
+  "decoded": "﻿var x = '\u0000';",
+  "lines": [
+   "﻿var x = '\u0000';"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "﻿var x = '\u0000';",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 3,
+  "error": "",
+  "decodedByteLen": 15
+ },
+ {
+  "name": "decode: utf-16 LE followed by utf-8 BOM bytes",
+  "decoded": "믯¿",
+  "lines": [
+   "믯¿"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "믯¿",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 5
+ },
+ {
+  "name": "decode: one byte 0xFF",
+  "decoded": "\ufffd",
+  "lines": [
+   "\ufffd"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "\ufffd",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 1
+ },
+ {
+  "name": "decode: two bytes of a utf-8 BOM",
+  "decoded": "\ufffd\ufffd",
+  "lines": [
+   "\ufffd\ufffd"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "\ufffd\ufffd",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 2
+ },
+ {
+  "name": "decode: only a utf-8 BOM",
+  "decoded": "",
+  "lines": [
+   ""
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "synthetic.ts",
+    "content": "",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "",
+  "decodedByteLen": 0
+ },
+ {
+  "name": "implicit: content before first filename",
+  "decoded": "\n//// var a;\n\n// @filename: b.ts\n\n//// var b;\n",
+  "lines": [
+   "",
+   "//// var a;",
+   "",
+   "// @filename: b.ts",
+   "",
+   "//// var b;",
+   ""
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/fs/test.ts",
+    "content": "\n//// var a;\n",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "\n//// var b;\n",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 46,
+  "error": "",
+  "decodedByteLen": 46
+ },
+ {
+  "name": "implicit: empty first file is skipped",
+  "decoded": "// @strict: true\n// @filename: b.ts\n//// var b;",
+  "lines": [
+   "// @strict: true",
+   "// @filename: b.ts",
+   "//// var b;"
+  ],
+  "settings": {
+   "filename": "b.ts",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "b.ts",
+    "content": "//// var b;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 47,
+  "error": "",
+  "decodedByteLen": 47
+ },
+ {
+  "name": "implicit: no directive",
+  "decoded": "\n\n//// var a;",
+  "lines": [
+   "",
+   "",
+   "//// var a;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "/fs/test.ts",
+    "content": "\n\n//// var a;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 13,
+  "error": "",
+  "decodedByteLen": 13
+ },
+ {
+  "name": "implicit: symlink binds to the implicit file",
+  "decoded": "// @symlink: /l.ts\n//// var a;",
+  "lines": [
+   "// @symlink: /l.ts",
+   "//// var a;"
+  ],
+  "settings": {
+   "symlink": "/l.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "/fs/test.ts",
+    "content": "//// var a;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {
+   "/l.ts": "/fs/test.ts"
+  },
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 30,
+  "error": "",
+  "decodedByteLen": 30
+ },
+ {
+  "name": "error: first of three units fails",
+  "decoded": "// @strict: true\n// @filename: a.ts\n1\n// @filename: b.ts\n2\n// @link: x -> y\n// @noEmit: true\n// @filename: c.ts\n3",
+  "lines": [
+   "// @strict: true",
+   "// @filename: a.ts",
+   "1",
+   "// @filename: b.ts",
+   "2",
+   "// @link: x -> y",
+   "// @noEmit: true",
+   "// @filename: c.ts",
+   "3"
+  ],
+  "settings": {
+   "filename": "c.ts",
+   "link": "x -> y",
+   "noemit": "true",
+   "strict": "true"
+  },
+  "panic": "",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "strict": "true"
+  },
+  "skipTrivia": 36,
+  "error": "cannot parse a.ts",
+  "decodedByteLen": 113
+ },
+ {
+  "name": "error: middle unit fails",
+  "decoded": "// @filename: a.ts\n1\n// @filename: b.ts\n2\n// @noEmit: true\n// @filename: c.ts\n3\n// @currentDirectory: /late",
+  "lines": [
+   "// @filename: a.ts",
+   "1",
+   "// @filename: b.ts",
+   "2",
+   "// @noEmit: true",
+   "// @filename: c.ts",
+   "3",
+   "// @currentDirectory: /late"
+  ],
+  "settings": {
+   "currentdirectory": "/late",
+   "filename": "c.ts",
+   "noemit": "true"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "1",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {
+   "noemit": "true"
+  },
+  "skipTrivia": 19,
+  "error": "cannot parse b.ts",
+  "decodedByteLen": 107
+ },
+ {
+  "name": "error: last unit fails",
+  "decoded": "// @filename: a.ts\n1\n// @filename: b.ts\n2\n// @filename: c.ts\n3",
+  "lines": [
+   "// @filename: a.ts",
+   "1",
+   "// @filename: b.ts",
+   "2",
+   "// @filename: c.ts",
+   "3"
+  ],
+  "settings": {
+   "filename": "c.ts"
+  },
+  "panic": "",
+  "units": [
+   {
+    "name": "a.ts",
+    "content": "1",
+    "fileOptions": {}
+   },
+   {
+    "name": "b.ts",
+    "content": "2",
+    "fileOptions": {}
+   },
+   {
+    "name": "FAILED:c.ts",
+    "content": "3",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "cannot parse c.ts",
+  "decodedByteLen": 62
+ },
+ {
+  "name": "error: single unit fails",
+  "decoded": "var x;",
+  "lines": [
+   "var x;"
+  ],
+  "settings": {},
+  "panic": "",
+  "units": [
+   {
+    "name": "FAILED:synthetic.ts",
+    "content": "var x;",
+    "fileOptions": {}
+   }
+  ],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 0,
+  "error": "cannot parse synthetic.ts",
+  "decodedByteLen": 6
+ },
+ {
+  "name": "error: implicit first file fails",
+  "decoded": "//// a\n// @filename: b.ts\n//// b",
+  "lines": [
+   "//// a",
+   "// @filename: b.ts",
+   "//// b"
+  ],
+  "settings": {
+   "filename": "b.ts"
+  },
+  "panic": "",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 32,
+  "error": "cannot parse /fs/t.ts",
+  "decodedByteLen": 32
+ },
+ {
+  "name": "error: failing unit is followed by a panic candidate",
+  "decoded": "// @filename: a.ts\n1\n// @filename:\nvar q;\n// @filename: c.ts\n3",
+  "lines": [
+   "// @filename: a.ts",
+   "1",
+   "// @filename:",
+   "var q;",
+   "// @filename: c.ts",
+   "3"
+  ],
+  "settings": {
+   "filename": "c.ts"
+  },
+  "panic": "",
+  "units": [],
+  "configUnit": null,
+  "symlinks": {},
+  "currentDirectory": "",
+  "globalOptions": {},
+  "skipTrivia": 19,
+  "error": "cannot parse a.ts",
+  "decodedByteLen": 62
+ }
+]

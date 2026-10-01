@@ -1,0 +1,12 @@
+Measured on the shared machine (16 cores, load average 160 to 250), bun 1.4.3 release and /workspace/bun/build/debug/bun-debug.
+input                                   files  source bytes  dump JSON bytes  without text  nodes    gzip -9
+200 cases (every 62nd), 200 bundles       269       111,212        1,024,279       907,099   20,367    269,883
+lib closure of lib.esnext.full.d.ts        93     2,983,921       12,344,486     9,295,275  152,616  2,484,228
+lib closure of lib.d.ts                    18     2,674,214       11,244,936     8,513,625  136,656
+lib closure of lib.es5.d.ts                 3       233,387          949,318       710,724   13,798
+all 16,211 units, one bundle per unit   16211     7,284,511       72,947,334 (ts family 68,293,843 + js 4,653,491)
+time, release bun:  200 cases 0.9 s total (load TypeScript 0.26 s); lib closure esnext.full 1.5 s
+time, debug bun:    200 cases 39.2 s total (load TypeScript 26.5 s, parse 6.1 s, dump 5.9 s);
+                    lib closure esnext.full 83.2 s (load 26.5 s, parse 18.1 s, dump 34.2 s, stringify 3.4 s);
+                    lib closure lib.d.ts 73.4 s
+typescript-go's own parse and dump of all 16,211 units: 12.5 s.

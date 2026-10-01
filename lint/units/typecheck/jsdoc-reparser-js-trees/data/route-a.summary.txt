@@ -1,0 +1,49 @@
+== JavaScript units (.js .jsx .mjs .cjs): 1276 units; with JSDoc nodes in typescript-go's tree 570; with reparsed nodes 505
+  L0 (byte for byte): identical 1146; among units with JSDoc 442/570; among units with reparsed nodes 395/505; among units without JSDoc 704/706
+  L1 (ranges and text of JSDocText and link nodes and ranges of comment lists masked): identical 1233; among units with JSDoc 529/570; among units with reparsed nodes 468/505; among units without JSDoc 704/706
+  L2 (L1 and JSDocText nodes and lengths of comment lists left out): identical 1237; among units with JSDoc 533/570; among units with reparsed nodes 469/505; among units without JSDoc 704/706
+  units that differ at L2: 39
+     16 kind go<KindTypeReference> ts<KindJSDocFunctionType> [JSDocFunctionType]: c00045u0_file.js c03090u0_0.js c03097u0_0.js c03098u0_0.js c03165u0_file.js c03181u0_bug38550.js ...
+      3 parse errors: pos KindJSTypeAliasDeclaration [JSDocFunctionType]: c03395u0_mod1.js c03395u2_mod3.js c03395u3_mod4.js
+      2 kind go<KindTypeReference> ts<KindJSDocFunctionType> [JSDocFunctionType,JSDocUnknownType]: c03089u0_0.js c03182u0_index.js
+      2 shape go<.Tags:> ts<.Tags:> [JSDocEnumTag,JSDocFunctionType]: c03125u0_index.js c03199u0_a.js
+      2 shape go<.Tags:> ts<.Tags:>: c03261u1_a.js c09618u0_jsFileAlternativeUseOfOverloadTag.js
+      2 parse errors: flags KindCommaToken xor=0x10000: c03432u1_file.jsx c09672u0_a.jsx
+      1 flags KindJSDocTypeExpression xor=0x8000: c03079u0_a.js
+      1 kind go<KindTypeReference> ts<KindJSDocNamepathType> [JSDocNamepathType]: c03166u0_index.js
+      1 shape go<.TagName: KindIdentifier> ts<.Comment:> [JSDocEnumTag]: c03207u0_exportedAliasedEnumTag.js
+      1 kind go<KindTypeReference> ts<KindJSDocFunctionType> [JSDocClassTag,JSDocFunctionType]: c03256u0_functions.js
+      1 pos KindJSDocTypeExpression: c03290u0_a.js
+      1 label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken> [JSDocFunctionType]: c03296u0_a.js
+      1 kind go<KindJSDocNonNullableType> ts<KindArrayType>: c03298u0_prefixPostfix.js
+      1 parse errors: pos KindJSTypeAliasDeclaration [JSDocNamepathType]: c03342u0_bug26693.js
+      1 flags KindIdentifier xor=0x8000: c03356u1_bad.js
+      1 shape go<.Statements:> ts<.Statements:>: c03365u0_templateInsideCallback.js
+      1 pos KindJSTypeAliasDeclaration: c03386u0_typedefDuplicateTypeDeclaration.js
+      1 parse errors: pos KindIdentifier: c03387u0_bug25104.js
+== TypeScript-family units (.ts .tsx .mts .cts): 14935 units; with JSDoc nodes in typescript-go's tree 167; with reparsed nodes 95
+  L0 (byte for byte): identical 14851; among units with JSDoc 105/167; among units with reparsed nodes 95/95; among units without JSDoc 14746/14768
+  L1 (ranges and text of JSDocText and link nodes and ranges of comment lists masked): identical 14905; among units with JSDoc 159/167; among units with reparsed nodes 95/95; among units without JSDoc 14746/14768
+  L2 (L1 and JSDocText nodes and lengths of comment lists left out): identical 14908; among units with JSDoc 162/167; among units with reparsed nodes 95/95; among units without JSDoc 14746/14768
+  units that differ at L2 (with JSDoc): 5
+      3 label go<.TagName: KindIdentifier> ts<.NameExpression: KindJSDocNameReference>: c03361u0_seeTag2.ts c07290u0_controlFlowPropertyDeclarations.ts c09752u0_jsxComplexSignatureHasApplicabilityError.tsx
+      1 flags KindIdentifier xor=0x8000: c06883u0_commentsCommentParsing.ts
+      1 shape go<.Comment:> ts<.TagName: KindIdentifier> [JSDocEnumTag,JSDocFunctionType]: c09719u0_jsdocInTypeScript.ts
+== run instances of the conformance enumerator (12,797 run instances, ../../conformance/enumerator/vectors/instances.tsv.gz)
+  with a JavaScript unit (.js .jsx .mjs .cjs): 990
+  with a JavaScript unit that has JSDoc nodes: 489
+  with a JavaScript unit that has reparsed nodes: 432
+  with a JavaScript unit whose route A tree differs from typescript-go's at L2: 37
+== test cases (12,445 with a unit): with a JavaScript unit 952; with JSDoc 500; with reparsed nodes 443; route A differs at L2 37
+== other measurements
+  JSDoc attached to the same hosts (host kind, host range, JSDoc range): JavaScript 570/570 units, 1,588 attachments; TypeScript 167/167 units, 844 attachments
+  port of checkJSSyntax as a pass over the finished tree: 1,276/1,276 JavaScript units give typescript-go's list (173 diagnostics in 65 units, order and related information included)
+  parse diagnostics of JavaScript units: identical lists 1,266; 1,271 after merging the TS1003 of the reparse pass
+  JSDoc diagnostics of JavaScript units (TypeScript's jsDocDiagnostics against typescript-go's): identical 1,239/1,276 (56 units have any)
+  external module indicator after the reparse pass: 1,276/1,276 (one unit has a reparsed overload signature as indicator: c03344u0_overloadTag1.js)
+  file imports: the module specifiers of reparsed @import declarations are in the list (24 units have a JSImportDeclaration)
+== closure of jsdoc.go (54 functions, 1,264 function lines) and reparser.go (21 functions, 700 function lines) in parser.go (431 functions, 6,277 function lines)
+  full closure: 402 functions, 5,693 lines (plus 6 functions, 41 lines of utilities.go); not reached: the source file driver, JSON, pragmas, the top level await reparse
+  direct callees: 41 functions, 338 lines
+  closure when 7 grammar entry points are given (parseJSDocType, parseExpression, parseModifiersEx, tryParseImportClause, parseModuleSpecifier, tryParseImportAttributes, parseTypeArguments): 55 functions, 453 lines
+  closure with only the expression grammar cut (10 cut points): 218 functions, 2,649 lines

@@ -1,0 +1,91 @@
+file /token-flags.ts scriptKind=3 variant=0 dts=false textLen=250
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=75 identifiers=13 text=30 reparsedClones=0
+root KindSourceFile [0,250) f=0x0
+  .Statements: list [0,249) n=8
+    - KindVariableStatement [0,19) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,18) f=0x2
+        .Declarations: list [5,18) n=1
+          - KindVariableDeclaration [5,18) f=0x0
+            .Initializer: KindStringLiteral [9,18) f=0x0 Text="single" TokenFlags=0x10000
+            .name: KindIdentifier [5,7) f=0x0 Text="a"
+    - KindVariableStatement [19,39) f=0x0
+      .DeclarationList: KindVariableDeclarationList [19,38) f=0x2
+        .Declarations: list [25,38) n=1
+          - KindVariableDeclaration [25,38) f=0x0
+            .Initializer: KindStringLiteral [29,38) f=0x0 Text="double" TokenFlags=0x0
+            .name: KindIdentifier [25,27) f=0x0 Text="b"
+    - KindVariableStatement [39,72) f=0x0
+      .DeclarationList: KindVariableDeclarationList [39,71) f=0x2
+        .Declarations: list [45,71) n=1
+          - KindVariableDeclaration [45,71) f=0x0
+            .Initializer: KindStringLiteral [49,71) f=0x0 Text="escABC" TokenFlags=0x11408
+            .name: KindIdentifier [45,47) f=0x0 Text="c"
+    - KindVariableStatement [72,128) f=0x0
+      .DeclarationList: KindVariableDeclarationList [72,127) f=0x2
+        .Declarations: list [78,127) n=1
+          - KindVariableDeclaration [78,127) f=0x0
+            .Initializer: KindBinaryExpression [82,127) f=0x0
+              .Left: KindBinaryExpression [82,119) f=0x0
+                .Left: KindBinaryExpression [82,113) f=0x0
+                  .Left: KindBinaryExpression [82,105) f=0x0
+                    .Left: KindBinaryExpression [82,99) f=0x0
+                      .Left: KindBinaryExpression [82,93) f=0x0
+                        .Left: KindNumericLiteral [82,86) f=0x0 Text="1000" TokenFlags=0x10
+                        .OperatorToken: KindPlusToken [86,88) f=0x0
+                        .Right: KindNumericLiteral [88,93) f=0x0 Text="16" TokenFlags=0x40
+                      .OperatorToken: KindPlusToken [93,95) f=0x0
+                      .Right: KindNumericLiteral [95,99) f=0x0 Text="1" TokenFlags=0x80
+                    .OperatorToken: KindPlusToken [99,101) f=0x0
+                    .Right: KindNumericLiteral [101,105) f=0x0 Text="7" TokenFlags=0x100
+                  .OperatorToken: KindPlusToken [105,107) f=0x0
+                  .Right: KindNumericLiteral [107,113) f=0x0 Text="1000" TokenFlags=0x200
+                .OperatorToken: KindPlusToken [113,115) f=0x0
+                .Right: KindBigIntLiteral [115,119) f=0x0 Text="10n" TokenFlags=0x0
+              .OperatorToken: KindPlusToken [119,121) f=0x0
+              .Right: KindBigIntLiteral [121,127) f=0x0 Text="0xffn" TokenFlags=0x40
+            .name: KindIdentifier [78,80) f=0x0 Text="d"
+    - KindVariableStatement [128,147) f=0x0
+      .DeclarationList: KindVariableDeclarationList [128,146) f=0x2
+        .Declarations: list [134,146) n=1
+          - KindVariableDeclaration [134,146) f=0x0
+            .Initializer: KindNoSubstitutionTemplateLiteral [138,146) f=0x0 RawText="" TemplateFlags=0x0 Text="plain" TokenFlags=0x0
+            .name: KindIdentifier [134,136) f=0x0 Text="e"
+    - KindVariableStatement [147,190) f=0x0
+      .DeclarationList: KindVariableDeclarationList [147,189) f=0x2
+        .Declarations: list [153,189) n=1
+          - KindVariableDeclaration [153,189) f=0x0
+            .Initializer: KindTemplateExpression [157,189) f=0x0
+              .Head: KindTemplateHead [157,165) f=0x0 RawText="head" TemplateFlags=0x0 Text="head" TokenFlags=0x0
+              .TemplateSpans: list [165,189) n=2
+                - KindTemplateSpan [165,176) f=0x0
+                  .Expression: KindIdentifier [165,166) f=0x0 Text="a"
+                  .Literal: KindTemplateMiddle [166,176) f=0x0 RawText="mid\\x41" TemplateFlags=0x1000 Text="midA" TokenFlags=0x0
+                - KindTemplateSpan [176,189) f=0x0
+                  .Expression: KindIdentifier [176,177) f=0x0 Text="b"
+                  .Literal: KindTemplateTail [177,189) f=0x0 RawText="tail\\u0042" TemplateFlags=0x400 Text="tailB" TokenFlags=0x0
+            .name: KindIdentifier [153,155) f=0x0 Text="f"
+    - KindVariableStatement [190,207) f=0x0
+      .DeclarationList: KindVariableDeclarationList [190,206) f=0x2
+        .Declarations: list [196,206) n=1
+          - KindVariableDeclaration [196,206) f=0x0
+            .Initializer: KindRegularExpressionLiteral [200,206) f=0x0 Text="/re/g" TokenFlags=0x0
+            .name: KindIdentifier [196,198) f=0x0 Text="g"
+    - KindVariableStatement [207,249) f=0x0
+      .DeclarationList: KindVariableDeclarationList [207,248) f=0x2
+        .Declarations: list [213,248) n=1
+          - KindVariableDeclaration [213,248) f=0x0
+            .Initializer: KindTaggedTemplateExpression [217,248) f=0x0
+              .Tag: KindPropertyAccessExpression [217,228) f=0x0
+                .Expression: KindIdentifier [217,224) f=0x0 Text="String"
+                .name: KindIdentifier [225,228) f=0x0 Text="raw"
+              .Template: KindTemplateExpression [228,248) f=0x0
+                .Head: KindTemplateHead [228,239) f=0x0 RawText="\\uworld " TemplateFlags=0xc00 Text="\\uworld " TokenFlags=0x0
+                .TemplateSpans: list [239,248) n=1
+                  - KindTemplateSpan [239,248) f=0x0
+                    .Expression: KindIdentifier [239,240) f=0x0 Text="a"
+                    .Literal: KindTemplateTail [240,248) f=0x0 RawText=" \\xtra" TemplateFlags=0x800 Text=" \\xtra" TokenFlags=0x0
+            .name: KindIdentifier [213,215) f=0x0 Text="h"
+  .EndOfFileToken: KindEndOfFile [249,250) f=0x0

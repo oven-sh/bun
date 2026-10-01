@@ -1,0 +1,38 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /min.ts
+SINCE type=85 signature=4
+DRIVE check
+CHECK /min.ts diagnostics=1
+STATE
+COUNTS TypeCount=87 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=119
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=1
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=87 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=87
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x400 objectFlags=0x0 data=Literal value=s"s" fresh=T87 regular=T86
+TYPE 87 flags=0x400 objectFlags=0x0 data=Literal value=s"s" fresh=T87 regular=T86
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72 resolvedMembers={"\xFEindex":"\xFEindex"@IndexSignature@/lib.es5.d.ts:21413:21454/0x20000 "charAt":"charAt"@MethodSignature@/lib.es5.d.ts:15617:15791/0x2000 "charCodeAt":"charCodeAt"@MethodSignature@/lib.es5.d.ts:15791:16035/0x2000 "concat":"concat"@MethodSignature@/lib.es5.d.ts:16035:16250/0x2000 "indexOf":"indexOf"@MethodSignature@/lib.es5.d.ts:16250:16639/0x2000 "lastIndexOf":"lastIndexOf"@MethodSignature@/lib.es5.d.ts:16639:16996/0x2000 "length":"length"@PropertySignature@/lib.es5.d.ts:20779:20862/0x4 "localeCompare":"localeCompare"@MethodSignature@/lib.es5.d.ts:16996:17190/0x2000 "match":"match"@MethodSignature@/lib.es5.d.ts:17190:17493/0x2000 "replace":"replace"@MethodSignature@/lib.es5.d.ts:17493:18052/0x2000 "search":"search"@MethodSignature@/lib.es5.d.ts:18382:18595/0x2000 "slice":"slice"@MethodSignature@/lib.es5.d.ts:18595:19055/0x2000 "split":"split"@MethodSignature@/lib.es5.d.ts:19055:19512/0x2000 "substr":"substr"@MethodSignature@/lib.es5.d.ts:20862:21322/0x2000 "substring":"substring"@MethodSignature@/lib.es5.d.ts:19512:20039/0x2000 "toLocaleLowerCase":"toLocaleLowerCase"@MethodSignature@/lib.es5.d.ts:20146:20329/0x2000 "toLocaleUpperCase":"toLocaleUpperCase"@MethodSignature@/lib.es5.d.ts:20436:20653/0x2000 "toLowerCase":"toLowerCase"@MethodSignature@/lib.es5.d.ts:20039:20146/0x2000 "toString":"toString"@MethodSignature@/lib.es5.d.ts:15535:15617/0x2000 "toUpperCase":"toUpperCase"@MethodSignature@/lib.es5.d.ts:20329:20436/0x2000 "trim":"trim"@MethodSignature@/lib.es5.d.ts:20653:20779/0x2000 "valueOf":"valueOf"@MethodSignature@/lib.es5.d.ts:21322:21413/0x2000}
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "x"@VariableDeclaration@/min.ts:5:21/0x2 type=T15
+GLOBALS count=119 transient=2
+DIAG /min.ts(6,7) TS2322 category=1 "Type 'string' is not assignable to type 'number'."
+SYMBOLS named=0 unnamed=6

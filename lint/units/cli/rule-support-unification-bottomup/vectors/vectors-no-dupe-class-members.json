@@ -1,0 +1,2284 @@
+[
+	{
+		"code": "class A { foo() {} bar() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static foo() {} foo() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { get foo() {} set foo(value) {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static foo() {} get foo() {} set foo(value) {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo() { } } class B { foo() { } }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [foo]() {} foo() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 'foo'() {} 'bar'() {} baz() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { *'foo'() {} *'bar'() {} *baz() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { get 'foo'() {} get 'bar'() {} get baz() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 1() {} 2() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['foo']() {} ['bar']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [`foo`]() {} [`bar`]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [12]() {} [123]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [1.0]() {} ['1.0']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [0x1]() {} [`0x1`]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [null]() {} ['']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { get ['foo']() {} set ['foo'](value) {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['foo']() {} static ['foo']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['constructor']() {} constructor() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 'constructor'() {} [`constructor`]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { constructor() {} get [`constructor`]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 'constructor'() {} set ['constructor'](value) {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['foo' + '']() {} ['foo']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [`foo${''}`]() {} [`foo`]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [-1]() {} ['-1']() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [foo]() {} [foo]() {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo; static foo; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo; #foo; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { '#foo'; #foo; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo() {} foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "!class A { foo() {} foo() {} };",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 'foo'() {} 'foo'() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { 10() {} 1e1() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name '10'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 3,
+				"message": "Duplicate name '10'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['foo']() {} ['foo']() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static ['foo']() {} static foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 38,
+				"start": 37,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { set 'foo'(value) {} set ['foo'](val) {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ''() {} ['']() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name ''."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 2,
+				"message": "Duplicate name ''."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [`foo`]() {} [`foo`]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static get [`foo`]() {} static get ['foo']() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 47,
+				"endLine": 1,
+				"endColumn": 52,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 47,
+				"start": 46,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo() {} [`foo`]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { get [`foo`]() {} 'foo'() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 28,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 28,
+				"start": 27,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static 'foo'() {} static [`foo`]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 37,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 37,
+				"start": 36,
+				"length": 5,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { ['constructor']() {} ['constructor']() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 33,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 33,
+				"start": 32,
+				"length": 13,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static [`constructor`]() {} static constructor() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 46,
+				"endLine": 1,
+				"endColumn": 57,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 46,
+				"start": 45,
+				"length": 11,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static constructor() {} static 'constructor'() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 42,
+				"endLine": 1,
+				"endColumn": 55,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 42,
+				"start": 41,
+				"length": 13,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [123]() {} [123]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 3,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [0x10]() {} 16() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate name '16'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 2,
+				"message": "Duplicate name '16'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [100]() {} [1e2]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name '100'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 3,
+				"message": "Duplicate name '100'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [123.00]() {} [`123`]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"start": 25,
+				"length": 5,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static '65'() {} static [0o101]() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 41,
+				"message": "Duplicate name '65'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 5,
+				"message": "Duplicate name '65'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [123n]() {} 123() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 3,
+				"message": "Duplicate name '123'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { [null]() {} 'null'() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 29,
+				"message": "Duplicate name 'null'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 6,
+				"message": "Duplicate name 'null'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo() {} foo() {} foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'foo'."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			},
+			{
+				"line": 1,
+				"column": 29,
+				"start": 28,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { static foo() {} static foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"start": 33,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo() {} get foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"start": 23,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { set foo(value) {} foo() {} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"start": 28,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { foo; foo; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 3,
+				"message": "Duplicate name 'foo'."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "class A { a(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { static a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 31,
+				"endLine": 1,
+				"endColumn": 32,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 31,
+				"start": 30,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} set a(v){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { get a(){} get a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){} get a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a; a; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 14,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 14,
+				"start": 13,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a = 1; a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){} a = 1 }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static a; a; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { 'a'(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { 1(){} '1'(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 3,
+				"message": "Duplicate name '1'."
+			}
+		]
+	},
+	{
+		"code": "class A { [a](){} [a](){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { ['a'](){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { [`a`](){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static constructor(){} static constructor(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 41,
+				"endLine": 1,
+				"endColumn": 52,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 41,
+				"start": 40,
+				"length": 11,
+				"message": "Duplicate name 'constructor'."
+			}
+		]
+	},
+	{
+		"code": "class A { constructor(){} static constructor(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { ['constructor'](){} ['constructor'](){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 45,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 32,
+				"start": 31,
+				"length": 13,
+				"message": "Duplicate name 'constructor'."
+			}
+		]
+	},
+	{
+		"code": "class A { constructor(){} ['constructor'](){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { #a(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { get #a(){} set #a(v){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { static {} static {} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "(class { a(){} a(){} })",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 16,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"start": 15,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){ class B { a(){} } } a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { async a(){} *a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"start": 23,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static async *a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 38,
+				"endLine": 1,
+				"endColumn": 39,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 38,
+				"start": 37,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} set a(v){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 32,
+				"start": 31,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){} set a(v){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} set a(v){} get a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static get a(){} set a(v){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { 0x1(){} 1(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "Duplicate name '1'."
+			}
+		]
+	},
+	{
+		"code": "class A { 1n(){} 1(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "Duplicate name '1'."
+			}
+		]
+	},
+	{
+		"code": "class A { ['a'] = 1; a = 2 }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static a = 1; static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 32,
+				"start": 31,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){} a(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 18,
+				"message": "Duplicate name 'a'."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 16,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			},
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { é(){} 'é'(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 17,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate name 'é'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 17,
+				"start": 17,
+				"length": 4,
+				"message": "Duplicate name 'é'."
+			}
+		]
+	},
+	{
+		"code": "class A { __proto__(){} __proto__(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 25,
+				"endLine": 1,
+				"endColumn": 34,
+				"message": "Duplicate name '__proto__'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"start": 24,
+				"length": 9,
+				"message": "Duplicate name '__proto__'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} static get a(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { constructor(){} constructor2(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { 'constructor'(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { a(){} b(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { static a(){} static b(){} a(){} b(){} }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { set a(v){} set a(v){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 26,
+				"endLine": 1,
+				"endColumn": 27,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"start": 25,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { set a(v){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a; get a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} a; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a; set a(v){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 18,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 18,
+				"start": 17,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { static a; static get a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 32,
+				"endLine": 1,
+				"endColumn": 33,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 32,
+				"start": 31,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { [a]; [a]; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { [1] = 1; 1 = 2; '1'; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Duplicate name '1'."
+			},
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 19,
+				"length": 1,
+				"message": "Duplicate name '1'."
+			},
+			{
+				"line": 1,
+				"column": 27,
+				"start": 26,
+				"length": 3,
+				"message": "Duplicate name '1'."
+			}
+		]
+	},
+	{
+		"code": "class A { a = () => { class B { a; a; } }; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A extends B { a(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"start": 26,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "x = class A { static a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 35,
+				"endLine": 1,
+				"endColumn": 36,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 35,
+				"start": 34,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { \"\\u0061\"(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 24,
+				"endLine": 1,
+				"endColumn": 25,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 24,
+				"start": 23,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { \\u0061(){} a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { [null](){} null(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'null'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 4,
+				"message": "Duplicate name 'null'."
+			}
+		]
+	},
+	{
+		"code": "class A { [/a/ig](){} '/a/gi'(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 23,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name '/a/gi'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 23,
+				"start": 22,
+				"length": 7,
+				"message": "Duplicate name '/a/gi'."
+			}
+		]
+	},
+	{
+		"code": "class A { 0x10n(){} 16(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 23,
+				"message": "Duplicate name '16'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 2,
+				"message": "Duplicate name '16'."
+			}
+		]
+	},
+	{
+		"code": "class A { a(){}\n  /* c */ a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 11,
+				"endLine": 2,
+				"endColumn": 12,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 11,
+				"start": 26,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { \"😀\"(){} \"😀\"(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 20,
+				"endLine": 1,
+				"endColumn": 24,
+				"message": "Duplicate name '😀'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 20,
+				"start": 21,
+				"length": 6,
+				"message": "Duplicate name '😀'."
+			}
+		]
+	},
+	{
+		"code": "class A { static 'a'(){} static ['a'](){} static a = 1 }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 34,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Duplicate name 'a'."
+			},
+			{
+				"line": 1,
+				"column": 50,
+				"endLine": 1,
+				"endColumn": 51,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 34,
+				"start": 33,
+				"length": 3,
+				"message": "Duplicate name 'a'."
+			},
+			{
+				"line": 1,
+				"column": 50,
+				"start": 49,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { get a(){} set a(v){} static a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 52,
+				"endLine": 1,
+				"endColumn": 53,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 52,
+				"start": 51,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { constructor(){} get constructor2(){} static ['constructor'](){} static constructor(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 82,
+				"endLine": 1,
+				"endColumn": 93,
+				"message": "Duplicate name 'constructor'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 82,
+				"start": 81,
+				"length": 11,
+				"message": "Duplicate name 'constructor'."
+			}
+		]
+	},
+	{
+		"code": "class A { static static(){} static static(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 36,
+				"endLine": 1,
+				"endColumn": 42,
+				"message": "Duplicate name 'static'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 36,
+				"start": 35,
+				"length": 6,
+				"message": "Duplicate name 'static'."
+			}
+		]
+	},
+	{
+		"code": "class A { get get(){} get get(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 27,
+				"endLine": 1,
+				"endColumn": 30,
+				"message": "Duplicate name 'get'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"start": 26,
+				"length": 3,
+				"message": "Duplicate name 'get'."
+			}
+		]
+	},
+	{
+		"code": "class A { async(){} async(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 26,
+				"message": "Duplicate name 'async'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 5,
+				"message": "Duplicate name 'async'."
+			}
+		]
+	},
+	{
+		"code": "class A { static(){} static(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 22,
+				"endLine": 1,
+				"endColumn": 28,
+				"message": "Duplicate name 'static'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"start": 21,
+				"length": 6,
+				"message": "Duplicate name 'static'."
+			}
+		]
+	},
+	{
+		"code": "class A { 1.0(){} 1(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 19,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Duplicate name '1'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 19,
+				"start": 18,
+				"length": 1,
+				"message": "Duplicate name '1'."
+			}
+		]
+	},
+	{
+		"code": "class A { a\n a }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 2,
+				"column": 2,
+				"endLine": 2,
+				"endColumn": 3,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 2,
+				"column": 2,
+				"start": 13,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { #a; a; static a; }",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "class A { static #a(){} static a(){} static a(){} }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 45,
+				"endLine": 1,
+				"endColumn": 46,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 45,
+				"start": 44,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "export default class { a(){} a(){} }",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 30,
+				"endLine": 1,
+				"endColumn": 31,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 30,
+				"start": 29,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "export class A { a; a }",
+		"sourceType": "module",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	},
+	{
+		"code": "class A { a = <b/>; a = <c/>; }",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 21,
+				"endLine": 1,
+				"endColumn": 22,
+				"message": "Duplicate name 'a'."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 21,
+				"start": 20,
+				"length": 1,
+				"message": "Duplicate name 'a'."
+			}
+		]
+	}
+]

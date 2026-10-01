@@ -1,0 +1,27 @@
+== vector sets of the earlier research
+no-unsafe-negation: 102 cases: same 102
+no-compare-neg-zero: 86 cases: same 85, moved 1
+use-isnan: 316 cases: same 307, moved 2, missing 6, both-reject 1
+valid-typeof: 202 cases: same 195, missing 6, both-reject 1
+no-duplicate-case: 273 cases: same 253, moved 17, missing 1, eslint-rejects 1, both-reject 1
+no-self-assign: 430 cases: same 426, missing 1, eslint-rejects 2, both-reject 1
+== ESLint's own tests, default options
+no-debugger: 2 cases: same 2
+no-dupe-keys: 50 cases: same 50
+no-dupe-class-members: 57 cases: same 57
+no-duplicate-case: 29 cases: same 29
+no-empty-pattern: 20 cases: same 20
+no-compare-neg-zero: 50 cases: same 50
+use-isnan: 135 cases: same 135
+valid-typeof: 41 cases: same 41
+no-unsafe-negation: 19 cases: same 19
+no-sparse-arrays: 6 cases: same 6
+no-self-assign: 74 cases: same 74
+== cases written for this research
+no-debugger: 34 cases: same 34
+no-dupe-class-members: 75 cases: same 75
+no-dupe-keys: 113 cases: same 108, missing 1, eslint-rejects 4
+no-duplicate-case: 71 cases: same 66, missing 1, bun-rejects 1, both-reject 3
+no-empty-pattern: 90 cases: same 90
+no-self-assign: 129 cases: same 123, missing 3, both-reject 3
+no-sparse-arrays: 71 cases: same 70, both-reject 1

@@ -1,0 +1,74 @@
+"var a = a"  =>  (none)
+"a = b"  =>  (none)
+"a += a"  =>  (none)
+"a = +a"  =>  (none)
+"a = [a]"  =>  (none)
+"a &= a"  =>  (none)
+"a |= a"  =>  (none)
+"let a = a"  =>  (none)
+"const a = a"  =>  (none)
+"[a] = a"  =>  (none)
+"[a = 1] = [a]"  =>  (none)
+"[a, b] = [b, a]"  =>  (none)
+"[a,, b] = [, b, a]"  =>  (none)
+"[x, a] = [...x, a]"  =>  (none)
+"[...a] = [...a, 1]"  =>  (none)
+"[a, ...b] = [0, ...b, 1]"  =>  (none)
+"[a, b] = {a, b}"  =>  (none)
+"({a} = a)"  =>  (none)
+"({a = 1} = {a})"  =>  (none)
+"({a: b} = {a})"  =>  (none)
+"({a} = {a: b})"  =>  (none)
+"({a} = {a() {}})"  =>  (none)
+"({a} = {[a]: a})"  =>  (none)
+"({[a]: b} = {[a]: b})"  =>  (none)
+"({'foo': a, 1: a} = {'bar': a, 2: a})"  =>  (none)
+"({a, ...b} = {a, ...b})"  =>  (none)
+"a.b = a.c"  =>  (none)
+"a.b = c.b"  =>  (none)
+"a.b = a[b]"  =>  (none)
+"a[b] = a.b"  =>  (none)
+"a.b().c = a.b().c"  =>  (none)
+"b().c = b().c"  =>  (none)
+"a.null = a[/(?<zero>0)/]"  =>  (none)
+"a[b + 1] = a[b + 1]"  =>  (none)
+"this.x = this.y"  =>  (none)
+"class C { #field; foo() { this['#field'] = this.#field; } }"  =>  (none)
+"class C { #field; foo() { this.#field = this['#field']; } }"  =>  (none)
+"a = a"  =>  1:5-1:6 no-self-assign "'a' is assigned to itself."
+"[a] = [a]"  =>  1:8-1:9 no-self-assign "'a' is assigned to itself."
+"[a, b] = [a, b]"  =>  1:11-1:12 no-self-assign "'a' is assigned to itself."  |  1:14-1:15 no-self-assign "'b' is assigned to itself."
+"[a, b] = [a, c]"  =>  1:11-1:12 no-self-assign "'a' is assigned to itself."
+"[a, b] = [, b]"  =>  1:13-1:14 no-self-assign "'b' is assigned to itself."
+"[a, ...b] = [a, ...b]"  =>  1:14-1:15 no-self-assign "'a' is assigned to itself."  |  1:20-1:21 no-self-assign "'b' is assigned to itself."
+"[[a], {b}] = [[a], {b}]"  =>  1:16-1:17 no-self-assign "'a' is assigned to itself."  |  1:21-1:22 no-self-assign "'b' is assigned to itself."
+"({a} = {a})"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."
+"({a: b} = {a: b})"  =>  1:15-1:16 no-self-assign "'b' is assigned to itself."
+"({'a': b} = {'a': b})"  =>  1:19-1:20 no-self-assign "'b' is assigned to itself."
+"({a: b} = {'a': b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({'a': b} = {a: b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({1: b} = {1: b})"  =>  1:15-1:16 no-self-assign "'b' is assigned to itself."
+"({1: b} = {'1': b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({'1': b} = {1: b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({['a']: b} = {a: b})"  =>  1:19-1:20 no-self-assign "'b' is assigned to itself."
+"({'a': b} = {[`a`]: b})"  =>  1:21-1:22 no-self-assign "'b' is assigned to itself."
+"({1: b} = {[1]: b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({a, b} = {a, b})"  =>  1:12-1:13 no-self-assign "'a' is assigned to itself."  |  1:15-1:16 no-self-assign "'b' is assigned to itself."
+"({a, b} = {b, a})"  =>  1:12-1:13 no-self-assign "'b' is assigned to itself."  |  1:15-1:16 no-self-assign "'a' is assigned to itself."
+"({a, b} = {c, a})"  =>  1:15-1:16 no-self-assign "'a' is assigned to itself."
+"({a: {b}, c: [d]} = {a: {b}, c: [d]})"  =>  1:26-1:27 no-self-assign "'b' is assigned to itself."  |  1:34-1:35 no-self-assign "'d' is assigned to itself."
+"({a, b} = {a, ...x, b})"  =>  1:21-1:22 no-self-assign "'b' is assigned to itself."
+"a.b = a.b"  =>  1:7-1:10 no-self-assign "'a.b' is assigned to itself."
+"a.b.c = a.b.c"  =>  1:9-1:14 no-self-assign "'a.b.c' is assigned to itself."
+"a[b] = a[b]"  =>  1:8-1:12 no-self-assign "'a[b]' is assigned to itself."
+"a['b'] = a['b']"  =>  1:10-1:16 no-self-assign "'a['b']' is assigned to itself."
+"a[\n    'b'\n] = a[\n    'b'\n]"  =>  3:5-5:2 no-self-assign "'a['b']' is assigned to itself."
+"this.x = this.x"  =>  1:10-1:16 no-self-assign "'this.x' is assigned to itself."
+"a['/(?<zero>0)/'] = a[/(?<zero>0)/]"  =>  1:21-1:36 no-self-assign "'a[/(?<zero>0)/]' is assigned to itself."
+"(a?.b).c = (a?.b).c"  =>  1:12-1:20 no-self-assign "'(a?.b).c' is assigned to itself."
+"a.b = a?.b"  =>  1:7-1:11 no-self-assign "'a?.b' is assigned to itself."
+"class C { #field; foo() { this.#field = this.#field; } }"  =>  1:41-1:52 no-self-assign "'this.#field' is assigned to itself."
+"class C { #field; foo() { [this.#field] = [this.#field]; } }"  =>  1:44-1:55 no-self-assign "'this.#field' is assigned to itself."
+"a &&= a"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."
+"a ||= a"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."
+"a ??= a"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."

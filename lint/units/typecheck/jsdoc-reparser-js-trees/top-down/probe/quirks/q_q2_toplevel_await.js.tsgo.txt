@@ -1,0 +1,26 @@
+file /q_q2_toplevel_await.js scriptKind=1 variant=1 dts=false textLen=48
+externalModuleIndicator KindExportDeclaration[36,47)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=17 identifiers=4 text=5 reparsedClones=2
+root KindSourceFile [0,48) f=0x10000
+  .Statements: list [0,47) n=3
+    - KindJSTypeAliasDeclaration [4,24) f=0x210008
+      .Type: KindNumberKeyword [14,20) f=0x410008
+      .name: KindIdentifier [22,24) f=0x410008 Text="T2"
+      .jsdoc: KindJSDoc [0,27) f=0x410000 parent=KindExpressionStatement[0,36)
+        .Comment: list [0,4) n=0
+        .Tags: list [4,24) n=1
+          - KindJSDocTypedefTag [4,24) f=0x410000
+            .TagName: KindIdentifier [5,12) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [13,21) f=0x410000
+              .Type: KindNumberKeyword [14,20) f=0x410000
+            .name: KindIdentifier [22,24) f=0x410000 Text="T2"
+    - KindExpressionStatement [0,36) f=0x210000
+      .Expression: KindAwaitExpression [0,35) f=0x10000
+        .Expression: KindIdentifier [33,35) f=0x10000 Text="x"
+      .jsdoc: KindJSDoc [0,27) f=0x410000 SHARED
+    - KindExportDeclaration [36,47) f=0x10000
+      .ExportClause: KindNamedExports [43,46) f=0x12000
+        .Elements: list [45,45) n=0
+  .EndOfFileToken: KindEndOfFile [47,48) f=0x10000

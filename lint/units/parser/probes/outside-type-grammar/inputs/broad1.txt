@@ -1,0 +1,166 @@
+export default interface I {}
+export default interface {}
+export default\ninterface I {}
+export default interface\nI {}
+export default abstract class C {}
+export default abstract\nclass C {}
+export default enum E {}
+export default type T = 1;
+export default namespace N {}
+export default declare class C {}
+export default declare function f(): void;
+export default function f(): void;
+export default function (): void;
+export default async function f(): Promise<void>;
+export default class C<T> {}
+export default class<T> {}
+export default function<T>() {}
+export default <T>(x: T) => x;
+export default async <T>(x: T) => x;
+export default x as any;
+export default x!;
+export default <any>x;
+export default x satisfies any;
+export default abstract;
+export default declare;
+export default type;
+export default interface;
+export default namespace;
+export default module;
+export default global;
+export default async;
+export declare default class C {}
+export interface I {}
+export\ninterface I {}
+export interface\nI {}
+export type\nT = 1;
+export namespace\nN {}
+export abstract\nclass C {}
+export declare\nconst x: number;
+export declare function f(): void; export declare function f(a: number): void;
+export async function f(): Promise<void>;
+export function f(): void;
+export function f(): void; export function f() {}
+export const x: number;
+export let x: number;
+export var x: number;
+export const enum E {}
+export declare const enum E {}
+export const x = 1 as const;
+export enum\nE {}
+export class C implements I {}
+export public class C {}
+export private class C {}
+export static class C {}
+export readonly class C {}
+export async class C {}
+export accessor class C {}
+export override class C {}
+export export class C {}
+export default default class C {}
+export in class C {}
+export out class C {}
+export const class C {}
+public class C {}
+private class C {}
+protected class C {}
+static class C {}
+readonly class C {}
+override class C {}
+accessor class C {}
+async class C {}
+public function f() {}
+public const x = 1;
+public var x = 1;
+public let x = 1;
+public enum E {}
+public interface I {}
+public type T = 1;
+public namespace N {}
+public import x = y;
+public export const x = 1;
+public x = 1;
+public;
+public\nclass C {}
+static function f() {}
+static x;
+static;
+static\nclass C {}
+readonly x = 1;
+accessor x = 1;
+override x = 1;
+async interface I {}
+async type T = 1;
+async enum E {}
+async namespace N {}
+async const x = 1;
+async var x = 1;
+async class C {}
+async declare class C {}
+declare async class C {}
+declare public class C {}
+declare static class C {}
+declare readonly x: number;
+declare accessor x: number;
+declare override x: number;
+declare export class C {}
+declare export default class C {}
+declare export = x;
+declare export as namespace X;
+declare export { a };
+declare export * from "x";
+declare import x = y;
+declare default class C {}
+declare function f() {}
+declare class C { m() {} }
+declare const x = 1;
+declare let x = 1;
+declare var x = 1;
+declare const x;
+declare namespace N { const x = 1; }
+declare namespace N { function f() {} }
+declare namespace N { class C { m() {} } }
+declare namespace N { export default 1; }
+declare namespace N { x; }
+declare namespace N { if (a) {} }
+declare namespace N { return; }
+declare module "m" { x; }
+declare module "m" { export default 1; }
+declare module "m" { export = x; }
+declare module "m" { import a from "b"; export * from "c"; }
+declare module "m" { function f() {} }
+declare enum E { A = f() }
+declare abstract class C { abstract m(): void; n(): void; }
+declare class C { static { } }
+declare class C { constructor(); constructor(a: number); }
+declare class C { get x(): number; set x(v: number); }
+declare class C { x = 1; }
+declare class C { x: number = 1; }
+declare class C { async m(): Promise<void>; }
+declare class C { *m(): void; }
+declare class C { declare x: number; }
+declare class C { accessor x: number; }
+declare class C { #x: number; }
+declare class C { [k: string]: number; }
+declare class C { m?(): void; }
+declare class C { static m(): void; static n: number; }
+declare class C extends B implements I {}
+declare class C<T> extends B<T> {}
+declare function f<T>(a: T): T;
+declare function f(a?: number, ...b: string[]): void;
+declare function f(a = 1): void;
+declare function f({ a }: any): void;
+declare function f({ a } = {}): void;
+declare function f(this: any): void;
+declare function f(a: number, ): void;
+declare function f(): asserts this;
+declare function f(x: any): x is string;
+declare function f(x: any): asserts x is string;
+declare function f(x: any): asserts x;
+declare function\nf(): void;
+declare function f(): void\ndeclare function g(): void
+declare let x: number, y: string;
+declare let { a }: any;
+declare let [a]: any;
+declare const x: unique symbol;
+declare var x;

@@ -1,0 +1,221 @@
+file expr1.ts bytes=705
+s_expr 0
+  e_binary 1 op=bin_add
+    e_identifier 1 name="a"
+    e_identifier 6 name="b"
+s_expr 9
+  e_binary 10 op=bin_add
+    e_identifier 10 name="a"
+    e_identifier 14 name="b"
+s_expr 18
+  e_binary 20 op=bin_mul
+    e_binary 20 op=bin_add
+      e_identifier 20 name="a"
+      e_identifier 25 name="b"
+    e_identifier 30 name="c"
+s_expr 33
+  e_binary 34 op=bin_comma
+    e_identifier 34 name="a"
+    e_identifier 37 name="b"
+s_expr 41
+  e_call 41
+    e_identifier 41 name="f"
+    e_identifier 44 name="a"
+    e_identifier 48 name="b"
+s_expr 52
+  e_dot 53 name="c"
+    e_dot 53 name="b"
+      e_identifier 53 name="a"
+s_expr 62
+  e_index 62
+    e_call 62
+      e_dot 62 name="c"
+        e_dot 62 name="b"
+          e_identifier 62 name="a"
+      e_identifier 69 name="d"
+    e_identifier 74 name="e"
+s_expr 78
+  e_call 78
+    e_identifier 78 name="a"
+    e_identifier 82 name="x"
+s_expr 86
+  e_binary 86 op=bin_assign
+    e_identifier 86 name="x"
+    e_arrow 90
+      b_identifier 91 name="y"
+      s_return 97
+        e_identifier 97 name="y"
+s_expr 100
+  e_binary 100 op=bin_assign
+    e_identifier 100 name="x"
+    e_arrow 105
+      b_identifier 106 name="y"
+      s_return 112
+        e_identifier 112 name="y"
+s_expr 116
+  e_binary 116 op=bin_assign
+    e_identifier 116 name="x"
+    e_arrow 120
+      b_identifier 127 name="y"
+      s_return 133
+        e_identifier 133 name="y"
+s_expr 136
+  e_binary 136 op=bin_assign
+    e_identifier 136 name="x"
+    e_arrow 140
+      b_identifier 146 name="y"
+      s_return 151
+        e_identifier 151 name="y"
+s_expr 154
+  e_binary 154 op=bin_assign
+    e_identifier 154 name="x"
+    e_arrow 158
+      b_identifier 158 name="y"
+      s_return 165
+        e_identifier 172 name="y"
+s_expr 178
+  e_new 178
+    e_identifier 182 name="Foo"
+s_expr 187
+  e_new 187
+    e_identifier 191 name="Foo"
+    e_number 195 value=1
+    e_spread 198
+      e_identifier 201 name="r"
+s_expr 205
+  e_new_target 205
+s_expr 217
+  e_import_meta 217
+s_expr 230
+  e_import 230
+    e_string 237 text="m"
+    e_missing -1
+s_expr 243
+  e_array 243
+    e_number 244 value=1
+    e_missing 247
+    e_spread 249
+      e_identifier 252 name="s"
+s_expr 258
+  e_object 259
+    e_string 261 text="a"
+    e_identifier 261 name="a"
+    e_string 264 text="b"
+    e_identifier 267 name="c"
+    e_identifier 271 name="d"
+    e_identifier 275 name="e"
+    e_identifier 281 name="f"
+    e_string 284 text="g"
+    e_function 285
+    e_string 296 text="h"
+    e_function 297
+      s_return 302
+        e_number 309 value=1
+    e_string 319 text="h"
+    e_function 320
+      b_identifier 321 name="v"
+    e_string 335 text="i"
+    e_function 336
+    e_string 343 text="s"
+    e_number 348 value=1
+    e_number 351 value=2
+    e_number 354 value=3
+s_expr 360
+  e_template 360
+    e_identifier 364 name="b"
+    e_identifier 369 name="d"
+s_expr 375
+  e_template 375
+    e_identifier 375 name="tag"
+    e_identifier 382 name="y"
+s_expr 388
+  e_template 388
+    e_identifier 388 name="tag"
+s_expr 400
+  e_string 400 text="plain"
+s_expr 409
+  e_if 409
+    e_identifier 409 name="a"
+    e_identifier 413 name="b"
+    e_identifier 417 name="c"
+s_expr 420
+  e_binary 420 op=bin_comma
+    e_unary 420 op=un_post_inc
+      e_identifier 420 name="a"
+    e_unary 425 op=un_pre_dec
+      e_identifier 427 name="b"
+s_expr 430
+  e_binary 430 op=bin_comma
+    e_binary 430 op=bin_comma
+      e_binary 430 op=bin_comma
+        e_binary 430 op=bin_comma
+          e_binary 430 op=bin_comma
+            e_binary 430 op=bin_comma
+              e_unary 430 op=un_typeof
+                e_identifier 437 name="a"
+              e_unary 440 op=un_void
+                e_number 445 value=0
+            e_unary 448 op=un_delete
+              e_dot 455 name="b"
+                e_identifier 455 name="a"
+          e_unary 460 op=un_not
+            e_identifier 461 name="a"
+        e_unary 464 op=un_cpl
+          e_identifier 465 name="a"
+      e_unary 468 op=un_neg
+        e_identifier 469 name="a"
+    e_unary 472 op=un_pos
+      e_identifier 473 name="a"
+s_expr 476
+  e_binary 476 op=bin_nullish_coalescing_assign
+    e_identifier 476 name="a"
+    e_binary 482 op=bin_logical_or
+      e_identifier 482 name="b"
+      e_binary 487 op=bin_logical_and
+        e_identifier 487 name="c"
+        e_identifier 492 name="d"
+s_expr 495
+  e_call 495
+    e_dot 495 name="test"
+      e_reg_exp 495
+    e_identifier 506 name="s"
+s_expr 510
+  e_binary 510 op=bin_assign
+    e_identifier 510 name="x"
+    e_function 514
+      b_identifier 530 name="p"
+      e_number 534 value=1
+      b_object 537
+        e_string 538 text="q"
+        b_identifier 538 name="q"
+      b_array 542
+        b_identifier 543 name="r"
+      b_identifier 550 name="rest"
+s_expr 560
+  e_binary 560 op=bin_assign
+    e_identifier 560 name="x"
+    e_class 564
+      e_identifier 584 name="Base"
+      e_string 598 text="s"
+      e_number 602 value=1
+      e_private_identifier 605
+      e_string 609 text="m"
+      e_function 610
+      s_expr 625
+        e_call 625
+          e_identifier 625 name="f"
+      e_string 634 text="constructor"
+      e_function 645
+        s_expr 650
+          e_call 650
+            e_super 650
+      e_identifier 666 name="k"
+      e_function 668
+        s_return 673
+          e_number 680 value=1
+s_expr 688
+  e_await 688
+    e_number 694 value=1
+s_expr 697
+  e_dot 697 name="x"
+    e_this 697

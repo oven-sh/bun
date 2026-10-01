@@ -1,0 +1,6129 @@
+[
+ {
+  "code": "var foo = { __proto__: 1, two: 2};",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { foo: 1, bar: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '': 1, bar: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '': 1, ' ': 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '': 1, [null]: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '': 1, [a]: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [a]: 1, [a]: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "+{ get a() { }, set a(b) { } };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { a: b, [a]: b };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { a: b, ...c }",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { get a() {}, set a (value) {} };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { a: 1, b: { a: 2 } };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = ({ null: 1, [/(?<zero>0)/]: 2 })",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {a, a} = obj",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { 012: 1, 12: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { 1_0: 1, 1: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: null, ['__proto__']: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { ['__proto__']: null, __proto__: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '__proto__': null, ['__proto__']: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { ['__proto__']: null, '__proto__': null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: null, __proto__ };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__, __proto__: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: null, __proto__() {} };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__() {}, __proto__: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: null, get __proto__() {} };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { get __proto__() {}, __proto__: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: null, set __proto__(value) {} };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { set __proto__(value) {}, __proto__: null };",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { a: b, ['a']: b };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { y: 1, y: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'y'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'y'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '': 1, '': 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key ''."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 2,
+    "message": "Duplicate key ''."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '': 1, [``]: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key ''."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 2,
+    "message": "Duplicate key ''."
+   }
+  ]
+ },
+ {
+  "code": "var foo = { 0x1: 1, 1: 2};",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 012: 1, 10: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '10'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 2,
+    "message": "Duplicate key '10'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0b1: 1, 1: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0o1: 1, 1: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1n: 1, 1: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1_0: 1, 10: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '10'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 2,
+    "message": "Duplicate key '10'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { \"z\": 1, z: 2 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'z'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'z'."
+   }
+  ]
+ },
+ {
+  "code": "var foo = {\n  bar: 1,\n  bar: 1,\n}",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 3,
+    "endLine": 3,
+    "endColumn": 6,
+    "message": "Duplicate key 'bar'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 3,
+    "start": 24,
+    "length": 3,
+    "message": "Duplicate key 'bar'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, get a() {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, set a(value) {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, b: { a: 2 }, get b() {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 35,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = ({ '/(?<zero>0)/': 1, [/(?<zero>0)/]: 2 })",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate key '/(?<zero>0)/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 1,
+    "message": "Duplicate key '/(?<zero>0)/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ['__proto__']: null, ['__proto__']: null };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 11,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ['__proto__']: null, __proto__ };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ['__proto__']: null, __proto__() {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ['__proto__']: null, get __proto__() {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ['__proto__']: null, set __proto__(value) {} };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { __proto__: null, a: 5, a: 6 };",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 35,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [/a/gi]: 1, [/a/ig]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '/a/gi': 1, [/a/ig]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '/a/ig': 1, [/a/ig]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [/a/]: 1, '/a/': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '/a/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 5,
+    "message": "Duplicate key '/a/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [/[/]/]: 1, '/[/]/': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key '/[/]/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 7,
+    "message": "Duplicate key '/[/]/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [/a\\/b/]: 1, '/a\\\\/b/': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 33,
+    "message": "Duplicate key '/a\\/b/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 9,
+    "message": "Duplicate key '/a\\/b/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [/a/ydsmig]: 1, '/a/dgimsy': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 38,
+    "message": "Duplicate key '/a/dgimsy'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 11,
+    "message": "Duplicate key '/a/dgimsy'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [/é/]: 1, '/é/': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '/é/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 21,
+    "length": 6,
+    "message": "Duplicate key '/é/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0x1n: 1, 1n: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 2,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0b11n: 1, 3: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '3'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key '3'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0o17n: 1, '15': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key '15'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 4,
+    "message": "Duplicate key '15'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0XFFn: 1, 255n: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key '255'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 4,
+    "message": "Duplicate key '255'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0xffffffffffffffffffffn: 1, 1208925819614629174706175n: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 39,
+    "endLine": 1,
+    "endColumn": 65,
+    "message": "Duplicate key '1208925819614629174706175'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 39,
+    "start": 38,
+    "length": 26,
+    "message": "Duplicate key '1208925819614629174706175'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1_0n: 1, 10: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '10'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 2,
+    "message": "Duplicate key '10'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0n: 1, 0: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key '0'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key '0'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0x0n: 1, 0: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '0'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 1,
+    "message": "Duplicate key '0'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0x00ffn: 1, 255: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '255'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 3,
+    "message": "Duplicate key '255'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 9007199254740993n: 1, 9007199254740993: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { 9007199254740992n: 1, 9007199254740993: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate key '9007199254740992'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 16,
+    "message": "Duplicate key '9007199254740992'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1e21: 1, '1e+21': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key '1e+21'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 7,
+    "message": "Duplicate key '1e+21'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0.1: 1, '.1': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { .1: 1, 0.1: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '0.1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 3,
+    "message": "Duplicate key '0.1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1.: 1, 1: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1e999: 1, Infinity: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key 'Infinity'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 8,
+    "message": "Duplicate key 'Infinity'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0.000001: 1, 1e-6: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key '0.000001'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 4,
+    "message": "Duplicate key '0.000001'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1e-7: 1, '1e-7': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '1e-7'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 6,
+    "message": "Duplicate key '1e-7'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0.0000001: 1, '1e-7': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key '1e-7'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 6,
+    "message": "Duplicate key '1e-7'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1_000: 1, 1000: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key '1000'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 4,
+    "message": "Duplicate key '1000'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 08: 1, 8: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key '8'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key '8'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 123456789012345678901234567890: 1, '1.2345678901234568e+29': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 46,
+    "endLine": 1,
+    "endColumn": 70,
+    "message": "Duplicate key '1.2345678901234568e+29'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 46,
+    "start": 45,
+    "length": 24,
+    "message": "Duplicate key '1.2345678901234568e+29'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 5e-324: 1, '5e-324': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key '5e-324'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 8,
+    "message": "Duplicate key '5e-324'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0xffffffffffffff: 1, 72057594037927940: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate key '72057594037927940'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 17,
+    "message": "Duplicate key '72057594037927940'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1.0: 1, '1.0': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [0]: 1, [-0]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { 0: 1, [+0]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { true: 1, [true]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'true'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 4,
+    "message": "Duplicate key 'true'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [false]: 1, 'false': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'false'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 7,
+    "message": "Duplicate key 'false'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [null]: 1, null: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key 'null'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 4,
+    "message": "Duplicate key 'null'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [undefined]: 1, undefined: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [NaN]: 1, NaN: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [Infinity]: 1, Infinity: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { é: 1, 'é': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'é'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 17,
+    "length": 4,
+    "message": "Duplicate key 'é'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '\\u00e9': 1, é: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'é'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 2,
+    "message": "Duplicate key 'é'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { \\u0061: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'a\\u0062': 1, ab: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'ab'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 2,
+    "message": "Duplicate key 'ab'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '\\uD800': 1, '\\uD801': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '\\uD800': 1, '\\uD800': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 32,
+    "message": "Duplicate key '\ud800'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 8,
+    "message": "Duplicate key '�'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '\\uD800': 1, '\\uFFFD': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '\\uD83D\\uDE00': 1, '😀': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key '😀'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 6,
+    "message": "Duplicate key '😀'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 𠮷: 1, '\\uD842\\uDFB7': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 32,
+    "message": "Duplicate key '𠮷'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 19,
+    "length": 14,
+    "message": "Duplicate key '𠮷'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '\\x61': 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'a\\\nb': 1, ab: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 8,
+    "endLine": 2,
+    "endColumn": 10,
+    "message": "Duplicate key 'ab'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 8,
+    "start": 21,
+    "length": 2,
+    "message": "Duplicate key 'ab'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, ...b, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: { b: 1, b: 2 }, a: 3 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'b'."
+   },
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   },
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, a: 2, a: 3 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = [{ a: 1, a: 2 }];",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "f({ a: 1, a: 2 });",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, b: { a: 2, b: 3 } };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a, a } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: b, a: c } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[{ a, a }] = arr;",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ x: { a, a } } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ x: [{ a, a }] } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a = { b: 1, b: 2 } } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 16,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 16,
+    "start": 15,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: b = { c: 1, c: 2 } } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'c'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'c'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: { b, b } = { c: 1, c: 2 } } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 26,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'c'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 26,
+    "start": 25,
+    "length": 1,
+    "message": "Duplicate key 'c'."
+   }
+  ]
+ },
+ {
+  "code": "({ [{ k: 1, k: 2 }.k]: a } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Duplicate key 'k'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Duplicate key 'k'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: { b: 1, b: 2 }.c } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "[{ b: 1, b: 2 }.c] = arr;",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "for ({ a, a } of xs);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({ a, a } in xs);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({ a, a }.b of xs);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "for (var { a, a } of xs);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[...{ a, a }] = arr;",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[...[{ a, a }]] = arr;",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[[{ a, a }] = [{ b: 1, b: 2 }]] = arr;",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "x = { a: { b, b } = obj };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = y = { a: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a, a } = { b: 1, b: 2 });",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "(({ a: b, a: c }) => {});",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "(function ({ a: b, a: c }) {});",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var { a: b, a: c } = obj;",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var { a: b = { d: 1, d: 2 }, a: c } = obj;",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'd'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'd'."
+   }
+  ]
+ },
+ {
+  "code": "(({ a: b = { d: 1, d: 2 } }) => {});",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'd'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 1,
+    "message": "Duplicate key 'd'."
+   }
+  ]
+ },
+ {
+  "code": "try {} catch ({ a: b, a: c }) {}",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: [{ b, b }] = [{ c: 1, c: 2 }] } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'c'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 1,
+    "message": "Duplicate key 'c'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: (b), a: (c) } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: { b: 1, b: 2 }[0] } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: f({ b: 1, b: 2 }).c } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a() {}, a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get a() {}, get a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { set a(v) {}, set a(v) {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 28,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 28,
+    "start": 27,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get a() {}, set a(v) {}, a: 1 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 37,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, get a() {}, set a(v) {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get a() {}, a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { async a() {}, *a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 26,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 26,
+    "start": 25,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get a() {}, set a(v) {}, get a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { set a(v) {}, get a() {}, set a(v) {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get a() {}, set a(v) {}, get a() {}, set a(v) {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 52,
+    "endLine": 1,
+    "endColumn": 53,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 52,
+    "start": 51,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { async *a() {}, async a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 33,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get [`a`]() {}, get 'a'() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get 1() {}, get 0x1() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 3,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a, a };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a, a: 1 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, a };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a, get a() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get: 1, get: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'get'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'get'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { set: 1, set() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'set'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'set'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { static: 1, static: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key 'static'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 6,
+    "message": "Duplicate key 'static'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { async: 1, async() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key 'async'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 5,
+    "message": "Duplicate key 'async'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get get() {}, get get() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 32,
+    "message": "Duplicate key 'get'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 3,
+    "message": "Duplicate key 'get'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { async, async };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'async'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 5,
+    "message": "Duplicate key 'async'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { if: 1, if: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'if'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 2,
+    "message": "Duplicate key 'if'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { constructor: 1, 'constructor': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 40,
+    "message": "Duplicate key 'constructor'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 13,
+    "message": "Duplicate key 'constructor'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { prototype: 1, prototype: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key 'prototype'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 9,
+    "message": "Duplicate key 'prototype'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`a`]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`a${b}`]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [tag`a`]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [`a\\u0062`]: 1, ab: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key 'ab'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 2,
+    "message": "Duplicate key 'ab'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`a\nb`]: 1, 'a\\nb': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 9,
+    "endLine": 2,
+    "endColumn": 15,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 9,
+    "start": 22,
+    "length": 6,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`a\r\nb`]: 1, 'a\\nb': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 9,
+    "endLine": 2,
+    "endColumn": 15,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 9,
+    "start": 23,
+    "length": 6,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`$`]: 1, $: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '$'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key '$'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`\\${a}`]: 1, '${a}': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key '${a}'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 6,
+    "message": "Duplicate key '${a}'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [('a')]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [ /*c*/ 'a' ]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [(0, 'a')]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { ['a' + '']: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [a]: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [a.b]: 1, [a.b]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [1 + 1]: 1, 2: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [!0]: 1, true: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [void 0]: 1, undefined: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [this]: 1, [this]: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { [[]]: 1, '': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__, __proto__ };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { __proto__() {}, __proto__() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 36,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get __proto__() {}, get __proto__() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 35,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 35,
+    "start": 34,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { get __proto__() {}, set __proto__(v) {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__, __proto__() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [`__proto__`]: 1, ['__proto__']: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 11,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { \\u005f_proto__: 1, ['__proto__']: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { __proto__: 1, ['__proto__']: 2, __proto__() {} };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 52,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "({ __proto__: a, __proto__: b } = obj);",
+  "origin": "dupe-probe-extra",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var x = { '': 1, \"\": 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key ''."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 2,
+    "message": "Duplicate key ''."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ' ': 1, ' ': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key ' '."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key ' '."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'a b': 1, 'a b': 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key 'a b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 5,
+    "message": "Duplicate key 'a b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'a': 1, \"a\": 2, a: 3, [`a`]: 4, ['a']: 5 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 37,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 44,
+    "endLine": 1,
+    "endColumn": 47,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 44,
+    "start": 43,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = {\n  a: 1,\n\n  /* c */ a: 2,\n};",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 4,
+    "column": 11,
+    "endLine": 4,
+    "endColumn": 12,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 4,
+    "column": 11,
+    "start": 29,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = {\n\ta: 1,\n\t'a': 2,\n};",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 2,
+    "endLine": 3,
+    "endColumn": 5,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 2,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { éé: 1, b: 1, b: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 25,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '😀': 1, b: 1, b: 2 };",
+  "origin": "dupe-probe-extra",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 26,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 26,
+    "start": 27,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, [('a')]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, [ /*c*/ 'a' ]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1: 1, [0x1]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 3,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, [`a`]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '/a/': 1, [/a/]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key '/a/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key '/a/'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1: 1, [1n]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 2,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1: 1, 0x1n: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 4,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { null: 1, [null]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'null'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 4,
+    "message": "Duplicate key 'null'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'true': 1, [true]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'true'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 4,
+    "message": "Duplicate key 'true'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 'false': 1, [false]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key 'false'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 5,
+    "message": "Duplicate key 'false'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1000: 1, 1_000: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key '1000'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 5,
+    "message": "Duplicate key '1000'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1000: 1, 1e3: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key '1000'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 3,
+    "message": "Duplicate key '1000'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 1000: 1, 1.0e+3: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '1000'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 6,
+    "message": "Duplicate key '1000'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { 0.5: 1, .5: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key '0.5'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 2,
+    "message": "Duplicate key '0.5'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, \\u0061: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 6,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ab: 1, a\\u{62}: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'ab'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 7,
+    "message": "Duplicate key 'ab'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, 'a': 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, \"a\\\"b\": 2, 'a\"b': 3 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 28,
+    "endLine": 1,
+    "endColumn": 33,
+    "message": "Duplicate key 'a\"b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 28,
+    "start": 27,
+    "length": 5,
+    "message": "Duplicate key 'a\"b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, [`a`]: 2, b: 3 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { '$': 1, [`$`]: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key '$'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 3,
+    "message": "Duplicate key '$'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, async a() {} };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, async *a() {} };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, *a() {} };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, get a() {}, a: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1,\n  // comment\n  a: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 3,
+    "endLine": 3,
+    "endColumn": 4,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 3,
+    "start": 31,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = {\r\n  a: 1,\r\n  a: 2,\r\n};",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 3,
+    "endLine": 3,
+    "endColumn": 4,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 3,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, a: 11 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 72,
+    "endLine": 1,
+    "endColumn": 73,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 72,
+    "start": 71,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: function () { return { b: 1, b: 2 }; }, a: 1 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate key 'b'."
+   },
+   {
+    "line": 1,
+    "column": 54,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   },
+   {
+    "line": 1,
+    "column": 54,
+    "start": 53,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { a: () => ({ b: 1, b: 2 }) };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { ...{ a: 1, a: 2 } };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = { [{ a: 1, a: 2 }.a]: 1 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "label: { ({ a: 1, a: 2 }); }",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "if (x) ({ a: 1, a: 2 });",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "x = { a: 1, a: 2 }.a;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "x += { a: 1, a: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "x ||= { a: 1, a: 2 };",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "new Foo({ a: 1, a: 2 });",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "foo`${{ a: 1, a: 2 }}`;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var f = ({ a } = { b: 1, b: 2 }) => {};",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 26,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 26,
+    "start": 25,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "function g([x = { b: 1, b: 2 }]) {}",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "(async () => { await { a: 1, a: 2 }; });",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "function* h() { yield { a: 1, a: 2 }; }",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 32,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "var x = [...[{ a: 1, a: 2 }]];",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: [x = { b: 1, b: 2 }] } = obj);",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: x.y = { b: 1, b: 2 } } = obj);",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ ...x.y } = { b: 1, b: 2 });",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 23,
+    "endLine": 1,
+    "endColumn": 24,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 23,
+    "start": 22,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ a, ...b } = { c: 1, c: 2 });",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'c'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key 'c'."
+   }
+  ]
+ },
+ {
+  "code": "[a, b = { c: 1, c: 2 }] = arr;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'c'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'c'."
+   }
+  ]
+ },
+ {
+  "code": "[a, ...[b, { c, c }]] = arr;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ([{ a, a }] of xs);",
+  "origin": "dupe-probe-extra2",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({ x: [{ a, a }] = [{ b: 1, b: 2 }] } of xs);",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "for (x.y of [{ a: 1, a: 2 }]);",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "for (var i = { a: 1, a: 2 }; ;) break;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "for (i = { a: 1, a: 2 }; ;) break;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "for (({ a: 1, a: 2 }).b = 0; ;) break;",
+  "origin": "dupe-probe-extra2",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({a, a} = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[{a, a}] = list;",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({a, a} of list);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({a, a} in obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a: {b, b}} = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a = 1, a = 2} = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a: x = 1, a: y = 2} = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[...{a, a}] = list;",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ \"\\uD800\": 1, \"\\uD801\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ \"\\uD800\": 1, \"\\uFFFD\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ é: 1, e: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: 1, ...{ a: 2 } });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [-1]: 1, \"-1\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [`a${b}`]: 1, [`a${b}`]: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [tag`a`]: 1, [tag`a`]: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ 1.0: 1, \"1.0\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [undefined]: 1, undefined: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [void 0]: 1, undefined: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [NaN]: 1, NaN: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ [\"a\" + \"\"]: 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: 1, b: { a: 2 }, c: [{ a: 3 }] });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ get a() {}, set a(v) {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ set a(v) {}, get a() {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ a: 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: 1, a: 2, a: 3 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 16,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 16,
+    "start": 15,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ é: 1, \"é\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Duplicate key 'é'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 10,
+    "length": 4,
+    "message": "Duplicate key 'é'."
+   }
+  ]
+ },
+ {
+  "code": "({ \"\\u0061\": 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ \\u0061: 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ 1e3: 1, 1000: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key '1000'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 4,
+    "message": "Duplicate key '1000'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0x1n: 1, 1: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0x10n: 1, \"16\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key '16'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 4,
+    "message": "Duplicate key '16'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0b101n: 1, 5n: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key '5'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 2,
+    "message": "Duplicate key '5'."
+   }
+  ]
+ },
+ {
+  "code": "({ 1_0n: 1, 10: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Duplicate key '10'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 2,
+    "message": "Duplicate key '10'."
+   }
+  ]
+ },
+ {
+  "code": "({ [null]: 1, null: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'null'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 4,
+    "message": "Duplicate key 'null'."
+   }
+  ]
+ },
+ {
+  "code": "({ [true]: 1, true: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 19,
+    "message": "Duplicate key 'true'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 4,
+    "message": "Duplicate key 'true'."
+   }
+  ]
+ },
+ {
+  "code": "({ [false]: 1, \"false\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 16,
+    "endLine": 1,
+    "endColumn": 23,
+    "message": "Duplicate key 'false'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 16,
+    "start": 15,
+    "length": 7,
+    "message": "Duplicate key 'false'."
+   }
+  ]
+ },
+ {
+  "code": "({ [/a/ig]: 1, [/a/gi]: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key '/a/gi'."
+   }
+  ]
+ },
+ {
+  "code": "({ [/a\\/b/]: 1, \"/a\\\\/b/\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Duplicate key '/a\\/b/'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 9,
+    "message": "Duplicate key '/a\\/b/'."
+   }
+  ]
+ },
+ {
+  "code": "({ a() {}, a: 1 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a, a });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 7,
+    "start": 6,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a, a() {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 7,
+    "start": 6,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ async a() {}, *a() {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ get a() {}, get a() {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ set a(v) {}, set a(v) {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 21,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 21,
+    "start": 20,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ get a() {}, a: 1 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 16,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 16,
+    "start": 15,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ set a(v) {}, a: 1 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 18,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ get a() {}, set a(v) {}, a: 1 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 30,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ get a() {}, set a(v) {}, get a() {} });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 34,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: { b: 1, b: 2 } });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: x = { b: 1, b: 2 } } = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ [{ b: 1, b: 2 }.b]: x } = obj);",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "x = { a: 1, a: 2 };",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: 1, a: 2 }).a = 1;",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "f({ a: 1, a: 2 }, { b: 1, b: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 27,
+    "endLine": 1,
+    "endColumn": 28,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 27,
+    "start": 26,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "({ \"😀\": 1, \"😀\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key '😀'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 14,
+    "length": 6,
+    "message": "Duplicate key '😀'."
+   }
+  ]
+ },
+ {
+  "code": "({ \"😀\": 1,\n  \"😀\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 3,
+    "endLine": 2,
+    "endColumn": 7,
+    "message": "Duplicate key '😀'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 3,
+    "start": 16,
+    "length": 6,
+    "message": "Duplicate key '😀'."
+   }
+  ]
+ },
+ {
+  "code": "var o = {\n\tkey: 1,\n\t\"key\": 2,\n};",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 2,
+    "endLine": 3,
+    "endColumn": 7,
+    "message": "Duplicate key 'key'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 2,
+    "start": 20,
+    "length": 5,
+    "message": "Duplicate key 'key'."
+   }
+  ]
+ },
+ {
+  "code": "({ .5: 1, \"0.5\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Duplicate key '0.5'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 5,
+    "message": "Duplicate key '0.5'."
+   }
+  ]
+ },
+ {
+  "code": "({ 1e21: 1, \"1e+21\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key '1e+21'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 7,
+    "message": "Duplicate key '1e+21'."
+   }
+  ]
+ },
+ {
+  "code": "({ 1e999: 1, Infinity: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'Infinity'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 8,
+    "message": "Duplicate key 'Infinity'."
+   }
+  ]
+ },
+ {
+  "code": "({ 9007199254740993: 1, 9007199254740992: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 25,
+    "endLine": 1,
+    "endColumn": 41,
+    "message": "Duplicate key '9007199254740992'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 25,
+    "start": 24,
+    "length": 16,
+    "message": "Duplicate key '9007199254740992'."
+   }
+  ]
+ },
+ {
+  "code": "({ [`a`]: 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ [(\"a\")]: 1, a: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 16,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 16,
+    "start": 15,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ [`a\nb`]: 1, \"a\\nb\": 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 9,
+    "endLine": 2,
+    "endColumn": 15,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 9,
+    "start": 15,
+    "length": 6,
+    "message": "Duplicate key 'a\nb'."
+   }
+  ]
+ },
+ {
+  "code": "({ 'a\\\nb': 1, ab: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 8,
+    "endLine": 2,
+    "endColumn": 10,
+    "message": "Duplicate key 'ab'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 8,
+    "start": 14,
+    "length": 2,
+    "message": "Duplicate key 'ab'."
+   }
+  ]
+ },
+ {
+  "code": "({ __proto__: null, __proto__ });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ __proto__() {}, __proto__ });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "({ \"__proto\\u005f_\": 1, [\"__proto__\"]: 2, __proto__ });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 52,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 9,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "({ ['__proto__']: 1, __proto__: 2, ['__proto__']: 3 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 48,
+    "message": "Duplicate key '__proto__'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 11,
+    "message": "Duplicate key '__proto__'."
+   }
+  ]
+ },
+ {
+  "code": "({ a: 1, 'a': 2, [\"a\"]: 3, [`a`]: 4 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 22,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 32,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   },
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 3,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ constructor: 1, constructor: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 31,
+    "message": "Duplicate key 'constructor'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 11,
+    "message": "Duplicate key 'constructor'."
+   }
+  ]
+ },
+ {
+  "code": "({ hasOwnProperty: 1, toString: 2, valueOf: 3 });",
+  "origin": "rdm-keys-own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({ toString: 1, toString: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 17,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'toString'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 17,
+    "start": 16,
+    "length": 8,
+    "message": "Duplicate key 'toString'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0: 1, \"0\": 2, 0n: 3, [-0]: 4 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Duplicate key '0'."
+   },
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key '0'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 3,
+    "message": "Duplicate key '0'."
+   },
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 2,
+    "message": "Duplicate key '0'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0xffffffffffffffffffffffffffffffffn: 1, 340282366920938463463374607431768211455n: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 44,
+    "endLine": 1,
+    "endColumn": 84,
+    "message": "Duplicate key '340282366920938463463374607431768211455'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 44,
+    "start": 43,
+    "length": 40,
+    "message": "Duplicate key '340282366920938463463374607431768211455'."
+   }
+  ]
+ },
+ {
+  "code": "({ 0x100000000000000000000000000000000n: 1, 340282366920938463463374607431768211456n: 2 });",
+  "origin": "rdm-keys-own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 45,
+    "endLine": 1,
+    "endColumn": 85,
+    "message": "Duplicate key '340282366920938463463374607431768211456'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 45,
+    "start": 44,
+    "length": 40,
+    "message": "Duplicate key '340282366920938463463374607431768211456'."
+   }
+  ]
+ },
+ {
+  "code": "({ 012: 1, 12: 2 });",
+  "origin": "rdm-show",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = { \\u0061: 1, b: 2 };",
+  "origin": "rdm-show",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = { \\u{61}bc: 1, \"d\\u0065\": 2, é: 3, \"é\": 4, '\\xe9': 5 };",
+  "origin": "rdm-show",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 43,
+    "message": "Duplicate key 'é'."
+   },
+   {
+    "line": 1,
+    "column": 48,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate key 'é'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 40,
+    "length": 4,
+    "message": "Duplicate key 'é'."
+   },
+   {
+    "line": 1,
+    "column": 48,
+    "start": 49,
+    "length": 6,
+    "message": "Duplicate key 'é'."
+   }
+  ]
+ },
+ {
+  "code": "x = { 0x10n: 1, 1_0n: 2, 0b11n: 3, 0O7n: 4 };",
+  "origin": "rdm-show",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = { [/a\\/b/gi]: 1 };",
+  "origin": "rdm-show",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "\"use strict\"; ({ a: 1, a: 2 });",
+  "origin": "rdm-show",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "({ 08: 1, 8: 2 });",
+  "origin": "rdm-show",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Duplicate key '8'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Duplicate key '8'."
+   }
+  ]
+ },
+ {
+  "code": "({ 1.: 1, 1: 2 });",
+  "origin": "rdm-show",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Duplicate key '1'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Duplicate key '1'."
+   }
+  ]
+ },
+ {
+  "code": "x = <div a=\"1\" a=\"2\" {...{ b: 1, b: 2 }} />;",
+  "origin": "rdm-show",
+  "jsx": true,
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 35,
+    "message": "Duplicate key 'b'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 1,
+    "message": "Duplicate key 'b'."
+   }
+  ]
+ },
+ {
+  "code": "x = <A p={{ a: 1, a: 2 }} />;",
+  "origin": "rdm-show",
+  "jsx": true,
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Duplicate key 'a'."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Duplicate key 'a'."
+   }
+  ]
+ },
+ {
+  "code": "x = <div a=\"1\" a=\"2\" />;",
+  "origin": "rdm-show",
+  "jsx": true,
+  "eslint": [],
+  "expect": []
+ }
+]

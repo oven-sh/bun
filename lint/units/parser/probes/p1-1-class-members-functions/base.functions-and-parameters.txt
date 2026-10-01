@@ -1,0 +1,409 @@
+# bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889  typescript 6.0.2
+"function f(): void; function f() {}"
+    tsc  ok
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"async function f(): Promise<void>; async function f() {}"
+    tsc  ok other 2318,2583,2697
+    bun  ok "async function f() {}\n"
+    tsc emit  "\"use strict\";\nasync function f() { }\n"
+"function* f(): any; function* f() {}"
+    tsc  ok grammar TS1222@8 other 2318
+    bun  ok "function* f() {}\n"
+    tsc emit  "\"use strict\";\nfunction* f() { }\n"
+"export function f(): void; export function f() {}"
+    tsc  ok
+    bun  ok "export function f() {}\n"
+    tsc emit  "export function f() { }\n"
+"export default function f(): void; export default function f() {}"
+    tsc  ok
+    bun  ok "export default function f() {}\n"
+    tsc emit  "export default function f() { }\n"
+"export default function (): void; export default function () {}"
+    tsc  ok
+    bun  ok "export default function input_default() {}\n"
+    tsc emit  "export default function () { }\n"
+"function f(): void\nfunction f() {}"
+    tsc  ok
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f()\nfunction f() {}"
+    tsc  ok other 7010
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(); function f() {}"
+    tsc  ok other 7010
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f<T>(a: T): T; function f(a: any) { return a }"
+    tsc  ok
+    bun  ok "function f(a) {\n  return a;\n}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { return a; }\n"
+"function f(this: Window): void {}"
+    tsc  ok
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(this: Window, a: number): void {}"
+    tsc  ok
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f(this): void {}"
+    tsc  ok other 7006
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(a: number, this: Window): void {}"
+    tsc  ok other 2680
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f(this: Window,): void {}"
+    tsc  ok
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(this?: Window): void {}"
+    tsc  parse TS1005@15
+    bun  ERR "Expected \")\" but found \"?\""
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(this: Window = x): void {}"
+    tsc  parse TS1005@24
+    bun  ERR "Expected \")\" but found \"=\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(...this: Window[]): void {}"
+    tsc  parse TS1359@14
+    bun  ERR "Expected identifier but found \"this\""
+    tsc emit  "\"use strict\";\nfunction f(...) { }\n"
+"const f = function (this: Window) {};"
+    tsc  ok
+    bun  ok "const f = function() {};\n"
+    tsc emit  "\"use strict\";\nconst f = function () { };\n"
+"const o = { m(this: Window) {} };"
+    tsc  ok
+    bun  ok "const o = { m() {} };\n"
+    tsc emit  "\"use strict\";\nconst o = { m() { } };\n"
+"class C { m(this: C) {} }"
+    tsc  ok
+    bun  ok "class C {\n  m() {}\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    m() { }\n}\n"
+"class C { get x(this: C): number { return 1 } }"
+    tsc  ok other 2784
+    bun  ok "class C {\n  get x() {\n    return 1;\n  }\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    get x() { return 1; }\n}\n"
+"class C { set x(this: C, v: number) {} }"
+    tsc  ok other 2784
+    bun  ok "class C {\n  set x(v) {}\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    set x(v) { }\n}\n"
+"class C { constructor(this: C) {} }"
+    tsc  ok other 2681
+    bun  ok "class C {\n  constructor() {}\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    constructor() { }\n}\n"
+"class C { static m(this: typeof C) {} }"
+    tsc  ok
+    bun  ok "class C {\n  static m() {}\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    static m() { }\n}\n"
+"function f(a?: number, b?) {}"
+    tsc  ok other 7006
+    bun  ok "function f(a, b) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a, b) { }\n"
+"function f(a?: number = 1) {}"
+    tsc  ok grammar TS1015@11
+    bun  ok "function f(a = 1) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a = 1) { }\n"
+"function f(a!: number) {}"
+    tsc  parse TS1005@12 TS1138@13
+    bun  ERR "Expected \")\" but found \"!\""
+    tsc emit  "\"use strict\";\nfunction f(a, , number) { }\n"
+"function f(a: number,) {}"
+    tsc  ok
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f(...a: number[],) {}"
+    tsc  ok grammar TS1013@25
+    bun  ERR "Expected \")\" but found \",\""
+    tsc emit  "\"use strict\";\nfunction f(...a) { }\n"
+"declare function f(...a: number[],): void;"
+    tsc  ok
+    bun  ok ""
+    tsc emit  "\"use strict\";\n"
+"declare function f(a, ...b,);"
+    tsc  ok other 7010,7006,7019
+    bun  ok ""
+    tsc emit  "\"use strict\";\n"
+"function f(...a?: number[]) {}"
+    tsc  ok grammar TS1047@15 other 2370
+    bun  ok "function f(...a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(...a) { }\n"
+"function f(...a = []) {}"
+    tsc  ok grammar TS1048@14
+    bun  ERR "Expected \")\" but found \"=\""
+    tsc emit  "\"use strict\";\nfunction f(...a = []) { }\n"
+"function f({ a }?: T) {}"
+    tsc  ok other 2463
+    bun  ok "function f({ a }) {}\n"
+    tsc emit  "\"use strict\";\nfunction f({ a }) { }\n"
+"function f([a]?: T) {}"
+    tsc  ok other 2463
+    bun  ok "function f([a]) {}\n"
+    tsc emit  "\"use strict\";\nfunction f([a]) { }\n"
+"function f(a: number): asserts a {}"
+    tsc  ok
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f(a): a is string { return true }"
+    tsc  ok other 7006
+    bun  ok "function f(a) {\n  return true;\n}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { return true; }\n"
+"function f(): this {}"
+    tsc  ok other 2526
+    bun  ok "function f() {}\n"
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f<const T>(a: T) {}"
+    tsc  ok
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f<in T>(a: T) {}"
+    tsc  ok grammar TS1274@11
+    bun  ERR "The modifier \"in\" is not valid here"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f<T,>(a: T) {}"
+    tsc  ok
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f<>(a) {}"
+    tsc  ok grammar TS1098@10 other 7006
+    bun  ERR "Expected identifier but found \">\""
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"function f(a): void\n{ }"
+    tsc  ok other 7006
+    bun  ok "function f(a) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"if (x) function f(): void;"
+    tsc  ok other 2391
+    bun  ok "if (x)\n  ;\n"
+    tsc emit  "\"use strict\";\nif (x)\n    ;\n"
+"label: function f(): void;"
+    tsc  ok grammar TS1344@0 other 2391
+    bun  ok "label:\n  ;\n"
+    tsc emit  "\"use strict\";\nlabel: ;\n"
+"function f(): void; var x = 1; function f() {}"
+    tsc  ok other 2391
+    bun  ok "var x = 1;\nfunction f() {}\n"
+    tsc emit  "\"use strict\";\nvar x = 1;\nfunction f() { }\n"
+"declare function f(): void { }"
+    tsc  ok grammar TS1183@27
+    bun  ok ""
+    tsc emit  "\"use strict\";\n"
+"function f(): void = 1"
+    tsc  parse TS1144@19
+    bun  ERR "Expected \";\" but found \"=\""
+    tsc emit  "\"use strict\";\n1;\n"
+"function f(a: number): void, function g() {}"
+    tsc  parse TS1144@27
+    bun  ERR "Expected \";\" but found \",\""
+    tsc emit  "\"use strict\";\nfunction g() { }\n"
+"function f(async: number) {}"
+    tsc  ok
+    bun  ok "function f(async) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(async) { }\n"
+"function f(readonly: number) {}"
+    tsc  ok
+    bun  ok "function f(readonly) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(readonly) { }\n"
+"function f(public: number) {}"
+    tsc  ok grammar TS1212@11
+    bun  ok "function f(public) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(public) { }\n"
+"function f(public) {}"
+    tsc  ok grammar TS1212@11 other 7006
+    bun  ok "function f(public) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(public) { }\n"
+"function f(public, private) {}"
+    tsc  ok grammar TS1212@11 TS1212@19 other 7006
+    bun  ok "function f(public, private) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(public, private) { }\n"
+"function f(public = 1) {}"
+    tsc  ok grammar TS1212@11
+    bun  ok "function f(public = 1) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(public = 1) { }\n"
+"function f(public?: number) {}"
+    tsc  ok grammar TS1212@11
+    bun  ok "function f(public) {}\n"
+    tsc emit  "\"use strict\";\nfunction f(public) { }\n"
+"function f(readonly readonly) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"readonly\""
+    tsc emit  "\"use strict\";\nfunction f(readonly) { }\n"
+"function f(public readonly) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"readonly\""
+    tsc emit  "\"use strict\";\nfunction f(readonly) { }\n"
+"function f(public\nx) {}"
+    tsc  parse TS1005@18
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(public, x) { }\n"
+"function f(public x\n: T) {}"
+    tsc  ok other 2369
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(...public x) {}"
+    tsc  parse TS1005@21
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(...public, x) { }\n"
+"function f(public ...x) {}"
+    tsc  ok grammar TS1317@11 other 2369,7019
+    bun  ERR "Expected \")\" but found \"...\""
+    tsc emit  "\"use strict\";\nfunction f(...x) { }\n"
+"function f(public {x}) {}"
+    tsc  ok grammar TS1187@11 other 2369,7031
+    bun  ERR "Expected \")\" but found \"{\""
+    tsc emit  "\"use strict\";\nfunction f({ x }) { }\n"
+"function f(public [x]) {}"
+    tsc  ok grammar TS1187@11 other 2369,7031
+    bun  ERR "Expected \")\" but found \"[\""
+    tsc emit  "\"use strict\";\nfunction f([x]) { }\n"
+"function f(public this) {}"
+    tsc  parse TS1433@11
+    bun  ERR "Expected \")\" but found \"this\""
+    tsc emit  "\"use strict\";\nfunction f() { }\n"
+"function f(public public) {}"
+    tsc  ok grammar TS1212@18 other 2369,7006
+    bun  ERR "Expected \")\" but found \"public\""
+    tsc emit  "\"use strict\";\nfunction f(public) { }\n"
+"function f(public static) {}"
+    tsc  ok grammar TS1212@18 other 2369,7006
+    bun  ERR "Expected \")\" but found \"static\""
+    tsc emit  "\"use strict\";\nfunction f(static) { }\n"
+"function f(public type) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"type\""
+    tsc emit  "\"use strict\";\nfunction f(type) { }\n"
+"function f(public of, private as, protected is) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"of\""
+    tsc emit  "\"use strict\";\nfunction f(of, as, is) { }\n"
+"function f(public await) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"await\""
+    tsc emit  "\"use strict\";\nfunction f(await) { }\n"
+"async function f(public await) {}"
+    tsc  ok grammar TS1359@24 other 2369,7006
+    bun  ERR "Expected \")\" but found \"await\""
+    tsc emit  "\"use strict\";\nasync function f(await) { }\n"
+"function f(public yield) {}"
+    tsc  ok grammar TS1212@18 other 2369,7006
+    bun  ERR "Expected \")\" but found \"yield\""
+    tsc emit  "\"use strict\";\nfunction f(yield) { }\n"
+"function* f(public yield) {}"
+    tsc  ok grammar TS1212@19 other 2318,2369,7006
+    bun  ERR "Expected \")\" but found \"yield\""
+    tsc emit  "\"use strict\";\nfunction* f(yield) { }\n"
+"function f(public x, y) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x, y) { }\n"
+"function f(x, public y) {}"
+    tsc  ok other 7006,2369
+    bun  ERR "Expected \")\" but found \"y\""
+    tsc emit  "\"use strict\";\nfunction f(x, y) { }\n"
+"function f(public x?: T, private y = 1, protected readonly z: U) {}"
+    tsc  ok grammar TS1016@59 other 2369
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x, y = 1, z) { }\n"
+"function f(override readonly x: T) {}"
+    tsc  ok other 2369
+    bun  ERR "Expected \")\" but found \"readonly\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(readonly override x: T) {}"
+    tsc  ok grammar TS1029@20 other 2369
+    bun  ERR "Expected \")\" but found \"override\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(public public x) {}"
+    tsc  ok grammar TS1028@18 other 2369,7006
+    bun  ERR "Expected \")\" but found \"public\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(static x) {}"
+    tsc  ok grammar TS1090@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(static x) { }\n"
+"function f(declare x) {}"
+    tsc  ok grammar TS1090@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(abstract x) {}"
+    tsc  ok grammar TS1242@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"function f(async x) {}"
+    tsc  ok grammar TS1090@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(async x) { }\n"
+"function f(accessor x) {}"
+    tsc  ok grammar TS1275@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(accessor x) { }\n"
+"function f(out x) {}"
+    tsc  ok grammar TS1274@11 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nfunction f(x) { }\n"
+"const f = function (public x) {};"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nconst f = function (x) { };\n"
+"const f = async function* (private x) {};"
+    tsc  ok other 2318,2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nconst f = async function* (x) { };\n"
+"const o = { m(public x) {}, get g() { return 1 }, set s(public v) {} };"
+    tsc  ok other 2369,7006,7032
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nconst o = { m(x) { }, get g() { return 1; }, set s(v) { } };\n"
+"const o = { constructor(public x) {} };"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nconst o = { constructor(x) { } };\n"
+"class C { m(public x) {} static n(private y) {} set p(readonly v) {} #q(protected z) {} }"
+    tsc  ok other 2369,7006,7032
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    m(x) { }\n    static n(y) { }\n    set p(v) { }\n    #q(z) { }\n}\n"
+"class C { \"constructor\"(public x) {} }"
+    tsc  ok other 7006
+    bun  ok "class C {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    x;\n    constructor(x) {\n        this.x = x;\n    }\n}\n"
+"class C { ['constructor'](public x) {} }"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    ['constructor'](x) { }\n}\n"
+"class C { static constructor(public x) {} }"
+    tsc  ok grammar TS1089@10 other 7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    x;\n    constructor(x) {\n        this.x = x;\n    }\n}\n"
+"class C { get constructor() { return 1 } }"
+    tsc  ok grammar TS1341@14
+    bun  ERR "Class constructor cannot be a getter"
+    tsc emit  "\"use strict\";\nclass C {\n    get constructor() { return 1; }\n}\n"
+"class C { m(public x): void; m(x: any) {} }"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    m(x) { }\n}\n"
+"abstract class C { abstract m(public x): void; }"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"declare class C { m(public x): void; }"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "\"use strict\";\n"
+"declare function f(public a: A): void;"
+    tsc  ok other 2369
+    bun  ERR "Expected \")\" but found \"a\""
+    tsc emit  "\"use strict\";\n"
+"function f(public a: A): void; function f(a: any) {}"
+    tsc  ok other 2369
+    bun  ERR "Expected \")\" but found \"a\""
+    tsc emit  "\"use strict\";\nfunction f(a) { }\n"
+"export default function (public x) {}"
+    tsc  ok other 2369,7006
+    bun  ERR "Expected \")\" but found \"x\""
+    tsc emit  "export default function (x) { }\n"
+"class C { constructor(public x) {} m(public y) {} }"
+    tsc  ok other 7006,2369
+    bun  ERR "Expected \")\" but found \"y\""
+    tsc emit  "\"use strict\";\nclass C {\n    x;\n    constructor(x) {\n        this.x = x;\n    }\n    m(y) { }\n}\n"

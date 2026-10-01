@@ -1,0 +1,108 @@
+import type A, { B } from "x";
+import type A, * as B from "x";
+import type A from "x";
+import type { A } from "x";
+import type * as A from "x";
+import type from "x";
+import type, { A } from "x";
+import type, * as A from "x";
+import type from from "x";
+import type as from "x";
+import type type from "x";
+import type A = require("x");
+import type A = B.C;
+import type = require("x");
+import type = B.C;
+import type type = require("x");
+import type from = require("x");
+import type as = require("x");
+import type\nA from "x";
+import type A\nfrom "x";
+import type\n{ A } from "x";
+import type from\n"x";
+import type {} from "x";
+import type { } from "x";
+import type "x";
+import type A from "x" with { type: "json" };
+import type { A } from "x" with { "resolution-mode": "import" };
+import type A from "x" assert { type: "json" };
+import A = require("x");
+import A = B.C;
+import A = B;
+import A = require("x").y;
+import A = require(x);
+import A = require();
+import A = B.C.D;
+import A = B.default;
+import A = B.if;
+import A = this;
+import A = this.B;
+import A = "x";
+import A = B<C>;
+import A = typeof B;
+import A = import("x");
+import await = require("x");
+import eval = require("x");
+import let = require("x");
+import type = B;
+import as = B;
+export import A = require("x");
+export import A = B.C;
+export import type A = B.C;
+export import type A = require("x");
+export type A = require("x");
+import type A = B.if;
+namespace N { import A = B.C; }
+namespace N { export import A = B.C; }
+namespace N { import A = require("x"); }
+namespace N { import type A = B.C; }
+namespace N { import A from "x"; }
+namespace N { import "x"; }
+namespace N { import("x"); }
+namespace N { import.meta; }
+namespace N { export * from "x"; }
+namespace N { export { a }; }
+namespace N { export { a } from "x"; }
+namespace N { export default 1; }
+namespace N { export = 1; }
+namespace N { export as namespace X; }
+namespace N { export type { a }; }
+namespace N { export type T = 1; }
+function f() { import A = B.C; }
+function f() { import type A from "x"; }
+{ import A = B.C; }
+export = A;
+export = 1;
+export = { a: 1 };
+export = function () {};
+export = class {};
+export = A.B;
+export = A as any;
+export =\nA;
+export\n= A;
+export = A; export = B;
+export = A; export const b = 1;
+export default 1; export = A;
+export as namespace X;
+export as namespace X
+export as namespace X.Y;
+export as namespace "X";
+export as namespace if;
+export as\nnamespace X;
+export as namespace\nX;
+export as X;
+export as namespace;
+import defer * as ns from "x";
+import defer A from "x";
+import defer { A } from "x";
+import defer "x";
+import defer from "x";
+import defer, { A } from "x";
+import defer = require("x");
+import.defer("x");
+import source A from "x";
+import source from "x";
+import.source("x");
+import type defer from "x";
+import type defer * as ns from "x";
+import defer type A from "x";

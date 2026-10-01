@@ -1,0 +1,68 @@
+
+## K inputs accepted today whose reading must not change without lint
+P-rej / bun ok           | switch (q) { case (y): (a = 1) => z => w; }
+    tsc parse=[TS1005@40] check=[]
+    tsc emit: "use strict"; switch (q) { case (y) => w: ; }
+    bun: switch (q) { case y: }
+P-ok/C-err / bun ok      | a < { b: c = 1 } > (d)
+    tsc parse=[] check=[TS1247@13]
+    tsc emit: "use strict"; a(d);
+    bun: a < { b: c = 1 } > d;
+P-ok/C-err / bun ok      | a < { [b + c]: d } > (e)
+    tsc parse=[] check=[TS1170@6]
+    tsc emit: "use strict"; a(e);
+    bun: a < { [b + c]: d } > e;
+P-ok/C-err / bun ok      | a < { get x() { return 1 } } > (e)
+    tsc parse=[] check=[TS1183@14]
+    tsc emit: "use strict"; a(e);
+    bun: a < { get x() { return 1; } } > e;
+valid / bun ok           | a < { m(p = 1) { } } > (e)
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; a < { m(p = 1) { } } > (e);
+    bun: a < { m(p = 1) {} } > e;
+valid / bun ok           | a < { [k]: d } > (e)
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; a(e);
+    bun: a(e);
+P-rej / bun ok           | async (q): ({ [s]: T }) => x
+    tsc parse=[TS1005@9] check=[]
+    tsc emit: "use strict"; async(q); ({ [s]: T }) => x;
+    bun: 
+P-rej / bun ok           | let f = (a): ({ [k]: v }) => x
+    tsc parse=[TS1005@11,TS1134@13] check=[]
+    tsc emit: "use strict"; let f = (a); ({ [k]: v }) => x;
+    bun: let f = (a) => x;
+valid / bun ok           | x ? (y) : (a = 1) => z => w
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; x ? (y) : (a = 1) => z => w;
+    bun: x && y;
+valid / bun ok           | x ? (y) : (a = 1) => z
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; x ? (y) : (a = 1) => z;
+    bun: x && y;
+P-rej / bun ok           | async (q): (readonly a) => x
+    tsc parse=[TS1005@9] check=[]
+    tsc emit: "use strict"; async(q); (a) => x;
+    bun: 
+P-rej / bun ok           | let f = (a): (readonly b) => x
+    tsc parse=[TS1005@11,TS1134@13] check=[]
+    tsc emit: "use strict"; let f = (a); (b) => x;
+    bun: let f = (a) => x;
+P-ok/C-err / bun ok      | new X<{ [b + c]: d }>(e)
+    tsc parse=[] check=[TS1170@8]
+    tsc emit: "use strict"; new X(e);
+    bun: new X < { [b + c]: d } > e;
+P-ok/C-err / bun REJ     | f<(a = 1) => void>(x)
+    tsc parse=[] check=[TS2371@3]
+    tsc emit: "use strict"; f(x);
+    bun: Expected ";" but found "=>" | Unexpected >
+
+## K inputs accepted today whose reading must not change without lint tsx
+P-rej / bun REJ          | <T extends-x>(y)</T>
+    tsc parse=[TS1005@16,TS1109@20] check=[]
+    tsc emit: "use strict"; (y) => ; T > ;
+    bun: Expected number but found "x" | Expected "=>" but found "<"
+P-ok/C-err / bun REJ     | const v = <T extends -x,>(y: T) => y
+    tsc parse=[] check=[TS1110@21]
+    tsc emit: "use strict"; const v = (y) => y;
+    bun: Expected number but found "x"

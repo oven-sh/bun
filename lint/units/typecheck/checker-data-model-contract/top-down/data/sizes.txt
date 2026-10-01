@@ -1,0 +1,10 @@
+# size_of in bytes, x86_64, dev profile, measured once with a test that printed them (not kept in the package).
+Type 56 (TypeData 32: the object, union, intersection, type parameter, conditional and template literal data are boxed)
+ObjectType 136, InterfaceType 264, TupleType 304, UnionType 200, ConditionalType 44, LiteralType 32, IntrinsicType 16
+IndexType 12, IndexedAccessType 16, SubstitutionType 12, LiteralValue 24
+Signature 80, IndexInfo 40, TypeMapper 48, CacheHashKey 16, TypeComparer 12
+Relater 232, InferenceContext 80, InferenceInfo 72, InferenceState 136
+List 16, Map 56 (a nil map costs the same), ast::open::Symbol 64 (the clippy limit for a by-value parameter is 64)
+Checker 6696 with the 83 fields of the scratch (two NilSections make up about 3000 of it)
+# wall time of the package on the shared machine, dependencies prebuilt: cargo check 9 s, cargo clippy --all-targets 14 s,
+# cargo test (build of both test targets) 49 s, the 41 tests 2 to 5 s.

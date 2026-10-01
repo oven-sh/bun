@@ -1,0 +1,201 @@
+"x = a ? <T>(b) : c => d;"                             | Expected ":" but found ";"           | js: ERR | 
+"x = a ? async <T>(b) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (this) : c => d : e;"                         | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? (this): C => d : e;"                          | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? y => (b) : c => d;"                           | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => (b, c) : c => d;"                        | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => ((b)) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => (b = 1) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => ([b]) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => async (b) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => <T>(b) : c => d;"                        | Expected ":" but found ";"           | js: ERR | 
+"x = a ? y => async <T>(b) : c => d;"                  | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => (this) : c => d : e;"                    | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? y => (this): C => d : e;"                     | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? (y) => (b) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => (b, c) : c => d;"                      | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => ((b)) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => (b = 1) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => ([b]) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => async (b) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => <T>(b) : c => d;"                      | Expected ":" but found ";"           | js: ERR | 
+"x = a ? (y) => async <T>(b) : c => d;"                | Expected ":" but found ";"           | js: OK  | 
+"x = a ? (y) => (this) : c => d : e;"                  | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? (y) => (this): C => d : e;"                   | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? async y => (b) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => (b, c) : c => d;"                  | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => ((b)) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => (b = 1) : c => d;"                 | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => ([b]) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => async (b) : c => d;"               | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => <T>(b) : c => d;"                  | Expected ":" but found ";"           | js: ERR | 
+"x = a ? async y => async <T>(b) : c => d;"            | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async y => (this) : c => d : e;"              | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? async y => (this): C => d : e;"               | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? async (y) => (b) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => (b, c) : c => d;"                | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => ((b)) : c => d;"                 | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => (b = 1) : c => d;"               | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => ([b]) : c => d;"                 | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => async (b) : c => d;"             | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => <T>(b) : c => d;"                | Expected ":" but found ";"           | js: ERR | 
+"x = a ? async (y) => async <T>(b) : c => d;"          | Expected ":" but found ";"           | js: OK  | 
+"x = a ? async (y) => (this) : c => d : e;"            | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? async (y) => (this): C => d : e;"             | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? <T>(y) => (b) : c => d;"                      | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => (b, c) : c => d;"                   | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => ((b)) : c => d;"                    | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => (b = 1) : c => d;"                  | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => ([b]) : c => d;"                    | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => async (b) : c => d;"                | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => <T>(b) : c => d;"                   | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => async <T>(b) : c => d;"             | Expected ":" but found ";"           | js: ERR | 
+"x = a ? <T>(y) => (this) : c => d : e;"               | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? <T>(y) => (this): C => d : e;"                | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z = (b) : c => d;"                            | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = (b, c) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = ((b)) : c => d;"                          | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = (b = 1) : c => d;"                        | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = ([b]) : c => d;"                          | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = async (b) : c => d;"                      | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = <T>(b) : c => d;"                         | Expected ":" but found ";"           | js: ERR | 
+"x = a ? z = async <T>(b) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z = (this) : c => d : e;"                     | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z = (this): C => d : e;"                      | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z += (b) : c => d;"                           | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += (b, c) : c => d;"                        | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += ((b)) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += (b = 1) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += ([b]) : c => d;"                         | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += async (b) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += <T>(b) : c => d;"                        | Expected ":" but found ";"           | js: ERR | 
+"x = a ? z += async <T>(b) : c => d;"                  | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z += (this) : c => d : e;"                    | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z += (this): C => d : e;"                     | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z ??= (b) : c => d;"                          | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= (b, c) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= ((b)) : c => d;"                        | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= (b = 1) : c => d;"                      | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= ([b]) : c => d;"                        | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= async (b) : c => d;"                    | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= <T>(b) : c => d;"                       | Expected ":" but found ";"           | js: ERR | 
+"x = a ? z ??= async <T>(b) : c => d;"                 | Expected ":" but found ";"           | js: OK  | 
+"x = a ? z ??= (this) : c => d : e;"                   | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? z ??= (this): C => d : e;"                    | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? -async (b) : c => d;"                         | Unexpected :                         | js: OK  | 
+"x = a ? -async (b) : c;"                              | Unexpected :                         | js: OK  | 
+"x = a ? -async () : c => d;"                          | Unexpected :                         | js: OK  | 
+"x = a ? -async () : c;"                               | Unexpected :                         | js: OK  | 
+"x = a ? -<T>(b) : c => d;"                            | Unexpected :                         | js: ERR | 
+"x = a ? -<T>(b) : c;"                                 | Unexpected :                         | js: ERR | 
+"x = a ? -async <T>(b) : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? -async <T>(b) : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? !async (b) : c => d;"                         | Unexpected :                         | js: OK  | 
+"x = a ? !async (b) : c;"                              | Unexpected :                         | js: OK  | 
+"x = a ? !async () : c => d;"                          | Unexpected :                         | js: OK  | 
+"x = a ? !async () : c;"                               | Unexpected :                         | js: OK  | 
+"x = a ? !<T>(b) : c => d;"                            | Unexpected :                         | js: ERR | 
+"x = a ? !<T>(b) : c;"                                 | Unexpected :                         | js: ERR | 
+"x = a ? !async <T>(b) : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? !async <T>(b) : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? typeof async (b) : c => d;"                   | Unexpected :                         | js: OK  | 
+"x = a ? typeof async (b) : c;"                        | Unexpected :                         | js: OK  | 
+"x = a ? typeof async () : c => d;"                    | Unexpected :                         | js: OK  | 
+"x = a ? typeof async () : c;"                         | Unexpected :                         | js: OK  | 
+"x = a ? typeof <T>(b) : c => d;"                      | Unexpected :                         | js: ERR | 
+"x = a ? typeof <T>(b) : c;"                           | Unexpected :                         | js: ERR | 
+"x = a ? typeof async <T>(b) : c => d;"                | Unexpected :                         | js: OK  | 
+"x = a ? typeof async <T>(b) : c;"                     | Unexpected :                         | js: OK  | 
+"x = a ? void async (b) : c => d;"                     | Unexpected :                         | js: OK  | 
+"x = a ? void async (b) : c;"                          | Unexpected :                         | js: OK  | 
+"x = a ? void async () : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? void async () : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? void <T>(b) : c => d;"                        | Unexpected :                         | js: ERR | 
+"x = a ? void <T>(b) : c;"                             | Unexpected :                         | js: ERR | 
+"x = a ? void async <T>(b) : c => d;"                  | Unexpected :                         | js: OK  | 
+"x = a ? void async <T>(b) : c;"                       | Unexpected :                         | js: OK  | 
+"x = a ? await (...b) : c => d;"                       | Unexpected ...                       | js: ERR | 
+"x = a ? await (...b) : c;"                            | Unexpected ...                       | js: ERR | 
+"x = a ? await () : c => d;"                           | Unexpected )                         | js: ERR | 
+"x = a ? await () : c;"                                | Unexpected )                         | js: ERR | 
+"x = a ? await <T>(b) : c => d;"                       | Unexpected :                         | js: ERR | 
+"x = a ? await <T>(b) : c;"                            | Unexpected :                         | js: ERR | 
+"x = a ? 1 + async (b) : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? 1 + async (b) : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? 1 + async () : c => d;"                       | Unexpected :                         | js: OK  | 
+"x = a ? 1 + async () : c;"                            | Unexpected :                         | js: OK  | 
+"x = a ? 1 + <T>(b) : c => d;"                         | Unexpected :                         | js: ERR | 
+"x = a ? 1 + <T>(b) : c;"                              | Unexpected :                         | js: ERR | 
+"x = a ? 1 + async <T>(b) : c => d;"                   | Unexpected :                         | js: OK  | 
+"x = a ? 1 + async <T>(b) : c;"                        | Unexpected :                         | js: OK  | 
+"x = a ? y || async (b) : c => d;"                     | Unexpected :                         | js: OK  | 
+"x = a ? y || async (b) : c;"                          | Unexpected :                         | js: OK  | 
+"x = a ? y || async () : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? y || async () : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? y || <T>(b) : c => d;"                        | Unexpected :                         | js: ERR | 
+"x = a ? y || <T>(b) : c;"                             | Unexpected :                         | js: ERR | 
+"x = a ? y || async <T>(b) : c => d;"                  | Unexpected :                         | js: OK  | 
+"x = a ? y || async <T>(b) : c;"                       | Unexpected :                         | js: OK  | 
+"x = a ? y ?? async (b) : c => d;"                     | Unexpected :                         | js: OK  | 
+"x = a ? y ?? async (b) : c;"                          | Unexpected :                         | js: OK  | 
+"x = a ? y ?? async () : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? y ?? async () : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? y ?? <T>(b) : c => d;"                        | Unexpected :                         | js: ERR | 
+"x = a ? y ?? <T>(b) : c;"                             | Unexpected :                         | js: ERR | 
+"x = a ? y ?? async <T>(b) : c => d;"                  | Unexpected :                         | js: OK  | 
+"x = a ? y ?? async <T>(b) : c;"                       | Unexpected :                         | js: OK  | 
+"x = a ? y && async (b) : c => d;"                     | Unexpected :                         | js: OK  | 
+"x = a ? y && async (b) : c;"                          | Unexpected :                         | js: OK  | 
+"x = a ? y && async () : c => d;"                      | Unexpected :                         | js: OK  | 
+"x = a ? y && async () : c;"                           | Unexpected :                         | js: OK  | 
+"x = a ? y && <T>(b) : c => d;"                        | Unexpected :                         | js: ERR | 
+"x = a ? y && <T>(b) : c;"                             | Unexpected :                         | js: ERR | 
+"x = a ? y && async <T>(b) : c => d;"                  | Unexpected :                         | js: OK  | 
+"x = a ? y && async <T>(b) : c;"                       | Unexpected :                         | js: OK  | 
+"x = a ? q ? r : <T>(b) : c => d;"                     | Expected ":" but found ";"           | js: ERR | 
+"x = a ? q ? r : async <T>(b) : c => d;"               | Expected ":" but found ";"           | js: OK  | 
+"x = a ? q ? r : (this) : c => d : e;"                 | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? q ? r : (this): C => d : e;"                  | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? [(this) : c => d] : e;"                       | Expected "]" but found ":"           | js: ERR | TS2730
+"x = a ? f((this) : c => d) : e;"                      | Expected ")" but found ":"           | js: ERR | TS2730
+"x = a ? { k: (this) : c => d } : e;"                  | Expected "}" but found ":"           | js: ERR | TS2730
+"x = a ? `${(this) : c => d}` : e;"                    | Expected "}" but found ":"           | js: ERR | TS2730
+"x = a ? y = z => (b) : c => d;"                       | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => (b, c) : c => d;"                    | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => ((b)) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => (b = 1) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => ([b]) : c => d;"                     | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => async (b) : c => d;"                 | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => <T>(b) : c => d;"                    | Expected ":" but found ";"           | js: ERR | 
+"x = a ? y = z => async <T>(b) : c => d;"              | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y = z => (this) : c => d : e;"                | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? y = z => (this): C => d : e;"                 | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? y => z => (b) : c => d;"                      | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => (b, c) : c => d;"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => ((b)) : c => d;"                    | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => (b = 1) : c => d;"                  | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => ([b]) : c => d;"                    | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => async (b) : c => d;"                | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => <T>(b) : c => d;"                   | Expected ":" but found ";"           | js: ERR | 
+"x = a ? y => z => async <T>(b) : c => d;"             | Expected ":" but found ";"           | js: OK  | 
+"x = a ? y => z => (this) : c => d : e;"               | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? y => z => (this): C => d : e;"                | Expected ";" but found ":"           | js: ERR | TS2730
+"switch (x) { case ((b)): c => d; }"                   | Expected ":" but found ";"           | js: OK  | 
+"x = a ? b ? ((b)) : c => d : e;"                      | Expected ":" but found ";"           | js: OK  | 
+"switch (x) { case -async (b): c; }"                   | Unexpected :                         | js: OK  | 
+"switch (x) { case 1 + async (b): c; }"                | Unexpected :                         | js: OK  | 
+"switch (x) { case -async (): c; }"                    | Unexpected :                         | js: OK  | 
+"switch (x) { case 1 + async (): c; }"                 | Unexpected :                         | js: OK  | 
+"switch (x) { case -<T>(b): c; }"                      | Unexpected :                         | js: ERR | 
+"switch (x) { case 1 + <T>(b): c; }"                   | Unexpected :                         | js: ERR | 
+"x = a ? b ? c : <T>(b) : e => f;"                     | Expected ":" but found ";"           | js: ERR | 
+"for (const k of a ? <T>(b) : c => d) {}"              | Expected ":" but found ")"           | js: ERR | 
+"x = { [a ? <T>(b) : c => d]: 1 };"                    | Expected ":" but found "]"           | js: ERR | 
+"switch (x) { case -async <T>(b): c; }"                | Unexpected :                         | js: OK  | 
+"switch (x) { case 1 + async <T>(b): c; }"             | Unexpected :                         | js: OK  | 
+"x = a ? b ? c : async <T>(b) : e => f;"               | Expected ":" but found ";"           | js: OK  | 
+"for (const k of a ? async <T>(b) : c => d) {}"        | Expected ":" but found ")"           | js: OK  | 
+"x = { [a ? async <T>(b) : c => d]: 1 };"              | Expected ":" but found "]"           | js: OK  | 
+"x = a ? b : (this) : c => d;"                         | Expected ";" but found ":"           | js: ERR | TS2730
+"x = a ? b ? (this): C => d : e : f;"                  | Expected ";" but found ":"           | js: ERR | TS2730
+"x = (this): C => d;"                                  | Expected ";" but found ":"           | js: ERR | TS2730

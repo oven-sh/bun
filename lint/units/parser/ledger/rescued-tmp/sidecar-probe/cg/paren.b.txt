@@ -1,0 +1,321 @@
+0000000000000000 <<X::P>::paren>:
+pushq	%rbp
+pushq	%r15
+pushq	%r14
+pushq	%r13
+pushq	%r12
+pushq	%rbx
+subq	$0x78, %rsp
+movl	%ecx, 0x4c(%rsp)
+movq	%rsi, %r14
+movq	%rdi, (%rsp)
+movq	$0x0, 0x30(%rsp)
+movq	$0x8, 0x38(%rsp)
+movq	$0x0, 0x40(%rsp)
+movq	$0x0, 0x50(%rsp)
+movq	0x10(%rsi), %rcx
+cmpq	(%rsi), %rcx
+je	0x22e <<X::P>::paren+0x22e>
+movq	0x8(%r14), %rax
+movl	%edx, (%rax,%rcx,4)
+movq	%rcx, 0x60(%rsp)
+leaq	0x1(%rcx), %rax
+movq	%rax, 0x58(%rsp)
+movq	%rax, 0x10(%r14)
+movzbl	0x68(%r14), %eax
+movb	%al, 0xf(%rsp)
+movb	$0x1, 0x68(%r14)
+movl	$0x8, %eax
+movq	%rax, 0x28(%rsp)
+xorl	%ebx, %ebx
+movq	(%rip), %r13            # 0x84 <<X::P>::paren+0x84>
+R_X86_64_GOTPCREL	<X::Lexer>::next-0x4
+xorl	%ebp, %ebp
+movzbl	0x50(%r14), %r12d
+cmpb	$0x29, %r12b
+je	0x1b0 <<X::P>::paren+0x1b0>
+cmpb	$0x2e, %r12b
+jne	0xaa <<X::P>::paren+0xaa>
+leaq	0x30(%r14), %rdi
+callq	*%r13
+testb	$0x1, %al
+jne	0x1be <<X::P>::paren+0x1be>
+movq	0x40(%r14), %rax
+movq	%rax, 0x60(%r14)
+leaq	0x10(%rsp), %rdi
+movq	%r14, %rsi
+movl	$0x2, %edx
+callq	*(%rip)                 # 0xc5 <<X::P>::paren+0xc5>
+R_X86_64_GOTPCREL	<X::P>::parse_expr-0x4
+cmpb	$0x0, 0x10(%rsp)
+jne	0x1cc <<X::P>::paren+0x1cc>
+movq	0x18(%rsp), %rax
+movq	%rax, %r15
+xorq	$0x5555, %r15           # imm = 0x5555
+cmpb	$0x2e, %r12b
+cmovneq	%rax, %r15
+movzbl	0x50(%r14), %eax
+cmpb	$0x3a, %al
+jne	0x120 <<X::P>::paren+0x120>
+movq	0x40(%r14), %rbp
+leaq	0x30(%r14), %rdi
+callq	*%r13
+testb	$0x1, %al
+jne	0x1be <<X::P>::paren+0x1be>
+movq	%r14, %rdi
+xorl	%esi, %esi
+xorl	%edx, %edx
+callq	*(%rip)                 # 0x110 <<X::P>::paren+0x110>
+R_X86_64_GOTPCREL	<X::P>::grammar_discard-0x4
+testb	$0x1, %al
+jne	0x21f <<X::P>::paren+0x21f>
+incq	%rbp
+movzbl	0x50(%r14), %eax
+cmpb	$0x3d, %al
+jne	0x15a <<X::P>::paren+0x15a>
+leaq	0x30(%r14), %rdi
+callq	*%r13
+testb	$0x1, %al
+jne	0x1be <<X::P>::paren+0x1be>
+leaq	0x10(%rsp), %rdi
+movq	%r14, %rsi
+movl	$0x2, %edx
+callq	*(%rip)                 # 0x146 <<X::P>::paren+0x146>
+R_X86_64_GOTPCREL	<X::P>::parse_expr-0x4
+cmpb	$0x1, 0x10(%rsp)
+je	0x1cc <<X::P>::paren+0x1cc>
+movq	0x18(%rsp), %rax
+orq	$0x1, %rax
+imulq	%rax, %r15
+cmpq	0x30(%rsp), %rbx
+je	0x191 <<X::P>::paren+0x191>
+movq	0x28(%rsp), %rax
+movq	%r15, (%rax,%rbx,8)
+leaq	0x1(%rbx), %r15
+movq	%r15, 0x40(%rsp)
+movzbl	0x50(%r14), %eax
+cmpl	$0x2c, %eax
+jne	0x1a8 <<X::P>::paren+0x1a8>
+leaq	0x30(%r14), %rdi
+callq	*%r13
+movq	%r15, %rbx
+testb	$0x1, %al
+je	0x86 <<X::P>::paren+0x86>
+jmp	0x1be <<X::P>::paren+0x1be>
+leaq	0x30(%rsp), %rdi
+callq	*(%rip)                 # 0x19c <<X::P>::paren+0x19c>
+R_X86_64_GOTPCREL	<alloc::raw_vec::RawVec<u64>>::grow_one-0x4
+movq	0x38(%rsp), %rax
+movq	%rax, 0x28(%rsp)
+jmp	0x161 <<X::P>::paren+0x161>
+cmpl	$0x29, %eax
+jne	0x211 <<X::P>::paren+0x211>
+incq	%rbx
+leaq	0x30(%r14), %rdi
+callq	*(%rip)                 # 0x1ba <<X::P>::paren+0x1ba>
+R_X86_64_GOTPCREL	<X::Lexer>::next-0x4
+testb	$0x1, %al
+je	0x1e0 <<X::P>::paren+0x1e0>
+movq	(%rsp), %rbx
+movw	$0x101, (%rbx)          # imm = 0x101
+jmp	0x486 <<X::P>::paren+0x486>
+movzbl	0x11(%rsp), %eax
+movq	(%rsp), %rbx
+movb	%al, 0x1(%rbx)
+movb	$0x1, (%rbx)
+jmp	0x486 <<X::P>::paren+0x486>
+movzbl	0xf(%rsp), %eax
+movb	%al, 0x68(%r14)
+movzbl	0x50(%r14), %eax
+cmpl	$0x3d, %eax
+je	0x1fc <<X::P>::paren+0x1fc>
+cmpl	$0x3a, %eax
+jne	0x336 <<X::P>::paren+0x336>
+cmpb	$0x4, 0x4c(%rsp)
+jbe	0x246 <<X::P>::paren+0x246>
+movq	(%rsp), %rbx
+movw	$0x401, (%rbx)          # imm = 0x401
+jmp	0x486 <<X::P>::paren+0x486>
+movq	(%rsp), %rbx
+movw	$0x301, (%rbx)          # imm = 0x301
+jmp	0x486 <<X::P>::paren+0x486>
+movq	(%rsp), %rbx
+movb	%dl, 0x1(%rbx)
+movb	$0x1, (%rbx)
+jmp	0x486 <<X::P>::paren+0x486>
+movq	%r14, %rdi
+movq	%rcx, %r15
+movl	%edx, %ebx
+callq	*(%rip)                 # 0x23c <<X::P>::paren+0x23c>
+R_X86_64_GOTPCREL	<alloc::raw_vec::RawVec<u32>>::grow_one-0x4
+movl	%ebx, %edx
+movq	%r15, %rcx
+jmp	0x4a <<X::P>::paren+0x4a>
+movl	%eax, 0x28(%rsp)
+movq	$0x0, 0x10(%rsp)
+movq	$0x8, 0x18(%rsp)
+movq	$0x0, 0x20(%rsp)
+testq	%rbx, %rbx
+je	0x2b5 <<X::P>::paren+0x2b5>
+movl	$0x8, %eax
+movq	0x38(%rsp), %r12
+xorl	%r15d, %r15d
+xorl	%ecx, %ecx
+jmp	0x295 <<X::P>::paren+0x295>
+nopl	(%rax,%rax)
+rolq	$0x3, %r13
+movq	%r13, (%rax,%r15,8)
+incq	%r15
+movq	%r15, 0x20(%rsp)
+cmpq	%r15, %rbx
+je	0x2b8 <<X::P>::paren+0x2b8>
+movq	(%r12,%r15,8), %r13
+cmpq	%rcx, %r15
+jne	0x280 <<X::P>::paren+0x280>
+leaq	0x10(%rsp), %rdi
+callq	*(%rip)                 # 0x2a9 <<X::P>::paren+0x2a9>
+R_X86_64_GOTPCREL	<alloc::raw_vec::RawVec<u64>>::grow_one-0x4
+movq	0x10(%rsp), %rcx
+movq	0x18(%rsp), %rax
+jmp	0x280 <<X::P>::paren+0x280>
+xorl	%r15d, %r15d
+movl	0x28(%rsp), %eax
+cmpl	$0x3d, %eax
+je	0x2d3 <<X::P>::paren+0x2d3>
+cmpl	$0x3a, %eax
+jne	0x318 <<X::P>::paren+0x318>
+movq	%r14, %rdi
+callq	*(%rip)                 # 0x2cf <<X::P>::paren+0x2cf>
+R_X86_64_GOTPCREL	<X::P>::try_arrow_return_type-0x4
+testb	%al, %al
+je	0x318 <<X::P>::paren+0x318>
+leaq	0x50(%rsp), %rsi
+movq	%r14, %rdi
+callq	*(%rip)                 # 0x2e1 <<X::P>::paren+0x2e1>
+R_X86_64_GOTPCREL	<X::P>::log_errors-0x4
+movq	0x18(%rsp), %r12
+leaq	0x68(%rsp), %rdi
+movq	%r14, %rsi
+movq	%r12, %rdx
+movq	%r15, %rcx
+callq	*(%rip)                 # 0x2fa <<X::P>::paren+0x2fa>
+R_X86_64_GOTPCREL	<X::P>::arrow_body-0x4
+cmpb	$0x0, 0x68(%rsp)
+je	0x3b5 <<X::P>::paren+0x3b5>
+movzbl	0x69(%rsp), %eax
+movq	(%rsp), %rbx
+movb	%al, 0x1(%rbx)
+movb	$0x1, %al
+jmp	0x3d4 <<X::P>::paren+0x3d4>
+movq	0x10(%rsp), %rsi
+testq	%rsi, %rsi
+je	0x336 <<X::P>::paren+0x336>
+movq	0x18(%rsp), %rdi
+shlq	$0x3, %rsi
+movl	$0x8, %edx
+callq	*(%rip)                 # 0x336 <<X::P>::paren+0x336>
+R_X86_64_GOTPCREL	__rustc::__rust_dealloc-0x4
+movq	0x10(%r14), %rax
+movq	0x60(%rsp), %rdx
+cmpq	%rax, %rdx
+jae	0x35a <<X::P>::paren+0x35a>
+movq	0x8(%r14), %rcx
+movl	$0x0, (%rcx,%rdx,4)
+cmpq	0x58(%rsp), %rax
+jne	0x35a <<X::P>::paren+0x35a>
+movq	%rdx, 0x10(%r14)
+testq	%rbp, %rbp
+je	0x389 <<X::P>::paren+0x389>
+movq	0x28(%r14), %rbx
+cmpq	0x18(%r14), %rbx
+je	0x460 <<X::P>::paren+0x460>
+movq	0x20(%r14), %rax
+movl	%ebp, (%rax,%rbx,4)
+incq	%rbx
+movq	%rbx, 0x28(%r14)
+movq	(%rsp), %rbx
+movw	$0x501, (%rbx)          # imm = 0x501
+jmp	0x486 <<X::P>::paren+0x486>
+movq	0x40(%rsp), %rbx
+testq	%rbx, %rbx
+je	0x3fb <<X::P>::paren+0x3fb>
+leaq	0x50(%rsp), %rsi
+movq	%r14, %rdi
+callq	*(%rip)                 # 0x3a1 <<X::P>::paren+0x3a1>
+R_X86_64_GOTPCREL	<X::P>::log_errors-0x4
+movq	0x38(%rsp), %rax
+cmpq	$0x4, %rbx
+jae	0x409 <<X::P>::paren+0x409>
+xorl	%ecx, %ecx
+xorl	%edx, %edx
+jmp	0x46f <<X::P>::paren+0x46f>
+movq	0x70(%rsp), %rax
+movq	0x10(%r14), %rcx
+testq	%rcx, %rcx
+movq	(%rsp), %rbx
+je	0x3ce <<X::P>::paren+0x3ce>
+decq	%rcx
+movq	%rcx, 0x10(%r14)
+movq	%rax, 0x8(%rbx)
+xorl	%eax, %eax
+movb	%al, (%rbx)
+movq	0x10(%rsp), %rsi
+testq	%rsi, %rsi
+je	0x486 <<X::P>::paren+0x486>
+shlq	$0x3, %rsi
+movl	$0x8, %edx
+movq	%r12, %rdi
+callq	*(%rip)                 # 0x3f6 <<X::P>::paren+0x3f6>
+R_X86_64_GOTPCREL	__rustc::__rust_dealloc-0x4
+jmp	0x486 <<X::P>::paren+0x486>
+movq	(%rsp), %rbx
+movw	$0x601, (%rbx)          # imm = 0x601
+jmp	0x486 <<X::P>::paren+0x486>
+movabsq	$0x1000000000000000, %rcx # imm = 0x1000000000000000
+addq	$-0x4, %rcx
+andq	%rbx, %rcx
+leaq	(,%rbx,8), %rdx
+andq	$-0x20, %rdx
+pxor	%xmm0, %xmm0
+xorl	%esi, %esi
+pxor	%xmm1, %xmm1
+movdqu	(%rax,%rsi), %xmm2
+paddq	%xmm2, %xmm1
+movdqu	0x10(%rax,%rsi), %xmm2
+paddq	%xmm2, %xmm0
+addq	$0x20, %rsi
+cmpq	%rsi, %rdx
+jne	0x430 <<X::P>::paren+0x430>
+paddq	%xmm1, %xmm0
+pshufd	$0xee, %xmm0, %xmm1     # xmm1 = xmm0[2,3,2,3]
+paddq	%xmm0, %xmm1
+movq	%xmm1, %rdx
+jmp	0x476 <<X::P>::paren+0x476>
+leaq	0x18(%r14), %rdi
+callq	*(%rip)                 # 0x46a <<X::P>::paren+0x46a>
+R_X86_64_GOTPCREL	<alloc::raw_vec::RawVec<u32>>::grow_one-0x4
+jmp	0x36d <<X::P>::paren+0x36d>
+addq	(%rax,%rcx,8), %rdx
+incq	%rcx
+cmpq	%rcx, %rbx
+jne	0x46f <<X::P>::paren+0x46f>
+movq	(%rsp), %rbx
+movq	%rdx, 0x8(%rbx)
+movb	$0x0, (%rbx)
+movq	0x30(%rsp), %rsi
+testq	%rsi, %rsi
+je	0x4a4 <<X::P>::paren+0x4a4>
+movq	0x38(%rsp), %rdi
+shlq	$0x3, %rsi
+movl	$0x8, %edx
+callq	*(%rip)                 # 0x4a4 <<X::P>::paren+0x4a4>
+R_X86_64_GOTPCREL	__rustc::__rust_dealloc-0x4
+movq	%rbx, %rax
+addq	$0x78, %rsp
+popq	%rbx
+popq	%r12
+popq	%r13
+popq	%r14
+popq	%r15
+popq	%rbp
+retq

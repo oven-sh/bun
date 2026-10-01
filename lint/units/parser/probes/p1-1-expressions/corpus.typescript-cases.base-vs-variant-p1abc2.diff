@@ -1,0 +1,12 @@
+10373c10373
+< ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression10.ts","ok ab3a04eb85fa236e"]
+---
+> ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression10.ts","ok 3767a5f2a3e9421b"]
+10375c10375
+< ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression12.ts","err Expected \":\" but found \"a\""]
+---
+> ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression12.ts","ok 3767a5f2a3e9421b"]
+10387c10387
+< ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression8.ts","err Expected \":\" but found \"x\""]
+---
+> ["/workspace/ref/typescript-go/_submodules/TypeScript/tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions/parserArrowFunctionExpression8.ts","ok 8cbc5936016586b9"]

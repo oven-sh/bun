@@ -1,0 +1,1 @@
+["x = a ? async <T,>(y) => (b) : c => d;", "x = a ? async <T,>(y) => (b) : c => d : e;", "x = a ? async <T,>(b) : c => d;", "x = a ? async <T,>(b) : c => d : e;", "x = a ? async <T extends U>(y) => (b) : c => d;", "x = a ? <T,>(y) => (b) : c => d;", "x = a ? <T,>(b) : c => d;", "x = a ? <T,>(b) : c => d : e;", "x = a ? async <T>(b) : c => d;", "x = a ? y => (b) : c => d;"]

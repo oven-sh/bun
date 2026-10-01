@@ -1,0 +1,95 @@
+file /p6.ts scriptKind=3 variant=0 dts=false textLen=171
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=71 identifiers=20 text=21 reparsedClones=0
+root KindSourceFile [0,171) f=0x0
+  .Statements: list [0,170) n=5
+    - KindExpressionStatement [0,43) f=0x0
+      .Expression: KindBinaryExpression [0,42) f=0x0
+        .Left: KindIdentifier [0,1) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [1,3) f=0x0
+        .Right: KindArrowFunction [3,42) f=0x0
+          .Body: KindBlock [29,42) f=0x2000
+            .Statements: list [31,40) n=1
+              - KindExpressionStatement [31,40) f=0x2000
+                .Expression: KindAwaitExpression [31,39) f=0x2000
+                  .Expression: KindIdentifier [37,39) f=0x2000 Text="a"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [26,29) f=0x0
+          .Parameters: list [11,25) n=2
+            - KindParameter [11,22) f=0x2000
+              .Initializer: KindAwaitExpression [14,22) f=0x2000
+                .Expression: KindNumericLiteral [20,22) f=0x2000 Text="1" TokenFlags=0x0
+              .name: KindIdentifier [11,12) f=0x2000 Text="a"
+            - KindParameter [23,25) f=0x2000
+              .name: KindIdentifier [23,25) f=0x2000 Text="b"
+          .modifiers.flags=0x400
+          .modifiers: list [3,9) n=1
+            - KindAsyncKeyword [3,9) f=0x0
+    - KindExpressionStatement [43,77) f=0x0
+      .Expression: KindBinaryExpression [43,76) f=0x0
+        .Left: KindIdentifier [43,45) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [45,47) f=0x0
+        .Right: KindArrowFunction [47,76) f=0x0
+          .Body: KindIdentifier [74,76) f=0x0 Text="a"
+          .EqualsGreaterThanToken: KindEqualsGreaterThanToken [71,74) f=0x0
+          .Parameters: list [49,70) n=4
+            - KindParameter [49,50) f=0x0
+              .name: KindIdentifier [49,50) f=0x0 Text="a"
+            - KindParameter [51,55) f=0x0
+              .name: KindObjectBindingPattern [51,55) f=0x0
+                .Elements: list [53,54) n=1
+                  - KindBindingElement [53,54) f=0x0
+                    .name: KindIdentifier [53,54) f=0x0 Text="b"
+            - KindParameter [56,64) f=0x0
+              .Initializer: KindIdentifier [62,64) f=0x0 Text="d"
+              .name: KindArrayBindingPattern [56,60) f=0x0
+                .Elements: list [58,59) n=1
+                  - KindBindingElement [58,59) f=0x0
+                    .name: KindIdentifier [58,59) f=0x0 Text="c"
+            - KindParameter [65,70) f=0x0
+              .DotDotDotToken: KindDotDotDotToken [65,69) f=0x0
+              .name: KindIdentifier [69,70) f=0x0 Text="e"
+    - KindFunctionDeclaration [77,105) f=0x0
+      .Body: KindBlock [102,105) f=0x0
+        .Statements: list [104,104) n=0
+      .Parameters: list [89,101) n=1
+        - KindParameter [89,101) f=0x0
+          .Initializer: KindArrowFunction [92,101) f=0x0
+            .Body: KindIdentifier [99,101) f=0x0 Text="b"
+            .EqualsGreaterThanToken: KindEqualsGreaterThanToken [96,99) f=0x0
+            .Parameters: list [94,95) n=1
+              - KindParameter [94,95) f=0x0
+                .name: KindIdentifier [94,95) f=0x0 Text="b"
+          .name: KindIdentifier [89,90) f=0x0 Text="a"
+      .name: KindIdentifier [86,88) f=0x0 Text="g"
+    - KindExpressionStatement [105,144) f=0x0
+      .Expression: KindBinaryExpression [105,143) f=0x0
+        .Left: KindIdentifier [105,107) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [107,109) f=0x0
+        .Right: KindFunctionExpression [109,143) f=0x0
+          .AsteriskToken: KindAsteriskToken [124,125) f=0x0
+          .Body: KindBlock [130,143) f=0x2800
+            .Statements: list [132,141) n=1
+              - KindExpressionStatement [132,141) f=0x2800
+                .Expression: KindYieldExpression [132,140) f=0x2800
+                  .Expression: KindIdentifier [138,140) f=0x2800 Text="a"
+          .Parameters: list [128,129) n=1
+            - KindParameter [128,129) f=0x2800
+              .name: KindIdentifier [128,129) f=0x2800 Text="a"
+          .modifiers.flags=0x400
+          .modifiers: list [109,115) n=1
+            - KindAsyncKeyword [109,115) f=0x0
+          .name: KindIdentifier [125,127) f=0x2800 Text="h"
+    - KindExpressionStatement [144,170) f=0x0
+      .Expression: KindBinaryExpression [144,169) f=0x0
+        .Left: KindIdentifier [144,146) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [146,148) f=0x0
+        .Right: KindFunctionExpression [148,169) f=0x0
+          .Body: KindBlock [166,169) f=0x2000
+            .Statements: list [168,168) n=0
+          .Parameters: list [165,165) n=0
+          .modifiers.flags=0x400
+          .modifiers: list [148,154) n=1
+            - KindAsyncKeyword [148,154) f=0x0
+  .EndOfFileToken: KindEndOfFile [170,171) f=0x0

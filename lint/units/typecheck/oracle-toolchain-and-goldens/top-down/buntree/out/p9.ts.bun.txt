@@ -1,0 +1,22 @@
+file p9.ts bytes=236 statements=10
+s_import @0
+s_import @31
+s_export_from @58
+s_export_star @92
+s_export_clause @122
+s_import @145
+s_expr @177
+  e_await @177
+    e_identifier @184 q
+s_expr @188
+  e_await @188
+    e_array @194
+      e_identifier @195 q
+s_for_of @199
+  s_local @210
+    b_identifier @216 i
+  e_identifier @221 j
+  s_block @224
+s_expr @227
+  e_dot @227
+    e_identifier @227 q

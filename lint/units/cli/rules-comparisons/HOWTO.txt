@@ -1,0 +1,6 @@
+Oracle: cd oracle && npm install (eslint 10.11.0; its four rule files are byte-identical to the pin 4618052).
+node probe.cjs <rule|all> <module|script|commonjs> ../cases/<file>.txt   prints what ESLint reports (line:col-endLine:endCol).
+node scan.cjs module ../cases/nun.txt ; node gen-nun.cjs ; node gen-start.cjs ; node gen-end.cjs   compare the scan with ESLint.
+node compact.cjs <rule> ../cases/final-<rule>.txt   rebuilds lists/<rule>.txt.
+Lists: VALID, INVALID (code => line:col, tag), DIFFERENT (ESLint; bun = the specified algorithm).
+Tags: [op] operator of the message; C comparisonWithNaN, S switchNaN, K caseNaN.

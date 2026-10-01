@@ -1,0 +1,27 @@
+file q7.ts bytes=62
+s_expr 0
+  e_binary 0 op=bin_assign
+    e_identifier 0 name="x"
+    e_identifier 4 name="a"
+s_expr 6
+  e_unary 6 op=un_pre_inc
+    e_identifier 8 name="b"
+s_expr 10
+  e_binary 10 op=bin_assign
+    e_identifier 10 name="y"
+    e_call 14
+      e_identifier 14 name="c"
+      e_identifier 17 name="d"
+s_expr 20
+  e_identifier 20 name="return_"
+s_if 29
+  e_identifier 33 name="a"
+  s_expr 36
+    e_identifier 36 name="b"
+  s_expr 43
+    e_identifier 43 name="c"
+s_do_while 45
+  s_empty -1
+  e_identifier 57 name="e"
+s_expr 60
+  e_identifier 60 name="f"

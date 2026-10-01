@@ -1,0 +1,81 @@
+What happens to the committed ground truth when sync.sh moves UPSTREAM
+=======================================================================
+
+Paths are below test/cli/lint/conformance/. "Script" means a bun or shell script that is committed there. Every step
+was run by this pass at the pinned commits, on the scratch repository /tmp/cgt/validate/with; the step that compares
+two different commits could not be run: the clone of typescript-go on this machine is shallow and holds one commit.
+
+A. Written again at every sync by a script, without Go and without network
+---------------------------------------------------------------------------
+1. corpus/ and UPSTREAM: sync.sh <typescript-go clone> <TypeScript clone> [commits]
+   (corpus-layout-and-sync/top-down/prototype/sync.sh). Git plumbing on the two clones.
+2. corpus/tsgo.expects-no-errors.txt: sync.sh, from the names of the .errors.txt.diff files (23 keys today).
+3. runner/options_table.json: probes/options_from_git.ts <clone> <commit> <out>. It reads declscompiler.go,
+   enummaps.go and core/compileroptions.go with "git show". Today it writes the stored 27847 bytes.
+   The prototype that the notes hold (enumerator/prototype/gen_options_table.ts) reads the worktree of the clone at a
+   fixed path and writes beside itself: the committed script has to take the clone and the commit as arguments.
+4. fixtures/instances.tsv and reference_counts.json: prototype/gen_reference.ts <runner> <conformance directory> <out>
+   <clone>. The runner enumerates the new corpus; the script writes the list and the constants.
+   Given the clone, it then holds the list against the baseline directories of typescript-go (git ls-tree of
+   testdata/baselines/reference/submodule/compiler and conformance) and ends with exit code 1 when
+     - a stem with a baseline (.errors.txt, .types, .symbols, .js, .js.map, .sourcemap.txt, .trace.json) is no instance,
+     - such a stem belongs to an instance that the list does not run,
+     - an instance is of kind E and typescript-go has no .errors.txt of that stem, or the reverse.
+   Today: 12763 stems, all of run instances; 7027 error baselines, the 7027 instances of kind E. 34 run instances and
+   the 2118 skipped ones leave no file: for those 2152 names the directories say nothing, and the list is the
+   runner's own word. A skipped instance that the runner takes for a run one would be one more of the 34.
+5. The two name lists of compiler_runner.go (45 tests dropped by name, 8 whose emit is not compared):
+   probes/source_lists.ts reads them from the Go source text and compares them with the arrays of the port
+   (runner/compiler_runner.ts:41 and :90). Today: equal. When they differ the port is edited by hand.
+6. Which ported upstream file changed: probes/ported_changed.sh with prototype/UPSTREAM_PORTED, which records the
+   git blob id of each of the 27 files of typescript-go and 3 files of TypeScript that the runner ports. It reads the
+   new commit only. No line printed: the port and every Go-made fixture of part B are still right by construction.
+   A line printed: that module of the runner is read against the upstream diff, and part B applies to it.
+7. Proof on the new corpus, bun only (17 s of wall time today):
+     bun sweep.ts --round-trip            every error baseline of typescript-go is read and written to the same bytes
+     bun sweep.ts --check <replay check>  every run instance is written from its oracle to the same bytes; the text
+                                          of every unit of an instance with errors is in its baseline
+   Today: 7027 of 7027, and 12796 of 12797 (one instance has roots that the port does not decide).
+8. expectations.json: a name whose case is gone, whose instance is skipped now, or whose kind changed fails
+   checkLists. That is the one place where a list shrinks: the commit of the sync removes those names and says so.
+9. The diff of the commit is the review: instances.tsv shows each instance that came, went, changed between E and C
+   or changed its skip; reference_counts.json shows the counts. Text, so that this diff can be read.
+
+B. Needs a Go build, and only when step 6 names the file
+--------------------------------------------------------
+Local Go 1.24 or later, standard library only, GOTOOLCHAIN=local GOPROXY=off. Never at a sync that leaves the
+ported files alone.
+- fixtures/directives-expected.json: the reference's parser on fixtures/directives-inputs.json
+  (directive-grammar/groundtruth: main.go holds copies of the functions of test_case_parser.go, scanner.go,
+  vfs/internal/internal.go, stringutil and tspath; the copies are made again from the new commit first).
+  Built and run by this pass with go 1.24.4: 12 s, the stored bytes.
+  Trigger: internal/testrunner/test_case_parser.go, internal/scanner/scanner.go (SkipTrivia),
+  internal/vfs/internal/internal.go, internal/stringutil, internal/tspath.
+- reference_counts.json, member go.tables, and the tables LOWER_RUNS and FOLD_RUNS of runner/gostrings.ts:
+  groundtruth/tables (this directory) and shared-foundation-merge/bottom-up/groundtruth/gen_tables.ts.
+  Trigger: the go directive of typescript-go's go.mod moves to a Go with a newer Unicode (1.24 and 1.26 are 15.0.0),
+  or internal/stringutil/util.go changes.
+Without Go at that moment the two files are changed as a snapshot: the port is brought in line with the upstream
+diff, the test shows which of the 120 records differ, and the new records are written by the port and read by a
+person. That is weaker than Go's answer and has to be said in the commit.
+
+C. Needs the reference's own toolchain (Go 1.26 and eleven modules): not possible offline on this machine
+-----------------------------------------------------------------------------------------------------------
+- reference_counts.json, member suiteRun: the sha256 of the subtests that a real run of TestSubmodule printed and
+  of its skip reasons. It is evidence for one commit. The update script removes the member when the commit of
+  typescript-go moves; the test asserts it while it is there and fails on a member of another commit.
+  With a log of a real run at the new commit, probes/log_reasons.py prints the two values again.
+- post-emit-order.txt: three names from a patched run. A tag only: no pass or fail reads it. It stays as it is, its
+  first line names the commit it was measured at, and a name whose case is gone is removed.
+Whether the route that produced both (Go 1.26 from GitHub, around the Go proxy) is allowed is the operators' open
+question. Nothing else that is committed depends on it.
+
+D. Where the generator sources live
+-----------------------------------
+In the repository, under test/cli/lint/conformance/, because a sync needs them and the notes branch is not part of
+the pull request: sync.sh, the update script (gen_reference.ts, with options_from_git.ts, source_lists.ts and
+ported_changed.sh folded in), runner/UPSTREAM_PORTED with the blob ids.
+In the notes only: every Go program and every vector of PROVENANCE.tsv. No .go file is tracked in this repository
+today (git ls-files '*.go' prints nothing), no committed file needs Go at a sync, and the two that need it when the
+parser or the Unicode version moves are named in part B with their programs. If the maintainers want those two
+programs in the repository they are 29 KB (directive-grammar/groundtruth) and 2 KB (groundtruth/tables).

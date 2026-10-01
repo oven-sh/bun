@@ -1,0 +1,98 @@
+file /q8.ts scriptKind=3 variant=0 dts=false textLen=189
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=78 identifiers=18 text=19 reparsedClones=0
+root KindSourceFile [0,189) f=0x0
+  .Statements: list [0,188) n=6
+    - KindVariableStatement [0,57) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,56) f=0x1
+        .Declarations: list [3,56) n=3
+          - KindVariableDeclaration [3,22) f=0x0
+            .Initializer: KindFunctionExpression [7,22) f=0x0
+              .Body: KindBlock [19,22) f=0x0
+                .Statements: list [21,21) n=0
+              .Parameters: list [18,18) n=0
+            .name: KindIdentifier [3,5) f=0x0 Text="x"
+          - KindVariableDeclaration [23,36) f=0x0
+            .Initializer: KindClassExpression [27,36) f=0x0
+              .Members: list [35,35) n=0
+            .name: KindIdentifier [23,25) f=0x0 Text="y"
+          - KindVariableDeclaration [37,56) f=0x0
+            .Initializer: KindArrowFunction [41,56) f=0x0
+              .Body: KindBlock [53,56) f=0x2000
+                .Statements: list [55,55) n=0
+              .EqualsGreaterThanToken: KindEqualsGreaterThanToken [50,53) f=0x0
+              .Parameters: list [49,49) n=0
+              .modifiers.flags=0x400
+              .modifiers: list [41,47) n=1
+                - KindAsyncKeyword [41,47) f=0x0
+            .name: KindIdentifier [37,39) f=0x0 Text="z"
+    - KindVariableStatement [57,113) f=0x0
+      .DeclarationList: KindVariableDeclarationList [57,112) f=0x1
+        .Declarations: list [61,112) n=1
+          - KindVariableDeclaration [61,112) f=0x0
+            .Initializer: KindObjectLiteralExpression [65,112) f=0x0
+              .Properties: list [67,110) n=3
+                - KindMethodDeclaration [67,74) f=0x0
+                  .Body: KindBlock [71,74) f=0x0
+                    .Statements: list [73,73) n=0
+                  .Parameters: list [70,70) n=0
+                  .name: KindIdentifier [67,69) f=0x0 Text="f"
+                - KindMethodDeclaration [75,88) f=0x0
+                  .Body: KindBlock [85,88) f=0x2000
+                    .Statements: list [87,87) n=0
+                  .Parameters: list [84,84) n=0
+                  .modifiers.flags=0x400
+                  .modifiers: list [75,81) n=1
+                    - KindAsyncKeyword [75,81) f=0x0
+                  .name: KindIdentifier [81,83) f=0x0 Text="g"
+                - KindGetAccessor [89,110) f=0x0
+                  .Body: KindBlock [97,110) f=0x0
+                    .Statements: list [99,108) n=1
+                      - KindReturnStatement [99,108) f=0x0
+                        .Expression: KindNumericLiteral [106,108) f=0x0 Text="1" TokenFlags=0x0
+                  .Parameters: list [96,96) n=0
+                  .name: KindIdentifier [93,95) f=0x0 Text="h"
+            .name: KindIdentifier [61,63) f=0x0 Text="o"
+    - KindExpressionStatement [113,133) f=0x0
+      .Expression: KindCallExpression [113,132) f=0x0
+        .Arguments: list [131,131) n=0
+        .Expression: KindParenthesizedExpression [113,130) f=0x0
+          .Expression: KindFunctionExpression [115,129) f=0x0
+            .Body: KindBlock [126,129) f=0x0
+              .Statements: list [128,128) n=0
+            .Parameters: list [125,125) n=0
+    - KindExpressionStatement [133,147) f=0x0
+      .Expression: KindCallExpression [133,146) f=0x0
+        .Arguments: list [145,145) n=0
+        .Expression: KindParenthesizedExpression [133,144) f=0x0
+          .Expression: KindArrowFunction [135,143) f=0x0
+            .Body: KindBlock [140,143) f=0x0
+              .Statements: list [142,142) n=0
+            .EqualsGreaterThanToken: KindEqualsGreaterThanToken [137,140) f=0x0
+            .Parameters: list [136,136) n=0
+    - KindExpressionStatement [147,166) f=0x0
+      .Expression: KindPrefixUnaryExpression [147,165) f=0x0 Operator=KindExclamationToken
+        .Operand: KindCallExpression [149,165) f=0x0
+          .Arguments: list [164,164) n=0
+          .Expression: KindFunctionExpression [149,163) f=0x0
+            .Body: KindBlock [160,163) f=0x0
+              .Statements: list [162,162) n=0
+            .Parameters: list [159,159) n=0
+    - KindExpressionStatement [166,188) f=0x0
+      .Expression: KindBinaryExpression [166,187) f=0x0
+        .Left: KindIdentifier [166,168) f=0x0 Text="a"
+        .OperatorToken: KindEqualsToken [168,170) f=0x0
+        .Right: KindConditionalExpression [170,187) f=0x0
+          .ColonToken: KindColonToken [178,180) f=0x0
+          .Condition: KindIdentifier [170,172) f=0x0 Text="b"
+          .QuestionToken: KindQuestionToken [172,174) f=0x0
+          .WhenFalse: KindParenthesizedExpression [180,187) f=0x0
+            .Expression: KindBinaryExpression [182,186) f=0x0
+              .Left: KindIdentifier [182,183) f=0x0 Text="d"
+              .OperatorToken: KindCommaToken [183,184) f=0x0
+              .Right: KindIdentifier [184,186) f=0x0 Text="e"
+          .WhenTrue: KindParenthesizedExpression [174,178) f=0x0
+            .Expression: KindIdentifier [176,177) f=0x0 Text="c"
+  .EndOfFileToken: KindEndOfFile [188,189) f=0x0

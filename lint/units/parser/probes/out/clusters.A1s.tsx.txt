@@ -1,0 +1,73 @@
+class A1s  dialect tsx  config plain: 179 inputs in 15 clusters
+
+[04-type-params-args / targsExpr]  bun Expected "…" but found "…"  /  tsc TS2364 TS2371   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS2364 x1, TS2371 x1
+    "<(a = 1) => void>"  [instAssign]
+
+[04-type-params-args / targsExpr]  bun Expected "…" but found "…"  /  tsc TS2371   (46 inputs, 1 distinct)
+    tsc also: TS2371 x46, TS2304 x45, TS2347 x5, TS2318 x2, TS2558 x2, TS2635 x1
+    "<(a = 1) => void>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS2364 TS2371   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1, TS2364 x1, TS2371 x1
+    "<({ a = 1 }) => void>"  [instAssign]
+
+[04-type-params-args / targsExpr]  bun Unexpected …  /  tsc TS2371   (46 inputs, 1 distinct)
+    tsc also: TS2371 x46, TS2304 x45, TS2347 x5, TS2318 x2, TS2558 x2, TS2635 x1
+    "<({ a = 1 }) => void>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]
+
+[04-type-params-args / targsHeritage]  bun Expected "…" but found "…"  /  tsc TS2500   (4 inputs, 4 distinct)
+    tsc also: TS2500 x4, TS2503 x1
+    "class C implements a() {}"  [-]
+    "class C implements a.b() {}"  [-]
+    "class C implements a?.b {}"  [-]
+    "class C implements new A {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Expected identifier but found "…"  /  tsc TS2500   (1 inputs, 1 distinct)
+    tsc also: TS2500 x1
+    "class C implements A.#b {}"  [-]
+
+[04-type-params-args / targsHeritage]  bun Unexpected …  /  tsc TS2660   (1 inputs, 1 distinct)
+    tsc also: TS2660 x1
+    "class C extends super.a {}"  [-]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS2369   (30 inputs, 6 distinct)
+    tsc also: TS2369 x30, TS2304 x30, TS7006 x15
+    "(public a: A) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(private a) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(readonly a: A) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(protected a?: A) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(override a) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(public readonly) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Expected "…" but found "…"  /  tsc TS2730   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS2730 x5, TS7006 x5
+    "a ? (this): b => c : d"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Invalid assignment target  /  tsc TS2364   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS2364 x5
+    "(a: A = 1 = 2) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Invalid binding pattern  /  tsc TS2730   (20 inputs, 4 distinct)
+    tsc also: TS2730 x20, TS2304 x20, TS7006 x5, TS2318 x5
+    "(this: A) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(this: A, a: B) => x"  [init,stmt,arg,condTrue,condFalse]
+    "(this) => x"  [init,stmt,arg,condTrue,condFalse]
+    "async (this: A) => x"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / arrow]  bun Unexpected …  /  tsc TS2730   (10 inputs, 2 distinct)
+    tsc also: TS2730 x10, TS2304 x10
+    "(this: A): this is B => true"  [init,stmt,arg,condTrue,condFalse]
+    "a ? (this: T): b => c : d"  [init,stmt,arg,condTrue,condFalse]
+
+[05-assertions / nonNull]  bun Unexpected …  /  tsc TS2660   (3 inputs, 1 distinct)
+    tsc also: TS2660 x3, TS2304 x1
+    "super.x!"  [stmt,init,arg]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS2364   (3 inputs, 1 distinct)
+    tsc also: TS2364 x3, TS2304 x3
+    "{ a?: 1 } = b"  [init,arg,paren]
+
+[05-assertions / objLit]  bun Expected "…" but found "…"  /  tsc TS2369   (3 inputs, 1 distinct)
+    tsc also: TS2369 x3, TS2304 x3
+    "{ m(public a: A) {} }"  [init,arg,paren]

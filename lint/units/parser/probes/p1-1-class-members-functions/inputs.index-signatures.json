@@ -1,0 +1,20 @@
+[
+"class C { [k: string]: T, }",
+"class C { [k: string]: T, x = 1 }",
+"class C { [k: string]: T, [l: number]: U }",
+"class C { [await: string]: T; }",
+"class C { [k: string]; }",
+"class C { [k?: string]: T; }",
+"class C { [k: string, l: number]: T; }",
+"class C { [...k: string[]]: T; }",
+"class C { [k,]: T; }",
+"class C { []: T; }",
+"class C { [public k: string]: T; }",
+"class C { [k: string = 1]: T; }",
+"class C { static [k: string]: T, }",
+"class C { [k: string]: T\n[l: number]: U }",
+"class C { [k: string]: T [l: number]: U }",
+"class C { [k: string]?: T; }",
+"class C { [k: string](): T; }",
+"class C { [k: string]: T = 1; }"
+]

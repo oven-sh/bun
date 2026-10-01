@@ -1,0 +1,66 @@
+checker flags {'TypeFlags': 72, 'ObjectFlags': 48, 'ElementFlags': 8, 'SignatureFlags': 11, 'VarianceFlags': 9, 'AccessFlags': 10, 'IndexFlags': 3, 'NodeCheckFlags': 9, 'TypePredicateKind': 4, 'SignatureKind': 2, 'CheckMode': 9, 'InferenceFlags': 3, 'InferencePriority': 14, 'UnionReduction': 2, 'IntersectionFlags': 2, 'SignatureCheckMode': 6, 'IntersectionState': 2, 'RecursionFlags': 3, 'ExpandingFlags': 3, 'RelationComparisonResult': 7, 'TypeMapperKind': 4}
+adapted
+assembled /tmp/cdm-td/crate
+    Checking bun_typecheck_cdm v0.0.0 (/tmp/cdm-td/crate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.88s
+    Checking bun_typecheck_cdm v0.0.0 (/tmp/cdm-td/crate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.28s
+   Compiling bun_typecheck_cdm v0.0.0 (/tmp/cdm-td/crate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.03s
+     Running unittests src/lib.rs (/tmp/cdm-td/target/debug/build/bun_typecheck_cdm/417ce6fc4e52da1f/out/bun_typecheck_cdm-417ce6fc4e52da1f)
+
+running 41 tests
+test diagnostics::tests::decimal ... ok
+test diagnostics::tests::format_is_one_pass ... ok
+test diagnostics::tests::ids_and_texts ... ok
+test diagnostics_tests::ad_hoc_and_out_of_range ... ok
+test diagnostics_tests::chain_related_and_columns ... ok
+test diagnostics_tests::collection_deduplicates_at_add_and_program_merges ... ok
+test diagnostics_tests::first_visible_result ... ok
+test diagnostics_tests::messages_compare_by_id ... ok
+test nodetable_tests::bound_tables_with_an_index ... ok
+test nodetable_tests::checker_nodes_live_in_the_open_store ... ok
+test nodetable_tests::every_definition_round_trips ... ok
+test nodetable_tests::finish_numbers_in_for_each_child_order ... ok
+test nodetable_tests::imports_a_dump_of_typescript ... ok
+test nodetable_tests::bind_publish_and_share_between_programs ... ok
+test nodetable_tests::lazy_symbol_ids_and_private_names ... ok
+test nodetable_tests::published_stores_keep_their_nodes ... ok
+test tests_checker::a_stored_comparer_names_the_slot_of_its_relater ... ok
+test tests_checker::fill_missing_type_arguments_mappers_read_the_list_while_it_is_filled ... ok
+test nodetable_tests::workspace_crates_link ... ok
+test tests_checker::get_inferred_type_calls_the_stored_comparer ... ok
+test tests_checker::a_circular_alias_is_reported_through_the_stack_and_the_table ... ok
+test tests_checker::a_deferred_call_runs_on_every_way_out ... ok
+test tests_checker::inference_lists_are_shared_by_handle ... ok
+test nodetable_tests::stable_store_keeps_addresses ... ok
+test tests_checker::report_error_reduces_the_chain_as_upstream ... ok
+test diagnostics::tests::table_counts ... ok
+test tests_checker::signature_related_to_passes_reporter_and_comparer_of_one_relater ... ok
+test tests_checker::symbol_ids_are_given_in_request_order ... ok
+test tests_checker::the_checker_is_one_record_of_arenas ... ok
+test tests_checker::the_first_visible_result_is_written_from_a_node ... ok
+test tests_checker::cache_keys_hash_upstream_bytes ... ok
+test tests_checker::callbacks_get_the_checker_back ... ok
+test tests_checker::the_program_is_a_trait_object_over_resolved_inputs ... ok
+test tests_checker::compare_types_orders_as_upstream ... ok
+test tests_checker::union_signatures_find_the_master_list_by_identity ... ok
+test tests_checker::faults_and_stand_ins_have_one_sink_each ... ok
+test tests_checker::instantiate_type_keeps_the_caches_of_the_active_mappers ... ok
+test tests_checker::lists_keep_nil_empty_and_identity_apart ... ok
+test tests_checker::recursive_type_related_to_fills_the_cache_as_upstream ... ok
+test diagnostics::tests::keys_agree_with_upstream ... ok
+test tests_checker::a_loop_that_upstream_cannot_leave_ends_with_a_fault ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/program.rs (/tmp/cdm-td/target/debug/build/bun_typecheck_cdm/3ee7599b00e982a0/out/program-3ee7599b00e982a0)
+program: files 1 libs 1 symbols 15 types 1 faults 0
+   Doc-tests bun_typecheck_cdm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+checker data model ok
+rc=0

@@ -1,0 +1,20 @@
+var v = a ? x : c ? <T>(d) : e => f;
+var v = a ? <T>(b) : c => d ? e : f;
+var v = a ? (<T>(b)) : c => d;
+interface as {};
+interface as {}; foo()
+let type: any; type as = 1;
+type as = 1; type X = as;
+declare namespace as.b {}
+declare module as.b {}
+module as.b {}
+namespace as.b.c { export const a = 1 }
+abstract declare class C { m(): void }
+@d abstract declare class C {}
+declare abstract class C {}
+export default @d() abstract class C {}
+export default @d abstract class {}
+class C { @d()!! m() {} }
+@d.e()! class C {}
+@d!()! class C {}
+enum E { ["x"] = 1, ["y"] = x + 1 }

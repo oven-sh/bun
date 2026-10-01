@@ -1,0 +1,62 @@
+FINAL C3 SUPPORT LAYER: one Context, one scanner, the eleven first rules. Run natively on /workspace/wt/cli at e3566be889.
+This directory replaces ../probe (first pass of this unit) and ../../rule-support-unification-bottomup/probe where they differ.
+
+probe/src/lint/        THE PROPOSED TEXT of src/lint for milestone C3 (mod.rs stands for lib.rs):
+  mod.rs               the entry `lint`, and stand-ins for the two types of milestone C2 (Diagnostic, Severity)
+  rule.rs              Rule { name, category }, RuleCategory::default_level
+  context.rs           Context: text, name_of, declare, report, report_if_global, too_deep, finish, and the services
+                       that read the text again: closes, binary_start, start_of, case_test, case_start, close_bracket, token_end
+  tokens.rs            THE SCANNER: Bun's lexer seated at an offset; regular expressions and JSX elements come from the tree
+                       (spans_under), the text of a template after a `}` is read by template_text_end
+  ast_utils.rs         ESLint lib/rules/utils/ast-utils.js: get_static_string_value, get_static_property_name, is_same_reference
+  linter.rs            the one walk (impl bun_ast::walk::Visitor), the stack guard, the marks of assignment targets
+  rules/*.rs           one module per rule, named as ESLint names the file
+probe/src/{main,harness,shims}.rs   the harness, not part of the change (shims.rs: the native symbols of Bun's C++)
+probe/build.py         rustc against the rlibs of the debug build of the worktree; CLIPPY=1: clippy-driver with the lints of
+                       the workspace and its clippy.toml. Needs <out>/../highway_strings.o (probe/native.sh, once).
+probe-tokens/          the three files that differ for the token dump (PROBE_TOKENS=1), and run.sh
+oracle/diff.cjs        ESLint at the pin against the probe for one rule and lists of cases; --out writes vectors
+oracle/corpus.cjs      the eleven rules of ESLint against the probe over a list of real files
+oracle/tokens-diff.cjs the tokens of the scanner against espree's tokens over a list of real files
+oracle/extract.cjs     the cases of ESLint's own test of a rule; oracle/mark-origin.cjs marks them in the vectors
+make-vectors.sh        every case list on disk (the earlier units' and cases/) -> vectors/<rule>.json and DIFFERENCES.txt
+make-fixtures.cjs      vectors -> fixtures/<rule>.json, what ships as test/cli/lint/rules/<rule>.json
+rules.test.ts.draft    the test that reads the fixtures. NOT RUN: `bun --lint` does not exist in the build yet.
+simulate-test.cjs      the body of that test over the probe's reports printed as the plain format: 2677 cases, 0 wrong
+src-lint/              the same text as probe/src/lint with the paths of a crate root (crate:: for crate::lint::) and a
+                       lib.rs; probe/build-lib.py checks it as a library (see the end of this file for whether that ran)
+UPSTREAM_PORTED        the text of src/lint/UPSTREAM_PORTED.  LICENSE.eslint  the text of src/lint/LICENSE.eslint.
+deep/make.py           inputs of the depth and cost runs (logs/deep.log)
+
+VECTORS   vectors/<rule>.json: { code, sourceType, jsx?, eslint: [{line, column, endLine, endColumn, message}] | null,
+          expect: [{line, column, start, length, message}] | null, differs?, eslintTest? }
+          eslint null: ESLint's parser rejects. expect null: Bun's parser rejects. expect is what the probe printed
+          (walk order, not deduplicated); start and length in bytes, columns in UTF-16 units.
+FIXTURES  fixtures/<rule>.json: { code, jsx?, expect: [{line, column, message}], differs?, eslint?, eslintTest? }
+          sorted, equal reports once, no case that a parser rejects. 2677 cases, 278 KB.
+
+REBUILD AND RERUN (every heavy command through /workspace/tools/lk, timeout 3600000)
+  1. the worktree has its debug build (bun bd --version); ESLint with its dependencies:
+       sh ../../rules-expression-equality-bottomup/prototype/setup.sh      -> /tmp/cmp-probe/eslint-pin
+  2. /workspace/tools/lk sh probe/native.sh /workspace/wt/cli /tmp/c3final/out      once per machine
+  3. /workspace/tools/lk python3 probe/build.py /workspace/wt/cli /tmp/c3final/out   -> /tmp/c3final/out/lintprobe (4 s)
+     CLIPPY=1 /workspace/tools/lk python3 probe/build.py /workspace/wt/cli /tmp/c3final/clippy-out
+     rustfmt --edition 2024 --check probe/src/main.rs      (the rustfmt of the pinned toolchain)
+  4. ASAN_OPTIONS=detect_leaks=0 sh make-vectors.sh ; node make-fixtures.cjs
+  5. sh run-corpus.sh    (split -l 2000 of ../../rule-support-unification-bottomup/logs/corpus-node_modules.list into
+     /tmp/c3final/corpus/nm.*, cwd of the relative paths: the worktree)
+  lintprobe prints `path<TAB>OK|PARSE`, then per report `path<TAB>start<TAB>len<TAB>line:column<TAB>code<TAB>text`
+  (a line break of the text as \n, a backslash as two).
+
+RESULTS (debug build with ASAN; ESLint 4618052e, espree 11.2.0, acorn 8.18.0, eslint-scope 9.1.2)
+  vectors: 2719 cases: 2638 with ESLint's answer, 21 moved, 16 missing, 2 with another text (both no-self-assign behind
+    a comment), 20 that both parsers reject, 21 that only ESLint's rejects, 1 that only Bun's rejects. DIFFERENCES.txt.
+  real files: 16159 (9813 of node_modules, 12 large ones, 6334 of ESLint, Node's tests and Bun's tests): 16067 with the
+    same reports, 0 different, 92 that ESLint's parser rejects, 445 reports. logs/corpus*.log.
+  tokens against espree (the probe of probe-tokens/, PROBE_TOKENS=1): 34,203,837 tokens with 27,664 regular expressions
+    and 1,960 JSX elements over five corpora (the first two overlap): every file that both parsers take has the same
+    tokens, 18,228 of 18,228. logs/tokens-diff.log.
+  depth and cost: logs/deep.log, logs/times-big.log (typescript.js, 9.1 MB: parse 8.5 s, walk and rules 0.22 s).
+  clippy with the lints of the workspace: clean. rustfmt: clean. Comment runs of two lines: none.
+  src-lint/ as a library: rustfmt follows its modules and is clean. The rustc and clippy check (probe/build-lib.py) was
+    queued behind the build lock, which had an hour of waiters: /tmp/c3final/blib.log and clippylib.log say whether it ran.

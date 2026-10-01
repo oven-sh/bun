@@ -1,0 +1,132 @@
+var f = (this: any) => 1;
+var f = (this) => 1;
+var f = (this: any, a: number) => 1;
+var f = async (this: any) => 1;
+var f = (a, this: any) => 1;
+var f = function (this: any) {};
+var f = function (a, this: any) {};
+function f(this) {}
+function f(this: any, a) {}
+function f(a, this: any) {}
+function f(this = 1) {}
+function f(this?: any) {}
+function f(...this) {}
+class C { m(this: C) {} }
+class C { constructor(this: C) {} }
+class C { set x(this: C, v) {} }
+class C { get x(this: C) { return 1 } }
+var o = { m(this: any) {} };
+var f = (public a) => 1;
+var f = (public a: number) => 1;
+var f = (private a) => 1;
+var f = (protected a) => 1;
+var f = (readonly a) => 1;
+var f = (override a) => 1;
+var f = (public readonly a) => 1;
+var f = (public) => 1;
+var f = (readonly) => 1;
+var f = (public, b) => 1;
+var f = (public = 1) => 1;
+var f = (public: number) => 1;
+var f = (public?) => 1;
+var f = async (public a) => 1;
+function f(public a) {}
+function f(public a: number) {}
+function f(readonly a) {}
+function f(override a) {}
+function f(public) {}
+function f(public, b) {}
+function f(public readonly) {}
+function f(declare a) {}
+function f(static a) {}
+function f(abstract a) {}
+function f(async a) {}
+function f(accessor a) {}
+function f(export a) {}
+function f(in a) {}
+function f(out a) {}
+function f(const a) {}
+var o = { m(public a) {} };
+class C { m(public a) {} }
+class C { static m(public a) {} }
+class C { set x(public a) {} }
+class C { constructor(public a) {} }
+class C { constructor(public a?) {} }
+class C { constructor(public a = 1) {} }
+class C { constructor(public a?: number) {} }
+class C { constructor(public a? = 1) {} }
+class C { constructor(public readonly a) {} }
+class C { constructor(readonly public a) {} }
+class C { constructor(public private a) {} }
+class C { constructor(public public a) {} }
+class C { constructor(override a) {} }
+class C { constructor(public override a) {} }
+class C { constructor(override public a) {} }
+class C { constructor(override readonly a) {} }
+class C { constructor(readonly override a) {} }
+class C { constructor(public override readonly a) {} }
+class C { constructor(public {a}) {} }
+class C { constructor(public [a]) {} }
+class C { constructor(public {a}: any) {} }
+class C { constructor(public ...a) {} }
+class C { constructor(public ...a: any[]) {} }
+class C { constructor(readonly ...a) {} }
+class C { constructor(...public a) {} }
+class C { constructor(public this) {} }
+class C { constructor(public) {} }
+class C { constructor(public, b) {} }
+class C { constructor(readonly) {} }
+class C { constructor(public readonly) {} }
+class C { constructor(public: number) {} }
+class C { constructor(public = 1) {} }
+class C { constructor(public?) {} }
+class C { constructor(declare a) {} }
+class C { constructor(static a) {} }
+class C { constructor(abstract a) {} }
+class C { constructor(async a) {} }
+class C { constructor(accessor a) {} }
+class C { constructor(export a) {} }
+class C { constructor(in a) {} }
+class C { constructor(out a) {} }
+class C { constructor(const a) {} }
+class C { constructor(public a); constructor(a) {} }
+class C { constructor(@dec public a) {} }
+class C { constructor(public @dec a) {} }
+declare class C { constructor(public a: number); }
+declare function f(public a: number): void;
+var f = (a?) => 1;
+var f = (a?: number) => 1;
+var f = (a? = 1) => 1;
+var f = (a?: number = 1) => 1;
+var f = (a?, b?) => 1;
+var f = ({a}?) => 1;
+var f = ([a]?) => 1;
+var f = ({a}?: any) => 1;
+var f = (...a?) => 1;
+var f = (...a?: any[]) => 1;
+var f = (...a: any[] = []) => 1;
+var f = (...a = []) => 1;
+var f = async (a?) => 1;
+var f = async (a? = 1) => 1;
+function f(a? = 1) {}
+function f(a?: number = 1) {}
+function f({a}?) {}
+function f({a}?: any) {}
+function f(...a?) {}
+function f(...a?: any[]) {}
+function f(...a = []) {}
+function f(a?) {}
+var f = (a!) => 1;
+var f = (a!: number) => 1;
+function f(a!: number) {}
+var f = (a, ) => 1;
+var f = (...a, ) => 1;
+function f(...a, ) {}
+declare function f(...a: any[], ): void;
+declare class C { m(...a: any[], ): void }
+declare class C { constructor(...a: any[], ); }
+class C { m(...a: any[], ): void; m() {} }
+interface I { m(...a: any[], ): void }
+type F = (...a: any[], ) => void;
+function f(...a: any[], ): void; function f() {}
+abstract class C { abstract m(...a: any[], ): void }

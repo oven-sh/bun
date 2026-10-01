@@ -1,0 +1,136 @@
+B  "import { \"type\" a } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1003@9+6 Identifier expected. ; TS1005@16+1 ',' expected.
+B  "import { \"type\" a as b } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1003@9+6 Identifier expected. ; TS1005@16+1 ',' expected.
+B  "import { \"type\" as as b } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1005@22+1 ',' expected.
+AA  "import { \"type\" as as } from \"x\";"
+     bun: ok "import { type as as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+B  "import { \"type\" as } from \"x\";"
+     bun: ok "import\"x\";\n"
+     tsc parse: TS1003@19+1 Identifier expected.
+B  "import { \"type\" \"a\" as b } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1003@9+6 Identifier expected. ; TS1005@16+3 ',' expected.
+B  "export { \"type\" a } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1005@16+1 ',' expected.
+B  "export { \"type\" a as b } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1005@16+1 ',' expected.
+B  "export { \"type\" \"a\" } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1005@16+3 ',' expected.
+B  "export { \"type\" as as b } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1005@22+1 ',' expected.
+AA  "export { \"type\" as as } from \"x\";"
+     bun: ok "export { type as as } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { \"type\" as as } from \"x\";\n"
+B  "export { \"type\" as } from \"x\";"
+     bun: ok ""
+     tsc parse: TS1003@19+1 Identifier expected.
+AA  "export { \"type\" as b } from \"x\";"
+     bun: ok "export { type as b } from \"x\";\n"
+     tsc check: (noise 2307)
+     tsc emit: "export { \"type\" as b } from \"x\";\n"
+RR  "export { \"type\" a };"
+     bun: Expected identifier but found "" @9
+     tsc parse: TS1005@16+1 ',' expected.
+A2  "export { \"type\" as as };"
+     bun: Expected identifier but found "" @9
+     tsc check: TS1003@9+6 Identifier expected.
+     tsc emit: "export { \"type\" as as };\n"
+AA  "import { typ\\u0065 a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import { typ\\u0065 as as b } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "export { typ\\u0065 a };"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+AA  "export { typ\\u0065 a } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import typ\\u0065 A from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+AA  "import typ\\u0065 { A } from \"x\";"
+     bun: ok ""
+     tsc check: (noise 2307)
+     tsc emit: "export {};\n"
+B  "export typ\\u0065 { A };"
+     bun: ok ""
+     tsc parse: TS1260@7+9 Keywords cannot contain escape characters.
+B  "export typ\\u0065 T = 1;"
+     bun: ok ""
+     tsc parse: TS1260@7+9 Keywords cannot contain escape characters.
+B  "typ\\u0065 T = 1;"
+     bun: ok ""
+     tsc parse: TS1260@0+9 Keywords cannot contain escape characters.
+B  "declar\\u0065 const x: number;"
+     bun: ok ""
+     tsc parse: TS1260@0+12 Keywords cannot contain escape characters.
+B  "namespac\\u0065 N {}"
+     bun: ok ""
+     tsc parse: TS1260@0+14 Keywords cannot contain escape characters.
+B  "interfac\\u0065 I {}"
+     bun: ok ""
+     tsc parse: TS1260@0+14 Keywords cannot contain escape characters.
+B  "abstrac\\u0074 class C {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1260@0+13 Keywords cannot contain escape characters.
+RR  "var x = y a\\u0073 any;"
+     bun: Expected ";" but found "a\u0073" @10
+     tsc parse: TS1260@10+7 Keywords cannot contain escape characters.
+RR  "var x = y satisfie\\u0073 any;"
+     bun: Expected ";" but found "satisfie\u0073" @10
+     tsc parse: TS1260@10+14 Keywords cannot contain escape characters.
+RR  "class C { publi\\u0063 x = 1 }"
+     bun: Expected ";" but found "x" @22 | Expected identifier but found "=" @24
+     tsc parse: TS1260@10+11 Keywords cannot contain escape characters.
+RR  "class C { stati\\u0063 x = 1 }"
+     bun: Expected ";" but found "x" @22 | Expected identifier but found "=" @24
+     tsc parse: TS1260@10+11 Keywords cannot contain escape characters.
+RR  "class C { readonl\\u0079 x = 1 }"
+     bun: Expected ";" but found "x" @24 | Expected identifier but found "=" @26
+     tsc parse: TS1260@10+13 Keywords cannot contain escape characters.
+RR  "class C { declar\\u0065 x: number }"
+     bun: Expected ";" but found "x" @23 | Expected identifier but found ":" @24
+     tsc parse: TS1260@10+12 Keywords cannot contain escape characters.
+B  "class C { constructor(publi\\u0063 x) {} }"
+     bun: ok "class C {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}\n"
+     tsc parse: TS1260@22+11 Keywords cannot contain escape characters.
+RR  "function f(x): x i\\u0073 string { return true }"
+     bun: Expected ";" but found "i\u0073" @17 | Expected ";" but found "{" @32 | Unexpected } @46
+     tsc parse: TS1260@17+7 Keywords cannot contain escape characters.
+B  "let x: keyo\\u0066 T;"
+     bun: ok "let x;\n"
+     tsc parse: TS1260@7+10 Keywords cannot contain escape characters.
+RR  "let x: typ\\u0065of y;"
+     bun: Unexpected typ\u0065of @7
+     tsc parse: TS1260@7+11 Keywords cannot contain escape characters.
+B  "let x: uniqu\\u0065 symbol;"
+     bun: ok "let x;\n"
+     tsc parse: TS1260@7+11 Keywords cannot contain escape characters.
+B  "let x: readonl\\u0079 string[];"
+     bun: ok "let x;\n"
+     tsc parse: TS1260@7+13 Keywords cannot contain escape characters.
+B  "type T = U extends infe\\u0072 V ? V : never;"
+     bun: ok ""
+     tsc parse: TS1260@19+10 Keywords cannot contain escape characters.
+RR  "enum E { A } const enu\\u006d F { A }"
+     bun: Expected identifier but found "enu\u006d" @19 | Expected ";" but found "F" @29 | This constant must be initialized @19
+     tsc parse: TS1260@19+9 Keywords cannot contain escape characters.

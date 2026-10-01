@@ -1,0 +1,10 @@
+file q6.ts bytes=51
+s_local 0
+  b_identifier 4 name="abc"
+  e_number 15 value=1
+s_local 18
+  b_identifier 22 name="é"
+  e_string 27
+  b_identifier 33 name="漢"
+  e_template 39
+    e_identifier 45 name="é"

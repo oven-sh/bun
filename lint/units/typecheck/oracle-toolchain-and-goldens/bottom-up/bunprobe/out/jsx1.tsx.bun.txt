@@ -1,0 +1,27 @@
+file jsx1.tsx bytes=112
+s_local 0
+  b_identifier 6 name="el"
+  e_jsx_element 11
+    e_string 106 text="div"
+    e_string 16 text="a"
+    e_string 18 text="1"
+    e_string 22 text="b"
+    e_identifier 25 name="c"
+    e_identifier 32 name="d"
+    e_string 35 text="e"
+    e_boolean 36
+    e_string 11
+    e_identifier 46 name="x"
+    e_string 11 text=" "
+    e_jsx_element 49
+      e_string 50 text="br"
+    e_string 11 text=" "
+    e_string 11 text=" "
+    e_spread 11
+      e_identifier 62 name="ys"
+    e_jsx_element 68
+      e_dot 87 name="Bar"
+        e_identifier 87 name="Foo"
+      e_string 77 text="x:y"
+      e_string 81 text="1"
+    e_jsx_element 98

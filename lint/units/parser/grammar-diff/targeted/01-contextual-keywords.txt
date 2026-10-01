@@ -1,0 +1,151 @@
+# names of type aliases, interfaces, namespaces, variables
+type as = 1;
+type type = 1;
+type of = 1;
+type async = 1;
+type await = 1;
+type is = 1;
+type out = 1;
+type in = 1;
+type declare = 1;
+type abstract = 1;
+type namespace = 1;
+type module = 1;
+type global = 1;
+type satisfies = 1;
+type asserts = 1;
+type infer = 1;
+type keyof = 1;
+type readonly = 1;
+type unique = 1;
+type override = 1;
+type accessor = 1;
+type get = 1;
+type set = 1;
+type from = 1;
+type using = 1;
+type defer = 1;
+type string = 1;
+type any = 1;
+type void = 1;
+type let = 1;
+type static = 1;
+type yield = 1;
+interface as {}
+interface type {}
+interface of {}
+interface is {}
+interface out {}
+interface declare {}
+interface abstract {}
+interface namespace {}
+interface module {}
+interface global {}
+interface satisfies {}
+interface asserts {}
+interface infer {}
+interface interface {}
+interface await {}
+interface async {}
+namespace as {}
+namespace type {}
+namespace of {}
+namespace declare {}
+namespace abstract {}
+namespace namespace {}
+namespace module {}
+namespace await {}
+module as {}
+module type {}
+module module {}
+let as = 1;
+let satisfies = 1;
+let is = 1;
+let asserts = 1;
+let infer = 1;
+let out = 1;
+let readonly = 1;
+let keyof = 1;
+let unique = 1;
+let override = 1;
+let accessor = 1;
+let global = 1;
+let of = 1;
+let type = 1;
+let declare = 1;
+let namespace = 1;
+let module = 1;
+let abstract = 1;
+type = 1;
+declare = 1;
+namespace = 1;
+module = 1;
+abstract = 1;
+as = 1;
+satisfies = 1;
+type;
+declare;
+namespace;
+module;
+abstract;
+type⏎A = 1;
+interface⏎A {}
+declare⏎const x: 1;
+abstract⏎class A {}
+namespace⏎A {}
+module⏎A {}
+declare⏎function f(): void;
+declare⏎class A {}
+type A⏎= 1;
+type A =⏎1;
+type⏎= 1;
+let x = type⏎A;
+type A<T> = T;
+type A<T extends B> = T;
+type A<T = B> = T;
+type A<T extends B = C> = T;
+type A<in T> = T;
+type A<out T> = T;
+type A<in out T> = T;
+type A<out in T> = T;
+type A<in in T> = T;
+type A<const T> = T;
+type A<const in T> = T;
+type A<T,> = T;
+type A<> = 1;
+type A<T, U> = [T, U];
+type A<T extends U, U> = T;
+type A<in> = 1;
+type A<out> = 1;
+type A<in, out> = 1;
+type A<in in> = 1;
+type A<out out> = 1;
+type A<in out> = 1;
+type A<const> = 1;
+type A<public T> = T;
+type A<readonly T> = T;
+type A<T extends> = T;
+type A<T => = T;
+type A<T = > = T;
+type A<T extends B<C>> = T;
+type A<T extends B<C<D>>> = T;
+type A<T = B<C>> = T;
+type A<T = B<C<D>>> = T;
+type A = 1
+type A = 1, B = 2;
+type A;
+type A =;
+type A = ;
+type = 1;
+type A B = 1;
+type A.B = 1;
+type 'a' = 1;
+type 1 = 1;
+export type A = 1;
+export type A<T> = T;
+export type as = 1;
+export type type = 1;
+export type⏎A = 1;
+declare type A = 1;
+export declare type A = 1;
+export default type A = 1;

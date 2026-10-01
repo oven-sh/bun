@@ -1,0 +1,31 @@
+lines of checker.go	functions	claimed by	settled layer	landing step	layer by the rule	latest callee step	reason
+2398-2477	checkSourceElementUnreachable, isSourceElementUnreachable	D-DRIVER, F-UNREACH	D-DRIVER	31	D-DRIVER	26 (isReachableFlowNode)	checkSourceElementWorker (2271) runs it for every source element and the run of `const x: number = "s";` enters both; callees land by step 26
+8833-8888	resolveDecorator, isPotentiallyUncalledDecorator, getDiagnosticHeadMessageForDecoratorResolution	E-CALL, E-DECOR	E-DECOR	30	E-DECOR	30 (getDecoratorCallSignature)	resolveDecorator calls getDecoratorCallSignature of E-DECOR; entered for a Decorator node only
+9273-9302	getDecoratorArgumentCount, getLegacyDecoratorArgumentCount	E-CALL, E-DECOR	E-CALL	25	E-CALL	18 (getParameterCount)	hasCorrectArity (9223) calls it; its callees land by step 18
+10171-10197	checkClassExpressionExternalHelpers	E-FUNC, D-HELPERS	D-HELPERS	31	D-HELPERS	31 (checkExternalEmitHelpers)	calls checkExternalEmitHelpers of D-HELPERS; a class expression waits for D-CLASS anyway
+10935-10943	checkAwaitExpression	E-OPER, E-AWAIT	E-AWAIT	28	E-AWAIT	33 (checkGrammarAwaitOrAwaitUsing)	calls checkAwaitedType of E-AWAIT; entered for an AwaitExpression node only
+11995-12037	forEachProperty, getDeclaringClass, isValidOverrideOf, isPropertyInClassDerivedFrom	E-ACCESS, R-REL	R-REL	23	R-REL	16 (getPropertyOfType)	Relater.propertyRelatedTo (relater.go 4318) calls isValidOverrideOf; the callees land by step 16
+13208-13219	getExactOptionalUnassignableProperties, isExactOptionalPropertyMismatch	E-OPER, R-REL	R-REL	23	R-REL	16 (getPropertiesOfType)	Relater.reportRelationError (relater.go 4818, 4830) and elaborateElement call them; the callees land by step 20
+18151-18162	getTypeOfPrototypeProperty	T-SYMTYPE, T-JSDECL	T-SYMTYPE	20	T-SYMTYPE	11 (getDeclaredTypeOfSymbol)	getTypeOfVariableOrParameterOrPropertyWorker (16675) calls it for every prototype property; callees land by step 11
+18164-18344	getWidenedTypeForAssignmentDeclaration, getAssignmentDeclarationInitializerType, hasParentWithTypeAnnotation, containsSameNamedThisProperty, getTypeFromPropertyDescriptor, isConstructorDeclaredThisProperty	T-SYMTYPE, T-JSDECL	T-JSDECL	20	T-JSDECL	27 (getDeclaringConstructor)	JavaScript assignment declarations: ported whole in step 20, the callees of steps 25 to 27 are stand-ins until then
+18346-18350	isGlobalSymbolConstructor	T-SYMTYPE, T-JSDECL	T-SYMTYPE	20	T-SYMTYPE	6 (getSymbolOfNode)	widenTypeForVariableLikeDeclaration (18356) calls it; callee getSymbolOfNode lands in step 6
+29124-29133	getTypeOfFirstParameterOfSignature, getTypeOfFirstParameterOfSignatureWithFallback	T-SIGSHAPE, E-AWAIT	T-SIGSHAPE	18	T-SIGSHAPE	18 (getTypeAtPosition)	two leaves over getTypeAtPosition of T-SIGSHAPE
+29924-29930	getContextualTypeForDecorator	E-CTX, E-DECOR	E-DECOR	30	E-DECOR	30 (getDecoratorCallSignature)	calls getDecoratorCallSignature of E-DECOR; entered for a Decorator node only
+
+lines of checker.go	layer	reason (no layer table lists the function)
+24805-24818	Z-SERVICES	getGlobalImportMetaExpressionType: its one caller is getSymbolAtLocation (31717, call at 31762) of the language service part
+
+file	lines	layer	landing step	verdict	reason
+checker/checker.go	29268-29344	K-TEMPLATE	9	accepted	getTemplateLiteralType and getTemplateStringForType: NewChecker (1019) makes numericStringType with them; a stand-in shifts every later type id by one
+checker/checker.go	25075-25125	K-SUBST	12	accepted	getConditionalFlowTypeOfType, getImpliedConstraint, isUnaryTupleTypeNode: getTypeFromTypeNode (22921) passes every type node through them
+checker/checker.go	31694-31702	K-SUBST	12	accepted	getActualTypeVariable: callee of getConditionalFlowTypeOfType
+checker/checker.go	27988-28023	R-REL	23	accepted	getNormalizedType group: isRelatedToEx (relater.go 2649) normalizes both sides of every relation
+checker/checker.go	28163-28248	R-REL	23	accepted	getNormalizedUnionOrIntersectionType .. getSingleBaseForNonAugmentingSubtype: callees of getNormalizedType, entered by the same run
+checker/checker.go	14052-14168	D-SINK	5	accepted	addDiagnostic, error and the deferred callbacks: the sink of every layer from initializeChecker on
+checker/checker.go	28025-28033	K-INDEXED	13	accepted	getSimplifiedType (plan of the type layers): getResolvedBaseConstraint (27588) calls it for every constrained type; its two branches are stand-ins until steps 27
+checker/relater.go	94-96	R-REL	13	accepted	asRecursionId (plan of the type layers): callee of getRecursionIdentity
+checker/relater.go	810-870	R-REL	13	accepted	getRecursionIdentity, getRecursionIdentityTarget, getRecursionIdentityFromTarget (plan of the type layers): getResolvedBaseConstraint calls them
+checker/checker.go	16587-16656	T-SYMTYPE	15	accepted	getTypeOfSymbol .. getTypeOfVariableOrParameterOrProperty (plan of the type layers): the dispatcher serves every symbol whose type is set at creation; the workers are stand-ins until step 20
+checker/checker.go	13950-13964	E-ACCESS	15	accepted	isReadonlySymbol (plan of the type layers): createUnionOrIntersectionProperty (21622) reads it for every property
+checker/checker.go	21829-22005	T-APPARENT	16	accepted	T-APPARENT lands with T-LOOKUP (plan of the type layers): every lookup starts with getReducedApparentType
+checker/inference.go	1-1684	I-INFER	25	rejected	inference directly after elaboration: the order of the unit file keeps inference after calls and overloads; the run of `const x: number = "s";` enters one function of the file (isSkipDirectInferenceNode)

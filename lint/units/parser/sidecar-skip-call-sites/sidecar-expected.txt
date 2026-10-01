@@ -1,0 +1,262 @@
+== var-annotation  "let a: string = \"\", [b]: T[] = [], {c}: { c: U } = o;"
+   binding-type key=4 colon=5 type=StringKeyword[7,13)
+   binding-type key=20 colon=23 type=ArrayType[25,28)
+   binding-type key=35 colon=38 type=TypeLiteral[40,48)
+== var-definite  "let d!: number;"
+   binding-type key=4 excl=5 colon=6 type=NumberKeyword[8,14)
+== var-nested-gt  "let x: A<B<C>>= y"
+   binding-type key=4 colon=5 type=TypeReference[7,14)
+== for-of-annotation  "for (const k: K of ks) {}"
+   binding-type key=11 colon=12 type=TypeReference[14,15)
+== catch-annotation  "try {} catch (e: unknown) {}"
+   binding-type key=14 colon=15 type=UnknownKeyword[17,24)
+== fn-params  "function f(a: A, b?: B, ...c: C[]) {}"
+   binding-type key=11 colon=12 type=TypeReference[14,15)
+   binding-type key=17 colon=19 type=TypeReference[21,22)
+   binding-type key=27 colon=28 type=ArrayType[30,33)
+== fn-this  "function f(this: Window, a: A) {}"
+   this-param fn=10 index=0 this=[11,15) colon=15 type=TypeReference[17,23)
+   binding-type key=25 colon=26 type=TypeReference[28,29)
+== fn-this-no-type  "function f(this) {}"
+   this-param fn=10 index=0 this=[11,15)
+== fn-return  "function f(): void {}"
+   return-type fn=10 colon=12 type=VoidKeyword[14,18)
+== fn-predicate  "function f(x: any): x is string { return true }"
+   binding-type key=11 colon=12 type=AnyKeyword[14,17)
+   return-type fn=10 colon=18 type=TypePredicate[20,31)
+== fn-asserts  "function f(x: any): asserts x is string {}"
+   binding-type key=11 colon=12 type=AnyKeyword[14,17)
+   return-type fn=10 colon=18 type=TypePredicate[20,39)
+== fn-asserts-bare  "function f(x: any): asserts x {}"
+   binding-type key=11 colon=12 type=AnyKeyword[14,17)
+   return-type fn=10 colon=18 type=TypePredicate[20,29)
+== method-this-predicate  "class C { m(): this is D { return true } }"
+   return-type fn=11 colon=13 type=TypePredicate[15,24)
+== fn-type-params  "function f<const T extends U = V, W>(a: T) {}"
+   type-params fn=36 lt=10 list=[11,35) count=2 end=36
+   binding-type key=37 colon=38 type=TypeReference[40,41)
+== fn-expr-type-params  "const g = function <T>(a: T): T { return a }"
+   type-params fn=22 lt=19 list=[20,21) count=1 end=22
+   binding-type key=23 colon=24 type=TypeReference[26,27)
+   return-type fn=22 colon=28 type=TypeReference[30,31)
+== fn-overload  "function f(a: string): void;\nfunction f(a: any) {}"
+   binding-type key=11 colon=12 type=StringKeyword[14,20)
+   return-type fn=10 colon=21 type=VoidKeyword[23,27)
+   binding-type key=40 colon=41 type=AnyKeyword[43,46)
+== declare-fn  "declare function f<T>(a: T): T;"
+   type-params fn=21 lt=18 list=[19,20) count=1 end=21
+   binding-type key=22 colon=23 type=TypeReference[25,26)
+   return-type fn=21 colon=27 type=TypeReference[29,30)
+== arrow-params  "const f = (a: A, b?: B, ...c: C[]): R => a"
+   binding-type key=11 colon=12 type=TypeReference[14,15)
+   binding-type key=17 colon=19 type=TypeReference[21,22)
+   binding-type key=27 colon=28 type=ArrayType[30,33)
+   return-type arrow=10 colon=34 type=TypeReference[36,37)
+== arrow-pattern-params  "const f = ({ a, b = 1 }: P, [c]: Q = []) => a"
+   binding-type key=11 colon=23 type=TypeReference[25,26)
+   binding-type key=28 colon=31 type=TypeReference[33,34)
+== arrow-type-params  "const f = <T,>(a: T): T => a"
+   type-params arrow=10 lt=10 list=[11,13) count=1 trailing-comma end=14
+   binding-type key=15 colon=16 type=TypeReference[18,19)
+   return-type arrow=10 colon=20 type=TypeReference[22,23)
+== arrow-type-params-extends  "const f = <T extends U>(a: T) => a"
+   type-params arrow=10 lt=10 list=[11,22) count=1 end=23
+   binding-type key=24 colon=25 type=TypeReference[27,28)
+== arrow-async  "const f = async (a: A): Promise<A> => a"
+   binding-type key=17 colon=18 type=TypeReference[20,21)
+   return-type arrow=10 colon=22 type=TypeReference[24,34)
+== arrow-async-type-params  "const f = async <T>(a: T) => a"
+   type-params arrow=10 lt=16 list=[17,18) count=1 end=19
+   binding-type key=20 colon=21 type=TypeReference[23,24)
+== async-call-type-args  "const r = async<T>(a)"
+   expr-type-args operand=EIdentifier@10 lt=15 list=[16,17) count=1 end=18
+== arrow-in-conditional-true  "const r = c ? (a: A): B => a : d"
+   binding-type key=15 colon=16 type=TypeReference[18,19)
+   return-type arrow=14 colon=20 type=TypeReference[22,23)
+== paren-in-conditional  "const r = c ? (a) : b => d"
+== arrow-in-conditional-nested  "const r = c ? (a): B => e ? (f) : g => h : d"
+   return-type arrow=28 colon=32 type=TypeReference[34,35)
+== arrow-predicate  "const f = (a: any): a is A<B>=> true"
+   binding-type key=11 colon=12 type=AnyKeyword[14,17)
+   return-type arrow=10 colon=18 type=TypePredicate[20,29)
+== class-type-params  "class C<in out T, const U> {}"
+   type-params class=0 lt=7 list=[8,25) count=2 end=26
+== class-expr-type-params  "const c = class<T> {}"
+   type-params class=10 lt=15 list=[16,17) count=1 end=18
+== class-extends-targs  "class C extends B<T, U> {}"
+   heritage class=0 extends=8
+   expr-type-args operand=EIdentifier@16 lt=17 list=[18,22) count=2 end=23
+== class-extends-targs-newline  "class C extends B<T>\n{}"
+   heritage class=0 extends=8
+   expr-type-args operand=EIdentifier@16 lt=17 list=[18,19) count=1 end=20
+== class-extends-call  "class C extends mixin<T>(B) {}"
+   heritage class=0 extends=8
+   expr-type-args operand=EIdentifier@16 lt=21 list=[22,23) count=1 end=24
+== class-extends-dotted  "class C extends a.b.D<T> implements I<T>, J.K {}"
+   heritage class=0 extends=8
+   expr-type-args operand=EDot@16 lt=21 list=[22,23) count=1 end=24
+   heritage class=0 implements=25 types=TypeReference[36,40),TypeReference[42,45)
+== class-implements  "class C implements I, J<K> {}"
+   heritage class=0 implements=8 types=TypeReference[19,20),TypeReference[22,26)
+== class-field  "class C { a: A = 1; static b?: B; c!: C; readonly [k]: D; declare e: E; accessor f: F }"
+   property-type key=10 colon=11 type=TypeReference[13,14)
+   property-type key=27 colon=29 type=TypeReference[31,32)
+   property-type key=34 colon=36 type=TypeReference[38,39)
+   property-type key=51 colon=53 type=TypeReference[55,56)
+   property-type key=66 colon=67 type=TypeReference[69,70)
+   property-type key=81 colon=82 type=TypeReference[84,85)
+== class-method  "class C { m<T>(this: C, a: T): T { return a } get x(): X { return 1 } set x(v: X) {} constructor(private p: P, q?: Q) {} }"
+   type-params fn=14 lt=11 list=[12,13) count=1 end=14
+   this-param fn=14 index=0 this=[15,19) colon=19 type=TypeReference[21,22)
+   binding-type key=24 colon=25 type=TypeReference[27,28)
+   return-type fn=14 colon=29 type=TypeReference[31,32)
+   return-type fn=51 colon=53 type=TypeReference[55,56)
+   binding-type key=76 colon=77 type=TypeReference[79,80)
+   binding-type key=105 colon=106 type=TypeReference[108,109)
+   binding-type key=111 colon=113 type=TypeReference[115,116)
+== class-index-signature  "class C { [key: string]: number; static readonly [k: symbol]: any }"
+   index-signature start=10 param=[11,14) param-type=StringKeyword[16,22) type=NumberKeyword[25,31) end=32
+   index-signature start=49 param=[50,51) param-type=SymbolKeyword[53,59) type=AnyKeyword[62,65) end=65
+== object-method  "const o = { m<T>(a: T): T { return a } }"
+   type-params fn=16 lt=13 list=[14,15) count=1 end=16
+   binding-type key=17 colon=18 type=TypeReference[20,21)
+   return-type fn=16 colon=22 type=TypeReference[24,25)
+== call-type-args  "f<A<B>>(x)"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,6) count=1 end=7
+== call-type-args-dotted  "a.b.c<T>(x)"
+   expr-type-args operand=EDot@0 lt=5 list=[6,7) count=1 end=8
+== call-type-args-shift  "f<<T>(a: T) => void>(g)"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,19) count=1 end=20
+== optional-call-type-args  "a?.<T>(x)"
+   optional-call-type-args callee=EIdentifier@0 lt=3 list=[4,5) count=1 end=6
+== optional-chain-call-type-args  "a?.b<T>(x)"
+   expr-type-args operand=EDot@0 lt=4 list=[5,6) count=1 end=7
+== instantiation-then-optional-call  "a<U>?.<T>(x)"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,3) count=1 end=4
+   optional-call-type-args callee=EIdentifier@0 lt=6 list=[7,8) count=1 end=9
+== new-type-args  "new F<A<B>>()"
+   expr-type-args operand=EIdentifier@4 lt=5 list=[6,10) count=1 end=11
+== new-type-args-no-parens  "new F<T>;"
+   expr-type-args operand=EIdentifier@4 lt=5 list=[6,7) count=1 end=8
+== new-optional-chain  "new a?.<T>()"
+   diag TS1209 at 5+2: Invalid optional chain from new expression. Did you mean to call 'a()'?
+   optional-call-type-args callee=ENew@0 lt=7 list=[8,9) count=1 end=10
+== tagged-type-args  "f<T>`x${1}`"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,3) count=1 end=4
+== instantiation  "const g = f<A<B>>;"
+   expr-type-args operand=EIdentifier@10 lt=11 list=[12,16) count=1 end=17
+== instantiation-nonnull-call  "f<T>!(x)"
+== instantiation-paren-call  "(f<T>)(x)"
+   expr-type-args operand=EIdentifier@1 lt=2 list=[3,4) count=1 end=5
+== decorator-type-args  "@d<T> class C {}"
+   diag TS1146 at 2+0: Declaration expected.
+   type-assertion lt=2 type=TypeReference[3,4) operand=EClass@6
+== decorator-call-type-args  "@a.b<T>(1) class C {}"
+   expr-type-args operand=EDot@1 lt=4 list=[5,6) count=1 end=7
+== decorator-member  "class C { @d<T>() m() {} }"
+   expr-type-args operand=EIdentifier@11 lt=12 list=[13,14) count=1 end=15
+== cast-simple  "const v = <T>x;"
+   type-assertion lt=10 type=TypeReference[11,12) operand=EIdentifier@13
+== cast-paren  "const v = <T>(x);"
+   type-assertion lt=10 type=TypeReference[11,12) operand=EIdentifier@14
+== cast-keyword  "const v = <any>(x);"
+   type-assertion lt=10 type=AnyKeyword[11,14) operand=EIdentifier@16
+== cast-two-names  "const v = <A, B>(x);"
+   diag TS1005 at 12+1: '>' expected.
+   diag TS1005 at 15+1: ',' expected.
+   type-assertion lt=10 type=TypeReference[11,12) operand=EIdentifier@12
+== cast-array  "const v = <A[]>(x).y;"
+   type-assertion lt=10 type=ArrayType[11,14) operand=EIdentifier@16
+== cast-nested  "const v = <T><U>x!;"
+   type-assertion lt=10 type=TypeReference[11,12) operand=EIdentifier@16
+   type-assertion lt=13 type=TypeReference[14,15) operand=EIdentifier@16
+== cast-then-member  "const v = <T>x.y + 1;"
+   type-assertion lt=10 type=TypeReference[11,12) operand=EIdentifier@13
+== as  "const v = x as A as B;"
+   as keyword-end=14 type=TypeReference[15,16) operand=EIdentifier@10
+   as keyword-end=19 type=TypeReference[20,21) operand=EIdentifier@10
+== as-const  "const v = [1] as const;"
+   as keyword-end=16 type=TypeReference[17,22) operand=EArray@10
+== satisfies  "const v = { a: 1 } satisfies S;"
+   satisfies keyword-end=28 type=TypeReference[29,30) operand=EObject@10
+== type-alias  "type A<T = X> = T[];"
+   type-alias name=[5,6) lt=6 list=[7,12) count=1 end=13 type=ArrayType[16,19) end=20
+== export-type-alias  "export type A = B"
+   type-alias name=[12,13) type=TypeReference[16,17) end=17
+== interface  "interface I<T> extends J<T>, K { a: T }"
+   interface name=[10,11) lt=11 list=[12,13) count=1 end=14 extends=TypeReference[23,27),TypeReference[29,30) members=1 end=39
+== jsx-type-args  "const e = <Foo<string> a=\"1\" />;"
+   jsx-type-args element=10 lt=14 list=[15,21) count=1 end=22
+== jsx-type-args-nested  "const e = <Foo<A<B>>>x</Foo>;"
+   jsx-type-args element=10 lt=14 list=[15,19) count=1 end=20
+== jsx-dotted  "const e = <a.B<T> />;"
+   jsx-type-args element=10 lt=14 list=[15,16) count=1 end=17
+== tsx-arrow-type-params  "const f = <T,>(a: T) => a"
+   type-params arrow=10 lt=10 list=[11,13) count=1 trailing-comma end=14
+   binding-type key=15 colon=16 type=TypeReference[18,19)
+== tsx-arrow-extends  "const f = <T extends U>(a: T) => a"
+   type-params arrow=10 lt=10 list=[11,22) count=1 end=23
+   binding-type key=24 colon=25 type=TypeReference[27,28)
+== spec-type-args-fail  "const r = a < b > c;"
+== spec-type-args-ok-nested  "f<A>(g<B>(x), h < i > j)"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,3) count=1 end=4
+   expr-type-args operand=EIdentifier@5 lt=6 list=[7,8) count=1 end=9
+== spec-cast-after-failed-type-params  "const v = <A[]>(x), w = <T>(y: T) => y, u = <U>z;"
+   type-assertion lt=10 type=ArrayType[11,14) operand=EIdentifier@16
+   type-params arrow=24 lt=24 list=[25,26) count=1 end=27
+   binding-type key=28 colon=29 type=TypeReference[31,32)
+   type-assertion lt=44 type=TypeReference[45,46) operand=EIdentifier@47
+== spec-async-qualified  "const v = async<A.B>(x)"
+   expr-type-args operand=EIdentifier@10 lt=15 list=[16,19) count=1 end=20
+== spec-arrow-return-fail  "switch (x) { case (a): b; }"
+== spec-conditional-paren  "const r = c ? (a) : b;"
+== spec-conditional-arrow-body  "const r = c ? (a): B => { let v: V = 1; return v } : d"
+   return-type arrow=14 colon=17 type=TypeReference[19,20)
+   binding-type key=30 colon=31 type=TypeReference[33,34)
+== spec-conditional-arrow-nested  "const r = a ? (b): T => c ? (d): U => { let e: E = d; return e } : f : g"
+   return-type arrow=14 colon=17 type=TypeReference[19,20)
+   return-type arrow=28 colon=31 type=TypeReference[33,34)
+   binding-type key=44 colon=45 type=TypeReference[47,48)
+== spec-extends-then-members  "class C extends B<T> { m(a: A): R { return f<X>(a) } }"
+   heritage class=0 extends=8
+   expr-type-args operand=EIdentifier@16 lt=17 list=[18,19) count=1 end=20
+   binding-type key=25 colon=26 type=TypeReference[28,29)
+   return-type fn=24 colon=30 type=TypeReference[32,33)
+   expr-type-args operand=EIdentifier@43 lt=44 list=[45,46) count=1 end=47
+== split-gt-type-params  "function f<T extends A<B>>(a: T) {}"
+   type-params fn=26 lt=10 list=[11,25) count=1 end=26
+   binding-type key=27 colon=28 type=TypeReference[30,31)
+== split-gt-return  "const f = (a: A<B<C>>): D<E<F>>=> a"
+   binding-type key=11 colon=12 type=TypeReference[14,21)
+   return-type arrow=10 colon=22 type=TypeReference[24,31)
+== empty-lists  "f<>(); new G<>(); function h<>() {}"
+   expr-type-args operand=EIdentifier@0 lt=1 list=[2,2) count=0 end=3
+   expr-type-args operand=EIdentifier@11 lt=12 list=[13,13) count=0 end=14
+   type-params fn=30 lt=28 list=[29,29) count=0 end=30
+== this-not-first  "function f(a, this: T) {}"
+   this-param fn=10 index=1 this=[14,18) colon=18 type=TypeReference[20,21)
+== definite-no-type  "let x!;"
+   binding-type key=4 excl=5
+== parameter-property  "class C { constructor(private readonly a: A, protected b?: B) {} }"
+   binding-type key=39 colon=40 type=TypeReference[42,43)
+   binding-type key=55 colon=57 type=TypeReference[59,60)
+== getter-setter-object  "const o = { get a(): A { return 1 }, set a(v: A) {} }"
+   return-type fn=17 colon=19 type=TypeReference[21,22)
+   binding-type key=43 colon=44 type=TypeReference[46,47)
+== default-export-fn  "export default function <T>(a: T): T { return a }"
+   type-params fn=27 lt=24 list=[25,26) count=1 end=27
+   binding-type key=28 colon=29 type=TypeReference[31,32)
+   return-type fn=27 colon=33 type=TypeReference[35,36)
+== generator-async-fn  "async function* g<T>(a: T): AsyncGenerator<T> {}"
+   type-params fn=20 lt=17 list=[18,19) count=1 end=20
+   binding-type key=21 colon=22 type=TypeReference[24,25)
+   return-type fn=20 colon=26 type=TypeReference[28,45)
+== abstract-members  "abstract class C<T> { abstract m<U>(a: U): T; abstract p: T }"
+   type-params class=9 lt=16 list=[17,18) count=1 end=19
+   type-params fn=35 lt=32 list=[33,34) count=1 end=35
+   binding-type key=36 colon=37 type=TypeReference[39,40)
+   return-type fn=35 colon=41 type=TypeReference[43,44)
+   property-type key=55 colon=56 type=TypeReference[58,59)
+== jsx-children-type-args  "const e = <A<X>><B<Y> /></A>;"
+   jsx-type-args element=10 lt=12 list=[13,14) count=1 end=15
+   jsx-type-args element=16 lt=18 list=[19,20) count=1 end=21

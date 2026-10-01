@@ -1,0 +1,75 @@
+"x = a ? (b) : c => (d);"
+   OK  x = a ? b : (c) => d;
+   P 8 10 9 21   "(b)"
+   P 19 21 20 21   "(d)"
+"x = a ? (b) : c => (d) : e;"
+   OK  x = a ? (b) => d : e;
+   P 19 21 20 21   "(d)"
+   R 8 14 16   arrow at 8 type at "c "
+"x = a ? (b): c => ((d), (e)) : (f);"
+   OK  x = a ? (b) => (d, e) : f;
+   P 19 21 20 21   "(d)"
+   P 24 26 25 21   "(e)"
+   P 18 27 20 2   "((d), (e))"
+   P 31 33 32 21   "(f)"
+   R 8 13 15   arrow at 8 type at "c "
+"x = a ? ((b), (c)) : (d);"
+   OK  x = a ? (b, c) : d;
+   P 9 11 10 21   "(b)"
+   P 14 16 15 21   "(c)"
+   P 8 17 10 2   "((b), (c))"
+   P 21 23 22 21   "(d)"
+"switch (x) { case (a): (b); }"
+   OK  switch (x) { case a: b; }
+   P 18 20 19 21   "(a)"
+   P 23 25 24 21   "(b)"
+"x = a ? (b: T): U => (c) : (d);"
+   OK  x = a ? (b) => c : d;
+   P 21 23 22 21   "(c)"
+   P 27 29 28 21   "(d)"
+   A 9 12 13   owner "b: " type at "T"
+   R 8 16 18   arrow at 8 type at "U "
+"x = a ? (b: T = (e)): U => (c) : (d: V) => (f);"
+   OK  x = a ? (b = e) => c : (d) => f;
+   P 16 18 17 21   "(e)"
+   P 27 29 28 21   "(c)"
+   P 43 45 44 21   "(f)"
+   A 9 12 14   owner "b: " type at "T "
+   A 34 37 38   owner "d: " type at "V"
+   R 8 22 24   arrow at 8 type at "U "
+"f = (a: A, { b }: B, ...c: C[]): R => ((a));"
+   OK  f = (a, { b }, ...c) => a;
+   P 39 41 40 21   "(a)"
+   P 38 42 40 21   "((a))"
+   A 5 8 9   owner "a: " type at "A"
+   A 11 18 19   owner "{ b" type at "B"
+   A 24 27 30   owner "c: " type at "C[]"
+   R 4 33 35   arrow at 4 type at "R "
+"g = async (a: A): Promise<R> => (a);"
+   OK  g = async (a) => a;
+   P 32 34 33 21   "(a)"
+   A 11 14 15   owner "a: " type at "A"
+   R 4 18 29   arrow at 4 type at "Promise<R> "
+"h = <T,>(a: T): T => (a);"
+   OK  h = (a) => a;
+   P 21 23 22 21   "(a)"
+   A 9 12 13   owner "a: " type at "T"
+   R 4 16 18   arrow at 4 type at "T "
+"v = <T>(a);"
+   OK  v = a;
+   P 4 9 8 21   "<T>(a)"
+"w = - (a) * ((b) + (c));"
+   OK  w = -a * (b + c);
+   P 6 8 7 21   "(a)"
+   P 13 15 14 21   "(b)"
+   P 19 21 20 21   "(c)"
+   P 12 22 14 2   "((b) + (c))"
+"@(dec) class K {}"
+   OK  import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from "bun:wrap"; var _init$1, _dec$2, _K$3; _dec$2 = [ dec ]; class K { static { _init$1 = __decoratorStart_x73frcn4(undefined); _K$3 = __decorateElement_ggs2dd8p(_init$1, 0, "K", _dec$2, this); } } K = _K$3; __runInitializers_cst8seht(_init$1, 1, _K$3);
+   P 1 5 2 21   "(dec)"
+"y = a ? (b) ? (c) : (d) : (e);"
+   OK  y = a ? b ? c : d : e;
+   P 8 10 9 21   "(b)"
+   P 14 16 15 21   "(c)"
+   P 20 22 21 21   "(d)"
+   P 26 28 27 21   "(e)"

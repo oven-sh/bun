@@ -1,0 +1,36 @@
+kind_generated.rs 1944 lines 59651 bytes
+flags_generated.rs 240 lines 11548 bytes
+ast_generated.rs 11137 lines 370937 bytes
+node_methods_generated.rs 559 lines 30438 bytes
+kinds 351 flags {"NodeFlags":40,"ModifierFlags":38,"TokenFlags":26,"SymbolFlags":66,"CheckFlags":27,"FlowFlags":15,"FunctionFlags":5} ast {"defs":194,"slots":499,"lates":179,"factories":193,"updates":166,"kindsWithTwoDefs":29,"kinds":351}
+node methods: 75 rows, 37 auto, 38 core, 0 problems
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+    Checking bun_typecheck_proto v0.0.0 (/workspace/notes/lint/units/typecheck/node-table-id-contract/bottom-up/crate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.44s
+   Compiling bun_typecheck_proto v0.0.0 (/workspace/notes/lint/units/typecheck/node-table-id-contract/bottom-up/crate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.65s
+     Running unittests src/lib.rs (/tmp/ntc/target/debug/build/bun_typecheck_proto/c0a230cb88da8f0d/out/bun_typecheck_proto-c0a230cb88da8f0d)
+
+running 10 tests
+test tests::bind_publish_and_share_between_programs ... ok
+test tests::bound_tables_with_an_index ... ok
+test tests::checker_nodes_live_in_the_open_store ... ok
+test tests::every_definition_round_trips ... ok
+test tests::finish_numbers_in_for_each_child_order ... ok
+test tests::imports_a_dump_of_typescript ... ok
+test tests::lazy_symbol_ids_and_private_names ... ok
+test tests::published_stores_keep_their_nodes ... ok
+test tests::stable_store_keeps_addresses ... ok
+test tests::workspace_crates_link ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+   Doc-tests bun_typecheck_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `release` profile [optimized] target(s) in 0.24s
+prototype ok
+rc=0

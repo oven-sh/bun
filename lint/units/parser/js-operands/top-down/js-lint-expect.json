@@ -1,0 +1,7350 @@
+[
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>(c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "a<b>(c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>`t`",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = new a<b>(c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = new a<b>",
+  "file": "a.js",
+  "bun_javascript": "Unexpected end of file",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 12,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>>(c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<<b>(c)>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>\ny",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>;",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ;",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>.c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected .",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>[c]",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>=c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>>c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b,c>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "f(a<b,c>(d))",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "f(a < b, c > (d))",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = [a < b, c > (d)]",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b | c > (d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b & c > (d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b.c > (d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < typeof b > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < (b) > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b[0] > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < 'b' > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < 1 > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < -1 > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < this > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < null > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < {} > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < [b] > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < (b) => c > (d)",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"=>\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 12,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b > (c) => d",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"=>\"",
+  "bun_typescript": "Expected \";\" but found \"=>\"",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 16,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>(c) + 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b> - c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>+c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>/c/.test(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Unexpected .",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>(c)<d>(e)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "if (a<b>(c)) {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "if (a < b && c > (d)) {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>\n(c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a?.b<c>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a.b<c>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a[b]<c>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a()<c>(d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>(c) ? d : e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = async<T>(y)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = async <T>(y)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = async < T > (y)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a << b > (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b >>> (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a < b >= (c)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>++",
+  "file": "a.js",
+  "bun_javascript": "Unexpected end of file",
+  "bun_typescript": "Unexpected end of file",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 10,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>\n++c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>?c:d",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ?",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>in c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected in",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>instanceof c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected instanceof",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 10
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>,c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ,",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = (a<b>)",
+  "file": "a.js",
+  "bun_javascript": "Unexpected )",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 9,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = [a<b>]",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ]",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 9,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = {y: a<b>}",
+  "file": "a.js",
+  "bun_javascript": "Unexpected }",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 12,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = `${a<b>}`",
+  "file": "a.js",
+  "bun_javascript": "Unexpected }",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 11,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>?.()",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ?.",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>?.c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ?.",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>!==c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected !==",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 3
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>=>c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected >",
+  "bun_typescript": "Unexpected >",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 9,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>&&c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected &&",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>||c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ||",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>??c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected ??",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>as",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Unexpected end of file",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "x = a<b>\nas",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "type-arguments",
+  "src": "for (;a<b>(c);) break",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 28,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 18,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c) : (d) => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c) : d : e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c) : d => {} : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 29,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 18,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c, d) : e => f : g",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 31,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 21,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? ({c}) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 30,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 20,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? ([c]) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 30,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 20,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c = 1) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 32,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 22,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (1) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? (c.d) : e => f : g",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? async (c) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 34,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 24,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? () => c : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => d ? e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b, c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : (c) => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b = 1) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? ({b}) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? ([b]) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? async (b) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : async c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => c : d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => (d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => d, e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b)\n: c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) ? c : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? function(){} : (b) => c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c ? d : e => f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => d ? (e) : f => g",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? ((b)) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b : (c) ? d : e => f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = (a ? (b) : c => d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = [a ? (b) : c => d]",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "f(a ? (b) : c => d)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => { return d }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? () : b => c",
+  "file": "a.js",
+  "bun_javascript": "Expected \"=>\" but found \":\"",
+  "bun_typescript": "Expected \"=>\" but found \":\"",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 19,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 13,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) : c => d : e",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b): c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b => (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? async (b) => (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? async b => (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? () => (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 26,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 20,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => (c) : d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => ((c)) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => (c, d) : e => f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => c => (d) : e => f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b = (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b += (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ??= (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? c : (d) : e => f",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b ? c : d = (e) : f => g",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? function () { return (b) } : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? { k: (b) } : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? [(b)] : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? f((b)) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? b + (c) : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? `${(b)}` : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => { return (c) } : d => e",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? yield_ => (b) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "function* g() { x = a ? yield (b) : c => d }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 43,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 36,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "async function g() { x = a ? await (b) : c => d }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "conditional-arrow",
+  "src": "x = a ? (b) => (c) : d => e : f",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 21,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { private\n x = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { protected\n foo() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { override\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { declare\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { abstract\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { accessor\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static readonly\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n static\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n [x] = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n 'x' = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n 1 = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n #x = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n *x() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly\n get x() { return 1 } }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { override\n async x() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly; x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { declare = 1; abstract = 2; public = 3 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { declare() {} abstract() {} public() {} private() {} protected() {} override() {} readonly() {} accessor() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static public() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static declare() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { get\n x() { return 1 } }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { async\n x() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static async\n x() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static accessor x = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { accessor x = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { accessor = 1 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { constructor(public_, x) {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { constructor(readonly) {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { constructor(private_ = 1) {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { 'constructor'() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { x\n y\n z }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static\n static\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { declare\n declare\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { abstract\n foo() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "x = { declare() {}, abstract: 1, public_: 2, readonly: 3 }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "x = class { public\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class implements_ {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A extends B {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "x = class extends B {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { static\n{ } }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { x\n['y'] }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { x\n*y() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { readonly\n static x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { override\n static\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { protected\n async\n x() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { private\n constructor() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "class-members",
+  "src": "class A { public\n accessor x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected identifier but found \";\"",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected identifier but found end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface\nFoo\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type; type\nA = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type; type;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "type = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type, Foo; type\nFoo\n= 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Unexpected end of file",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare\nvar x",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare\nfunction f() {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare, global; declare\nglobal\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 29,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var abstract; abstract\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var abstract; abstract;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var namespace, foo; namespace\nfoo\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var module, foo; module\nfoo\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var module; module\n'x'\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "module.exports = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var namespace; namespace.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type; type.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var abstract; abstract.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "global.x = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var global; global\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 12,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "statement-keywords",
+  "src": "declare: for(;;) break declare",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "type: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "interface: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "namespace: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "abstract: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "module: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "global: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var as, y, z; x = y\nas\nz",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var satisfies, y, z; x = y\nsatisfies\nz",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "x = y\n!z",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var async, x; async\nx",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var async; x = async < 1 > (2)",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare, x; declare in x",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type, x; type in x",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare++",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type; type()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var namespace; namespace()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var module; module()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var abstract; abstract()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare`x`",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var abstract; if (x) abstract\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type; if (x) type\nelse y",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; { declare\nlet x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "function f() { var declare; declare\nreturn }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var as; as",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var satisfies; satisfies()",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var any, unknown, never, keyof, infer, is, asserts, unique, out, override, readonly, accessor; x = [any, unknown, never, keyof, infer, is, asserts, unique, out, override, readonly, accessor]",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "let x\n!y",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var x\n!y",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; interface\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var type, a, b; type\n[a] = b",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare\n;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; declare\n",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; if (x) declare; else y",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; if (x) interface; else y",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected identifier but found \";\"",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var declare; x => { declare; }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var interface; function f() { interface; }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected identifier but found \";\"",
+  "cause": "P1 bun's TypeScript grammar differs from tsc's (tsc reads the .ts file as the .js file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var enum_; enum_\nA\n{}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var namespace; namespace\n.x",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "using: 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var using; using\nx = 1",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "statement-keywords",
+  "src": "var await_; await_\nusing\nx",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import type from 'x'; type",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import type, {a} from 'x'; type; a",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import type, * as ns from 'x'; type; ns",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {type} from 'x'; type",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {type as foo} from 'x'; foo",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {type as as} from 'x'; as",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {type, a} from 'x'; type; a",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {a, type} from 'x'; type; a",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {as} from 'x'; as",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {as as as} from 'x'; as",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import {default as type} from 'x'; type",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var type; export {type}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var type; export {type as foo}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var type; export {type as as}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var type; export {type as default}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var type; export {type as 'str'}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var as; export {as}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var as; export {as as as}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "export * as type from 'x'",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "export {type} from 'x'",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "export {type as foo} from 'x'",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "export {default as type} from 'x'",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import * as type from 'x'; type",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import type from 'x'; export default type",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var abstract; export default abstract;",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "var abstract; export default abstract\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "export default async\nfunction f() {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import from_ from 'x'; from_",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import from from 'x'; from",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import type from from 'x'",
+  "file": "a.js",
+  "bun_javascript": "Expected string but found \"from\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 0,
+     "length": 25
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import defer from 'x'; defer",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "imports-exports",
+  "src": "import source from 'x'; source",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A extends B>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \"(\" but found \"t\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 17,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 18,
+     "length": 2
+    },
+    {
+     "code": 1109,
+     "start": 22,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8004,
+     "start": 5,
+     "length": 11
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A extends>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A extends={1}>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A extends B C>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \">\" but found \"C\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 17,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 19,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 20,
+     "length": 2
+    },
+    {
+     "code": 1109,
+     "start": 24,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 8004,
+     "start": 5,
+     "length": 13
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A>(y) => z</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1382,
+     "start": 12,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A b={c<d>(e)}/>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <div>{a<b>(c)}</div>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts, different tree",
+  "cause": "T  type arguments in an expression (tsc: not in a JavaScript file)",
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <div>{a ? b ? (c) : d => e : f}</div>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 34,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 24,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <T,>(y) => z",
+  "file": "a.jsx",
+  "bun_javascript": "Expected \">\" but found \",\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 5,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <a.b/>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <a:b/>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A const/>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A const B>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <A in out>t</A>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <const T>t</const>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <div/>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = <>{y}</>",
+  "file": "a.jsx",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = a < b > c</b>",
+  "file": "a.jsx",
+  "bun_javascript": "Syntax Error",
+  "bun_typescript": "Syntax Error",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 13,
+     "length": 2
+    },
+    {
+     "code": 1109,
+     "start": 17,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "jsx",
+  "src": "x = y\n<div/>",
+  "file": "a.jsx",
+  "bun_javascript": "Unexpected >",
+  "bun_typescript": "Unexpected >",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 11,
+     "length": 1
+    },
+    {
+     "code": 1109,
+     "start": 12,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@dec class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@dec\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@a.b() class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@(a) class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@dec export class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "export @dec class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@dec export default class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "export default @dec class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec static x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec accessor x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec foo() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec get x() { return 1 } }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec #x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec ['x']() {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { @dec\n x }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "x = @dec class {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "class A { foo(@dec x) {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 1206,
+     "start": 14,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "decorators",
+  "src": "class A { constructor(@dec x) {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 1206,
+     "start": 22,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "decorators",
+  "src": "@dec abstract_\nclass A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"class\" but found \"abstract_\"",
+  "bun_typescript": "Expected \"class\" but found \"abstract_\"",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 4,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 1206,
+     "start": 0,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 4,
+     "length": 0
+    }
+   ],
+   "js": []
+  }
+ },
+ {
+  "group": "decorators",
+  "src": "@a @b class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@a.b.c class A {}",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@a[b] class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"class\" but found \"[\"",
+  "bun_typescript": "Expected \"class\" but found \"[\"",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 2,
+     "length": 0
+    },
+    {
+     "code": 1005,
+     "start": 6,
+     "length": 5
+    }
+   ],
+   "js": [
+    {
+     "code": 1206,
+     "start": 0,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 2,
+     "length": 0
+    },
+    {
+     "code": 1005,
+     "start": 6,
+     "length": 5
+    }
+   ],
+   "js": []
+  }
+ },
+ {
+  "group": "decorators",
+  "src": "@a`b` class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"class\" but found \"`b`\"",
+  "bun_typescript": "Expected \"class\" but found \"`b`\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@a?.b class A {}",
+  "file": "a.js",
+  "bun_javascript": "Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator",
+  "bun_typescript": "Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@new a class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected identifier but found \"new\"",
+  "bun_typescript": "Expected identifier but found \"new\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "decorators",
+  "src": "@a<b> class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"class\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 2,
+     "length": 0
+    },
+    {
+     "code": 17008,
+     "start": 3,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 16,
+     "length": 0
+    }
+   ],
+   "js": [
+    {
+     "code": 1206,
+     "start": 0,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [
+    {
+     "code": 1146,
+     "start": 2,
+     "length": 0
+    },
+    {
+     "code": 17008,
+     "start": 3,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 16,
+     "length": 0
+    }
+   ],
+   "js": []
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "let x: number = 1",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 7,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(a: number) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(): void {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(a?) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 12,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f<T>() {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"(\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 11,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f();",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \";\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 9,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 0,
+     "length": 13
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A<T> {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 8,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A implements B {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \"implements\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8005,
+     "start": 8,
+     "length": 12
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A extends B<T> {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8011,
+     "start": 18,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { x: number }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 13,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { x?: number }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 11,
+     "length": 1
+    },
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { x! }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"!\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { public x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { private x = 1 }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { readonly x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { declare x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { abstract x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "abstract class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"class\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 0,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { override foo() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"foo\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { foo?() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 13,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { foo(): void {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 17,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { foo<T>() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 14,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { foo(); foo() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \";\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 10,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 10,
+     "length": 6
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { constructor(public x) {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8012,
+     "start": 22,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { [k: string]: any }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"]\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 10,
+     "length": 16
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { static x: number }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 20,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { async foo(): Promise<void> {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 23,
+     "length": 13
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "interface A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 10,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "type A = 1",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8008,
+     "start": 5,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "enum A {}",
+  "file": "a.js",
+  "bun_javascript": "Unexpected enum",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 5,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "const enum A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected identifier but found \"enum\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 11,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "declare const x",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"const\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 0,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "declare function f()",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"function\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 17,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 0,
+     "length": 20
+    },
+    {
+     "code": 8009,
+     "start": 0,
+     "length": 7
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "declare class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"class\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 0,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "declare module 'm' {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"module\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 15,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "declare global {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"global\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 8,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": []
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "namespace A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 10,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "module A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 7,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "import x = require('y')",
+  "file": "a.js",
+  "bun_javascript": "Expected \"from\" but found \"=\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8002,
+     "start": 0,
+     "length": 23
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "import x = y.z",
+  "file": "a.js",
+  "bun_javascript": "Expected \"from\" but found \"=\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8002,
+     "start": 0,
+     "length": 14
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export = x",
+  "file": "a.js",
+  "bun_javascript": "Unexpected =",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8003,
+     "start": 0,
+     "length": 10
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export as namespace x",
+  "file": "a.js",
+  "bun_javascript": "Unexpected as",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "import type x from 'y'",
+  "file": "a.js",
+  "bun_javascript": "Expected \"from\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 0,
+     "length": 22
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "import type {x} from 'y'",
+  "file": "a.js",
+  "bun_javascript": "Expected \"from\" but found \"{\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 0,
+     "length": 24
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "import {type x} from 'y'",
+  "file": "a.js",
+  "bun_javascript": "Expected \"}\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 8,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export type {x}",
+  "file": "a.js",
+  "bun_javascript": "Unexpected type",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 0,
+     "length": 15
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export {type x}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"}\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 8,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export type * from 'y'",
+  "file": "a.js",
+  "bun_javascript": "Unexpected type",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 0,
+     "length": 22
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = y as any",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"as\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8016,
+     "start": 9,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = y as const",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"as\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8016,
+     "start": 9,
+     "length": 5
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = y satisfies z",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"satisfies\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8037,
+     "start": 16,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = y!",
+  "file": "a.js",
+  "bun_javascript": "Unexpected !",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8013,
+     "start": 4,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = y!.z",
+  "file": "a.js",
+  "bun_javascript": "Unexpected !",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8013,
+     "start": 4,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = <any>y",
+  "file": "a.js",
+  "bun_javascript": "Unexpected <",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 17008,
+     "start": 5,
+     "length": 3
+    },
+    {
+     "code": 1005,
+     "start": 10,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = (a): b => c",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 9,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = (a: b) => c",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 8,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = (a?) => c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected )",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 6,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = <T>(a) => c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected <",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1382,
+     "start": 12,
+     "length": 1
+    },
+    {
+     "code": 17008,
+     "start": 5,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 15,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = <T,>(a) => c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected <",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 5,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = async <T>(a) => c",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"=>\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 17,
+     "length": 2
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = async (a): b => c",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 15,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = a ? (b) : c => d : e",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 14,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = function <T>() {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"(\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 14,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = function (): void {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 17,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = { foo<T>() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \":\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 10,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = { foo(): void {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 13,
+     "length": 4
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = { foo?() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"}\" but found \"?\"",
+  "bun_typescript": "Expected \"}\" but found \"?\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 9,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "try {} catch (e: any) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 17,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "for (let x: number of y) ;",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 12,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(this) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected identifier but found \"this\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(this: any) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected identifier but found \"this\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 17,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "var x!: number",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"!\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 8,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = a?.<T>()",
+  "file": "a.js",
+  "bun_javascript": "Expected identifier but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1003,
+     "start": 7,
+     "length": 1
+    },
+    {
+     "code": 1109,
+     "start": 11,
+     "length": 1
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = new a<b>",
+  "file": "a.js",
+  "bun_javascript": "Unexpected end of file",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 12,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = f<T>",
+  "file": "a.js",
+  "bun_javascript": "Unexpected end of file",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1109,
+     "start": 8,
+     "length": 0
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = <A<T>/>",
+  "file": "a.js",
+  "bun_javascript": "Unexpected <",
+  "bun_typescript": "Expected \">\" but found \"/\"",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1003,
+     "start": 6,
+     "length": 1
+    },
+    {
+     "code": 1382,
+     "start": 10,
+     "length": 1
+    },
+    {
+     "code": 17008,
+     "start": 7,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 11,
+     "length": 0
+    },
+    {
+     "code": 2657,
+     "start": 4,
+     "length": 7
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = <A<T>>t</A>",
+  "file": "a.js",
+  "bun_javascript": "Unexpected <",
+  "bun_typescript": "Syntax Error",
+  "cause": null,
+  "tsc": {
+   "parse": [
+    {
+     "code": 1003,
+     "start": 6,
+     "length": 1
+    },
+    {
+     "code": 1382,
+     "start": 9,
+     "length": 1
+    },
+    {
+     "code": 17002,
+     "start": 13,
+     "length": 1
+    },
+    {
+     "code": 2657,
+     "start": 4,
+     "length": 11
+    }
+   ],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "@dec declare class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"class\" but found \"declare\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 5,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export default interface A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8006,
+     "start": 25,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export default abstract class A {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"class\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 15,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "export declare const x: number",
+  "file": "a.js",
+  "bun_javascript": "Unexpected declare",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 7,
+     "length": 7
+    },
+    {
+     "code": 8010,
+     "start": 24,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 24,
+     "length": 6
+    },
+    {
+     "code": 8009,
+     "start": 7,
+     "length": 7
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "export import a = b.c",
+  "file": "a.js",
+  "bun_javascript": "Unexpected import",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8002,
+     "start": 0,
+     "length": 21
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(public x) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"x\"",
+  "bun_typescript": "Expected \")\" but found \"x\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8012,
+     "start": 11,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "x = (public x) => 1",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"x\"",
+  "bun_typescript": "Expected \")\" but found \"x\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8012,
+     "start": 5,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "let x: typeof import('y')",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 7,
+     "length": 18
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(...a?) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 15,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f(a?: number = 1) {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 12,
+     "length": 1
+    },
+    {
+     "code": 8010,
+     "start": 15,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { accessor x: number }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 22,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { static accessor x?: number }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"?\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 27,
+     "length": 1
+    },
+    {
+     "code": 8010,
+     "start": 30,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { get x(): number { return 1 } }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 19,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { set x(v: number) {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \")\" but found \":\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8010,
+     "start": 19,
+     "length": 6
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { constructor(); constructor() {} }",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \";\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 10,
+     "length": 11
+    }
+   ]
+  },
+  "typescript_go": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8017,
+     "start": 10,
+     "length": 14
+    }
+   ]
+  }
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { declare static x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"static\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { static declare x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 17,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { private static x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"static\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { static private x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 17,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { public readonly x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"readonly\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 6
+    },
+    {
+     "code": 8009,
+     "start": 17,
+     "length": 8
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { in x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "Expected \";\" but found \"x\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 2
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A { out x }",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"x\"",
+  "bun_typescript": "Expected \";\" but found \"x\"",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8009,
+     "start": 10,
+     "length": 3
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "function f<const T>() {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"(\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 11,
+     "length": 7
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "class A<in T, out U> {}",
+  "file": "a.js",
+  "bun_javascript": "Expected \"{\" but found \"<\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8004,
+     "start": 8,
+     "length": 11
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "using x = y as z",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"as\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8016,
+     "start": 15,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "typescript-only",
+  "src": "label: type A = 1",
+  "file": "a.js",
+  "bun_javascript": "Expected \";\" but found \"A\"",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": [
+    {
+     "code": 8008,
+     "start": 12,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 30,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 23,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a): b => {} }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 31,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 23,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a, b): c => d }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 33,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 26,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a): (b) => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a): b }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case a: b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case async (a): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 36,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 29,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a):\n b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 31,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 24,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case ({a}): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 32,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 25,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case ([a]): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 32,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 25,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a = 1): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 34,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 27,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (1): b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case (a): b => c; break; case (d): e => f }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \";\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 29,
+     "length": 1
+    },
+    {
+     "code": 1005,
+     "start": 55,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 23,
+     "length": 1
+    },
+    {
+     "code": 8010,
+     "start": 48,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "switch (x) { case y ? (a) : b => c: d }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "Expected \":\" but found \"}\"",
+  "cause": "Q  tsc rejects the JavaScript file too (quirk of the reference grammar)",
+  "tsc": {
+   "parse": [
+    {
+     "code": 1005,
+     "start": 38,
+     "length": 1
+    }
+   ],
+   "js": [
+    {
+     "code": 8010,
+     "start": 28,
+     "length": 1
+    }
+   ]
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "x = { k: (a) }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "x = { [(a)]: b => c }",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "x = y ? { k: (a) } : b => c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "x = a ? (b) : c",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ },
+ {
+  "group": "paren-colon",
+  "src": "x = a ? ((b)) : c => d",
+  "file": "a.js",
+  "bun_javascript": "accepts",
+  "bun_typescript": "accepts",
+  "cause": null,
+  "tsc": {
+   "parse": [],
+   "js": []
+  },
+  "typescript_go": "same as tsc"
+ }
+]

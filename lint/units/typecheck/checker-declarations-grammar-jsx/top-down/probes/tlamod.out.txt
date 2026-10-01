@@ -1,0 +1,9 @@
+PARSE tlamod.ts parse=[] js=[] bind=[]
+tlamod.ts(2,1)+5: error TS1378: Top-level 'await' expressions are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
+tlamod.ts(3,5)+5: error TS1432: Top-level 'for await' loops are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
+tlamod.ts(4,1)+5: error TS2854: Top-level 'await using' statements are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
+RESOLUTIONDEPTH 0 []
+global: error TS2318: Cannot find global type 'AsyncDisposable'.
+global: error TS2318: Cannot find global type 'Disposable'.
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=4 Options=1 SourceFiles=1
+COUNTS TypeCount=92 SymbolCount=28 SignatureCount=4 TotalInstantiationCount=1

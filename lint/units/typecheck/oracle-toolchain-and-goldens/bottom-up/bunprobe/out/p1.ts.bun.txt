@@ -1,0 +1,19 @@
+file p1.ts bytes=120
+s_class 7
+  e_identifier 23 name="B"
+  e_string 27 text="x"
+  e_number 31 value=1
+  e_string 34 text="m"
+  e_function 35
+    b_identifier 36 name="a"
+  s_expr 51
+    e_identifier 51 name="s"
+s_class 58
+  e_identifier 74 name="B"
+  e_string 78 text="x"
+  e_number 82 value=1
+s_block 87
+  s_class 89
+    e_identifier 105 name="B"
+    e_string 109 text="x"
+    e_number 113 value=1

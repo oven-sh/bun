@@ -1,0 +1,514 @@
+A1  "var v = a ? <T>(b) : c => d;"
+     bun: Expected ":" but found ";" @27 | Unexpected end of file @28
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c => d;\n"
+AA  "var v = a ? <T>(b) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? <T>(b): c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? <T>(b) : c;"
+     bun: ok "var v = a ? b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c;\n"
+AA  "var v = a ? <T>(b) => c : d;"
+     bun: ok "var v = a ? (b) => c : d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => c : d;\n"
+A1  "var v = a ? <T>(b): c => d;"
+     bun: Expected ":" but found ";" @26 | Unexpected end of file @27
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c => d;\n"
+AA  "var v = a ? (b) : c => d;"
+     bun: ok "var v = a ? b : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c => d;\n"
+AA  "var v = a ? (b) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? (b): c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AAg "var v = a ? (b, c) : d => e;"
+     bun: ok "var v = a ? (b, c) : (d) => e;\n"
+     tsc check: TS2695@13+1 Left side of comma operator is unused and has no side effects. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b, c) : d => e;\n"
+AA  "var v = a ? (b, c) : d => e : f;"
+     bun: ok "var v = a ? (b, c) => e : f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b, c) => e : f;\n"
+AA  "var v = a ? ((b)) : c => d;"
+     bun: ok "var v = a ? b : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? ((b)) : c => d;\n"
+B  "var v = a ? ((b)) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc parse: TS1005@27+1 ',' expected.
+AA  "var v = a ? (b = 1) : c => d;"
+     bun: ok "var v = a ? b = 1 : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b = 1) : c => d;\n"
+AA  "var v = a ? (b = 1) : c => d : e;"
+     bun: ok "var v = a ? (b = 1) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b = 1) => d : e;\n"
+AAg "var v = a ? ({ b }) : c => d;"
+     bun: ok "var v = a ? { b } : (c) => d;\n"
+     tsc check: TS18004@15+1 No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? ({ b }) : c => d;\n"
+AA  "var v = a ? ({ b }) : c => d : e;"
+     bun: ok "var v = a ? ({ b }) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? ({ b }) => d : e;\n"
+AA  "var v = a ? ([b]) : c => d;"
+     bun: ok "var v = a ? [b] : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? ([b]) : c => d;\n"
+AA  "var v = a ? (...b) : c => d : e;"
+     bun: ok "var v = a ? (...b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (...b) => d : e;\n"
+AA  "var v = a ? (b?) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? (b: B) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? (b: B) => c : d;"
+     bun: ok "var v = a ? (b) => c : d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => c : d;\n"
+AA  "var v = a ? () : c => d : e;"
+     bun: ok "var v = a ? () => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => d : e;\n"
+RR  "var v = a ? () : c => d;"
+     bun: Expected "=>" but found ":" @15
+     tsc parse: TS1005@23+1 ':' expected.
+AA  "var v = a ? () => b : c;"
+     bun: ok "var v = a ? () => b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => b : c;\n"
+AA  "var v = a ? (): b => c : d;"
+     bun: ok "var v = a ? () => c : d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => c : d;\n"
+AA  "var v = a ? async (b) : c => d;"
+     bun: ok "var v = a ? async(b) : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async(b) : c => d;\n"
+AA  "var v = a ? async (b) : c => d : e;"
+     bun: ok "var v = a ? async (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async (b) => d : e;\n"
+AA  "var v = a ? async (b): c => d : e;"
+     bun: ok "var v = a ? async (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async (b) => d : e;\n"
+A1  "var v = a ? async <T>(b) : c => d;"
+     bun: Expected ":" but found ";" @33 | Unexpected end of file @34
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async(b) : c => d;\n"
+AA  "var v = a ? async <T>(b): c => d : e;"
+     bun: ok "var v = a ? async (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async (b) => d : e;\n"
+AA  "var v = a ? async <T>(b) => c : d;"
+     bun: ok "var v = a ? async (b) => c : d;\n"
+     tsc check: (noise 2318,2304)
+     tsc emit: "\"use strict\";\nvar v = a ? async (b) => c : d;\n"
+AA  "var v = a ? b : c ? (d) : e => f;"
+     bun: ok "var v = a ? b : c ? d : (e) => f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? b : c ? (d) : e => f;\n"
+AA  "var v = a ? b : c ? (d) : e => f : g;"
+     bun: ok "var v = a ? b : c ? (d) => f : g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? b : c ? (d) => f : g;\n"
+AA  "var v = a ? b ? (c) : d => e : f : g;"
+     bun: ok "var v = a ? b ? (c) => e : f : g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? b ? (c) => e : f : g;\n"
+AA  "var v = a ? (b ? (c) : d => e) : f;"
+     bun: ok "var v = a ? b ? c : (d) => e : f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b ? (c) : d => e) : f;\n"
+AA  "var v = a ? function (b): c {} : d;"
+     bun: ok "var v = a ? function(b) {} : d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? function (b) { } : d;\n"
+AA  "var v = a ? (b) : (c) : d => e;"
+     bun: ok "var v = a ? b : (c) => e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : (c) => e;\n"
+AA  "var v = a ? (b) : (c): d => e;"
+     bun: ok "var v = a ? b : (c) => e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : (c) => e;\n"
+RR  "var v = a ? (b): (c) => d : e;"
+     bun: Expected ";" but found ":" @26
+     tsc parse: TS1005@26+1 ',' expected.
+AA  "var v = a ? (b) : c => (d) : e => f;"
+     bun: ok "var v = a ? b : (c) => (d) => f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => (d) : e => f;\n"
+AA  "var v = a ? x => (b) : c;"
+     bun: ok "var v = a ? (x) => b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? x => (b) : c;\n"
+AA  "var v = a ? (x): y => (b) : c;"
+     bun: ok "var v = a ? (x) => b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (x) => (b) : c;\n"
+AA  "var v = a ? (b) : c => d ? e : f;"
+     bun: ok "var v = a ? b : (c) => d ? e : f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c => d ? e : f;\n"
+AA  "var v = a ? (b): c => d ? e : f : g;"
+     bun: ok "var v = a ? (b) => d ? e : f : g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d ? e : f : g;\n"
+AA  "var v = a ? { m: (b): c => d } : e;"
+     bun: ok "var v = a ? { m: (b) => d } : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? { m: (b) => d } : e;\n"
+AA  "var v = a ? [(b): c => d] : e;"
+     bun: ok "var v = a ? [(b) => d] : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? [(b) => d] : e;\n"
+AA  "var v = a ? f((b): c => d) : e;"
+     bun: ok "var v = a ? f((b) => d) : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? f((b) => d) : e;\n"
+AA  "var v = a ? ((b): c => d) : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? ((b) => d) : e;\n"
+AA  "var v = a ? `${(b): c => d}` : e;"
+     bun: ok "var v = a ? `${(b) => d}` : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? `${(b) => d}` : e;\n"
+A1  "var v = a ? (await) : b;"
+     bun: Unexpected ) @18
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (await) : b;\n"
+AA  "var v = a ? (this) : b;"
+     bun: ok "var v = a ? exports : b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (this) : b;\n"
+A2  "var v = a ? (this): b => c : d;"
+     bun: Expected ";" but found ":" @27
+     tsc check: TS2730@13+4 An arrow function cannot have a 'this' parameter. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => c : d;\n"
+A2  "var v = a ? (this: T): b => c : d;"
+     bun: Unexpected ":" @17
+     tsc check: TS2730@13+7 An arrow function cannot have a 'this' parameter. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => c : d;\n"
+A2  "var v = a ? <T>(this: T): b => c : d;"
+     bun: Unexpected ":" @20
+     tsc check: TS2730@16+7 An arrow function cannot have a 'this' parameter. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? () => c : d;\n"
+RR  "var v = a ? <T,>(b) : c => d;"
+     bun: Expected ":" but found ";" @28 | Unexpected end of file @29
+     tsc parse: TS1005@14+1 '>' expected. ; TS1134@15+1 Variable declaration expected. ; TS1005@20+1 ';' expected.
+AA  "var v = a ? <const T>(b): c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? <T extends U>(b): c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? <T>(b) : <U>(c) => d;"
+     bun: ok "var v = a ? b : (c) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : (c) => d;\n"
+AA  "var v = a ? <T>(b): <U>(c) => d => e : f;"
+     bun: ok "var v = a ? (b) => e : f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => e : f;\n"
+AA  "var v = a ? <T>b : c;"
+     bun: ok "var v = a ? b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? b : c;\n"
+AA  "var v = a ? <T>(b) : c;"
+     bun: ok "var v = a ? b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) : c;\n"
+RR  "var v = a ? <T>(b);"
+     bun: Expected ":" but found ";" @18 | Unexpected end of file @19
+     tsc parse: TS1005@18+1 ':' expected.
+AA  "var v = <T>(b) : c => d;"
+     bun: ok "var v = (b) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b) => d;\n"
+AA  "var v = <T>(b): c => d;"
+     bun: ok "var v = (b) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b) => d;\n"
+AA  "var v = <T>(b) => d;"
+     bun: ok "var v = (b) => d;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b) => d;\n"
+AA  "var v = <T>b;"
+     bun: ok "var v = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = b;\n"
+AA  "var v = <T>(b);"
+     bun: ok "var v = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b);\n"
+AAg "var v = <T>(b, c);"
+     bun: ok "var v = (b, c);\n"
+     tsc check: TS2695@12+1 Left side of comma operator is unused and has no side effects. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b, c);\n"
+AA  "var v = <T>() => 1;"
+     bun: ok "var v = () => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = () => 1;\n"
+AA  "var v = <T>(): c => 1;"
+     bun: ok "var v = () => 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = () => 1;\n"
+AA  "var v = <T>(...b) => 1;"
+     bun: ok "var v = (...b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = (...b) => 1;\n"
+AA  "var v = <T>(b?) => 1;"
+     bun: ok "var v = (b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = (b) => 1;\n"
+AA  "var v = <T>(b: B) => 1;"
+     bun: ok "var v = (b) => 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (b) => 1;\n"
+AA  "var v = <T>(b = 1) => 1;"
+     bun: ok "var v = (b = 1) => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = (b = 1) => 1;\n"
+AA  "var v = <T>({ b }) => 1;"
+     bun: ok "var v = ({ b }) => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = ({ b }) => 1;\n"
+A2  "var v = <T>(this: T) => 1;"
+     bun: Invalid binding pattern @12
+     tsc check: TS2730@12+7 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar v = () => 1;\n"
+AA  "var v = <T>function () {};"
+     bun: ok "var v = function() {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = function () { };\n"
+AA  "var v = <T>class {};"
+     bun: ok "var v = class {\n};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = class {\n};\n"
+B  "var v = <T>async () => 1;"
+     bun: ok "var v = async () => 1;\n"
+     tsc parse: TS1005@20+2 ';' expected.
+B  "var v = <T>async <U>() => 1;"
+     bun: ok "var v = async () => 1;\n"
+     tsc parse: TS1005@23+2 ';' expected.
+AA  "var v = <T><U>x;"
+     bun: ok "var v = x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+B  "var v = <T><U>(x) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc parse: TS1005@18+2 ';' expected.
+B  "var v = <T>x => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc parse: TS1005@13+2 ';' expected.
+B  "var v = <T>async x => x;"
+     bun: ok "var v = async (x) => x;\n"
+     tsc parse: TS1005@17+1 ',' expected. ; TS1005@19+2 ';' expected.
+AAg "var v = <const>x;"
+     bun: ok "var v = x;\n"
+     tsc check: TS1355@15+1 A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+AA  "var v = <const T>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+RR  "var v = <const T>x;"
+     bun: Expected ">" but found "T" @15
+     tsc parse: TS1005@15+1 '>' expected.
+A1  "var v = <in>x;"
+     bun: The modifier "in" is not valid here @9 | Unexpected in @9
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+A1  "var v = <out>x;"
+     bun: The modifier "out" is not valid here @9
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+RR  "var v = <in T>(x: T) => x;"
+     bun: The modifier "in" is not valid here @9
+     tsc parse: TS1005@12+1 '>' expected. ; TS1005@16+1 ')' expected. ; TS1005@19+1 ',' expected. ; TS1005@21+2 ';' expected.
+A2  "var v = <out T>(x: T) => x;"
+     bun: The modifier "out" is not valid here @9
+     tsc check: TS1274@9+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+RR  "var v = <in out T>(x: T) => x;"
+     bun: The modifier "in" is not valid here @9
+     tsc parse: TS1005@12+3 '>' expected. ; TS1005@16+1 ',' expected. ; TS1005@17+1 ',' expected. ; TS1005@20+1 ')' expected. ; TS1434@22+1 Unexpected keyword or identifier. ; TS1128@23+1 Declaration or statement expected. ; TS1128@25+2 Declaration or statement expected.
+A1  "var v = <out>(x) => x;"
+     bun: The modifier "out" is not valid here @9
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+A1  "var v = <out, T>(x) => x;"
+     bun: The modifier "out" is not valid here @9
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+A1  "var v = <out = A>(x) => x;"
+     bun: The modifier "out" is not valid here @9
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+RR  "var v = <out extends A>(x) => x;"
+     bun: The modifier "out" is not valid here @9
+     tsc parse: TS1359@13+7 Identifier expected. 'extends' is a reserved word that cannot be used here.
+RR  "var v = <in>(x) => x;"
+     bun: The modifier "in" is not valid here @9 | Unexpected in @9
+     tsc parse: TS1005@16+2 ';' expected.
+A1  "var v = <if>x;"
+     bun: Unexpected if @9
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+RR  "var v = <T,>x;"
+     bun: Expected ">" but found "," @10
+     tsc parse: TS1005@10+1 '>' expected. ; TS1134@11+1 Variable declaration expected.
+RR  "var v = <>x;"
+     bun: Unexpected > @9
+     tsc parse: TS1110@9+1 Type expected.
+AA  "var v = <T>(x)!;"
+     bun: ok "var v = x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = (x);\n"
+AA  "var v = <T>x!;"
+     bun: ok "var v = x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+AA  "var v = <T>x as U;"
+     bun: ok "var v = x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+AA  "var v = <T>x++;"
+     bun: ok "var v = x++;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x++;\n"
+AA  "var v = <T>++x;"
+     bun: ok "var v = ++x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = ++x;\n"
+AA  "var v = <T>-x;"
+     bun: ok "var v = -x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = -x;\n"
+AAg "var v = <T>await x;"
+     bun: ok "var v = await x;\n"
+     tsc check: TS1375@11+5 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = await x;\n"
+AAg "var v = <T>yield;"
+     bun: ok "var v = yield;\n"
+     tsc check: TS1212@11+5 Identifier expected. 'yield' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = yield;\n"
+AA  "var v = <T>new X;"
+     bun: ok "var v = new X;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = new X;\n"
+AA  "var v = <T>x.y<U>();"
+     bun: ok "var v = x.y();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x.y();\n"
+A2  "var v = <T>super.x;"
+     bun: Unexpected "super" @11
+     tsc check: TS2660@11+5 'super' can only be referenced in members of derived classes or object literal expressions. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = super.x;\n"
+AA  "var v = <typeof x>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <keyof T>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <A | B>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <A extends B ? C : D>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <(a: A) => B>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <new () => B>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <{ a: A }>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <[A, B]>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <A[]>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <\"s\">y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <1>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <-1>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <`a${B}`>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <import(\"x\").A>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2307,2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AAg "var v = <this>y;"
+     bun: ok "var v = y;\n"
+     tsc check: TS2526@9+4 A 'this' type is available only in a non-static member of a class or interface. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <void>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <null>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AAg "var v = <unique symbol>y;"
+     bun: ok "var v = y;\n"
+     tsc check: TS1335@9+13 'unique symbol' types are not allowed here. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+A2  "var v = <asserts x>y;"
+     bun: Expected ">" but found "x" @17
+     tsc check: TS1228@9+9 A type predicate is only allowed in return type position for functions and methods. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+B  "var v = <x is A>y;"
+     bun: ok "var v = y;\n"
+     tsc parse: TS1005@11+2 '>' expected. ; TS1005@14+1 ',' expected. ; TS1005@15+1 ',' expected.
+AAg "var v = <infer A>y;"
+     bun: ok "var v = y;\n"
+     tsc check: TS1338@9+7 'infer' declarations are only permitted in the 'extends' clause of a conditional type. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <readonly A[]>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"
+AA  "var v = <abstract new () => A>y;"
+     bun: ok "var v = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = y;\n"

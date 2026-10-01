@@ -1,0 +1,3 @@
+min.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+RESOLUTIONDEPTH 0 []
+COUNTS TypeCount=87 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

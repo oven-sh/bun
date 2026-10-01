@@ -1,0 +1,1 @@
+["a[/a/gg] = a[/a/gg]", "arguments = arguments", "switch (a) { case 1.toFixed: break; }", "switch (a) { case a\n--> x: y\n: break; case a: break; }", "switch (a) { case a <!-- b\n: break; case a: break; }"]

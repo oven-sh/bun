@@ -1,0 +1,17 @@
+site	function	kind	compared with	codes
+relater.go:401	createDiagnosticChainFromErrorChain	flag of the message	ElidedInCompatibilityPyramid()	2202,2203,2204,2205
+relater.go:4812	r.reportRelationError	nil test	message == nil	-
+relater.go:4830	r.reportRelationError	equality	Argument_of_type_0_is_not_assignable_to_parameter_of_type_1	2345
+relater.go:4833	r.reportRelationError	switch getChainMessage(0)	Object_literal_may_only_specify_known_properties_and_0_does_not_exist_in_type_1, ..._but_0_does_not_exist_in_type_1_Did_you_mean_to_write_2	2353,2561
+relater.go:4840	r.reportRelationError	switch getChainMessage(0)	Excessive_complexity_comparing_types_0_and_1, The_type_0_is_readonly_and_cannot_be_assigned_to_the_mutable_type_1	2859,4104
+relater.go:4847	r.reportRelationError	switch getChainMessage(0)	Property_0_is_missing_in_type_1_but_required_in_type_2	2741
+relater.go:4853	r.reportRelationError	switch getChainMessage(0)	Type_0_is_missing_the_following_properties_from_type_1_Colon_2_and_3_more, ..._Colon_2	2740,2739
+relater.go:4863	r.reportError	equality	Types_of_property_0_are_incompatible	2326
+relater.go:4865	r.reportError	switch getChainMessage(0)	the two excess property messages	2353,2561
+relater.go:4874	r.reportError	switch getChainMessage(1)	Call_signatures_with_no_arguments_..., Construct_signatures_with_no_arguments_..., Call_signature_return_types_0_and_1_are_incompatible, Construct_signature_return_types_0_and_1_are_incompatible	2204,2205,2202,2203
+relater.go:4892	r.reportError	switch getChainMessage(1)	Types_of_property_0_are_incompatible, The_types_of_0_are_incompatible_between_these_types, The_types_returned_by_0_are_incompatible_between_these_types	2326,2200,2201
+relater.go:4900	r.reportError	equality	Types_of_property_0_are_incompatible	2326
+relater.go:4966-4971	isConversionOrInterfaceImplementationMessage	equality (6)	Class_0_incorrectly_implements_interface_1, Class_0_incorrectly_implements_class_1_..., Conversion_of_type_0_to_type_1_may_be_a_mistake_..., Its_instance_type_0_..., Its_return_type_0_..., Its_element_type_0_is_not_a_valid_JSX_element	2420,2720,2352,2788,2787,2789
+relater.go:384	c.checkTypeRelatedToEx	nil test	headMessage != nil	-
+checker.go:15309	c.resolveExternalModule	equality	Module_0_was_resolved_to_1_but_jsx_is_not_set	6142
+checker.go:15473	c.resolveExternalModule	equality	Could_not_find_a_declaration_file_for_module_0_1_implicitly_has_an_any_type	7016

@@ -1,0 +1,25 @@
+enum E1 { A, B }
+declare const vAny: any;
+declare const vUnknown: unknown;
+declare const vNever: never;
+declare const vString: string;
+declare const vNumber: number;
+declare const vLitA: "a";
+declare const vLit1: 1;
+declare const vUnion: string | number;
+declare const vUndefined: undefined;
+declare const vNull: null;
+declare const vVoid: void;
+declare const vObjA: { a: string };
+declare const vObjAB: { a: string; b?: number };
+declare const vObjRo: { readonly a: "a" };
+declare const vFn1: (x: string) => void;
+declare const vFn2: (x: "a") => undefined;
+declare const vFn3: (x: string, y: number) => void;
+declare const vTuple: [string, number];
+declare const vArray: string[];
+declare const vRoArray: readonly string[];
+declare const vEnum: E1;
+declare const vEnumA: E1.A;
+declare const vObject: object;
+declare const vEmpty: {};

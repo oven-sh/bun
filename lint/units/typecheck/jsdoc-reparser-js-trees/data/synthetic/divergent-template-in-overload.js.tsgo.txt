@@ -1,0 +1,48 @@
+file /divergent-template-in-overload.js scriptKind=1 variant=1 dts=false textLen=113
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=41 identifiers=15 text=19 reparsedClones=3
+root KindSourceFile [0,113) f=0x10000
+  .Statements: list [0,112) n=1
+    - KindClassDeclaration [0,112) f=0x10000
+      .Members: list [9,110) n=2
+        - KindMethodDeclaration [22,30) f=0x10008
+          .Parameters: list [36,71) n=1
+            - KindParameter [53,71) f=0x10008
+              .Type: KindTypeReference [61,62) f=0x410008
+                .TypeName: KindIdentifier [61,62) f=0x410000 Text="T"
+              .name: KindIdentifier [64,65) f=0x410008 Text="a"
+          .Type: KindTypeReference [81,82) f=0x410008
+            .TypeName: KindIdentifier [81,82) f=0x410000 Text="T"
+          .name: KindIdentifier [9,93) f=0x10008 Text="m"
+        - KindMethodDeclaration [9,110) f=0x210000
+          .Body: KindBlock [96,110) f=0x10000
+            .Statements: list [98,108) n=1
+              - KindReturnStatement [98,108) f=0x10000
+                .Expression: KindIdentifier [105,107) f=0x10000 Text="a"
+          .Parameters: list [94,95) n=1
+            - KindParameter [94,95) f=0x10000
+              .name: KindIdentifier [94,95) f=0x10000 Text="a"
+          .name: KindIdentifier [9,93) f=0x10000 Text="m"
+          .jsdoc: KindJSDoc [9,89) f=0x410000
+            .Comment: list [12,21) n=0
+            .Tags: list [21,87) n=1
+              - KindJSDocOverloadTag [21,87) f=0x410000
+                .TagName: KindIdentifier [22,30) f=0x410000 Text="overload"
+                .TypeExpression: KindJSDocSignature [21,87) f=0x410000
+                  .Parameters: list [36,71) n=1
+                    - KindJSDocParameterTag [53,71) f=0x410000
+                      .TagName: KindIdentifier [54,59) f=0x418000 Text="param"
+                      .TypeExpression: KindJSDocTypeExpression [60,63) f=0x410000
+                        .Type: KindTypeReference [61,62) f=0x410000
+                          .TypeName: KindIdentifier [61,62) f=0x410000 Text="T"
+                      .name: KindIdentifier [64,65) f=0x410000 Text="a"
+                  .Type: KindJSDocReturnTag [71,87) f=0x410000
+                    .TagName: KindIdentifier [72,79) f=0x410000 Text="returns"
+                    .TypeExpression: KindJSDocTypeExpression [80,83) f=0x410000
+                      .Type: KindTypeReference [81,82) f=0x410000
+                        .TypeName: KindIdentifier [81,82) f=0x410000 Text="T"
+      .name: KindIdentifier [5,7) f=0x10000 Text="C"
+  .EndOfFileToken: KindEndOfFile [112,113) f=0x10000
+jsdocDiagnostic [37,45) TS8039 cat=1 "A JSDoc '@template' tag may not follow a '@typedef', '@callback', or '@overload' tag"

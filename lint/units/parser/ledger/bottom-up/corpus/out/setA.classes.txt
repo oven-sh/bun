@@ -1,0 +1,90 @@
+==== view ts: set A = 17577 rows
+  rule G: {"A1c":2304,"A1s":2941,"A2":12332}
+  rule N: {"A1":1941,"A3":3304,"A2":12332}
+  rule V: {"A1":1964,"A3":3281,"A2":12332}
+  rule R: {"A1":2297,"A3":2948,"A2":12332}
+  rule R with A1 split (A1v worklist, A1r reserved word as a name, A1j tsc's JavaScript does not parse): {"A1v":1280,"A3":2948,"A2":12332,"A1r":908,"A1j":109}
+  of these, rows that the parser of typescript-go rejects: {"A2":197}
+  cross table:
+     12332  G=A2 N=A2 V=A2 R=A2
+      2941  G=A1s N=A3 V=A3 R=A3
+      1937  G=A1c N=A1 V=A1 R=A1
+       329  G=A1c N=A3 V=A3 R=A1
+        27  G=A1c N=A3 V=A1 R=A1
+         7  G=A1c N=A3 V=A3 R=A3
+         4  G=A1c N=A1 V=A3 R=A1
+  does the JavaScript that tsc prints parse with the js loader of the bun side (by class of rule R):
+       109  A1 js=REJECTED
+      2188  A1 js=parses
+      1211  A2 js=REJECTED
+        16  A2 js=emit threw
+     11105  A2 js=parses
+       116  A3 js=REJECTED
+      2832  A3 js=parses
+
+==== view tsx: set A = 16997 rows
+  rule G: {"A1s":2869,"A1c":2185,"A2":11943}
+  rule N: {"A3":3214,"A1":1840,"A2":11943}
+  rule V: {"A3":3197,"A1":1857,"A2":11943}
+  rule R: {"A3":2876,"A1":2178,"A2":11943}
+  rule R with A1 split (A1v worklist, A1r reserved word as a name, A1j tsc's JavaScript does not parse): {"A3":2876,"A1v":1202,"A2":11943,"A1r":856,"A1j":120}
+  of these, rows that the parser of typescript-go rejects: {"A2":189}
+  cross table:
+     11943  G=A2 N=A2 V=A2 R=A2
+      2869  G=A1s N=A3 V=A3 R=A3
+      1830  G=A1c N=A1 V=A1 R=A1
+       311  G=A1c N=A3 V=A3 R=A1
+        27  G=A1c N=A3 V=A1 R=A1
+        10  G=A1c N=A1 V=A3 R=A1
+         7  G=A1c N=A3 V=A3 R=A3
+  does the JavaScript that tsc prints parse with the js loader of the bun side (by class of rule R):
+       120  A1 js=REJECTED
+      2058  A1 js=parses
+      1209  A2 js=REJECTED
+        16  A2 js=emit threw
+     10718  A2 js=parses
+       108  A3 js=REJECTED
+      2768  A3 js=parses
+
+==== view deco: set A = 17426 rows
+  rule G: {"A1c":2485,"A1s":3001,"A2":11940}
+  rule N: {"A1":2062,"A3":3424,"A2":11940}
+  rule V: {"A1":2085,"A3":3401,"A2":11940}
+  rule R: {"A1":2478,"A3":3008,"A2":11940}
+  rule R with A1 split (A1v worklist, A1r reserved word as a name, A1j tsc's JavaScript does not parse): {"A1v":1434,"A3":3008,"A2":11940,"A1r":708,"A1j":336}
+  of these, rows that the parser of typescript-go rejects: {"A2":197}
+  cross table:
+     11940  G=A2 N=A2 V=A2 R=A2
+      3001  G=A1s N=A3 V=A3 R=A3
+      2058  G=A1c N=A1 V=A1 R=A1
+       389  G=A1c N=A3 V=A3 R=A1
+        27  G=A1c N=A3 V=A1 R=A1
+         7  G=A1c N=A3 V=A3 R=A3
+         4  G=A1c N=A1 V=A3 R=A1
+  does the JavaScript that tsc prints parse with the js loader of the bun side (by class of rule R):
+       336  A1 js=REJECTED
+      2142  A1 js=parses
+      1251  A2 js=REJECTED
+         4  A2 js=emit threw
+     10685  A2 js=parses
+       122  A3 js=REJECTED
+      2886  A3 js=parses
+
+==== view dts: set A = 17577 rows
+  rule G: {"A2":16575,"A1c":441,"A1s":561}
+  rule N: {"A2":16575,"A1":424,"A3":578}
+  rule V: {"A2":16575,"A1":422,"A3":580}
+  rule R: {"A2":16575,"A1":440,"A3":562}
+  rule R with A1 split (A1v worklist, A1r reserved word as a name, A1j tsc's JavaScript does not parse): {"A2":16575,"A1v":336,"A1r":104,"A3":562}
+  of these, rows that the parser of typescript-go rejects: {"A2":197}
+  cross table:
+     16575  G=A2 N=A2 V=A2 R=A2
+       561  G=A1s N=A3 V=A3 R=A3
+       422  G=A1c N=A1 V=A1 R=A1
+        16  G=A1c N=A3 V=A3 R=A1
+         2  G=A1c N=A1 V=A3 R=A1
+         1  G=A1c N=A3 V=A3 R=A3
+  does the JavaScript that tsc prints parse with the js loader of the bun side (by class of rule R):
+       440  A1 js=n/a
+     16575  A2 js=n/a
+       562  A3 js=n/a

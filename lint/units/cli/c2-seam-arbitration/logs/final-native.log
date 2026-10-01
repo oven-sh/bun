@@ -1,0 +1,11 @@
+
+running 6 tests
+test tests::a_typescript_code_and_a_rule_name ... ok
+test tests::the_line_map_is_the_one_of_tsc ... ok
+test tests::the_plain_position_is_the_one_of_tsc ... ok
+test tests::order_and_duplicates ... ok
+test tests::names ... ok
+test tests::without_a_file_chains_and_the_other_categories ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

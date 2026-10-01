@@ -1,0 +1,538 @@
+[
+ {
+  "name": "args-gg",
+  "text": "A<B<C>>"
+ },
+ {
+  "name": "args-ggg",
+  "text": "A<B<C<D>>>"
+ },
+ {
+  "name": "args-ge",
+  "text": "A<B>= y"
+ },
+ {
+  "name": "args-gge",
+  "text": "A<B<C>>= y"
+ },
+ {
+  "name": "args-ggge",
+  "text": "A<B<C<D>>>= y"
+ },
+ {
+  "name": "args-extra-gt",
+  "text": "A<B>> = y"
+ },
+ {
+  "name": "fn-tp-gg",
+  "text": "<T extends A<B>>() => void"
+ },
+ {
+  "name": "fn-tp-ggg",
+  "text": "<T extends A<B<C>>>(x: T) => void"
+ },
+ {
+  "name": "fn-tp-default-gg",
+  "text": "<T = A<B>>() => T"
+ },
+ {
+  "name": "ctor-tp-gg",
+  "text": "new <T extends A<B>>() => T"
+ },
+ {
+  "name": "members-tp-gg",
+  "text": "{ m<T extends A<B>>(): void; <U extends A<B>>(): U; new <V = A<B>>(): V }"
+ },
+ {
+  "name": "open-ll",
+  "text": "A<<T>() => void>"
+ },
+ {
+  "name": "open-ll-nested-close",
+  "text": "A<<T extends B<C>>() => D<E>>"
+ },
+ {
+  "name": "args-then-index",
+  "text": "A<B>[C<D>]"
+ },
+ {
+  "name": "args-gg-array",
+  "text": "A<B<C>>[]"
+ },
+ {
+  "name": "typeof-args-gg",
+  "text": "typeof a<B<C>>"
+ },
+ {
+  "name": "import-args-gg",
+  "text": "import(\"m\").X<Y<Z>>"
+ },
+ {
+  "name": "args-trailing-comma",
+  "text": "A<B, >"
+ },
+ {
+  "name": "args-trailing-comma-gg",
+  "text": "A<B<C,>>"
+ },
+ {
+  "name": "args-empty",
+  "text": "A<>"
+ },
+ {
+  "name": "tp-trailing-comma",
+  "text": "<T,>() => void"
+ },
+ {
+  "name": "comments",
+  "text": "/*1*/ A /*2*/ < /*3*/ B /*4*/ < /*5*/ C /*6*/ >> /*7*/ = y"
+ },
+ {
+  "name": "conditional-gge",
+  "text": "A extends B<C> ? D : E<F<G>>= y"
+ },
+ {
+  "name": "tuple-gg",
+  "text": "[A<B<C>>, D<E>]"
+ },
+ {
+  "name": "union-gg",
+  "text": "A<B<C>> | D<E<F>>= y"
+ },
+ {
+  "name": "newline-before-lt",
+  "text": "A\n<B>(y)"
+ },
+ {
+  "name": "dot-then-args",
+  "text": "a.b<C<D>>"
+ },
+ {
+  "name": "gggg",
+  "text": "A<B<C<D<E>>>>"
+ },
+ {
+  "name": "gggge",
+  "text": "A<B<C<D<E>>>>= y"
+ },
+ {
+  "name": "template",
+  "text": "`a${B}c${ D<E> }e`"
+ },
+ {
+  "name": "union-leading",
+  "text": "| A | B<C>"
+ },
+ {
+  "name": "union-single-leading",
+  "text": "| A"
+ },
+ {
+  "name": "conditional",
+  "text": "A | B extends C ? D : E[]"
+ },
+ {
+  "name": "array-indexed",
+  "text": "A [ ] [ K ]"
+ },
+ {
+  "name": "tuple",
+  "text": "[a: A, b?: B, ...c: C[], D?, ...E]"
+ },
+ {
+  "name": "tuple-trailing",
+  "text": "[A, B , ]"
+ },
+ {
+  "name": "object",
+  "text": "{ a: A; b?: B, c(x: X): Y\n readonly [k: string]: V ; new <U>(u: U): W }"
+ },
+ {
+  "name": "mapped",
+  "text": "{ -readonly [K in keyof U as N<K>]+?: U[K] ; }"
+ },
+ {
+  "name": "fn",
+  "text": "<U extends V = W>(this: X, a?: A, ...r: R[]) => a is B"
+ },
+ {
+  "name": "ctor",
+  "text": "abstract new (a: A) => B"
+ },
+ {
+  "name": "operators",
+  "text": "keyof readonly A[] | unique symbol"
+ },
+ {
+  "name": "infer",
+  "text": "A extends (infer U extends V)[] ? U : never"
+ },
+ {
+  "name": "import",
+  "text": "typeof import(\"m\", { with: { a: \"b\" } }).Q.R<S>"
+ },
+ {
+  "name": "typeof",
+  "text": "typeof a.b<C>"
+ },
+ {
+  "name": "literal",
+  "text": "- 1 | -2n | \"s\" | `t` | true | null"
+ },
+ {
+  "name": "paren",
+  "text": "( A | B )[]"
+ },
+ {
+  "name": "nonnull",
+  "text": "A!"
+ },
+ {
+  "name": "qualified",
+  "text": "a . b . C<D>"
+ },
+ {
+  "name": "comments",
+  "text": "/*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;"
+ },
+ {
+  "name": "accessor-members",
+  "text": "{ get a(): A; set a(v: A) }"
+ },
+ {
+  "name": "binding-parameter",
+  "text": "({ a, b: [c] }: X, [d]?: Y) => void"
+ },
+ {
+  "name": "initializer-parameter",
+  "text": "(a = 1) => void"
+ },
+ {
+  "name": "fn-in-union",
+  "text": "A | () => void"
+ },
+ {
+  "name": "jsdoc-prefix-q",
+  "text": "?A"
+ },
+ {
+  "name": "jsdoc-postfix-q",
+  "text": "A?"
+ },
+ {
+  "name": "jsdoc-prefix-bang",
+  "text": "!A"
+ },
+ {
+  "name": "jsdoc-all",
+  "text": "*"
+ },
+ {
+  "name": "kw-dot",
+  "text": "string.a<B>"
+ },
+ {
+  "name": "typeof-this",
+  "text": "typeof this.a"
+ },
+ {
+  "name": "import-args",
+  "text": "import(\"x\")<A>"
+ },
+ {
+  "name": "import-qual",
+  "text": "import(\"x\").A.B<C<D>>"
+ },
+ {
+  "name": "import-attr-trailing",
+  "text": "import(\"x\", { with: { \"a\": \"b\", c: \"d\", }, })"
+ },
+ {
+  "name": "members-mods",
+  "text": "{ readonly a?: A\n m?<U>(a): R, <V>(b: V): V; new (c): C\n readonly [k: string]: V }"
+ },
+ {
+  "name": "member-init",
+  "text": "{ a: A = 1; b }"
+ },
+ {
+  "name": "member-computed",
+  "text": "{ [Symbol.iterator](): X; [k]: Y; \"s\": 1; 2: 3 }"
+ },
+ {
+  "name": "mapped-min",
+  "text": "{ [K in T] }"
+ },
+ {
+  "name": "mapped-ro-q",
+  "text": "{ readonly [K in T]?: U }"
+ },
+ {
+  "name": "mapped-plus-minus",
+  "text": "{ +readonly [K in T]-?: U; }"
+ },
+ {
+  "name": "param-mods",
+  "text": "(public a: A, readonly b?: B) => void"
+ },
+ {
+  "name": "param-patterns",
+  "text": "([a, , ...b]: X, { c = 1, d: { e }, ...f }: Y = z) => void"
+ },
+ {
+  "name": "ctor-type-args",
+  "text": "new <U>(a: U) => A<U>"
+ },
+ {
+  "name": "conditional-nested",
+  "text": "A extends B ? C : D extends E ? F : G"
+ },
+ {
+  "name": "intersection-leading",
+  "text": "& A & B | & C"
+ },
+ {
+  "name": "union-of-intersection",
+  "text": "A & B | C & D | E"
+ },
+ {
+  "name": "keyof-union",
+  "text": "keyof A | B"
+ },
+ {
+  "name": "infer-constraint-cond",
+  "text": "A extends infer U extends B ? C : D"
+ },
+ {
+  "name": "array-of-fn",
+  "text": "(() => void)[]"
+ },
+ {
+  "name": "indexed-nl",
+  "text": "{ a: A\n [k: string]: B }"
+ },
+ {
+  "name": "tuple-empty",
+  "text": "[]"
+ },
+ {
+  "name": "tuple-named-rest-opt",
+  "text": "[...a: A[], b?: B, C?, ...D[]]"
+ },
+ {
+  "name": "type-args-multi",
+  "text": "A<B, C<D>, E>"
+ },
+ {
+  "name": "fn-type-no-params",
+  "text": "() => A"
+ },
+ {
+  "name": "fn-predicate-this",
+  "text": "(this: A) => this is B"
+ },
+ {
+  "name": "fn-asserts",
+  "text": "(x: any) => asserts x is B"
+ },
+ {
+  "name": "getter-no-type",
+  "text": "{ get a(); set b(v) }"
+ },
+ {
+  "name": "neg-literal",
+  "text": "-1"
+ },
+ {
+  "name": "template-empty-tail",
+  "text": "`${A}`"
+ },
+ {
+  "name": "object-empty",
+  "text": "{}"
+ },
+ {
+  "name": "tp-split-ggg",
+  "text": "<U extends A<B<C>>>() => void"
+ },
+ {
+  "name": "tp-trailing-comma",
+  "text": "<U, V,>() => void"
+ },
+ {
+  "name": "readonly-array",
+  "text": "readonly A[][]"
+ },
+ {
+  "name": "paren-fn",
+  "text": "((a: A) => B) | C"
+ },
+ {
+  "name": "keyword-each",
+  "text": "any"
+ },
+ {
+  "name": "this",
+  "text": "this"
+ },
+ {
+  "name": "neg-bigint",
+  "text": "-2n"
+ },
+ {
+  "name": "string-escape",
+  "text": "\"a\\u0062\""
+ },
+ {
+  "name": "true",
+  "text": "true"
+ },
+ {
+  "name": "null",
+  "text": "null"
+ },
+ {
+  "name": "fn-after-bar",
+  "text": "| (() => A) | B"
+ },
+ {
+  "name": "nested-fn-ret",
+  "text": "(a: A) => (b: B) => C"
+ },
+ {
+  "name": "ctor-abstract",
+  "text": "abstract new () => A"
+ },
+ {
+  "name": "index-chain",
+  "text": "A[B][C][]"
+ },
+ {
+  "name": "paren-postfix",
+  "text": "(A)[]"
+ },
+ {
+  "name": "keyof-typeof",
+  "text": "keyof typeof a.b"
+ },
+ {
+  "name": "readonly-tuple",
+  "text": "readonly [A, B]"
+ },
+ {
+  "name": "infer-in-cond",
+  "text": "A extends [infer H, ...infer R] ? H : R"
+ },
+ {
+  "name": "infer-ext-paren",
+  "text": "A extends (infer U extends B ? C : D) ? E : F"
+ },
+ {
+  "name": "object-nl",
+  "text": "{\n a: A\n b?: B\n}"
+ },
+ {
+  "name": "object-mixed",
+  "text": "{ a: A, b: B; c(): C\n d: D }"
+ },
+ {
+  "name": "method-generic",
+  "text": "{ m<T>(a: T): T }"
+ },
+ {
+  "name": "index-sig-mods",
+  "text": "{ readonly [k: string]: V; [s: symbol]: W }"
+ },
+ {
+  "name": "call-ctor-sigs",
+  "text": "{ (a: A): B; new (a: A): B; <T>(a: T): T }"
+ },
+ {
+  "name": "mapped-as",
+  "text": "{ [K in keyof T as `x${K & string}`]: T[K] }"
+ },
+ {
+  "name": "template-nested",
+  "text": "`a${`b${C}`}d`"
+ },
+ {
+  "name": "template-union",
+  "text": "`${A | B}-${C}`"
+ },
+ {
+  "name": "import-plain",
+  "text": "import(\"m\")"
+ },
+ {
+  "name": "typeof-import",
+  "text": "typeof import(\"m\")"
+ },
+ {
+  "name": "predicate-not-return",
+  "text": "(x: A) => x is B"
+ },
+ {
+  "name": "asserts-this-is",
+  "text": "(this: A) => asserts this is B"
+ },
+ {
+  "name": "tuple-spread-named",
+  "text": "[first: A, ...rest: B[]]"
+ },
+ {
+  "name": "tuple-optional-rest",
+  "text": "[A?, ...B[]]"
+ },
+ {
+  "name": "union-long",
+  "text": "A | B | C | D | E | F"
+ },
+ {
+  "name": "inter-union-mix",
+  "text": "A & B | C & D & E | F"
+ },
+ {
+  "name": "lead-both",
+  "text": "| & A"
+ },
+ {
+  "name": "cond-in-union-paren",
+  "text": "A | (B extends C ? D : E)"
+ },
+ {
+  "name": "cond-false-union",
+  "text": "A extends B ? C : D | E"
+ },
+ {
+  "name": "array-of-union-paren",
+  "text": "(A | B)[]"
+ },
+ {
+  "name": "qualified-keyword",
+  "text": "a.default.in"
+ },
+ {
+  "name": "ws-and-newlines",
+  "text": "A <\n  B ,\n  C\n>"
+ },
+ {
+  "name": "param-this",
+  "text": "(this: A, b: B) => C"
+ },
+ {
+  "name": "param-rest",
+  "text": "(...a: A[]) => B"
+ },
+ {
+  "name": "param-optional",
+  "text": "(a?: A, b?) => C"
+ },
+ {
+  "name": "tp-constraint-default",
+  "text": "<T extends A = B, U = T>() => [T, U]"
+ },
+ {
+  "name": "tp-in-out-const",
+  "text": "<const T, in out U>() => void"
+ }
+]

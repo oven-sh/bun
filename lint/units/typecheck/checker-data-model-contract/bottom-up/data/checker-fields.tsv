@@ -1,0 +1,320 @@
+line	upstream field	Go type	Rust field	Rust type	note
+586	id	uint32	id	u32	
+587	program	Program	program	&'a dyn Program<'a>	constructor argument
+588	compilerOptions	*core.CompilerOptions	compiler_options	&'a CompilerOptions	constructor argument
+589	files	[]*ast.SourceFile	files	List<'a, NodeId>	the SourceFile nodes in program order
+590	fileIndexMap	map[*ast.SourceFile]int	file_index_map	Map<NodeId, isize>	
+591	compareSymbols	func(*ast.Symbol, *ast.Symbol) int	-	-	method compare_symbols calls compare_symbols_worker
+592	compareSymbolChains	func([]*ast.Symbol, []*ast.Symbol) int	-	-	method compare_symbol_chains calls compare_symbol_chains_worker
+593	TypeCount	uint32	type_count	u32	
+594	SymbolCount	uint32	symbol_count	u32	
+595	SignatureCount	uint32	signature_count	u32	
+596	TotalInstantiationCount	uint32	total_instantiation_count	u32	
+597	instantiationCount	uint32	instantiation_count	u32	
+598	instantiationDepth	uint32	instantiation_depth	u32	
+599	conditionalConstraintDepth	uint32	conditional_constraint_depth	u32	
+600	inlineLevel	int	inline_level	isize	
+601	serializationLevel	int	serialization_level	isize	
+602	currentNode	*ast.Node	current_node	NodeId	
+603	varianceTypeParameter	*Type	variance_type_parameter	TypeId	
+604	languageVersion	core.ScriptTarget	language_version	ScriptTarget	
+605	moduleKind	core.ModuleKind	module_kind	ModuleKind	
+606	moduleResolutionKind	core.ModuleResolutionKind	module_resolution_kind	ModuleResolutionKind	
+607	isInferencePartiallyBlocked	bool	is_inference_partially_blocked	bool	
+608	legacyDecorators	bool	legacy_decorators	bool	
+609	emitStandardClassFields	bool	emit_standard_class_fields	bool	
+610	strictNullChecks	bool	strict_null_checks	bool	
+611	strictFunctionTypes	bool	strict_function_types	bool	
+612	strictBindCallApply	bool	strict_bind_call_apply	bool	
+613	strictPropertyInitialization	bool	strict_property_initialization	bool	
+614	strictBuiltinIteratorReturn	bool	strict_builtin_iterator_return	bool	
+615	noImplicitAny	bool	no_implicit_any	bool	
+616	noImplicitThis	bool	no_implicit_this	bool	
+617	useUnknownInCatchVariables	bool	use_unknown_in_catch_variables	bool	
+618	exactOptionalPropertyTypes	bool	exact_optional_property_types	bool	
+619	canCollectSymbolAliasAccessibilityData	bool	can_collect_symbol_alias_accessibility_data	bool	
+620	wasCanceled	bool	was_canceled	bool	
+621	arrayVariances	[]VarianceFlags	array_variances	List<'a, VarianceFlags>	
+622	globals	ast.SymbolTable	globals	SymbolTableId	
+623	evaluate	evaluator.Evaluator	-	-	method evaluate runs the evaluator with evaluate_entity as host
+624	stringLiteralTypes	map[string]*Type	string_literal_types	Map<Text<'a>, TypeId>	
+625	numberLiteralTypes	map[jsnum.Number]*Type	number_literal_types	Map<u64, TypeId>	the key is the bit pattern, -0 stored as +0; NaN has nan_type
+626	nanType	*Type	nan_type	TypeId	
+627	bigintLiteralTypes	map[jsnum.PseudoBigInt]*Type	bigint_literal_types	Map<PseudoBigInt<'a>, TypeId>	
+628	enumLiteralTypes	map[EnumLiteralKey]*Type	enum_literal_types	Map<EnumLiteralKey<'a>, TypeId>	
+629	enumNaNLiteralTypes	map[*ast.Symbol]*Type	enum_na_n_literal_types	Map<SymbolId, TypeId>	
+630	indexedAccessTypes	map[CacheHashKey]*Type	indexed_access_types	Map<CacheHashKey, TypeId>	
+631	templateLiteralTypes	map[CacheHashKey]*Type	template_literal_types	Map<CacheHashKey, TypeId>	
+632	stringMappingTypes	map[StringMappingKey]*Type	string_mapping_types	Map<StringMappingKey, TypeId>	
+633	uniqueESSymbolTypes	map[*ast.Symbol]*Type	unique_es_symbol_types	Map<SymbolId, TypeId>	
+634	thisExpandoKinds	map[*ast.Symbol]thisAssignmentDeclarationKind	this_expando_kinds	Map<SymbolId, ThisAssignmentDeclarationKind>	
+635	thisExpandoLocations	map[*ast.Symbol]*ast.Node	this_expando_locations	Map<SymbolId, NodeId>	
+636	subtypeReductionCache	map[CacheHashKey][]*Type	subtype_reduction_cache	Map<CacheHashKey, List<'a, TypeId>>	
+637	cachedTypes	map[CachedTypeKey]*Type	cached_types	Map<CachedTypeKey, TypeId>	
+638	cachedSignatures	map[CachedSignatureKey]*Signature	cached_signatures	Map<CachedSignatureKey, SignatureId>	
+639	undefinedProperties	map[string]*ast.Symbol	undefined_properties	Map<Text<'a>, SymbolId>	
+640	narrowedTypes	map[NarrowedTypeKey]*Type	narrowed_types	Map<NarrowedTypeKey, TypeId>	
+641	assignmentReducedTypes	map[AssignmentReducedKey]*Type	assignment_reduced_types	Map<AssignmentReducedKey, TypeId>	
+642	discriminatedContextualTypes	map[DiscriminatedContextualTypeKey]*Type	discriminated_contextual_types	Map<DiscriminatedContextualTypeKey, TypeId>	
+643	instantiationExpressionTypes	map[InstantiationExpressionKey]*Type	instantiation_expression_types	Map<InstantiationExpressionKey, TypeId>	
+644	substitutionTypes	map[SubstitutionTypeKey]*Type	substitution_types	Map<SubstitutionTypeKey, TypeId>	
+645	reverseMappedCache	map[ReverseMappedTypeKey]*Type	reverse_mapped_cache	Map<ReverseMappedTypeKey, TypeId>	
+646	reverseHomomorphicMappedCache	map[ReverseMappedTypeKey]*Type	reverse_homomorphic_mapped_cache	Map<ReverseMappedTypeKey, TypeId>	
+647	iterationTypesCache	map[IterationTypesKey]IterationTypes	iteration_types_cache	Map<IterationTypesKey, IterationTypes>	
+648	markerTypes	collections.Set[*Type]	marker_types	Set<TypeId>	
+649	resolvingExplicitTypeOfSymbol	collections.Set[*ast.Symbol]	resolving_explicit_type_of_symbol	Set<SymbolId>	
+650	undefinedSymbol	*ast.Symbol	undefined_symbol	SymbolId	
+651	argumentsSymbol	*ast.Symbol	arguments_symbol	SymbolId	
+652	requireSymbol	*ast.Symbol	require_symbol	SymbolId	
+653	unknownSymbol	*ast.Symbol	unknown_symbol	SymbolId	
+654	unresolvedSymbols	map[string]*ast.Symbol	unresolved_symbols	Map<Text<'a>, SymbolId>	
+655	errorTypes	map[CacheHashKey]*Type	error_types	Map<CacheHashKey, TypeId>	
+656	moduleSymbols	map[*ast.Node]*ast.Symbol	module_symbols	Map<NodeId, SymbolId>	
+657	globalThisSymbol	*ast.Symbol	global_this_symbol	SymbolId	
+658	symbolTableAliasCache	map[symbolTableID][]*ast.Symbol	symbol_table_alias_cache	Map<SymbolTableKey, List<'a, SymbolId>>	
+659	classExpressionNameTables	map[ast.NodeId]ast.SymbolTable	class_expression_name_tables	Map<NodeId, SymbolTableId>	
+660	resolveName	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	-	-	method resolve_name runs NameResolver::resolve with the host of createNameResolver
+661	resolveNameForSymbolSuggestion	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	-	-	method resolve_name_for_symbol_suggestion, host of createNameResolverForSuggestion
+662	tupleTypes	map[CacheHashKey]*Type	tuple_types	Map<CacheHashKey, TypeId>	
+663	unionTypes	map[CacheHashKey]*Type	union_types	Map<CacheHashKey, TypeId>	
+664	unionOfUnionTypes	map[UnionOfUnionKey]*Type	union_of_union_types	Map<UnionOfUnionKey, TypeId>	
+665	intersectionTypes	map[CacheHashKey]*Type	intersection_types	Map<CacheHashKey, TypeId>	
+666	propertiesTypes	map[PropertiesTypesKey]*Type	properties_types	Map<PropertiesTypesKey, TypeId>	
+667	diagnostics	ast.DiagnosticsCollection	diagnostics	DiagnosticsCollection	over the one store `diagnostic_store`
+668	suggestionDiagnostics	ast.DiagnosticsCollection	suggestion_diagnostics	DiagnosticsCollection	over the one store `diagnostic_store`
+669	symbolArena	core.Arena[ast.Symbol]	-	-	the symbols of a checker live in the open store of the node table (ast.new_symbol)
+670	signatureArena	core.Arena[Signature]	signatures	Records<SignatureId, Signature<'a>>	field `signatures`
+671	indexInfoArena	core.Arena[IndexInfo]	index_infos	Records<IndexInfoId, IndexInfo<'a>>	field `index_infos`
+672	mergedSymbols	map[*ast.Symbol]*ast.Symbol	merged_symbols	Map<SymbolId, SymbolId>	
+673	factory	ast.NodeFactory	-	-	synthetic nodes are made in the open store of the node table
+674	nodeLinks	core.LinkStore[*ast.Node, NodeLinks]	node_links	LinkStore<NodeId, NodeLinks>	
+675	signatureLinks	core.LinkStore[*ast.Node, SignatureLinks]	signature_links	LinkStore<NodeId, SignatureLinks>	
+676	symbolNodeLinks	nodeLinkStore[SymbolNodeLinks]	symbol_node_links	LinkStore<NodeId, SymbolNodeLinks>	the paged store is an allocation detail
+677	typeNodeLinks	core.LinkStore[*ast.Node, TypeNodeLinks]	type_node_links	LinkStore<NodeId, TypeNodeLinks<'a>>	
+678	enumMemberLinks	core.LinkStore[*ast.Node, EnumMemberLinks]	enum_member_links	LinkStore<NodeId, EnumMemberLinks<'a>>	
+679	assertionLinks	core.LinkStore[*ast.Node, AssertionLinks]	assertion_links	LinkStore<NodeId, AssertionLinks>	
+680	arrayLiteralLinks	core.LinkStore[*ast.Node, ArrayLiteralLinks]	array_literal_links	LinkStore<NodeId, ArrayLiteralLinks>	
+681	switchStatementLinks	core.LinkStore[*ast.Node, SwitchStatementLinks]	switch_statement_links	LinkStore<NodeId, SwitchStatementLinks<'a>>	
+682	jsxElementLinks	core.LinkStore[*ast.Node, JsxElementLinks]	jsx_element_links	LinkStore<NodeId, JsxElementLinks>	
+683	computedNameLinks	core.LinkStore[*ast.Node, ComputedNameNodeLinks]	computed_name_links	LinkStore<NodeId, ComputedNameNodeLinks<'a>>	
+684	symbolReferenceLinks	core.LinkStore[*ast.Symbol, SymbolReferenceLinks]	symbol_reference_links	LinkStore<SymbolId, SymbolReferenceLinks>	
+685	valueSymbolLinks	symbolArenaLinkStore[ValueSymbolLinks]	value_symbol_links	LinkStore<SymbolId, ValueSymbolLinks>	every access goes through value_symbol_links_get, which assigns the lazy symbol id (links.go 34, 46)
+686	mappedSymbolLinks	core.LinkStore[*ast.Symbol, MappedSymbolLinks]	mapped_symbol_links	LinkStore<SymbolId, MappedSymbolLinks>	
+687	deferredSymbolLinks	core.LinkStore[*ast.Symbol, DeferredSymbolLinks]	deferred_symbol_links	LinkStore<SymbolId, DeferredSymbolLinks<'a>>	
+688	aliasSymbolLinks	core.LinkStore[*ast.Symbol, AliasSymbolLinks]	alias_symbol_links	LinkStore<SymbolId, AliasSymbolLinks>	
+689	moduleSymbolLinks	core.LinkStore[*ast.Symbol, ModuleSymbolLinks]	module_symbol_links	LinkStore<SymbolId, ModuleSymbolLinks<'a>>	
+690	lateBoundLinks	core.LinkStore[*ast.Symbol, LateBoundLinks]	late_bound_links	LinkStore<SymbolId, LateBoundLinks>	
+691	exportTypeLinks	core.LinkStore[*ast.Symbol, ExportTypeLinks]	export_type_links	LinkStore<SymbolId, ExportTypeLinks>	
+692	membersAndExportsLinks	core.LinkStore[*ast.Symbol, MembersAndExportsLinks]	members_and_exports_links	LinkStore<SymbolId, MembersAndExportsLinks>	
+693	typeAliasLinks	core.LinkStore[*ast.Symbol, TypeAliasLinks]	type_alias_links	LinkStore<SymbolId, TypeAliasLinks<'a>>	
+694	declaredTypeLinks	core.LinkStore[*ast.Symbol, DeclaredTypeLinks]	declared_type_links	LinkStore<SymbolId, DeclaredTypeLinks>	
+695	spreadLinks	core.LinkStore[*ast.Symbol, SpreadLinks]	spread_links	LinkStore<SymbolId, SpreadLinks>	
+696	varianceLinks	core.LinkStore[*ast.Symbol, VarianceLinks]	variance_links	LinkStore<SymbolId, VarianceLinks<'a>>	
+697	ReverseMappedSymbolLinks	core.LinkStore[*ast.Symbol, ReverseMappedSymbolLinks]	reverse_mapped_symbol_links	LinkStore<SymbolId, ReverseMappedSymbolLinks>	
+698	markedAssignmentSymbolLinks	core.LinkStore[*ast.Symbol, MarkedAssignmentSymbolLinks]	marked_assignment_symbol_links	LinkStore<SymbolId, MarkedAssignmentSymbolLinks>	
+699	symbolContainerLinks	core.LinkStore[*ast.Symbol, ContainingSymbolLinks]	symbol_container_links	LinkStore<SymbolId, ContainingSymbolLinks<'a>>	
+700	sourceFileLinks	core.LinkStore[*ast.SourceFile, SourceFileLinks]	source_file_links	LinkStore<NodeId, SourceFileLinks<'a>>	
+701	regExpScanner	*scanner.Scanner	-	-	made on first use by the regular expression layer
+702	patternForType	map[*Type]*ast.Node	pattern_for_type	Map<TypeId, NodeId>	
+703	contextFreeTypes	map[*ast.Node]*Type	context_free_types	Map<NodeId, TypeId>	
+704	anyType	*Type	any_type	TypeId	
+705	autoType	*Type	auto_type	TypeId	
+706	wildcardType	*Type	wildcard_type	TypeId	
+707	blockedStringType	*Type	blocked_string_type	TypeId	
+708	errorType	*Type	error_type	TypeId	
+709	unresolvedType	*Type	unresolved_type	TypeId	
+710	nonInferrableAnyType	*Type	non_inferrable_any_type	TypeId	
+711	intrinsicMarkerType	*Type	intrinsic_marker_type	TypeId	
+712	unknownType	*Type	unknown_type	TypeId	
+713	undefinedType	*Type	undefined_type	TypeId	
+714	undefinedWideningType	*Type	undefined_widening_type	TypeId	
+715	missingType	*Type	missing_type	TypeId	
+716	undefinedOrMissingType	*Type	undefined_or_missing_type	TypeId	
+717	optionalType	*Type	optional_type	TypeId	
+718	nullType	*Type	null_type	TypeId	
+719	nullWideningType	*Type	null_widening_type	TypeId	
+720	stringType	*Type	string_type	TypeId	
+721	numberType	*Type	number_type	TypeId	
+722	bigintType	*Type	bigint_type	TypeId	
+723	regularFalseType	*Type	regular_false_type	TypeId	
+724	falseType	*Type	false_type	TypeId	
+725	regularTrueType	*Type	regular_true_type	TypeId	
+726	trueType	*Type	true_type	TypeId	
+727	booleanType	*Type	boolean_type	TypeId	
+728	esSymbolType	*Type	es_symbol_type	TypeId	
+729	voidType	*Type	void_type	TypeId	
+730	neverType	*Type	never_type	TypeId	
+731	silentNeverType	*Type	silent_never_type	TypeId	
+732	implicitNeverType	*Type	implicit_never_type	TypeId	
+733	unreachableNeverType	*Type	unreachable_never_type	TypeId	
+734	nonPrimitiveType	*Type	non_primitive_type	TypeId	
+735	stringOrNumberType	*Type	string_or_number_type	TypeId	
+736	stringNumberSymbolType	*Type	string_number_symbol_type	TypeId	
+737	numberOrBigIntType	*Type	number_or_big_int_type	TypeId	
+738	templateConstraintType	*Type	template_constraint_type	TypeId	
+739	numericStringType	*Type	numeric_string_type	TypeId	
+740	uniqueLiteralType	*Type	unique_literal_type	TypeId	
+741	uniqueLiteralMapper	*TypeMapper	unique_literal_mapper	TypeMapperId	
+742	reliabilityFlags	RelationComparisonResult	reliability_flags	RelationComparisonResult	
+743	reportUnreliableMapper	*TypeMapper	report_unreliable_mapper	TypeMapperId	
+744	reportUnmeasurableMapper	*TypeMapper	report_unmeasurable_mapper	TypeMapperId	
+745	restrictiveMapper	*TypeMapper	restrictive_mapper	TypeMapperId	
+746	permissiveMapper	*TypeMapper	permissive_mapper	TypeMapperId	
+747	emptyObjectType	*Type	empty_object_type	TypeId	
+748	emptyJsxObjectType	*Type	empty_jsx_object_type	TypeId	
+749	emptyFreshJsxObjectType	*Type	empty_fresh_jsx_object_type	TypeId	
+750	emptyTypeLiteralType	*Type	empty_type_literal_type	TypeId	
+751	unknownEmptyObjectType	*Type	unknown_empty_object_type	TypeId	
+752	unknownUnionType	*Type	unknown_union_type	TypeId	
+753	emptyGenericType	*Type	empty_generic_type	TypeId	
+754	anyFunctionType	*Type	any_function_type	TypeId	
+755	noConstraintType	*Type	no_constraint_type	TypeId	
+756	circularConstraintType	*Type	circular_constraint_type	TypeId	
+757	resolvingDefaultType	*Type	resolving_default_type	TypeId	
+758	markerSuperType	*Type	marker_super_type	TypeId	
+759	markerSubType	*Type	marker_sub_type	TypeId	
+760	markerOtherType	*Type	marker_other_type	TypeId	
+761	markerSuperTypeForCheck	*Type	marker_super_type_for_check	TypeId	
+762	markerSubTypeForCheck	*Type	marker_sub_type_for_check	TypeId	
+763	noTypePredicate	*TypePredicate	no_type_predicate	TypePredicateId	
+764	anySignature	*Signature	any_signature	SignatureId	
+765	unknownSignature	*Signature	unknown_signature	SignatureId	
+766	resolvingSignature	*Signature	resolving_signature	SignatureId	
+767	silentNeverSignature	*Signature	silent_never_signature	SignatureId	
+768	cachedArgumentsReferenced	map[*ast.Node]bool	cached_arguments_referenced	Map<NodeId, bool>	
+769	enumNumberIndexInfo	*IndexInfo	enum_number_index_info	IndexInfoId	
+770	anyBaseTypeIndexInfo	*IndexInfo	any_base_type_index_info	IndexInfoId	
+771	patternAmbientModules	[]*ast.PatternAmbientModule	pattern_ambient_modules	Vec<PatternAmbientModule<'a>>	
+772	patternAmbientModuleAugmentations	ast.SymbolTable	pattern_ambient_module_augmentations	SymbolTableId	
+773	globalObjectType	*Type	global_object_type	TypeId	
+774	globalFunctionType	*Type	global_function_type	TypeId	
+775	globalCallableFunctionType	*Type	global_callable_function_type	TypeId	
+776	globalNewableFunctionType	*Type	global_newable_function_type	TypeId	
+777	globalArrayType	*Type	global_array_type	TypeId	
+778	globalReadonlyArrayType	*Type	global_readonly_array_type	TypeId	
+779	globalStringType	*Type	global_string_type	TypeId	
+780	globalNumberType	*Type	global_number_type	TypeId	
+781	globalBooleanType	*Type	global_boolean_type	TypeId	
+782	globalRegExpType	*Type	global_reg_exp_type	TypeId	
+783	globalThisType	*Type	global_this_type	TypeId	
+784	anyArrayType	*Type	any_array_type	TypeId	
+785	autoArrayType	*Type	auto_array_type	TypeId	
+786	anyReadonlyArrayType	*Type	any_readonly_array_type	TypeId	
+787	deferredGlobalImportMetaExpressionType	*Type	deferred_global_import_meta_expression_type	TypeId	
+788	contextualBindingPatterns	[]*ast.Node	contextual_binding_patterns	Vec<NodeId>	
+789	emptyStringType	*Type	empty_string_type	TypeId	
+790	zeroType	*Type	zero_type	TypeId	
+791	zeroBigIntType	*Type	zero_big_int_type	TypeId	
+792	typeofType	*Type	typeof_type	TypeId	
+793	typeResolutions	[]TypeResolution	type_resolutions	Vec<TypeResolution>	
+794	resolutionStart	int	resolution_start	isize	
+795	varianceStack	[]VarianceStackEntry	variance_stack	Vec<VarianceStackEntry<'a>>	
+796	apparentArgumentCount	*int	apparent_argument_count	Option<isize>	`*int`
+797	lastGetCombinedNodeFlagsNode	*ast.Node	last_get_combined_node_flags_node	NodeId	
+798	lastGetCombinedNodeFlagsResult	ast.NodeFlags	last_get_combined_node_flags_result	NodeFlags	
+799	lastGetCombinedModifierFlagsNode	*ast.Node	last_get_combined_modifier_flags_node	NodeId	
+800	lastGetCombinedModifierFlagsResult	ast.ModifierFlags	last_get_combined_modifier_flags_result	ModifierFlags	
+801	freeinferenceState	*InferenceState	freeinference_state	InferenceStateId	head of the free list in inference_states
+802	freeFlowState	*FlowState	free_flow_state	FlowStateId	head of the free list in flow_states
+803	flowLoopCache	map[FlowLoopKey]*Type	flow_loop_cache	Map<FlowLoopKey, TypeId>	
+804	flowLoopStack	[]FlowLoopInfo	flow_loop_stack	Vec<FlowLoopInfo>	
+805	sharedFlows	[]SharedFlow	shared_flows	Vec<SharedFlow>	
+806	antecedentTypes	[]*Type	antecedent_types	Vec<TypeId>	
+807	flowAnalysisDisabled	bool	flow_analysis_disabled	bool	
+808	flowInvocationCount	int	flow_invocation_count	isize	
+809	flowTypeCache	map[*ast.Node]*Type	flow_type_cache	Map<NodeId, TypeId>	
+810	lastFlowNode	*ast.FlowNode	last_flow_node	FlowNodeId	
+811	lastFlowNodeReachable	bool	last_flow_node_reachable	bool	
+812	flowNodeReachable	map[*ast.FlowNode]bool	flow_node_reachable	Map<FlowNodeId, bool>	
+813	flowNodePostSuper	map[*ast.FlowNode]bool	flow_node_post_super	Map<FlowNodeId, bool>	
+814	renamedBindingElementsInTypes	[]*ast.Node	renamed_binding_elements_in_types	Vec<NodeId>	
+815	contextualInfos	[]ContextualInfo	contextual_infos	Vec<ContextualInfo>	
+816	inferenceContextInfos	[]InferenceContextInfo	inference_context_infos	Vec<InferenceContextInfo>	
+817	awaitedTypeStack	[]*Type	awaited_type_stack	Vec<TypeId>	
+818	reverseMappedSourceStack	[]*Type	reverse_mapped_source_stack	Vec<TypeId>	
+819	reverseMappedTargetStack	[]*Type	reverse_mapped_target_stack	Vec<TypeId>	
+820	reverseExpandingFlags	ExpandingFlags	reverse_expanding_flags	ExpandingFlags	
+821	freeRelater	*Relater	free_relater	RelaterId	head of the free list in relaters
+822	subtypeRelation	*Relation	subtype_relation	Relation	
+823	strictSubtypeRelation	*Relation	strict_subtype_relation	Relation	
+824	assignableRelation	*Relation	assignable_relation	Relation	
+825	comparableRelation	*Relation	comparable_relation	Relation	
+826	identityRelation	*Relation	identity_relation	Relation	
+827	enumRelation	map[EnumRelationKey]RelationComparisonResult	enum_relation	Map<EnumRelationKey, RelationComparisonResult>	
+828	getGlobalESSymbolType	func() *Type	get_global_es_symbol_type	Memo<TypeId>	
+829	getGlobalBigIntType	func() *Type	get_global_big_int_type	Memo<TypeId>	
+830	getGlobalImportMetaType	func() *Type	get_global_import_meta_type	Memo<TypeId>	
+831	getGlobalImportAttributesType	func() *Type	get_global_import_attributes_type	Memo<TypeId>	
+832	getGlobalImportAttributesTypeChecked	func() *Type	get_global_import_attributes_type_checked	Memo<TypeId>	
+833	getGlobalNonNullableTypeAliasOrNil	func() *ast.Symbol	get_global_non_nullable_type_alias_or_nil	Memo<SymbolId>	
+834	getGlobalExtractSymbol	func() *ast.Symbol	get_global_extract_symbol	Memo<SymbolId>	
+835	getGlobalDisposableType	func() *Type	get_global_disposable_type	Memo<TypeId>	
+836	getGlobalAsyncDisposableType	func() *Type	get_global_async_disposable_type	Memo<TypeId>	
+837	getGlobalAwaitedSymbol	func() *ast.Symbol	get_global_awaited_symbol	Memo<SymbolId>	
+838	getGlobalAwaitedSymbolOrNil	func() *ast.Symbol	get_global_awaited_symbol_or_nil	Memo<SymbolId>	
+839	getGlobalNaNSymbolOrNil	func() *ast.Symbol	get_global_na_n_symbol_or_nil	Memo<SymbolId>	
+840	getGlobalRecordSymbol	func() *ast.Symbol	get_global_record_symbol	Memo<SymbolId>	
+841	getGlobalTemplateStringsArrayType	func() *Type	get_global_template_strings_array_type	Memo<TypeId>	
+842	getGlobalESSymbolConstructorSymbolOrNil	func() *ast.Symbol	get_global_es_symbol_constructor_symbol_or_nil	Memo<SymbolId>	
+843	getGlobalESSymbolConstructorTypeSymbolOrNil	func() *ast.Symbol	get_global_es_symbol_constructor_type_symbol_or_nil	Memo<SymbolId>	
+844	getGlobalImportCallOptionsType	func() *Type	get_global_import_call_options_type	Memo<TypeId>	
+845	getGlobalImportCallOptionsTypeChecked	func() *Type	get_global_import_call_options_type_checked	Memo<TypeId>	
+846	getGlobalPromiseType	func() *Type	get_global_promise_type	Memo<TypeId>	
+847	getGlobalPromiseTypeChecked	func() *Type	get_global_promise_type_checked	Memo<TypeId>	
+848	getGlobalPromiseLikeType	func() *Type	get_global_promise_like_type	Memo<TypeId>	
+849	getGlobalPromiseConstructorSymbol	func() *ast.Symbol	get_global_promise_constructor_symbol	Memo<SymbolId>	
+850	getGlobalPromiseConstructorSymbolOrNil	func() *ast.Symbol	get_global_promise_constructor_symbol_or_nil	Memo<SymbolId>	
+851	getGlobalOmitSymbol	func() *ast.Symbol	get_global_omit_symbol	Memo<SymbolId>	
+852	getGlobalNoInferSymbolOrNil	func() *ast.Symbol	get_global_no_infer_symbol_or_nil	Memo<SymbolId>	
+853	getGlobalIteratorType	func() *Type	get_global_iterator_type	Memo<TypeId>	
+854	getGlobalIterableType	func() *Type	get_global_iterable_type	Memo<TypeId>	
+855	getGlobalIterableTypeChecked	func() *Type	get_global_iterable_type_checked	Memo<TypeId>	
+856	getGlobalIterableIteratorType	func() *Type	get_global_iterable_iterator_type	Memo<TypeId>	
+857	getGlobalIterableIteratorTypeChecked	func() *Type	get_global_iterable_iterator_type_checked	Memo<TypeId>	
+858	getGlobalIteratorObjectType	func() *Type	get_global_iterator_object_type	Memo<TypeId>	
+859	getGlobalGeneratorType	func() *Type	get_global_generator_type	Memo<TypeId>	
+860	getGlobalAsyncIteratorType	func() *Type	get_global_async_iterator_type	Memo<TypeId>	
+861	getGlobalAsyncIterableType	func() *Type	get_global_async_iterable_type	Memo<TypeId>	
+862	getGlobalAsyncIterableTypeChecked	func() *Type	get_global_async_iterable_type_checked	Memo<TypeId>	
+863	getGlobalAsyncIterableIteratorType	func() *Type	get_global_async_iterable_iterator_type	Memo<TypeId>	
+864	getGlobalAsyncIterableIteratorTypeChecked	func() *Type	get_global_async_iterable_iterator_type_checked	Memo<TypeId>	
+865	getGlobalAsyncIteratorObjectType	func() *Type	get_global_async_iterator_object_type	Memo<TypeId>	
+866	getGlobalAsyncGeneratorType	func() *Type	get_global_async_generator_type	Memo<TypeId>	
+867	getGlobalIteratorYieldResultType	func() *Type	get_global_iterator_yield_result_type	Memo<TypeId>	
+868	getGlobalIteratorReturnResultType	func() *Type	get_global_iterator_return_result_type	Memo<TypeId>	
+869	getGlobalTypedPropertyDescriptorType	func() *Type	get_global_typed_property_descriptor_type	Memo<TypeId>	
+870	getGlobalClassDecoratorContextType	func() *Type	get_global_class_decorator_context_type	Memo<TypeId>	
+871	getGlobalClassMethodDecoratorContextType	func() *Type	get_global_class_method_decorator_context_type	Memo<TypeId>	
+872	getGlobalClassGetterDecoratorContextType	func() *Type	get_global_class_getter_decorator_context_type	Memo<TypeId>	
+873	getGlobalClassSetterDecoratorContextType	func() *Type	get_global_class_setter_decorator_context_type	Memo<TypeId>	
+874	getGlobalClassAccessorDecoratorContxtType	func() *Type	-	-	never assigned and never read upstream
+875	getGlobalClassAccessorDecoratorContextType	func() *Type	get_global_class_accessor_decorator_context_type	Memo<TypeId>	
+876	getGlobalClassAccessorDecoratorTargetType	func() *Type	get_global_class_accessor_decorator_target_type	Memo<TypeId>	
+877	getGlobalClassAccessorDecoratorResultType	func() *Type	get_global_class_accessor_decorator_result_type	Memo<TypeId>	
+878	getGlobalClassFieldDecoratorContextType	func() *Type	get_global_class_field_decorator_context_type	Memo<TypeId>	
+879	syncIterationTypesResolver	*IterationTypesResolver	-	-	IterationTypesResolverKind::Sync: the function fields are methods that switch on the kind
+880	asyncIterationTypesResolver	*IterationTypesResolver	-	-	IterationTypesResolverKind::Async
+881	isPrimitiveOrObjectOrEmptyType	func(*Type) bool	-	-	method
+882	containsMissingType	func(*Type) bool	-	-	method
+883	couldContainTypeVariables	func(*Type) bool	-	-	method could_contain_type_variables calls could_contain_type_variables_worker
+884	isStringIndexSignatureOnlyType	func(*Type) bool	-	-	method
+885	markNodeAssignments	func(*ast.Node) bool	-	-	method
+886	compareTypesAssignable	TypeComparer	-	-	TypeComparer::Assignable and method compare_types_assignable_worker
+887	emitResolver	*EmitResolver	-	-	declaration emit is out of scope
+888	emitResolverOnce	sync.Once	-	-	declaration emit is out of scope
+889	_jsxNamespace	string	jsx_namespace	Text<'a>	
+890	_jsxFactoryEntity	*ast.Node	jsx_factory_entity	NodeId	
+891	skipDirectInferenceNodes	collections.Set[*ast.Node]	skip_direct_inference_nodes	Set<NodeId>	
+892	ctx	context.Context	-	-	no cancellation: one checker, one run
+893	packagesMap	map[string]bool	packages_map	Map<Text<'a>, bool>	
+894	activeMappers	[]*TypeMapper	active_mappers	Vec<TypeMapperId>	
+895	activeTypeMappersCaches	[]map[CacheHashKey]*Type	active_type_mappers_caches	Vec<Map<CacheHashKey, TypeId>>	
+896	ambientModulesOnce	sync.Once	-	-	folded into the Memo of ambient_modules
+897	ambientModules	[]*ast.Symbol	ambient_modules	Memo<List<'a, SymbolId>>	
+898	withinUnreachableCode	bool	within_unreachable_code	bool	
+899	reportedUnreachableNodes	collections.Set[*ast.Node]	reported_unreachable_nodes	Set<NodeId>	
+900	nonExistentProperties	collections.Set[NonExistentPropertyKey]	non_existent_properties	Set<NonExistentPropertyKey>	
+901	deferredDiagnosticCallbacks	[]func()	deferred_diagnostic_callbacks	Vec<DeferredDiagnosticCallback<'a>>	boxed FnOnce(&mut Checker)
+902	typeToStringNodebuilder	*NodeBuilder	-	-	field `node_builder`: the state of the one node builder; its handle is the unit value NodeBuilder
+904	mu	sync.Mutex	-	-	one checker
+905	tracer	*Tracer	-	-	tracing has no port

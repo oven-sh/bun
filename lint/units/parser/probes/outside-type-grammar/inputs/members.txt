@@ -1,0 +1,162 @@
+var o = { m?() {} };
+var o = { m?(): void {} };
+var o = { a?: 1 };
+var o = { a? };
+var o = { a?, b };
+var o = { a! };
+var o = { a!: 1 };
+var o = { m!() {} };
+var o = { get a?() { return 1 } };
+var o = { async m?() {} };
+var o = { *m?() {} };
+var o = { "a"?: 1 };
+var o = { 1?: 1 };
+var o = { [a]?: 1 };
+var o = { [a]?() {} };
+var o = { m<T>() {} };
+var o = { m<T>?() {} };
+var o = { public a: 1 };
+var o = { public m() {} };
+var o = { private a: 1 };
+var o = { readonly a: 1 };
+var o = { static a: 1 };
+var o = { static m() {} };
+var o = { declare a: 1 };
+var o = { abstract a: 1 };
+var o = { abstract m() {} };
+var o = { override m() {} };
+var o = { accessor a: 1 };
+var o = { export a: 1 };
+var o = { async a: 1 };
+var o = { const a: 1 };
+var o = { default a: 1 };
+var o = { in a: 1 };
+var o = { out a: 1 };
+var o = { public get a() { return 1 } };
+var o = { public async m() {} };
+var o = { public *m() {} };
+var o = { public a };
+var o = { public };
+var o = { public, b };
+var o = { public: 1 };
+var o = { public() {} };
+var o = { readonly };
+var o = { m(); };
+var o = { m(): void; };
+var o = { m() };
+var o = { a: 1; b: 2 };
+var o = { [k: string]: 1 };
+var o = { a = 1 };
+var o = { get a(): number { return 1 } };
+var o = { set a(v: number) {} };
+var o = { set a(v?: number) {} };
+var o = { set a(v = 1) {} };
+var o = { get a(x) { return 1 } };
+var o = { set a() {} };
+var o = { set a(x, y) {} };
+var o = { get a<T>() { return 1 } };
+var o = { set a(v): void {} };
+var o = { get a() };
+var o = { @dec m() {} };
+var o = { @dec a: 1 };
+({ a?: 1 } = b);
+({ a? } = b);
+var { a?: c } = b;
+class C { m?() {} }
+class C { m?(): void {} }
+class C { m?(): void }
+class C { m?(): void; }
+class C { a?: number }
+class C { a? }
+class C { a? = 1 }
+class C { a?: number = 1 }
+class C { a!: number }
+class C { a! }
+class C { a! = 1 }
+class C { a!: number = 1 }
+class C { a!?: number }
+class C { a?!: number }
+class C { m!() {} }
+class C { m!(): void }
+class C { static a!: number }
+class C { "a"!: number }
+class C { 1!: number }
+class C { [a]!: number }
+class C { #a!: number }
+class C { #a?: number }
+class C { #m?() {} }
+class C { get a?() { return 1 } }
+class C { get a!() { return 1 } }
+class C { set a?(v) {} }
+class C { async m?() {} }
+class C { *m?() {} }
+class C { async *m?() {} }
+class C { constructor?() {} }
+class C { static m?() {} }
+class C { accessor a?: number }
+class C { accessor a!: number }
+class C { accessor a }
+class C { accessor a = 1 }
+class C { accessor }
+class C { accessor() {} }
+class C { accessor = 1 }
+class C { accessor: number }
+class C { static accessor a = 1 }
+class C { accessor static a = 1 }
+class C { accessor\na }
+class C { accessor a() {} }
+class C { accessor get a() { return 1 } }
+class C { accessor "a" = 1 }
+class C { accessor [a] = 1 }
+class C { accessor #a = 1 }
+class C { declare accessor a: number }
+class C { public accessor a = 1 }
+class C { accessor public a = 1 }
+class C { readonly accessor a = 1 }
+class C { abstract accessor a: number }
+abstract class C { abstract accessor a: number }
+class C { override accessor a = 1 }
+class C { @dec accessor a = 1 }
+class C { @dec static accessor a = 1 }
+class C { @dec accessor }
+class C { @dec accessor = 1 }
+class C { @dec accessor: number }
+class C { @dec accessor() {} }
+class C { [k: string]: number }
+class C { [k: string]: number; }
+class C { [k: string]: number, }
+class C { [k: string]: number; [j: number]: string }
+class C { static [k: string]: number }
+class C { readonly [k: string]: number }
+class C { static readonly [k: string]: number }
+class C { public [k: string]: number }
+class C { declare [k: string]: number }
+class C { abstract [k: string]: number }
+class C { [k: string] }
+class C { [k: string]; }
+class C { [k]: number }
+class C { [k: string]?: number }
+class C { [k?: string]: number }
+class C { [...k: string[]]: number }
+class C { [k: string, j: number]: number }
+class C { [k: string,]: number }
+class C { []: number }
+class C { [public k: string]: number }
+class C { [k = 1]: number }
+class C { [k: string = "a"]: number }
+class C { [await: string]: number }
+class C { [yield: string]: number }
+class C { [type: string]: number }
+class C { [k: string]: number = 1 }
+class C { [k: string](): void }
+class C { [k: string]<T>(): void }
+class C { ["a"]: number }
+class C { [a.b]: number }
+class C { [a as any]: number }
+class C { [a: string] = 1 }
+class C { [{a}: string]: number }
+class C { [[a]: string]: number }
+class C { @dec [k: string]: number }
+interface I { [k: string]: number, }
+interface I { [await: string]: number }
+type T = { [k: string]: number, };

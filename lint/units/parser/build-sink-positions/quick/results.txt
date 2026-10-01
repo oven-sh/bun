@@ -1,0 +1,70 @@
+# Output of scmp.py on variants of the base grammar (e3566be889), made by experiment-patch.py and compiled by run.py.
+# s1: sub-parses through S::Sub and S::NONE, no new call. x1: about thirty calls of build hooks without a guard.
+# x2<G>: the calls of group G inside 'if S::BUILDS'. A entry capture, B keyof readonly primitives, C reference member index,
+# D tuple, E union intersection, F conditional, G parenthesized, H token arms before next(), I token arms after next().
+### base vs s1 (grammar functions)
+functions a 2376 b 2376; matched a 65 b 65; identical 65, different 0, only a 0, only b 0
+### s1 vs x1 (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 63, different 2, only a 0, only b 19
+DIFF   1749 ->  1752 insns,  263 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF   1749 ->  1752 insns,  263 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+### s1 vs x2A (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 63, different 2, only a 0, only b 19
+DIFF    950 ->   941 insns,  697 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts
+DIFF    950 ->   941 insns,  697 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts
+### s1 vs x2B (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs x2C (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs x2D (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs x2E (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs x2F (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs x2G (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs y2A (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs y2H (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 63, different 2, only a 0, only b 19
+DIFF    950 ->   941 insns,  697 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts
+DIFF    950 ->   941 insns,  697 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts
+### s1 vs y2I (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs y2all (grammar functions)
+functions a 2376 b 2398; matched a 65 b 84; identical 65, different 0, only a 0, only b 19
+### s1 vs y2all (every function of the crate)
+functions a 2376 b 2398; matched a 2376 b 2398; identical 2372, different 4, only a 0, only b 22
+DIFF    184 ->   184 insns,    4 changed lines  <bun_js_parser::p::P<false, false>>::wrap_value_for_server_component_reference
+DIFF    184 ->   184 insns,    4 changed lines  <bun_js_parser::p::P<true, false>>::wrap_value_for_server_component_reference
+DIFF   5811 ->  5816 insns,    9 changed lines  <bun_js_parser::parse::parse_entry::Parser>::_parse::<true>
+DIFF    527 ->    16 insns,  517 changed lines  <scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<bun_js_parser::p::P<true, false>>, <bun_js_parser::parse::parse_entry::Parser>::_parse<true>::{clos
+    --- 
+    +++ 
+    @@ -145,4 +145,9 @@
+     .L11:
+    -leaq	-8944(%rbp), %rdi
+    -callq	<scopeguard::ScopeGuard<core::mem::maybe_uninit::MaybeUninit<bun_js_parser::p::P<true, false>>, <bun_js_parser::parse::parse_entry::Parser>::_parse<true>::{closure#23}> as core::ops::drop::Drop>::drop
+    +leaq	-5072(%rbp), %rbx
+    +leaq	-8944(%rbp), %rsi
+    +movl	$3808, %edx
+    +movq	%rbx, %rdi
+    +callq	*memcpy@GOTPCREL(%rip)
+    +movq	%rbx, %rdi
+    +callq	core::ptr::drop_glue::<bun_js_parser::p::P<true, false>>
+     movq	-1224(%rbp), %rax
+### s1 vs z2: y2all plus skip_type_script_type_arguments generic over the sink with a place for the list (grammar functions)
+functions a 2376 b 2400; matched a 65 b 86; identical 63, different 2, only a 0, only b 21
+DIFF    242 ->   242 insns,   26 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF    242 ->   242 insns,   26 changed lines  <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+--- <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+    --- 
+    +++ 
+    @@ -7,3 +7,3 @@
+     pushq	%rbx
+    -subq	$248, %rsp
+    +subq	$264, %rsp
+     movq	%rdi, %rbx
+    @@ -56,5 +56,5 @@
+     movzbl	844(%rdi), %r14d

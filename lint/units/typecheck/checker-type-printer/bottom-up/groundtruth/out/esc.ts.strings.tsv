@@ -1,0 +1,11 @@
+KindVariableDeclaration	3	symbol=nonascii	symbolIn=nonascii	type={ "a-\u00E9": 1; é: 2; "tab\t": 3; "q\"q": 4; }	typeFq={ "a-\u00E9": 1; é: 2; "tab\t": 3; "q\"q": 4; }	typeIn={ "a-\u00E9": 1; é: 2; "tab\t": 3; "q\"q": 4; }
+KindPropertySignature	15	symbol="a-é"	symbolIn=nonascii["a-\u00E9"]	type=1	typeFq=1	typeIn=1
+KindPropertySignature	26	symbol=é	symbolIn=nonascii.é	type=2	typeFq=2	typeIn=2
+KindPropertySignature	33	symbol="tab\t"	symbolIn=nonascii["tabt"]	type=3	typeFq=3	typeIn=3
+KindPropertySignature	45	symbol="q\"q"	symbolIn=nonascii["q\"q"]	type=4	typeFq=4	typeIn=4
+KindVariableDeclaration	62	symbol=esc	symbolIn=esc	type="lone\uD800" | "quote\"d" | "tab\there" | "unié😀" | `tpl${number}`	typeFq="lone\uD800" | "quote\"d" | "tab\there" | "unié😀" | `tpl${number}`	typeIn="lone\uD800" | "quote\"d" | "tab\there" | "unié😀" | `tpl${number}`
+KindEnumDeclaration	147	symbol=En	symbolIn=En	type=typeof En	typeFq=typeof En	typeIn=typeof En	declared=En	declaredFq=En	declaredIn=En
+KindEnumMember	157	symbol="k-é"	symbolIn=En["k-é"]	type=(typeof En)["k-\u00E9"]	typeFq=(typeof En)["k-\u00E9"]	typeIn=(typeof En)["k-\u00E9"]
+KindVariableDeclaration	178	symbol=en	symbolIn=en	type=En	typeFq=En	typeIn=En
+KindClassDeclaration	195	symbol=Ké	symbolIn=Ké	type=typeof Ké	typeFq=typeof Ké	typeIn=typeof Ké	declared=Ké	declaredFq=Ké	declaredIn=Ké
+KindMethodDeclaration	207	symbol="m-é"	symbolIn=Ké["m-\u00E9"]	type=() => void	typeFq=() => void	typeIn=() => void	signature=(): void	signatureArrow=() => void

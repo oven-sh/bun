@@ -1,0 +1,1581 @@
+# Object types, interfaces, type aliases, mapped types.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== atype member.001
+{}
+=== atype member.002
+{ a: A }
+=== atype member.003
+{ a?: A }
+=== atype member.004
+{ a }
+=== atype member.005
+{ a? }
+=== atype member.006
+{ a, b }
+=== atype member.007
+{ a; b }
+=== atype member.008
+{ a
+b }
+=== atype member.009
+{ a: A, b: B }
+=== atype member.010
+{ a: A; b: B }
+=== atype member.011
+{ a: A
+b: B }
+=== atype member.012
+{ a: A b: B }
+=== atype member.013
+{ a: A, b: B, }
+=== atype member.014
+{ a: A; b: B; }
+=== atype member.015
+{ a: A;; }
+=== atype member.016
+{ a: A,, }
+=== atype member.017
+{ , }
+=== atype member.018
+{ ; }
+=== atype member.019
+{ a: }
+=== atype member.020
+{ a?: }
+=== atype member.021
+{ : A }
+=== atype member.022
+{ a: A = 1 }
+=== atype member.023
+{ a = 1 }
+=== atype member.024
+{ a?: A = 1 }
+=== atype member.025
+{ a!: A }
+=== atype member.026
+{ a! }
+=== atype member.027
+{ a?!: A }
+=== atype member.028
+{ readonly a: A }
+=== atype member.029
+{ readonly a?: A }
+=== atype member.030
+{ readonly: A }
+=== atype member.031
+{ readonly?: A }
+=== atype member.032
+{ readonly }
+=== atype member.033
+{ readonly readonly: A }
+=== atype member.034
+{ readonly readonly a: A }
+=== atype member.035
+{ readonly
+a: A }
+=== atype member.036
+{ readonly a(): void }
+=== atype member.037
+{ readonly (): void }
+=== atype member.038
+{ "a": A }
+=== atype member.039
+{ 'a'?: A }
+=== atype member.040
+{ 1: A }
+=== atype member.041
+{ 1.5: A }
+=== atype member.042
+{ 0x10: A }
+=== atype member.043
+{ 1n: A }
+=== atype member.044
+{ -1: A }
+=== atype member.045
+{ `a`: A }
+=== atype member.046
+{ #a: A }
+=== atype member.047
+{ [a]: A }
+=== atype member.048
+{ [a]?: A }
+=== atype member.049
+{ [a.b]: A }
+=== atype member.050
+{ [Symbol.iterator]: A }
+=== atype member.051
+{ ["a"]: A }
+=== atype member.052
+{ ["a" + "b"]: A }
+=== atype member.053
+{ [a, b]: A }
+=== atype member.054
+{ [a](): A }
+=== atype member.055
+{ [a]?(): A }
+=== atype member.056
+{ [a]<T>(): A }
+=== atype member.057
+{ []: A }
+=== atype member.058
+{ [1]: A }
+=== atype member.059
+{ [a as B]: A }
+=== atype member.060
+{ a(): void }
+=== atype member.061
+{ a(b: B): void }
+=== atype member.062
+{ a?(): void }
+=== atype member.063
+{ a<T>(b: T): T }
+=== atype member.064
+{ a(); }
+=== atype member.065
+{ a(), b() }
+=== atype member.066
+{ a() {} }
+=== atype member.067
+{ a(): void {} }
+=== atype member.068
+{ a(b = 1): void }
+=== atype member.069
+{ a(public b: B): void }
+=== atype member.070
+{ a(this: A): void }
+=== atype member.071
+{ a(...b: B[]): void }
+=== atype member.072
+{ a(): b is B }
+=== atype member.073
+{ a(b): asserts b }
+=== atype member.074
+{ a(): this is B }
+=== atype member.075
+{ a() => void }
+=== atype member.076
+{ a: () => void }
+=== atype member.077
+{ a?: () => void }
+=== atype member.078
+{ "a"(): void }
+=== atype member.079
+{ 1(): void }
+=== atype member.080
+{ async a(): void }
+=== atype member.081
+{ *a(): void }
+=== atype member.082
+{ async *a(): void }
+=== atype member.083
+{ (): void }
+=== atype member.084
+{ (a: A): B }
+=== atype member.085
+{ <T>(a: T): T }
+=== atype member.086
+{ (): void; (a: A): B }
+=== atype member.087
+{ () }
+=== atype member.088
+{ (a) }
+=== atype member.089
+{ (): }
+=== atype member.090
+{ ()?: void }
+=== atype member.091
+{ (): void, }
+=== atype member.092
+{ () => void }
+=== atype member.093
+{ new (): A }
+=== atype member.094
+{ new (a: A): B }
+=== atype member.095
+{ new <T>(a: T): A }
+=== atype member.096
+{ new () }
+=== atype member.097
+{ new (): }
+=== atype member.098
+{ new: A }
+=== atype member.099
+{ new?: A }
+=== atype member.100
+{ new }
+=== atype member.101
+{ new(): A; new: B }
+=== atype member.102
+{ new?(): A }
+=== atype member.103
+{ "new"(): A }
+=== atype member.104
+{ new
+(): A }
+=== atype member.105
+{ new new (): A }
+=== atype member.106
+{ new () => A }
+=== atype member.107
+{ abstract new (): A }
+=== atype member.108
+{ readonly new (): A }
+=== atype member.109
+{ new<T>(): A }
+=== atype member.110
+{ [k: string]: A }
+=== atype member.111
+{ [k: number]: A }
+=== atype member.112
+{ [k: symbol]: A }
+=== atype member.113
+{ [k: string | number]: A }
+=== atype member.114
+{ [k: `a${string}`]: A }
+=== atype member.115
+{ [k: K]: A }
+=== atype member.116
+{ readonly [k: string]: A }
+=== atype member.117
+{ static [k: string]: A }
+=== atype member.118
+{ public [k: string]: A }
+=== atype member.119
+{ [k: string]?: A }
+=== atype member.120
+{ [k?: string]: A }
+=== atype member.121
+{ [...k: string[]]: A }
+=== atype member.122
+{ [k: string, l: number]: A }
+=== atype member.123
+{ [k: string,]: A }
+=== atype member.124
+{ [k, l]: A }
+=== atype member.125
+{ [k?]: A }
+=== atype member.126
+{ [k: string] }
+=== atype member.127
+{ [k: string]: }
+=== atype member.128
+{ [k: string]: A = 1 }
+=== atype member.129
+{ [k: string](): A }
+=== atype member.130
+{ [public k: string]: A }
+=== atype member.131
+{ [k: string]: A; [l: number]: B }
+=== atype member.132
+{ [k: string]: A, a: B }
+=== atype member.133
+{ [this: string]: A }
+=== atype member.134
+{ [k = 1]: A }
+=== atype member.135
+{ [{ k }: string]: A }
+=== atype member.136
+{ [k: string
+]: A }
+=== atype member.137
+{ -readonly [k: string]: A }
+=== atype member.138
+{ get a(): A }
+=== atype member.139
+{ set a(v: A) }
+=== atype member.140
+{ get a(): A; set a(v: A) }
+=== atype member.141
+{ get a() }
+=== atype member.142
+{ get a }
+=== atype member.143
+{ get: A }
+=== atype member.144
+{ get?: A }
+=== atype member.145
+{ get }
+=== atype member.146
+{ get(): A }
+=== atype member.147
+{ get<T>(): A }
+=== atype member.148
+{ set: A }
+=== atype member.149
+{ set(v: A): void }
+=== atype member.150
+{ get
+a(): A }
+=== atype member.151
+{ set
+a(v) }
+=== atype member.152
+{ get a<T>(): A }
+=== atype member.153
+{ set a(v: A): void }
+=== atype member.154
+{ get a(v): A }
+=== atype member.155
+{ set a() }
+=== atype member.156
+{ get a(): A {} }
+=== atype member.157
+{ get "a"(): A }
+=== atype member.158
+{ get 1(): A }
+=== atype member.159
+{ get [a](): A }
+=== atype member.160
+{ get #a(): A }
+=== atype member.161
+{ readonly get a(): A }
+=== atype member.162
+{ get readonly a(): A }
+=== atype member.163
+{ get get(): A }
+=== atype member.164
+{ get set(): A }
+=== atype member.165
+{ get new(): A }
+=== atype member.166
+{ set a(v?: A) }
+=== atype member.167
+{ set a(...v: A[]) }
+=== atype member.168
+{ get a?(): A }
+=== atype member.169
+{ public a: A }
+=== atype member.170
+{ private a: A }
+=== atype member.171
+{ protected a: A }
+=== atype member.172
+{ static a: A }
+=== atype member.173
+{ abstract a: A }
+=== atype member.174
+{ declare a: A }
+=== atype member.175
+{ override a: A }
+=== atype member.176
+{ async a: A }
+=== atype member.177
+{ accessor a: A }
+=== atype member.178
+{ export a: A }
+=== atype member.179
+{ default a: A }
+=== atype member.180
+{ const a: A }
+=== atype member.181
+{ in a: A }
+=== atype member.182
+{ out a: A }
+=== atype member.183
+{ public: A; public?: A; public(): A }
+=== atype member.184
+{ private: A; private?: A; private(): A }
+=== atype member.185
+{ protected: A; protected?: A; protected(): A }
+=== atype member.186
+{ static: A; static?: A; static(): A }
+=== atype member.187
+{ abstract: A; abstract?: A; abstract(): A }
+=== atype member.188
+{ declare: A; declare?: A; declare(): A }
+=== atype member.189
+{ override: A; override?: A; override(): A }
+=== atype member.190
+{ async: A; async?: A; async(): A }
+=== atype member.191
+{ accessor: A; accessor?: A; accessor(): A }
+=== atype member.192
+{ export: A; export?: A; export(): A }
+=== atype member.193
+{ default: A; default?: A; default(): A }
+=== atype member.194
+{ const: A; const?: A; const(): A }
+=== atype member.195
+{ in: A; in?: A; in(): A }
+=== atype member.196
+{ out: A; out?: A; out(): A }
+=== atype member.197
+{ type: A; type?: A; type(): A }
+=== atype member.198
+{ of: A; of?: A; of(): A }
+=== atype member.199
+{ as: A; as?: A; as(): A }
+=== atype member.200
+{ is: A; is?: A; is(): A }
+=== atype member.201
+{ if: A; if?: A; if(): A }
+=== atype member.202
+{ class: A; class?: A; class(): A }
+=== atype member.203
+{ function: A; function?: A; function(): A }
+=== atype member.204
+{ void: A; void?: A; void(): A }
+=== atype member.205
+{ null: A; null?: A; null(): A }
+=== atype member.206
+{ this: A; this?: A; this(): A }
+=== atype member.207
+{ true: A; true?: A; true(): A }
+=== atype member.208
+{ typeof: A; typeof?: A; typeof(): A }
+=== atype member.209
+{ delete: A; delete?: A; delete(): A }
+=== atype member.210
+{ import: A; import?: A; import(): A }
+=== atype member.211
+{ enum: A; enum?: A; enum(): A }
+=== atype member.212
+{ var: A; var?: A; var(): A }
+=== atype member.213
+{ let: A; let?: A; let(): A }
+=== atype member.214
+{ yield: A; yield?: A; yield(): A }
+=== atype member.215
+{ await: A; await?: A; await(): A }
+=== atype member.216
+{ keyof: A; keyof?: A; keyof(): A }
+=== atype member.217
+{ infer: A; infer?: A; infer(): A }
+=== atype member.218
+{ unique: A; unique?: A; unique(): A }
+=== atype member.219
+{ any: A; any?: A; any(): A }
+=== atype member.220
+{ string: A; string?: A; string(): A }
+=== atype member.221
+{ constructor: A; constructor?: A; constructor(): A }
+=== atype member.222
+{ static readonly a: A }
+=== atype member.223
+{ readonly static a: A }
+=== atype member.224
+{ public readonly a: A }
+=== atype member.225
+{ @d a: A }
+=== atype member.226
+{ ...A }
+=== atype member.227
+{ a: A, ...B }
+=== atype member.228
+{ a.b: A }
+=== atype member.229
+{ a | b: A }
+=== atype member.230
+{ a: A }[]
+=== atype member.231
+{ a: A }["a"]
+=== atype member.232
+{ a: A } | { b: B }
+=== atype member.233
+{ a: { b: { c: C } } }
+=== atype member.234
+{ a: A extends B ? C : D }
+=== atype member.235
+{ a: A | B; b: C & D }
+=== atype member.236
+{ a: typeof b }
+=== atype member.237
+{ a: A<B>; c: D<E<F>> }
+=== atype member.238
+{ a: A<B>, c: D }
+=== atype member.239
+{ a: [A, B]; c: C[] }
+=== atype member.240
+{ a: keyof A }
+=== atype member.241
+{ a: new () => A }
+=== atype member.242
+{ a: `t${A}` }
+=== atype member.243
+{ a: -1 }
+=== atype member.244
+{ a: import('m').A }
+=== atype member.245
+{
+  a: A
+  b: B
+  c(): C
+  (): D
+  new (): E
+  [k: string]: F
+}
+=== atype member.246
+{ a: A
+<T>(b: T): T }
+=== atype member.247
+{ a: A.B
+<T>(b: T): T }
+=== atype member.248
+{ a: A
+[k: string]: B }
+=== atype member.249
+{ a: A
+(b: B): C }
+=== atype member.250
+{ a
+(b: B): C }
+=== atype member.251
+{ a: A
+extends: B }
+=== atype member.252
+{ a: A
+?: B }
+=== atype member.253
+{ a: typeof b
+<T>(c: T): T }
+=== atype member.254
+{ a: A
+=== atype member.255
+{ a: A ]
+=== atype member.256
+{ a: A )
+=== atype mapped.001
+{ [K in A]: B }
+=== atype mapped.002
+{ [K in keyof A]: A[K] }
+=== atype mapped.003
+{ [K in A]?: B }
+=== atype mapped.004
+{ [K in A]+?: B }
+=== atype mapped.005
+{ [K in A]-?: B }
+=== atype mapped.006
+{ readonly [K in A]: B }
+=== atype mapped.007
+{ +readonly [K in A]: B }
+=== atype mapped.008
+{ -readonly [K in A]: B }
+=== atype mapped.009
+{ -readonly [K in A]-?: B }
+=== atype mapped.010
+{ +readonly [K in A]+?: B }
+=== atype mapped.011
+{ [K in A as C]: B }
+=== atype mapped.012
+{ [K in keyof A as `get${K}`]: A[K] }
+=== atype mapped.013
+{ [K in A as K extends B ? C : never]: D }
+=== atype mapped.014
+{ [K in A]: B; }
+=== atype mapped.015
+{ [K in A]: B, }
+=== atype mapped.016
+{ [K in A] }
+=== atype mapped.017
+{ [K in A]; }
+=== atype mapped.018
+{ [K in A]? }
+=== atype mapped.019
+{ [K in A]: }
+=== atype mapped.020
+{ [K in A]?: }
+=== atype mapped.021
+{ [K in A]: B; c: C }
+=== atype mapped.022
+{ [K in A]: B; [L in C]: D }
+=== atype mapped.023
+{ a: A; [K in B]: C }
+=== atype mapped.024
+{ [K in A]: B
+}
+=== atype mapped.025
+{
+  [K in A]: B
+}
+=== atype mapped.026
+{ +[K in A]: B }
+=== atype mapped.027
+{ -[K in A]: B }
+=== atype mapped.028
+{ readonly +[K in A]: B }
+=== atype mapped.029
+{ readonly readonly [K in A]: B }
+=== atype mapped.030
+{ + readonly [K in A]: B }
+=== atype mapped.031
+{ [K in A]+: B }
+=== atype mapped.032
+{ [K in A]-: B }
+=== atype mapped.033
+{ [K in A]!: B }
+=== atype mapped.034
+{ [K in A]??: B }
+=== atype mapped.035
+{ [K in A]?+: B }
+=== atype mapped.036
+{ [K in A] +?: B }
+=== atype mapped.037
+{ [K in A as]: B }
+=== atype mapped.038
+{ [K in]: B }
+=== atype mapped.039
+{ [K in A,]: B }
+=== atype mapped.040
+{ [K, L in A]: B }
+=== atype mapped.041
+{ [K in A in B]: C }
+=== atype mapped.042
+{ [in in A]: B }
+=== atype mapped.043
+{ [K of A]: B }
+=== atype mapped.044
+{ [K extends A]: B }
+=== atype mapped.045
+{ [K in A extends B ? C : D]: E }
+=== atype mapped.046
+{ [K in A | B]: C }
+=== atype mapped.047
+{ [K in (A)]: B }
+=== atype mapped.048
+{ [K in A as B as C]: D }
+=== atype mapped.049
+{ [K in A]: B }[]
+=== atype mapped.050
+{ [K in A]: B }[K]
+=== atype mapped.051
+{ [K in A]: B }[keyof A]
+=== atype mapped.052
+{ [K in A]: B } & C
+=== atype mapped.053
+{ [K in A]: { [L in B]: C } }
+=== atype mapped.054
+{ [K in A]: () => void }
+=== atype mapped.055
+{ [K in A]: B extends C ? D : E }
+=== atype mapped.056
+{ [K in A]
+: B }
+=== atype mapped.057
+{ [
+K in A
+]: B }
+=== atype mapped.058
+{ [K
+in A]: B }
+=== atype mapped.059
+{ static [K in A]: B }
+=== atype mapped.060
+{ public [K in A]: B }
+=== atype mapped.061
+{ [K in A](): B }
+=== atype mapped.062
+{ [K in A]<T>(): B }
+=== atype mapped.063
+{ [K in A] = B }
+=== atype mapped.064
+{ [K in A]: B = 1 }
+=== atype mapped.065
+{ [K.L in A]: B }
+=== atype mapped.066
+{ ["K" in A]: B }
+=== atype mapped.067
+{ [1 in A]: B }
+=== atype mapped.068
+{ [#K in A]: B }
+=== atype mapped.069
+{ [K in A]: B
+=== atype mapped.070
+{ [K in A: B }
+=== atype mapped.071
+{ [keyof in A]: B }
+=== atype mapped.072
+{ [readonly in A]: B }
+=== atype mapped.073
+{ [infer in A]: B }
+=== atype mapped.074
+{ [unique in A]: B }
+=== atype mapped.075
+{ [string in A]: B }
+=== atype mapped.076
+{ [any in A]: B }
+=== atype mapped.077
+{ [type in A]: B }
+=== atype mapped.078
+{ [of in A]: B }
+=== atype mapped.079
+{ [as in A]: B }
+=== atype mapped.080
+{ [is in A]: B }
+=== atype mapped.081
+{ [async in A]: B }
+=== atype mapped.082
+{ [await in A]: B }
+=== atype mapped.083
+{ [yield in A]: B }
+=== atype mapped.084
+{ [let in A]: B }
+=== atype mapped.085
+{ [static in A]: B }
+=== atype mapped.086
+{ [public in A]: B }
+=== atype mapped.087
+{ [abstract in A]: B }
+=== atype mapped.088
+{ [asserts in A]: B }
+=== atype mapped.089
+{ [out in A]: B }
+=== atype mapped.090
+{ [this in A]: B }
+=== atype mapped.091
+{ [new in A]: B }
+=== atype mapped.092
+{ [typeof in A]: B }
+=== atype mapped.093
+{ [import in A]: B }
+=== atype mapped.094
+{ [function in A]: B }
+=== atype mapped.095
+{ [const in A]: B }
+=== atype mapped.096
+{ [void in A]: B }
+=== atype mapped.097
+{ [null in A]: B }
+=== atype mapped.098
+{ [if in A]: B }
+=== atype mapped.099
+{ [class in A]: B }
+=== atype mapped.100
+{ [keyof: string]: B }
+=== atype mapped.101
+{ [readonly: string]: B }
+=== atype mapped.102
+{ [infer: string]: B }
+=== atype mapped.103
+{ [unique: string]: B }
+=== atype mapped.104
+{ [string: string]: B }
+=== atype mapped.105
+{ [any: string]: B }
+=== atype mapped.106
+{ [type: string]: B }
+=== atype mapped.107
+{ [of: string]: B }
+=== atype mapped.108
+{ [as: string]: B }
+=== atype mapped.109
+{ [is: string]: B }
+=== atype mapped.110
+{ [async: string]: B }
+=== atype mapped.111
+{ [asserts: string]: B }
+=== atype mapped.112
+{ [abstract: string]: B }
+=== atype mapped.113
+{ [out: string]: B }
+=== atype mapped.114
+{ [this: string]: B }
+=== atype mapped.115
+{ [new: string]: B }
+=== atype mapped.116
+{ [typeof: string]: B }
+=== atype mapped.117
+{ [import: string]: B }
+=== atype mapped.118
+{ [function: string]: B }
+=== atype mapped.119
+{ [const: string]: B }
+=== atype mapped.120
+{ [void: string]: B }
+=== atype mapped.121
+{ [in: string]: B }
+=== file iface.001
+interface I {}
+=== file iface.002
+interface I { a: A }
+=== file iface.003
+interface I<T> {}
+=== file iface.004
+interface I<T extends A = B> {}
+=== file iface.005
+interface I<in T, out U, in out V> {}
+=== file iface.006
+interface I<const T> {}
+=== file iface.007
+interface I<> {}
+=== file iface.008
+interface I<T,> {}
+=== file iface.009
+interface I<public T> {}
+=== file iface.010
+interface I {};
+=== file iface.011
+interface I {} interface J {}
+=== file iface.012
+interface I { a: A } interface I { b: B }
+=== file iface.013
+interface
+I {}
+=== file iface.014
+interface I
+{}
+=== file iface.015
+interface I<T>
+{}
+=== file iface.016
+interface I {
+=== file iface.017
+interface {}
+=== file iface.018
+interface I
+=== file iface.019
+interface I;
+=== file iface.020
+interface I = {}
+=== file iface.021
+interface I()
+=== file iface.022
+interface I.J {}
+=== file iface.023
+interface "I" {}
+=== file iface.024
+interface 1 {}
+=== file iface.025
+interface I implements A {}
+=== file iface.026
+interface I extends A implements B {}
+=== file iface.027
+interface I implements A extends B {}
+=== file iface.028
+interface I extends A extends B {}
+=== file iface.029
+interface I extends A, B extends C {}
+=== file iface.030
+interface I extends {}
+=== file iface.031
+export interface I {}
+=== file iface.032
+export default interface I {}
+=== file iface.033
+export default interface {}
+=== file iface.034
+export default interface I<T> extends A<T> {}
+=== file iface.035
+declare interface I {}
+=== file iface.036
+export declare interface I {}
+=== file iface.037
+declare export interface I {}
+=== file iface.038
+abstract interface I {}
+=== file iface.039
+async interface I {}
+=== file iface.040
+static interface I {}
+=== file iface.041
+public interface I {}
+=== file iface.042
+const interface I {}
+=== file iface.043
+@d interface I {}
+=== file iface.044
+{ interface I {} }
+=== file iface.045
+function f() { interface I {} }
+=== file iface.046
+if (a) interface I {}
+=== file iface.047
+label: interface I {}
+=== file iface.048
+namespace N { interface I {}; export interface J {} }
+=== file iface.049
+class C { interface I {} }
+=== file iface.050
+for (;;) interface I {}
+=== file iface.051
+interface;
+=== file iface.052
+interface = 1;
+=== file iface.053
+interface();
+=== file iface.054
+interface.a;
+=== file iface.055
+var interface = 1;
+=== file iface.056
+let interface: A;
+=== file iface.057
+interface
+{}
+=== file iface.058
+interface
+I
+{}
+=== file iface.059
+a = interface;
+=== file iface.060
+interface + 1;
+=== file iface.061
+interface ? a : b;
+=== file iface.062
+interface => 1;
+=== file iface.063
+(interface) => 1;
+=== file iface.064
+interface as {}
+=== file iface.065
+interface type {}
+=== file iface.066
+interface of {}
+=== file iface.067
+interface is {}
+=== file iface.068
+interface async {}
+=== file iface.069
+interface await {}
+=== file iface.070
+interface yield {}
+=== file iface.071
+interface let {}
+=== file iface.072
+interface static {}
+=== file iface.073
+interface public {}
+=== file iface.074
+interface private {}
+=== file iface.075
+interface protected {}
+=== file iface.076
+interface implements {}
+=== file iface.077
+interface package {}
+=== file iface.078
+interface abstract {}
+=== file iface.079
+interface declare {}
+=== file iface.080
+interface readonly {}
+=== file iface.081
+interface keyof {}
+=== file iface.082
+interface infer {}
+=== file iface.083
+interface unique {}
+=== file iface.084
+interface asserts {}
+=== file iface.085
+interface out {}
+=== file iface.086
+interface override {}
+=== file iface.087
+interface accessor {}
+=== file iface.088
+interface global {}
+=== file iface.089
+interface namespace {}
+=== file iface.090
+interface module {}
+=== file iface.091
+interface require {}
+=== file iface.092
+interface constructor {}
+=== file iface.093
+interface from {}
+=== file iface.094
+interface get {}
+=== file iface.095
+interface set {}
+=== file iface.096
+interface using {}
+=== file iface.097
+interface defer {}
+=== file iface.098
+interface satisfies {}
+=== file iface.099
+interface intrinsic {}
+=== file iface.100
+interface interface {}
+=== file iface.101
+interface any {}
+=== file iface.102
+interface string {}
+=== file iface.103
+interface number {}
+=== file iface.104
+interface boolean {}
+=== file iface.105
+interface symbol {}
+=== file iface.106
+interface bigint {}
+=== file iface.107
+interface object {}
+=== file iface.108
+interface undefined {}
+=== file iface.109
+interface unknown {}
+=== file iface.110
+interface never {}
+=== file iface.111
+interface void {}
+=== file iface.112
+interface null {}
+=== file iface.113
+interface this {}
+=== file iface.114
+interface true {}
+=== file iface.115
+interface if {}
+=== file iface.116
+interface class {}
+=== file iface.117
+interface function {}
+=== file iface.118
+interface default {}
+=== file iface.119
+interface in {}
+=== file iface.120
+interface new {}
+=== file iface.121
+interface typeof {}
+=== file iface.122
+interface enum {}
+=== file iface.123
+interface extends {}
+=== file iface.124
+interface import {}
+=== file iface.125
+interface export {}
+=== file iface.126
+interface var {}
+=== file iface.127
+interface const {}
+=== file iface.128
+interface arguments {}
+=== file iface.129
+interface eval {}
+=== file iface.130
+interface I extends A {}
+=== file iface.131
+interface I extends A, B {}
+=== file iface.132
+interface I extends A<B> {}
+=== file iface.133
+interface I extends A<B>, C<D> {}
+=== file iface.134
+interface I extends A.B {}
+=== file iface.135
+interface I extends A.B.C<D> {}
+=== file iface.136
+interface I extends A<B<C>> {}
+=== file iface.137
+interface I extends A<B<C<D>>> {}
+=== file iface.138
+interface I extends A, {}
+=== file iface.139
+interface I extends , A {}
+=== file iface.140
+interface I extends A,, B {}
+=== file iface.141
+interface I extends  {}
+=== file iface.142
+interface I extends A B {}
+=== file iface.143
+interface I extends A[] {}
+=== file iface.144
+interface I extends A[B] {}
+=== file iface.145
+interface I extends A | B {}
+=== file iface.146
+interface I extends A & B {}
+=== file iface.147
+interface I extends (A) {}
+=== file iface.148
+interface I extends (A)<B> {}
+=== file iface.149
+interface I extends typeof x {}
+=== file iface.150
+interface I extends keyof A {}
+=== file iface.151
+interface I extends A extends B ? C : D {}
+=== file iface.152
+interface I extends {} {}
+=== file iface.153
+interface I extends { a: A } {}
+=== file iface.154
+interface I extends [A] {}
+=== file iface.155
+interface I extends () => void {}
+=== file iface.156
+interface I extends new () => A {}
+=== file iface.157
+interface I extends string {}
+=== file iface.158
+interface I extends void {}
+=== file iface.159
+interface I extends null {}
+=== file iface.160
+interface I extends this {}
+=== file iface.161
+interface I extends this.A {}
+=== file iface.162
+interface I extends super {}
+=== file iface.163
+interface I extends super.A {}
+=== file iface.164
+interface I extends 1 {}
+=== file iface.165
+interface I extends "s" {}
+=== file iface.166
+interface I extends `t` {}
+=== file iface.167
+interface I extends -1 {}
+=== file iface.168
+interface I extends A<B>.C {}
+=== file iface.169
+interface I extends A<> {}
+=== file iface.170
+interface I extends A<B,> {}
+=== file iface.171
+interface I extends A?.B {}
+=== file iface.172
+interface I extends A! {}
+=== file iface.173
+interface I extends A!.B {}
+=== file iface.174
+interface I extends A() {}
+=== file iface.175
+interface I extends A()<B> {}
+=== file iface.176
+interface I extends A.B() {}
+=== file iface.177
+interface I extends A[0] {}
+=== file iface.178
+interface I extends A["b"] {}
+=== file iface.179
+interface I extends A`t` {}
+=== file iface.180
+interface I extends new A {}
+=== file iface.181
+interface I extends new A() {}
+=== file iface.182
+interface I extends A as B {}
+=== file iface.183
+interface I extends A satisfies B {}
+=== file iface.184
+interface I extends a ? B : C {}
+=== file iface.185
+interface I extends A.#b {}
+=== file iface.186
+interface I extends A.class {}
+=== file iface.187
+interface I extends A.default {}
+=== file iface.188
+interface I extends class {} {}
+=== file iface.189
+interface I extends function () {} {}
+=== file iface.190
+interface I extends import('m') {}
+=== file iface.191
+interface I extends import('m').A {}
+=== file iface.192
+interface I extends import.meta {}
+=== file iface.193
+interface I extends typeof import('m') {}
+=== file iface.194
+interface I extends unique symbol {}
+=== file iface.195
+interface I extends readonly A[] {}
+=== file iface.196
+interface I extends infer A {}
+=== file iface.197
+interface I extends asserts a {}
+=== file iface.198
+interface I extends a is A {}
+=== file iface.199
+interface I extends A
+<B> {}
+=== file iface.200
+interface I extends A<B>
+ {}
+=== file iface.201
+interface I extends A.
+B {}
+=== file iface.202
+interface I extends await A {}
+=== file iface.203
+interface I extends yield A {}
+=== file iface.204
+interface I extends async {}
+=== file iface.205
+interface I extends type {}
+=== file iface.206
+interface I extends of {}
+=== file iface.207
+interface I extends as {}
+=== file iface.208
+interface I extends any {}
+=== file iface.209
+interface I extends undefined {}
+=== file iface.210
+interface I extends object {}
+=== file iface.211
+interface I extends implements {}
+=== file iface.212
+interface I extends extends {}
+=== file iface.213
+interface I extends A<B> extends C<D> {}
+=== file alias.001
+type X = A;
+=== file alias.002
+type X = A
+=== file alias.003
+type X<T> = T;
+=== file alias.004
+type X<T extends A = B> = T;
+=== file alias.005
+type X<in T, out U, in out V> = T;
+=== file alias.006
+type X<const T> = T;
+=== file alias.007
+type X<> = A;
+=== file alias.008
+type X<T,> = T;
+=== file alias.009
+type X<,> = A;
+=== file alias.010
+type X<T U> = A;
+=== file alias.011
+type X<T = A, U> = T;
+=== file alias.012
+type X<T extends> = T;
+=== file alias.013
+type X<T => = T;
+=== file alias.014
+type X<T extends A extends B ? C : D> = T;
+=== file alias.015
+type X<T extends A<B>> = T;
+=== file alias.016
+type X<T = A<B>> = T;
+=== file alias.017
+type X<T = A<B>>= T;
+=== file alias.018
+type X<T = A<B>>=T;
+=== file alias.019
+type X<T>=T;
+=== file alias.020
+type X<T extends A<B<C>>> = T;
+=== file alias.021
+type X<T = A<B<C>>>= T;
+=== file alias.022
+type X<public T> = T;
+=== file alias.023
+type X<T extends keyof U, U> = T;
+=== file alias.024
+type X<in> = A;
+=== file alias.025
+type X<out> = A;
+=== file alias.026
+type X<in in T> = T;
+=== file alias.027
+type X<out out T> = T;
+=== file alias.028
+type X<out in T> = T;
+=== file alias.029
+type X<in out> = A;
+=== file alias.030
+type X<out out> = A;
+=== file alias.031
+type X<in const T> = T;
+=== file alias.032
+type X<T[]> = A;
+=== file alias.033
+type X<T.U> = A;
+=== file alias.034
+type X<"T"> = A;
+=== file alias.035
+type X<this> = A;
+=== file alias.036
+type X<void> = A;
+=== file alias.037
+type
+X = A;
+=== file alias.038
+type X
+= A;
+=== file alias.039
+type X =
+A;
+=== file alias.040
+type X<T>
+= A;
+=== file alias.041
+type X = A;;
+=== file alias.042
+type X = A type Y = B
+=== file alias.043
+type X = A
+type Y = B
+=== file alias.044
+type X = A; type Y = B
+=== file alias.045
+type X: A;
+=== file alias.046
+type X = ;
+=== file alias.047
+type X;
+=== file alias.048
+type X
+=== file alias.049
+type X =
+=== file alias.050
+type X = A B;
+=== file alias.051
+type X = A, Y = B;
+=== file alias.052
+type X.Y = A;
+=== file alias.053
+type "X" = A;
+=== file alias.054
+type 1 = A;
+=== file alias.055
+type X() = A;
+=== file alias.056
+type X[] = A;
+=== file alias.057
+type X = A = B;
+=== file alias.058
+type X == A;
+=== file alias.059
+type = 1;
+=== file alias.060
+type
+= 1;
+=== file alias.061
+type;
+=== file alias.062
+type();
+=== file alias.063
+type.a;
+=== file alias.064
+type
+X;
+=== file alias.065
+type
+X
+= 1;
+=== file alias.066
+var type = 1; type = 2;
+=== file alias.067
+let type: type;
+=== file alias.068
+type + 1;
+=== file alias.069
+type ? a : b;
+=== file alias.070
+type => 1;
+=== file alias.071
+(type) => 1;
+=== file alias.072
+a = type;
+=== file alias.073
+type
+(a);
+=== file alias.074
+type
+[a];
+=== file alias.075
+type `t`;
+=== file alias.076
+type++;
+=== file alias.077
+type in a;
+=== file alias.078
+type instanceof A;
+=== file alias.079
+type of = 1;
+=== file alias.080
+type type = type;
+=== file alias.081
+type X = type;
+=== file alias.082
+for (type of a) {}
+=== file alias.083
+for (type in a) {}
+=== file alias.084
+for (type X = 1;;) {}
+=== file alias.085
+label: type X = 1;
+=== file alias.086
+{ type X = 1; }
+=== file alias.087
+function f() { type X = 1; }
+=== file alias.088
+if (a) type X = 1;
+=== file alias.089
+while (a) type X = 1;
+=== file alias.090
+namespace N { type X = 1; export type Y = 2 }
+=== file alias.091
+class C { type X = 1 }
+=== file alias.092
+switch (a) { case 1: type X = 1; }
+=== file alias.093
+export type X = A;
+=== file alias.094
+export type X<T> = T
+=== file alias.095
+export default type X = A;
+=== file alias.096
+declare type X = A;
+=== file alias.097
+export declare type X = A;
+=== file alias.098
+declare export type X = A;
+=== file alias.099
+abstract type X = A;
+=== file alias.100
+async type X = A;
+=== file alias.101
+const type X = A;
+=== file alias.102
+@d type X = A;
+=== file alias.103
+static type X = A;
+=== file alias.104
+type X = intrinsic;
+=== file alias.105
+type X = intrinsic.A;
+=== file alias.106
+type X = intrinsic<A>;
+=== file alias.107
+type X = intrinsic[];
+=== file alias.108
+type X = intrinsic | A;
+=== file alias.109
+type X<T> = intrinsic;
+=== file alias.110
+let x: intrinsic;
+=== file alias.111
+type intrinsic = 1;
+=== file alias.112
+type as = 1;
+=== file alias.113
+type type = 1;
+=== file alias.114
+type is = 1;
+=== file alias.115
+type async = 1;
+=== file alias.116
+type await = 1;
+=== file alias.117
+type yield = 1;
+=== file alias.118
+type let = 1;
+=== file alias.119
+type static = 1;
+=== file alias.120
+type public = 1;
+=== file alias.121
+type private = 1;
+=== file alias.122
+type protected = 1;
+=== file alias.123
+type implements = 1;
+=== file alias.124
+type package = 1;
+=== file alias.125
+type interface = 1;
+=== file alias.126
+type abstract = 1;
+=== file alias.127
+type declare = 1;
+=== file alias.128
+type readonly = 1;
+=== file alias.129
+type keyof = 1;
+=== file alias.130
+type infer = 1;
+=== file alias.131
+type unique = 1;
+=== file alias.132
+type asserts = 1;
+=== file alias.133
+type out = 1;
+=== file alias.134
+type override = 1;
+=== file alias.135
+type accessor = 1;
+=== file alias.136
+type global = 1;
+=== file alias.137
+type namespace = 1;
+=== file alias.138
+type module = 1;
+=== file alias.139
+type require = 1;
+=== file alias.140
+type constructor = 1;
+=== file alias.141
+type from = 1;
+=== file alias.142
+type get = 1;
+=== file alias.143
+type set = 1;
+=== file alias.144
+type using = 1;
+=== file alias.145
+type defer = 1;
+=== file alias.146
+type satisfies = 1;
+=== file alias.147
+type any = 1;
+=== file alias.148
+type string = 1;
+=== file alias.149
+type number = 1;
+=== file alias.150
+type boolean = 1;
+=== file alias.151
+type symbol = 1;
+=== file alias.152
+type bigint = 1;
+=== file alias.153
+type object = 1;
+=== file alias.154
+type undefined = 1;
+=== file alias.155
+type unknown = 1;
+=== file alias.156
+type never = 1;
+=== file alias.157
+type void = 1;
+=== file alias.158
+type null = 1;
+=== file alias.159
+type this = 1;
+=== file alias.160
+type true = 1;
+=== file alias.161
+type if = 1;
+=== file alias.162
+type class = 1;
+=== file alias.163
+type function = 1;
+=== file alias.164
+type default = 1;
+=== file alias.165
+type in = 1;
+=== file alias.166
+type new = 1;
+=== file alias.167
+type typeof = 1;
+=== file alias.168
+type enum = 1;
+=== file alias.169
+type extends = 1;
+=== file alias.170
+type import = 1;
+=== file alias.171
+type export = 1;
+=== file alias.172
+type var = 1;
+=== file alias.173
+type const = 1;
+=== file alias.174
+type arguments = 1;
+=== file alias.175
+type eval = 1;

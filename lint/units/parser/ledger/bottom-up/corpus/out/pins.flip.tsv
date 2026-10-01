@@ -1,0 +1,105 @@
+pin (test file:line loader method expectation)	class R (A1 split)	class G	class V	checker codes	tsc emit parses as js	source
+test/bundler/transpiler/transpiler.test.js:645 ts transformSync E:Unexpected "foo"	A1v	A1c	A1	2304	yes	declare foo
+test/bundler/esbuild/ts.test.ts:681 file /entry.ts  (bun rejects: "a" has already been declared)	A1v	A1c	A3	2304,2307,2339,2584,7005,7034	yes	\n        import {a, b, c, d, e} from './other.ts'\n        let a\n        const b = 0\n        var c\n        function d() { return 5; }\n        class e { constructor() { this.prop = 2; }}\n        console.log(JSON.stringify([a, b, c, d(), new e]))\n      
+test/bundler/esbuild/ts.test.ts:698 file /entry.ts  (bun rejects: "a" has already been declared)	A1v	A1c	A3	2304,2307,2339,2584,7005,7034	yes	\n        import {a, b, c, d, e, real} from './other.ts'\n        let a\n        const b = 0\n        var c\n        function d() { return 5; }\n        class e { constructor() { this.prop = 2; }}\n        console.log(JSON.stringify([a, b, c, d(), new e, real]))\n      
+test/bundler/esbuild/ts.test.ts:856 file /all.ts  (bun rejects: Expected identifier but found "new")	A2	A2	A2	1206,1497,2304,2554,7006,7008	yes	\n        @x.y()\n        @new y.x()\n        export default class Foo {\n          @x @y mUndef\n          @x @y mDef = 1\n          @x @y method(@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }\n          @x @y declare mDecl\n          @x @y declare mAbst\n          constructor(@x0 @y0 arg0, @x1 @y1 arg1) {}\n\n          @x @y static sUndef\n          @x @y static sDef = new Foo\n          @x @y static sMethod(@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }\n          @x @y static declare mDecl\n        }\n      
+test/bundler/transpiler/transpiler.test.js:513 ts transformSync E:Expected "from" but found ","	A2	A2	A2	1363,2300	yes	import type foo, * as foo from 'bar'
+test/bundler/transpiler/transpiler.test.js:514 ts transformSync E:Expected "from" but found ","	A2	A2	A2	1363,2300	yes	import type foo, {foo} from 'bar'
+test/bundler/transpiler/transpiler.test.js:521 ts transformSync E:Expected "=" but found "from"	A2	A2	A2	1191,2307	yes	export import type from 'mod'
+test/bundler/transpiler/transpiler.test.js:522 ts transformSync E:Expected "=" but found "from"	A2	A2	A2	1147	yes	namespace N { import type from 'mod' }
+test/bundler/transpiler/transpiler.test.js:639 ts transformSync E:Unexpected "interface"	A2	A2	A2	1212,2304	no: "interface" is a reserved word and cannot be used in strict mode	declare interface\nFoo\n{ sideEffect() }
+test/bundler/transpiler/transpiler.test.js:640 ts transformSync E:Unexpected "abstract"	A1v	A1c	A1	2304	yes	declare abstract\nclass Foo {}
+test/bundler/transpiler/transpiler.test.js:644 ts transformSync E:Unexpected "declare"	A1v	A1c	A1	2304	yes	declare declare\nlet x = 1
+test/bundler/transpiler/transpiler.test.js:646 ts transformSync E:Unexpected "foo"	A1v	A1c	A1	2304	yes	declare foo: bar
+test/bundler/transpiler/transpiler.test.js:647 ts transformSync E:Unexpected "module"	A1v	A1c	A1	2304	yes	declare module : es2015
+test/bundler/transpiler/transpiler.test.js:672 ts transformSync E:Unexpected "abstract"	A2	A2	A2	1206,2304,7006		function dec(c){return c}\n@dec export default abstract\nclass Foo {}
+test/bundler/transpiler/transpiler.test.js:686 ts transformSync E:Expected "class" but found end of file	A2	A2	A2	1206,2304		@dec export default abstract = 1
+test/bundler/transpiler/transpiler.test.js:687 ts transformSync E:Expected "class" but found "class"	A2	A2	A2	1206,2304		@dec(() => 0) export default abstract = 1\nclass Foo {}
+test/bundler/transpiler/transpiler.test.js:796 ts transformSync E:Unexpected {	A2	A2	A2	1194,2304,2395	yes	namespace M {export import M_A = M;}\nexport namespace M {export {M_A as a};}
+test/bundler/transpiler/transpiler.test.js:797 ts transformSync E:Unexpected {	A2	A2	A2	1194,2304,2395	yes	namespace M { export import M_A = M; }\nexport namespace M { export { M_A as a }; }
+test/bundler/transpiler/transpiler.test.js:800 ts transformSync E:Unexpected {	A2	A2	A2	1194	yes	namespace M { const x = 1; export { x }; }
+test/bundler/transpiler/transpiler.test.js:801 ts transformSync E:Unexpected {	A2	A2	A2	1194	yes	namespace M { export {}; }
+test/bundler/transpiler/transpiler.test.js:802 ts transformSync E:Unexpected {	A2	A2	A2	1194,1540	yes	module M { const x = 1; export { x }; }
+test/bundler/transpiler/transpiler.test.js:803 ts transformSync E:Unexpected {	A2	A2	A2	1194	yes	namespace M { export { x } from 'y'; }
+test/bundler/transpiler/transpiler.test.js:804 ts transformSync E:Unexpected *	A2	A2	A2	1194	yes	namespace M { export * from 'y'; }
+test/bundler/transpiler/transpiler.test.js:821 ts transformSync E:Expected identifier but found ">"	A2	A2	A2	1098	yes	class Foo<> {}
+test/bundler/transpiler/transpiler.test.js:822 ts transformSync E:Expected identifier but found ">"	A2	A2	A2	1098	yes	function foo<>(): void {}
+test/bundler/transpiler/transpiler.test.js:823 ts transformSync E:Unexpected >	A2	A2	A2	1099,2304	yes	const x: Foo<> = {}
+test/bundler/transpiler/transpiler.test.js:1150 ts transformSync E:Cannot use "yield" outside a generator function	A2	A2	A2	1163,2318,7057	no: Cannot use "yield" outside a generator function	function *f() { enum x { y = yield 1 } }
+test/bundler/transpiler/transpiler.test.js:1151 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308	no: "await" can only be used inside an "async" function	async function f() { enum x { y = await 1 } }
+test/bundler/transpiler/transpiler.test.js:1152 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308,2474	no: "await" can only be used inside an "async" function	async function f() { const enum x { y = await 1 } }
+test/bundler/transpiler/transpiler.test.js:1153 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308,2318,2697	no: "await" can only be used inside an "async" function	let g = async () => { enum x { y = await 1 } }
+test/bundler/transpiler/transpiler.test.js:1154 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308	no: "await" can only be used inside an "async" function	enum x { y = await 1 }
+test/bundler/transpiler/transpiler.test.js:1155 ts transformSync E:Cannot use "this" here	A3	A1s	A3	2332,2683	yes	enum x { y = this }
+test/bundler/transpiler/transpiler.test.js:1156 ts transformSync E:Cannot use "this" here	A2	A2	A2	2332,2683,18033	yes	enum x { y = () => this }
+test/bundler/transpiler/transpiler.test.js:1157 ts transformSync E:Cannot use "this" here	A3	A1s	A3	2332,2683	yes	class C { m() { enum x { y = this } } }
+test/bundler/transpiler/transpiler.test.js:1158 ts transformSync E:Unexpected "super"	A1j	A1c	A1	2304	no: Unexpected "super"	class C extends B { m() { enum x { y = super.foo } } }
+test/bundler/transpiler/transpiler.test.js:1159 ts transformSync E:Unexpected "super"	A2	A2	A2	2304,18033	no: Unexpected "super"	class C extends B { constructor() { super(); enum x { y = super() } } }
+test/bundler/transpiler/transpiler.test.js:1160 ts transformSync E:Unexpected "super"	A3	A1c	A3	2335	no: Unexpected "super"	class C { static { enum x { y = super.foo } } }
+test/bundler/transpiler/transpiler.test.js:1161 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1066,1308	yes	declare enum x { y = await 1 }
+test/bundler/transpiler/transpiler.test.js:1162 ts transformSync E:Cannot use "this" here	A2	A2	A2	1066,2332,2683	yes	declare enum x { y = this }
+test/bundler/transpiler/transpiler.test.js:1197 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308	no: "await" can only be used inside an "async" function	namespace x { export const y = await 1; }
+test/bundler/transpiler/transpiler.test.js:1198 ts transformSync E:"await" can only be used inside an "async" function	A2	A2	A2	1308	no: "await" can only be used inside an "async" function	namespace x { await 1; }
+test/bundler/transpiler/transpiler.test.js:1199 ts transformSync E:A return statement cannot be used here	A2	A2	A2	1108	yes	namespace x { return 1; }
+test/bundler/transpiler/transpiler.test.js:1200 ts transformSync E:A return statement cannot be used here	A2	A2	A2	1108	yes	namespace x { return; }
+test/bundler/transpiler/transpiler.test.js:1201 ts transformSync E:Cannot use "this" here	A3	A1s	A3	2331,2683	yes	namespace x { const y: string = this; }
+test/bundler/transpiler/transpiler.test.js:1202 ts transformSync E:Cannot use "this" here	A3	A1s	A3	2331,2683	yes	namespace x { export const y = () => this; }
+test/bundler/transpiler/transpiler.test.js:1203 ts transformSync E:A return statement cannot be used here	A2	A2	A2	1108	yes	namespace x.y { return 1; }
+test/bundler/transpiler/transpiler.test.js:1204 ts transformSync E:A return statement cannot be used here	A2	A2	A2	1108,1540	yes	module x { return 1; }
+test/bundler/transpiler/transpiler.test.js:1205 ts transformSync E:Cannot use "this" here	A2	A2	A2	1254,2331,2683	yes	declare namespace x { export const y = this; }
+test/bundler/transpiler/transpiler.test.js:1206 ts transformSync E:Cannot use "await" outside an async function	A2	A2	A2	1103	no: Cannot use "await" outside an async function	namespace x { for await (const y of []); }
+test/bundler/transpiler/transpiler.test.js:1502 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1029,2637	yes	type Foo<out in T> = T
+test/bundler/transpiler/transpiler.test.js:1503 ts transformSync E:Expected ">" but found "T"	A2	A2	A2	1273	yes	type Foo<public T> = T
+test/bundler/transpiler/transpiler.test.js:1504 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1030,2637	yes	type Foo<in out in T> = T
+test/bundler/transpiler/transpiler.test.js:1505 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1030,2637	yes	type Foo<in out out T> = T
+test/bundler/transpiler/transpiler.test.js:1518 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	function foo<in T>() {}
+test/bundler/transpiler/transpiler.test.js:1519 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	function foo<out T>() {}
+test/bundler/transpiler/transpiler.test.js:1520 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	export default function foo<in T>() {}
+test/bundler/transpiler/transpiler.test.js:1521 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	export default function foo<out T>() {}
+test/bundler/transpiler/transpiler.test.js:1522 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	export default function <in T>() {}
+test/bundler/transpiler/transpiler.test.js:1523 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	export default function <out T>() {}
+test/bundler/transpiler/transpiler.test.js:1526 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,7010	yes	declare function foo<in T>()
+test/bundler/transpiler/transpiler.test.js:1527 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274,7010	yes	declare function foo<out T>()
+test/bundler/transpiler/transpiler.test.js:1534 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2304	yes	foo = function <in T>() {}
+test/bundler/transpiler/transpiler.test.js:1535 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274,2304	yes	foo = function <out T>() {}
+test/bundler/transpiler/transpiler.test.js:1536 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2355	yes	class Foo { foo<in T>(): T {} }
+test/bundler/transpiler/transpiler.test.js:1537 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274,2355	yes	class Foo { foo<out T>(): T {} }
+test/bundler/transpiler/transpiler.test.js:1538 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2304,2355	yes	foo = { foo<in T>(): T {} }
+test/bundler/transpiler/transpiler.test.js:1539 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274,2304,2355	yes	foo = { foo<out T>(): T {} }
+test/bundler/transpiler/transpiler.test.js:1541 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	<out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1543 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	let x: <in T>() => {}
+test/bundler/transpiler/transpiler.test.js:1544 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	let x: <out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1545 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2300	yes	let x: <in T, out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1546 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	let x: new <in T>() => {}
+test/bundler/transpiler/transpiler.test.js:1547 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	let x: new <out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1548 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2300	yes	let x: new <in T, out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1552 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274,2300	yes	let x: new <in T, out T>() => {}
+test/bundler/transpiler/transpiler.test.js:1550 ts transformSync E:The modifier "in" is not valid here	A2	A2	A2	1274	yes	let x: { y<in T>(): any }
+test/bundler/transpiler/transpiler.test.js:1551 ts transformSync E:The modifier "out" is not valid here	A2	A2	A2	1274	yes	let x: { y<out T>(): any }
+test/bundler/transpiler/transpiler.test.js:1569 ts transformSync E:Expected identifier but found "#a"	A1v	A1c	A1	2304	yes	const a: typeof #a = 1;
+test/bundler/transpiler/transpiler.test.js:1594 ts transformSync E:The modifier "const" is not valid here	A2	A2	A2	1277	yes	type Foo<const T> = T
+test/bundler/transpiler/transpiler.test.js:1595 ts transformSync E:The modifier "const" is not valid here	A2	A2	A2	1277	yes	interface Foo<const T> {}
+test/bundler/transpiler/transpiler.test.js:1602 ts transformSync E:Expected "=>" but found end of file	A2	A2	A2	1009,2304	yes	x = async <T,>(y)
+test/bundler/transpiler/transpiler.test.js:1933 ts transformSync E:"Observable" has already been declared	A3	A1s	A3	2300,2307	yes	import{Observable}from""\nimport{Observable} from "x"
+test/bundler/transpiler/transpiler.test.js:1934 ts transformSync E:"Foo" has already been declared	A3	A1c	A3	2307,2395	yes	import { Foo } from "./x";\nexport class Foo {}
+test/bundler/transpiler/transpiler.test.js:1935 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import Foo from "./x";\nclass Foo {}
+test/bundler/transpiler/transpiler.test.js:1936 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import * as Foo from "./x";\nclass Foo {}
+test/bundler/transpiler/transpiler.test.js:1937 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import { Foo } from "./x";\nfunction Foo() {}
+test/bundler/transpiler/transpiler.test.js:1938 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import { Foo } from "./x";\nvar Foo = 1;
+test/bundler/transpiler/transpiler.test.js:1939 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;
+test/bundler/transpiler/transpiler.test.js:1940 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import { Foo } from "./x";\nlet Foo = 1;
+test/bundler/transpiler/transpiler.test.js:1941 ts transformSync E:"Foo" has already been declared	A1v	A1c	A1	2307	yes	import { Foo } from "./x";\nenum Foo {}
+test/bundler/transpiler/transpiler.test.js:1942 ts transformSync E:"Foo" has already been declared	A3	A1s	A3	2300,2307	yes	import { Foo } from "./x";\nimport Foo = require("./y");
+test/bundler/transpiler/transpiler.test.js:1943 ts transformSync E:"Foo" has already been declared	A3	A1s	A3	2300,2307,2503	yes	import { Foo } from "./x";\nimport Foo = Bar.Baz;
+test/bundler/transpiler/transpiler.test.js:1944 ts transformSync E:"Foo" has already been declared	A3	A1s	A3	2300,2307	yes	import { Foo, Foo } from "./x";
+test/bundler/transpiler/transpiler.test.js:2018 ts transformSync E:For loop initializers cannot start with "async of"	A2	A2	A2	1106,2304	no: Expected "=>" but found "["	for (async of [7]);
+test/bundler/transpiler/transpiler.test.js:2019 ts transformSync E:For loop initializers cannot start with "async of"	A2	A2	A2	1106,2304	no: Expected "=>" but found "["	for (async\nof [7]);
+test/bundler/transpiler/transpiler.test.js:2082 ts transformSync E:Cannot use "declare" with an "await using" declaration	A2	A2	A2	1123,1495,7005	no: Expected identifier but found ";"	declare await using basic;var
+test/bundler/transpiler/transpiler.test.js:2083 ts transformSync E:Cannot use "declare" with a "using" declaration	A2	A2	A2	1123,1491,7005	no: Expected identifier but found ";"	declare using basic;var
+test/bundler/transpiler/transpiler.test.js:2084 ts transformSync E:Cannot use "declare" with a "using" declaration	A2	A2	A2	1491,7005	yes	declare using x
+test/bundler/transpiler/transpiler.test.js:2085 ts transformSync E:Cannot use "declare" with an "await using" declaration	A2	A2	A2	1495,7005	yes	declare await using x
+test/bundler/transpiler/transpiler.test.js:2086 ts transformSync E:Cannot use "declare" with a "using" declaration	A2	A2	A2	1254,1491,2304,2318	yes	declare using x = foo()
+test/bundler/transpiler/transpiler.test.js:2087 ts transformSync E:Cannot use "declare" with an "await using" declaration	A2	A2	A2	1254,1495,2304,2318	yes	declare await using x = foo()
+test/bundler/transpiler/transpiler.test.js:2088 ts transformSync E:Cannot use "declare" with a "using" declaration	A2	A2	A2	1545,7005	yes	declare namespace NS { using x; }
+test/bundler/transpiler/transpiler.test.js:2089 ts transformSync E:Cannot use "declare" with a "using" declaration	A2	A2	A2	1545,7005	yes	declare module "m" { using x; }
+test/bundler/transpiler/transpiler.test.js:2090 ts transformSync E:Cannot use "declare" with an "await using" declaration	A2	A2	A2	1546,2669,7005	yes	declare global { await using x; }

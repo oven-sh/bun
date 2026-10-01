@@ -1,0 +1,91 @@
+## 00-no-arguments: executes 2 family functions, 2 of them new (7 lines)
+  pseudochecker/type.go: newPseudoType PseudoTypeDefault.AsPseudoType
+## 01-keyword: executes 2 family functions, 0 of them new (0 lines)
+## 02-literal: executes 62 family functions, 60 of them new (1448 lines)
+  checker/nodebuilder.go: NodeBuilder.EmitContext NodeBuilder.enterContext NodeBuilder.propagateVerbosityOut NodeBuilder.popContext NodeBuilder.exitContext NodeBuilder.exitContextCheck NodeBuilder.TypeToTypeNode NewNodeBuilderEx c.getNodeBuilder c.getNodeBuilderEx
+  checker/nodebuilderimpl.go: newNodeBuilderImpl typeToTypeNode
+  checker/printer.go: createPrinterWithRemoveComments c.TypeToString c.typeToString toNodeBuilderFlags c.typeToStringEx
+  checker/symboltracker.go: NewSymbolTrackerImpl
+  printer/emitcontext.go: NewEmitContext onCreate EmitFlags
+  printer/factory.go: NewNodeFactory
+  printer/printer.go: NewPrinter getLiteralTextOfNode writeAs writeKeyword shouldEmitComments shouldEmitSourceMaps writeTokenText emitKeywordNode emitKeywordNodeEx emitLiteral emitNumericLiteral emitKeywordTypeNode emitLiteralType emitTypeNodeOutsideExtends emitTypeNodePreservingExtends emitTypeNode emitExpression setSourceFile Write emitCommentsBeforeNode emitCommentsAfterNode emitSourceMapsBeforeNode emitSourceMapsAfterNode enterNode exitNode enterTokenNode exitTokenNode
+  printer/textwriter.go: textWriter.Clear textWriter.String textWriter.updateLineCountAndPosFor getIndentString textWriter.writeText textWriter.Write textWriter.WriteKeyword textWriter.WriteStringLiteral NewTextWriter
+  printer/utilities.go: getLiteralText
+  pseudochecker/checker.go: NewPseudoChecker
+## 03-identifier: executes 2 family functions, 0 of them new (0 lines)
+## 04-qualified-name: executes 87 family functions, 41 of them new (870 lines)
+  checker/emitresolver.go: isConstEnumOrConstEnumOnlyModule
+  checker/nodebuilder.go: NodeBuilder.SymbolToNode
+  checker/nodebuilderimpl.go: saveRestoreFlags shouldExpandType mapToTypeNodes symbolToNode symbolToTypeNode createAccessFromSymbolChain symbolToExpression createExpressionFromSymbolChain startsWithSingleOrDoubleQuote getNameOfSymbolAsWritten lookupSymbolChain lookupSymbolChainWorker typeReferenceToTypeNode newIdentifier createExpressionWithTypeArguments lookupExpressionChainTypeArgumentNodes shouldWriteTypeParametersInQualifiedName
+  checker/printer.go: createPrinterWithRemoveCommentsOmitTrailingSemicolon c.symbolToString c.symbolToStringEx
+  checker/symbolaccessibility.go: hasNonGlobalAugmentationExternalModuleSymbol
+  checker/symboltracker.go: SymbolTrackerImpl.TrackSymbol
+  printer/emitcontext.go: AddEmitFlags
+  printer/printer.go: getTextOfNode write emitIdentifierText emitIdentifierName emitIdentifierReference emitEntityName emitTypeArguments emitTypeReference
+  printer/semicolon_writer.go: getTrailingSemicolonDeferringWriter trailingSemicolonDeferringWriter.commitSemicolon trailingSemicolonDeferringWriter.Write trailingSemicolonDeferringWriter.Clear
+  printer/singlelinestringwriter.go: GetSingleLineStringWriter singleLineStringWriter.Clear singleLineStringWriter.String singleLineStringWriter.Write
+## 10-array: executes 76 family functions, 19 of them new (217 lines)
+  printer/emitcontext.go: SetEmitFlags
+  printer/printer.go: writePunctuation shouldEmitOnSingleLine shouldEmitOnMultipleLines shouldEmitTokenSourceMaps emitToken emitTokenEx emitArrayType emitPostfixTypeOperand emitTupleType emitList emitListRange emitCommentsBeforeToken emitCommentsAfterToken emitSourceMapsBeforeToken emitSourceMapsAfterToken enterToken exitToken
+  printer/textwriter.go: textWriter.WritePunctuation
+## 10-union: executes 195 family functions, 91 of them new (2548 lines)
+  checker/nodebuilder_hover.go: isExpanding
+  checker/nodebuilderimpl.go: checkTruncationLength isActivelyExpanding isClassInstanceSide isIdentifierTypeReference setCommentRange serializeTypeForDeclaration shouldUsePlaceholderForProperty classifyPropertyName createPropertyNameNodeForIdentifierOrLiteral isStringNamed isSingleQuotedStringNamed getPropertyNameNodeForSymbol getPropertyNameNodeForSymbolFromNameType addPropertyToElementList createTypeNodesFromResolvedType createTypeNodeFromObjectType shouldWriteTypeOfFunctionSymbol createAnonymousTypeNode shouldEmitTypeOfSymbol createAnonymousTypeNodeEx visitAndTransformType newStringLiteral newStringLiteralEx
+  checker/nodebuilderscopes.go: addSymbolTypeToContext
+  checker/printer.go: c.formatUnionTypes
+  checker/pseudotypenodebuilder.go: pseudoTypeToNodeWithCheckerFallback pseudoTypeToNode pseudoTypeEquivalentToType pseudoTypeToType
+  printer/emitcontext.go: onUpdate onClone SetOriginal SetOriginalEx Original MostOriginal ParseNode emitNode.copyFrom CommentRange SetCommentRange AssignCommentRange GetExternalHelpersModuleName
+  printer/namegenerator.go: NameGenerator.PushScope NameGenerator.PopScope NameGenerator.GenerateName
+  printer/printer.go: writeProperty writeSpace writeTrailingSemicolon getLeadingLineTerminatorCount getSeparatingLineTerminatorCount getClosingLineTerminatorCount shouldEmitOnNewLine shouldEmitLeadingComments emitTokenNode emitTokenNodeEx emitStringLiteral emitPropertyName emitModifierList emitTypeAnnotation emitPropertySignature emitTypeElement emitTypeLiteral emitUnionTypeConstituent emitUnionType hasTrailingComma writeDelimiter emitListItems emitTrailingCommentsOfPosition setSourceMapSource shouldReuseTempVariableScope pushNameGenerationScope popNameGenerationScope generateAllMemberNames generateMemberNames generateNameIfNeeded generateName
+  printer/textwriter.go: textWriter.Grow textWriter.WriteProperty textWriter.WriteSpace textWriter.WriteTrailingSemicolon
+  printer/utilities.go: escapeStringWorker tryGetEnd greatestEnd
+  pseudochecker/lookup.go: GetTypeOfDeclaration typeFromPropertyAssignment typeFromExpression isConstContextPropagatingKind IsInConstContext
+  pseudochecker/type.go: NewPseudoTypeMaybeConstLocation PseudoType.AsPseudoTypeMaybeConstLocation NewPseudoTypeNumericLiteral
+## 10-intersection: executes 125 family functions, 5 of them new (58 lines)
+  checker/nodebuilderimpl.go: arrayIsHomogeneous getNameOfSymbolFromNameType
+  printer/printer.go: emitTypeQuery emitIntersectionTypeConstituent emitIntersectionType
+## 10-typeof: executes 71 family functions, 0 of them new (0 lines)
+## 10-keyof: executes 251 family functions, 70 of them new (1877 lines)
+  checker/emitresolver.go: newEmitResolver getMeaningOfEntityNameReference EmitResolver.requiresAddingImplicitUndefined EmitResolver.requiresAddingImplicitUndefinedWorker EmitResolver.isOptionalUninitializedParameterProperty EmitResolver.isRequiredInitializedParameter EmitResolver.isOptionalParameter
+  checker/nodebuilderimpl.go: canReuseExistingJSTypeNode tryGetResolvedSymbolFromTypeNode existingTypeNodeIsNotReferenceOrIsReferenceWithCompatibleTypeArgumentCount symbolToName createEntityNameFromSymbolChain symbolToEntityNameNode setTextRange typeParameterToName getEffectiveParameterDeclaration symbolToParameterDeclaration parameterToParameterDeclarationName serializeInferredReturnTypeForSignature signatureToSignatureDeclarationHelper c.getExpandedParameters tryGetThisParameterDeclaration serializeReturnTypeForSignature getTypeFromTypeNode TypeAlias.ToTypeReferenceNode
+  checker/nodebuilderscopes.go: cloneNodeBuilderContext enterSignatureScope enterNewScope
+  checker/nodecopy.go: reuseNode reuseTypeNode recoveryBoundary.startRecoveryScope wrappingTracker.TrackSymbol newWrappingTracker createRecoveryBoundary finalizeBoundary tryReuseExistingNodeHelper getExistingNodeTreeVisitor
+  checker/symboltracker.go: SymbolTrackerImpl.ReportInferenceFallback
+  printer/printer.go: writeParameter increaseIndentIf decreaseIndentIf shouldEmitIndented emitBindingIdentifier emitBindingName emitTypeParameterDeclarationNode emitParameterName emitParameter emitParameterDeclarationNode emitTypeParameters emitInitializer emitParameters emitTypeArgument emitReturnType emitFunctionType emitTypeOperator generateAllNames generateNames getOpeningBracket getClosingBracket
+  printer/textwriter.go: textWriter.WriteParameter
+  pseudochecker/lookup.go: GetReturnTypeOfSignature isValueSignatureDeclaration createReturnFromSignature typeFromSingleReturnExpression typeFromParameter isContextuallyTyped
+  pseudochecker/type.go: NewPseudoTypeDirect PseudoType.AsPseudoTypeDirect NewPseudoTypeInferred PseudoType.AsPseudoTypeInferred
+## 10-generic: executes 102 family functions, 1 of them new (3 lines)
+  checker/printer.go: c.TypeToStringEx
+## 10-tuple-or-index: executes 127 family functions, 3 of them new (68 lines)
+  printer/printer.go: emitTupleElementType emitLeadingComments emitTrailingComments
+## 10-object: executes 125 family functions, 0 of them new (0 lines)
+## 10-function: executes 182 family functions, 3 of them new (49 lines)
+  checker/nodebuilderimpl.go: typeParameterToDeclarationWithConstraint typeParameterToDeclaration
+  printer/printer.go: emitTypeParameter
+## 10-constructor: executes 119 family functions, 1 of them new (17 lines)
+  printer/printer.go: emitConstructorType
+## 10-predicate: executes 319 family functions, 70 of them new (1154 lines)
+  checker/nodebuilder.go: NodeBuilder.SignatureToSignatureDeclaration
+  checker/nodebuilderimpl.go: checkTypeExpandability createElidedInformationPlaceholder canUsePropertyAccess getSymbolChain sortByBestName typeToTypeNodeHelperWithPossibleReusableTypeNode typePredicateToTypePredicateNodeHelper indexInfoToObjectComputedNamesOrSignatureDeclaration indexInfoToIndexSignatureDeclarationHelper trackComputedName
+  checker/nodecopy.go: recoveryBoundary.markError recoveryBoundary.endRecoveryScope
+  checker/printer.go: createPrinterWithRemoveCommentsOmitTrailingSemicolonNeverAsciiEscape c.signatureToString c.signatureToStringEx
+  checker/symbolaccessibility.go: getQualifiedLeftMeaning c.getWithAlternativeContainers c.getAlternativeContainingModules c.getVariableDeclarationOfObjectLiteral hasExternalModuleSymbol c.getExternalModuleContainer c.getFileSymbolIfFileSymbolExportEqualsContainer c.getContainersOfSymbol c.getAliasForSymbolInContainer c.getAccessibleSymbolChain symbolTableIDFromResolvedExports symbolTableIDFromMembers symbolTableIDFromGlobals c.getAccessibleSymbolChainEx c.getAccessibleSymbolChainFromSymbolTable c.getSymbolTableAliases c.trySymbolTable c.getCandidateListForSymbol c.isAccessible c.canQualifySymbol c.needsQualification isPropertyOrMethodDeclarationSymbol c.someSymbolTableInScope
+  printer/emitcontext.go: AddSyntheticLeadingComment
+  printer/printer.go: writeOperator writeLineRepeat increaseIndent decreaseIndent getLinesBetweenNodes shouldElideIndentation emitPunctuationNodeEx emitComputedPropertyName emitMemberName emitParametersForIndexSignature emitSignature emitCallSignature emitIndexSignature emitTypePredicateParameterName emitTypePredicate emitThisType mayNeedDotDotForPropertyAccess emitPropertyAccessExpression
+  printer/semicolon_writer.go: trailingSemicolonDeferringWriter.WriteTrailingSemicolon trailingSemicolonDeferringWriter.WriteKeyword trailingSemicolonDeferringWriter.WritePunctuation trailingSemicolonDeferringWriter.WriteSpace trailingSemicolonDeferringWriter.WriteParameter
+  printer/singlelinestringwriter.go: singleLineStringWriter.WriteKeyword singleLineStringWriter.WriteParameter singleLineStringWriter.WritePunctuation singleLineStringWriter.WriteSpace
+  printer/textwriter.go: textWriter.DecreaseIndent textWriter.IncreaseIndent textWriter.WriteOperator
+## 10-template: executes 118 family functions, 7 of them new (38 lines)
+  printer/printer.go: emitTemplateHead emitTemplateMiddle emitTemplateTail emitTemplateMiddleTail emitTemplateTypeSpan emitTemplateTypeSpanNode emitTemplateType
+## 10-mapped: executes 127 family functions, 3 of them new (179 lines)
+  checker/nodebuilderimpl.go: createMappedTypeNodeFromType
+  printer/printer.go: emitMappedTypeParameter emitMappedType
+## 10-rest-or-elision: executes 293 family functions, 14 of them new (403 lines)
+  checker/emitresolver.go: EmitResolver.isDeclarationVisible EmitResolver.determineIfDeclarationIsVisible noopAddVisibleAlias EmitResolver.hasVisibleDeclarations
+  checker/nodebuilderimpl.go: typeNodeIsEquivalentToType tryReuseExistingNonParameterTypeNode cloneBindingName
+  checker/symbolaccessibility.go: c.IsAnySymbolAccessible symbolTableIDFromLocals c.IsSymbolAccessible c.isSymbolAccessibleWorker
+  printer/printer.go: emitArrayBindingPattern emitBindingElement emitBindingElementNode
+## 05-other-single-token: executes 2 family functions, 0 of them new (0 lines)
+## 06-other-text: executes 94 family functions, 0 of them new (0 lines)
+total 390

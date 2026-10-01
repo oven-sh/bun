@@ -1,0 +1,70 @@
+checker/checker.go:8066	(*Checker).checkTemplateExpression	local-buffer	local	texts	[]string	8071 x[i]=; 8077 x[i]=	
+checker/checker.go:8066	(*Checker).checkTemplateExpression	local-buffer	local	types	[]*checker.Type	8078 x[i]=	
+checker/checker.go:8111	(*Checker).checkArrayLiteral	local-buffer	local	elementInfos	[]checker.TupleElementInfo	8130 x[i]=; 8152 x[i]=; 8155 x[i]=; 8160 x[i]=; 8164 x[i]=	
+checker/checker.go:8111	(*Checker).checkArrayLiteral	escape-then-write	local	elementTypes	[]*checker.Type	8129 x[i]=; 8151 x[i]=; 8154 x[i]=; 8159 x[i]=; 8163 x[i]=; 8183 x[i]=	8174 arg of c.createTupleTypeEx; 8177 arg of c.createTupleTypeEx
+checker/checker.go:9115	(*Checker).chooseOverload	stored-slice	field	s.candidates	[]*checker.Signature	9191 x[i]=	
+checker/checker.go:9600	(*Checker).pickLongestCandidateSignature	param	param	candidates	[]*checker.Signature	9627 x[i]=	9611 arg of c.getLongestCandidateIndex
+checker/checker.go:13488	(*Checker).getSpreadType	local-buffer	local	newTypes	[]*checker.Type	13534 x[i]=	
+checker/checker.go:18067	(*Checker).getTypeFromArrayBindingPattern	local-buffer	local	elementInfos	[]checker.TupleElementInfo	18102 x[i]=	
+checker/checker.go:18067	(*Checker).getTypeFromArrayBindingPattern	local-buffer	local	elementTypes	[]*checker.Type	18101 x[i]=	
+checker/checker.go:18872	(*Checker).pushTypeResolution	stored-slice	field	c.typeResolutions	[]checker.TypeResolution	18877 x[i].f=	
+checker/checker.go:18889	(*Checker).popTypeResolution	stored-slice	field	c.typeResolutions	[]checker.TypeResolution	18892 x[i]=	
+checker/checker.go:19133	(*Checker).findApplicableIndexInfo	local-buffer	local	types	[]*checker.Type	19159 x[i]=	
+checker/checker.go:19320	(*Checker).getTupleBaseType	local-buffer	local	elementTypes	[]*checker.Type	19326 x[i]=; 19328 x[i]=	
+checker/checker.go:21336	(*Checker).combineUnionOrIntersectionParameters	local-buffer	local	params	[]*ast.Symbol	21388 x[i]=; 21397 x[i]=	
+checker/checker.go:21460	(*Checker).appendIndexInfo	param	param	indexInfos	[]*checker.IndexInfo	21472 x[i]=	
+checker/checker.go:21479	(*Checker).findMixins	local-buffer	local	mixinFlags	[]bool	21495 x[i]=	
+checker/checker.go:22068	(*Checker).fillMissingTypeArguments	escape-then-write	local	result	[]*checker.Type	22076 copy(x,..); 22079 x[i]=; 22090 x[i]=; 22092 x[i]=	22090 arg of newTypeMapper
+checker/checker.go:22260	(*Checker).pushActiveMapper	stored-slice	field	c.activeTypeMappersCaches	[]map[checker.CacheHashKey]*checker.Type	22268 x[i]=	
+checker/checker.go:22275	(*Checker).popActiveMapper	stored-slice	field	c.activeMappers	[]*checker.TypeMapper	22276 x[i]=	
+checker/checker.go:22418	(*Checker).getObjectTypeInstantiation	local-buffer	local	typeArguments	[]*checker.Type	22472 x[i]=	
+checker/checker.go:22707	(*Checker).instantiateMappedTupleType	local-buffer	local	newElementInfos	[]checker.TupleElementInfo	22744 x[i].f=; 22748 x[i].f=	
+checker/checker.go:22707	(*Checker).instantiateMappedTupleType	local-buffer	local	newElementTypes	[]*checker.Type	22751 x[i]=	
+checker/checker.go:22897	instantiateList	local-buffer	local	result	[]T	22902 copy(x,..); 22903 x[i]=; 22905 x[i]=	
+checker/checker.go:23478	(*TupleNormalizer).normalize	stored-slice	field	n.infos	[]checker.TupleElementInfo	23524 x[i].f=	
+checker/checker.go:23478	(*TupleNormalizer).normalize	stored-slice	field	n.types	[]*checker.Type	23537 x[i]=	
+checker/checker.go:24362	(*Checker).getTypeFromTemplateTypeNode	local-buffer	local	texts	[]string	24368 x[i]=; 24370 x[i]=	
+checker/checker.go:24362	(*Checker).getTypeFromTemplateTypeNode	local-buffer	local	types	[]*checker.Type	24371 x[i]=	
+checker/checker.go:25884	(*Checker).addTypesToUnion	escape-then-write	local	types	[]*checker.Type	25933 slices.SortStableFunc; 25937 x[i]=	25887 closure; 25887 closure
+checker/checker.go:26179	(*Checker).getIntersectionTypeEx	escape-then-write	local	typeSet	[]*checker.Type	26245 x[i]=	26211 arg of c.extractRedundantTemplateLiterals; 26241 arg of c.removeRedundantSupertypes
+checker/checker.go:26466	(*Checker).intersectUnionsOfPrimitiveTypes	local-buffer	local	result	[]*checker.Type	26503 x[i]=	
+checker/checker.go:26466	(*Checker).intersectUnionsOfPrimitiveTypes	param	param	types	[]*checker.Type	26512 x[i]=	
+checker/checker.go:26553	(*Checker).getCrossProductIntersections	local-buffer	local	constituents	[]*checker.Type	26563 x[i]=	
+checker/checker.go:26593	(*Checker).filterTypes	param	param	types	[]*checker.Type	26595 x[i]=	
+checker/checker.go:27881	(*Checker).getUniqAssociatedNamesFromTupleType	local-buffer	local	names	[]string	27886 x[i]=; 27902 x[i]=	
+checker/checker.go:29381	(*Checker).applyTemplateStringMapping	local-buffer	local	newTexts	[]string	29389 x[i]=	
+checker/checker.go:29381	(*Checker).applyTemplateStringMapping	local-buffer	local	newTypes	[]*checker.Type	29393 x[i]=	
+checker/checker.go:30165	(*Checker).getEffectiveCallArguments	local-buffer	local	args	[]*ast.Node	30178 x[i]=; 30180 x[i]=	
+checker/checker.go:30265	(*Checker).getEffectiveDecoratorArguments	local-buffer	local	args	[]*ast.Node	30271 x[i]=	
+checker/checker.go:31003	(*Checker).popContextualType	stored-slice	field	c.contextualInfos	[]checker.ContextualInfo	31005 x[i]=	
+checker/checker.go:31082	(*Checker).popInferenceContext	stored-slice	field	c.inferenceContextInfos	[]checker.InferenceContextInfo	31084 x[i]=	
+checker/flow.go:1989	(*Checker).getSwitchClauseTypeOfWitnesses	local-buffer	local	witnesses	[]string	2001 x[i]=	
+checker/flow.go:2026	(*Checker).getSwitchClauseTypes	local-buffer	local	types	[]*checker.Type	2032 x[i]=	
+checker/inference.go:370	(*Checker).inferFromMatchingTypes	local-buffer	local	matchedTargets	[]*checker.Type	391 slices.SortFunc	
+checker/inference.go:448	(*Checker).inferToMultipleTypes	local-buffer	local	matched	[]bool	474 x[i]=	
+checker/inference.go:1406	(*Checker).getInferredTypes	local-buffer	local	result	[]*checker.Type	1409 x[i]=	
+checker/inference.go:1678	(*Checker).mergeInferences	param	param	target	[]*checker.InferenceInfo	1681 x[i]=	
+checker/nodebuilder_hover.go:186	(*NodeBuilderImpl).addClassModifiers	param	param	members	[]*ast.Node	206 x[i]=	
+checker/nodebuilder_hover.go:216	typeElementsToClassElements	param	param	members	[]*ast.Node	221 x[i]=; 224 x[i]=	
+checker/nodebuilder_hover.go:412	(*NodeBuilderImpl).expandModuleDecl	local-buffer	local	bodyStatements	[]*ast.Node	528 x[i]=; 537 x[i]=	
+checker/nodebuilderimpl.go:343	(*NodeBuilderImpl).mapToTypeNodes	local-buffer	local	nodes	[]*ast.Node	365 x[i]=; 368 x[i]=	
+checker/nodebuilderimpl.go:343	(*NodeBuilderImpl).mapToTypeNodes	local-buffer	local	result	[]*ast.Node	426 x[i]=	
+checker/nodebuilderimpl.go:1087	(*NodeBuilderImpl).getSymbolChain	local-buffer	local	parentSpecifiers	[]checker.sortedSymbolNamePair	1108 slices.SortStableFunc	
+checker/nodebuilderimpl.go:1912	(*Checker).getExpandedParameters	local-buffer	local	names	[]string	1950 x[i]=	
+checker/nodebuilderimpl.go:2645	(*NodeBuilderImpl).createTypeNodesFromResolvedType	escape-then-write	local	typeElements	[]*ast.TypeElement	2691 x[i]=	2669 arg of b.f.NewNodeList
+checker/nodebuilderimpl.go:2995	(*NodeBuilderImpl).typeReferenceToTypeNode	stored-slice	field	tupleConstituentNodes.Nodes	[]*ast.Node	3029 x[i]=; 3038 x[i]=; 3040 x[i]=	
+checker/relater.go:1205	(*Checker).discriminateTypeByDiscriminableItems	local-buffer	local	include	[]checker.Ternary	1210 x[i]=; 1225 x[i]=; 1234 x[i]=; 1236 x[i]=	
+checker/relater.go:1334	(*Checker).getVariancesWorker	local-buffer	local	formatted	[]string	1344 x[i]=	
+checker/relater.go:1334	(*Checker).getVariancesWorker	local-buffer	local	variances	[]checker.VarianceFlags	1400 x[i]=	
+checker/relater.go:1829	(*Checker).getRestTypeAtPosition	local-buffer	local	infos	[]checker.TupleElementInfo	1855 x[i]=	
+checker/relater.go:1829	(*Checker).getRestTypeAtPosition	local-buffer	local	types	[]*checker.Type	1849 x[i]=; 1852 x[i]=	
+checker/relater.go:1930	(*Checker).getKnownKeysOfTupleType	local-buffer	local	keys	[]*checker.Type	1934 x[i]=; 1936 x[i]=	
+checker/relater.go:2418	(*Checker).inferFromLiteralPartsToTemplateLiteral	local-buffer	local	matchTexts	[]string	2445 x[i]=; 2446 copy(x,..); 2447 x[i]=	
+checker/relater.go:4021	(*Relater).typeRelatedToDiscriminatedType	local-buffer	local	combination	[]*checker.Type	4070 x[i]=	
+checker/relater.go:4021	(*Relater).typeRelatedToDiscriminatedType	local-buffer	local	discriminantCombinations	[][]*checker.Type	4073 x[i]=	
+checker/relater.go:4021	(*Relater).typeRelatedToDiscriminatedType	local-buffer	local	sourceDiscriminantTypes	[][]*checker.Type	4059 x[i]=	
+checker/relater.go:4862	(*Relater).reportError	param	param	args	[]any	4886 x[i]=	
+checker/symbolaccessibility.go:535	(*Checker).trySymbolTable	local-buffer	local	candidateChains	[][]*ast.Symbol	584 slices.SortStableFunc	
+checker/tracer.go:357	wrapTypes	local-buffer	local	result	[]tracing.TracedType	363 x[i]=	
+checker/types.go:1084	(*TupleType).ElementFlags	local-buffer	local	elementFlags	[]checker.ElementFlags	1087 x[i]=	
+checker/utilities.go:362	(*Checker).sortSymbols	param	param	symbols	[]*ast.Symbol	363 slices.SortFunc	

@@ -1,0 +1,168 @@
+libs keys 107 lib files 95 libs.json entries 108
+closure 82 bytes 2882115 unknown []
+load order (post-order):
+  0 lib.decorators.d.ts 106
+  1 lib.decorators.legacy.d.ts 107
+  2 lib.es5.d.ts 1
+  3 lib.es2015.core.d.ts 24
+  4 lib.es2015.collection.d.ts 25
+  5 lib.es2015.symbol.d.ts 31
+  6 lib.es2015.iterable.d.ts 27
+  7 lib.es2015.generator.d.ts 26
+  8 lib.es2015.promise.d.ts 28
+  9 lib.es2015.proxy.d.ts 29
+  10 lib.es2015.reflect.d.ts 30
+  11 lib.es2015.symbol.wellknown.d.ts 32
+  12 lib.es2015.d.ts 3
+  13 lib.es2016.array.include.d.ts 33
+  14 lib.es2016.intl.d.ts 34
+  15 lib.es2016.d.ts 5
+  16 lib.es2017.arraybuffer.d.ts 35
+  17 lib.es2017.date.d.ts 36
+  18 lib.es2017.intl.d.ts 40
+  19 lib.es2017.object.d.ts 37
+  20 lib.es2017.sharedmemory.d.ts 38
+  21 lib.es2017.string.d.ts 39
+  22 lib.es2017.typedarrays.d.ts 41
+  23 lib.es2017.d.ts 6
+  24 lib.es2018.asynciterable.d.ts 43
+  25 lib.es2018.asyncgenerator.d.ts 42
+  26 lib.es2018.promise.d.ts 45
+  27 lib.es2018.regexp.d.ts 46
+  28 lib.es2018.intl.d.ts 44
+  29 lib.es2018.d.ts 7
+  30 lib.es2019.array.d.ts 47
+  31 lib.es2019.object.d.ts 48
+  32 lib.es2019.string.d.ts 49
+  33 lib.es2019.symbol.d.ts 50
+  34 lib.es2019.intl.d.ts 51
+  35 lib.es2019.d.ts 8
+  36 lib.es2020.intl.d.ts 58
+  37 lib.es2020.bigint.d.ts 52
+  38 lib.es2020.date.d.ts 53
+  39 lib.es2020.number.d.ts 59
+  40 lib.es2020.promise.d.ts 54
+  41 lib.es2020.sharedmemory.d.ts 55
+  42 lib.es2020.symbol.wellknown.d.ts 57
+  43 lib.es2020.string.d.ts 56
+  44 lib.es2020.d.ts 9
+  45 lib.es2021.promise.d.ts 60
+  46 lib.es2021.string.d.ts 61
+  47 lib.es2021.weakref.d.ts 62
+  48 lib.es2021.intl.d.ts 63
+  49 lib.es2021.d.ts 10
+  50 lib.es2022.array.d.ts 64
+  51 lib.es2022.error.d.ts 65
+  52 lib.es2022.intl.d.ts 66
+  53 lib.es2022.object.d.ts 67
+  54 lib.es2022.regexp.d.ts 69
+  55 lib.es2022.string.d.ts 68
+  56 lib.es2022.d.ts 11
+  57 lib.es2023.array.d.ts 70
+  58 lib.es2023.collection.d.ts 71
+  59 lib.es2023.intl.d.ts 72
+  60 lib.es2023.d.ts 12
+  61 lib.es2024.arraybuffer.d.ts 73
+  62 lib.es2024.collection.d.ts 74
+  63 lib.es2024.object.d.ts 75
+  64 lib.es2024.promise.d.ts 76
+  65 lib.es2024.regexp.d.ts 77
+  66 lib.es2024.sharedmemory.d.ts 78
+  67 lib.es2024.string.d.ts 79
+  68 lib.es2024.d.ts 13
+  69 lib.es2025.collection.d.ts 80
+  70 lib.es2025.float16.d.ts 81
+  71 lib.es2025.intl.d.ts 82
+  72 lib.es2025.iterator.d.ts 83
+  73 lib.es2025.promise.d.ts 84
+  74 lib.es2025.regexp.d.ts 85
+  75 lib.es2025.d.ts 14
+  76 lib.dom.d.ts 16
+  77 lib.webworker.importscripts.d.ts 20
+  78 lib.scripthost.d.ts 23
+  79 lib.dom.iterable.d.ts 17
+  80 lib.dom.asynciterable.d.ts 18
+  81 lib.es2025.full.d.ts 109
+program order (sortLibs):
+  0 lib.es5.d.ts 1 es5.d.ts
+  1 lib.es2015.d.ts 3 es2015.d.ts
+  2 lib.es2016.d.ts 5 es2016.d.ts
+  3 lib.es2017.d.ts 6 es2017.d.ts
+  4 lib.es2018.d.ts 7 es2018.d.ts
+  5 lib.es2019.d.ts 8 es2019.d.ts
+  6 lib.es2020.d.ts 9 es2020.d.ts
+  7 lib.es2021.d.ts 10 es2021.d.ts
+  8 lib.es2022.d.ts 11 es2022.d.ts
+  9 lib.es2023.d.ts 12 es2023.d.ts
+  10 lib.es2024.d.ts 13 es2024.d.ts
+  11 lib.es2025.d.ts 14 es2025.d.ts
+  12 lib.dom.d.ts 16 dom.generated.d.ts
+  13 lib.dom.iterable.d.ts 17 dom.iterable.generated.d.ts
+  14 lib.dom.asynciterable.d.ts 18 dom.asynciterable.generated.d.ts
+  15 lib.webworker.importscripts.d.ts 20 webworker.importscripts.d.ts
+  16 lib.scripthost.d.ts 23 scripthost.d.ts
+  17 lib.es2015.core.d.ts 24 es2015.core.d.ts
+  18 lib.es2015.collection.d.ts 25 es2015.collection.d.ts
+  19 lib.es2015.generator.d.ts 26 es2015.generator.d.ts
+  20 lib.es2015.iterable.d.ts 27 es2015.iterable.d.ts
+  21 lib.es2015.promise.d.ts 28 es2015.promise.d.ts
+  22 lib.es2015.proxy.d.ts 29 es2015.proxy.d.ts
+  23 lib.es2015.reflect.d.ts 30 es2015.reflect.d.ts
+  24 lib.es2015.symbol.d.ts 31 es2015.symbol.d.ts
+  25 lib.es2015.symbol.wellknown.d.ts 32 es2015.symbol.wellknown.d.ts
+  26 lib.es2016.array.include.d.ts 33 es2016.array.include.d.ts
+  27 lib.es2016.intl.d.ts 34 es2016.intl.d.ts
+  28 lib.es2017.arraybuffer.d.ts 35 es2017.arraybuffer.d.ts
+  29 lib.es2017.date.d.ts 36 es2017.date.d.ts
+  30 lib.es2017.object.d.ts 37 es2017.object.d.ts
+  31 lib.es2017.sharedmemory.d.ts 38 es2017.sharedmemory.d.ts
+  32 lib.es2017.string.d.ts 39 es2017.string.d.ts
+  33 lib.es2017.intl.d.ts 40 es2017.intl.d.ts
+  34 lib.es2017.typedarrays.d.ts 41 es2017.typedarrays.d.ts
+  35 lib.es2018.asyncgenerator.d.ts 42 es2018.asyncgenerator.d.ts
+  36 lib.es2018.asynciterable.d.ts 43 es2018.asynciterable.d.ts
+  37 lib.es2018.intl.d.ts 44 es2018.intl.d.ts
+  38 lib.es2018.promise.d.ts 45 es2018.promise.d.ts
+  39 lib.es2018.regexp.d.ts 46 es2018.regexp.d.ts
+  40 lib.es2019.array.d.ts 47 es2019.array.d.ts
+  41 lib.es2019.object.d.ts 48 es2019.object.d.ts
+  42 lib.es2019.string.d.ts 49 es2019.string.d.ts
+  43 lib.es2019.symbol.d.ts 50 es2019.symbol.d.ts
+  44 lib.es2019.intl.d.ts 51 es2019.intl.d.ts
+  45 lib.es2020.bigint.d.ts 52 es2020.bigint.d.ts
+  46 lib.es2020.date.d.ts 53 es2020.date.d.ts
+  47 lib.es2020.promise.d.ts 54 es2020.promise.d.ts
+  48 lib.es2020.sharedmemory.d.ts 55 es2020.sharedmemory.d.ts
+  49 lib.es2020.string.d.ts 56 es2020.string.d.ts
+  50 lib.es2020.symbol.wellknown.d.ts 57 es2020.symbol.wellknown.d.ts
+  51 lib.es2020.intl.d.ts 58 es2020.intl.d.ts
+  52 lib.es2020.number.d.ts 59 es2020.number.d.ts
+  53 lib.es2021.promise.d.ts 60 es2021.promise.d.ts
+  54 lib.es2021.string.d.ts 61 es2021.string.d.ts
+  55 lib.es2021.weakref.d.ts 62 es2021.weakref.d.ts
+  56 lib.es2021.intl.d.ts 63 es2021.intl.d.ts
+  57 lib.es2022.array.d.ts 64 es2022.array.d.ts
+  58 lib.es2022.error.d.ts 65 es2022.error.d.ts
+  59 lib.es2022.intl.d.ts 66 es2022.intl.d.ts
+  60 lib.es2022.object.d.ts 67 es2022.object.d.ts
+  61 lib.es2022.string.d.ts 68 es2022.string.d.ts
+  62 lib.es2022.regexp.d.ts 69 es2022.regexp.d.ts
+  63 lib.es2023.array.d.ts 70 es2023.array.d.ts
+  64 lib.es2023.collection.d.ts 71 es2023.collection.d.ts
+  65 lib.es2023.intl.d.ts 72 es2023.intl.d.ts
+  66 lib.es2024.arraybuffer.d.ts 73 es2024.arraybuffer.d.ts
+  67 lib.es2024.collection.d.ts 74 es2024.collection.d.ts
+  68 lib.es2024.object.d.ts 75 es2024.object.d.ts
+  69 lib.es2024.promise.d.ts 76 es2024.promise.d.ts
+  70 lib.es2024.regexp.d.ts 77 es2024.regexp.d.ts
+  71 lib.es2024.sharedmemory.d.ts 78 es2024.sharedmemory.d.ts
+  72 lib.es2024.string.d.ts 79 es2024.string.d.ts
+  73 lib.es2025.collection.d.ts 80 es2025.collection.d.ts
+  74 lib.es2025.float16.d.ts 81 es2025.float16.d.ts
+  75 lib.es2025.intl.d.ts 82 es2025.intl.d.ts
+  76 lib.es2025.iterator.d.ts 83 es2025.iterator.d.ts
+  77 lib.es2025.promise.d.ts 84 es2025.promise.d.ts
+  78 lib.es2025.regexp.d.ts 85 es2025.regexp.d.ts
+  79 lib.decorators.d.ts 106 decorators.d.ts
+  80 lib.decorators.legacy.d.ts 107 decorators.legacy.d.ts
+  81 lib.es2025.full.d.ts 109 es2025.full.d.ts

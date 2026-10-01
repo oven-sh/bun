@@ -1,0 +1,19 @@
+# What the run instances need from a program layer, counted on the manifest of groundtruth/k5 (12,797 rows) and the census of ../../end-to-end-k4-k5/data/census.tsv.gz.
+ 12797  E  7027  C  5770  all run instances
+    84  E    32  C    52  have a configuration file or links
+  1886  E  1030  C   856  of the rest: a module name or a type reference name has to be resolved (a resolver is an input)
+ 10827  E  5965  C  4862  of the rest: no name to resolve (phase 1 of the adapter)
+ 10114  E  5491  C  4623    of them TypeScript only and every diagnostic of the oracle comes from the parser, the binder or the checker
+   619  E   380  C   239    of them with a JS or JSX file
+   368  E   233  C   135    of them with more than one file that is no default library
+    60  E    34  C    26    of them with a reference path
+   127  E   127  C     0    of them with a diagnostic of the program layer (configuration, options, includes, declaration transform, suggestions)
+   961  E   371  C   590    of them with declaration emit on
+# Resolver stand-in (probe/resprobe.ts): typescript 6.0.2's resolveModuleName and resolveTypeReferenceDirective over the in-memory files of the instance,
+# against the resolutions of typescript-go: 1,945 instances have a name to resolve (5,990 names); 1,860 agree on every name; 85 differ (resolution-differs.tsv):
+# 18 of them have links (the probe has no links), the others are package self names, package imports and the external-library flag under node16 to nodenext.
+# Metadata (probe/metaprobe.ts): the package.json type, the package directory and the implied node format of fileloader.go 370-391, computed from the
+# in-memory files, equal typescript-go's for all 17,454 files that are no default library (1,675 of them are below a package.json).
+# Default libraries (py/libcheck.py): default file by target or the lib list, closure over reference lib in post-order, sorted by priority: equal to the program
+# of the reference in 12,790 instances; of the 7 instances where a file that is no library has a reference lib, 3 agree and 4 use libReplacement.
+# Order of the other files (py/loadorder.py): the collectFiles order of filesparser.go recomputed from the reference's own lists: equal in 12,797 of 12,797.

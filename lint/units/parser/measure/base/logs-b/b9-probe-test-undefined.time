@@ -1,0 +1,8 @@
+QUEUED 1790705410792 2026-09-29T18:10:10+00:00
+CMD cargo rustc -p bun_js_parser --lib --profile test --target-dir /tmp/parser-probe/target -- -C link-arg=-Wl,--error-limit=0
+START 1790705442746 2026-09-29T18:10:42+00:00 load=257.46 263.50 248.11
+END 1790705458056 2026-09-29T18:10:58+00:00 load=284.75 269.27 250.25
+EXIT 101
+WAIT_MS 31954
+RUN_MS 15310
+DONE

@@ -1,0 +1,225 @@
+A2  "var v = <Foo<> />;"
+     bun: Unexpected > @13
+     tsc check: TS1099@12+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+A2  "var v = <Foo<>></Foo>;"
+     bun: Unexpected >> @13
+     tsc check: TS1099@12+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo></Foo>;\n"
+AA  "var v = <Foo<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo<T>></Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo></Foo>;\n"
+A2  "var v = <Foo<T,> />;"
+     bun: Unexpected > @15
+     tsc check: TS1009@14+1 Trailing comma not allowed. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo<T, U> a=\"b\" />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  a: \"b\"\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a=\"b\"/>;\n"
+AA  "var v = <Foo<T>\n/>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo\n<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo <T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo.Bar<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo.Bar, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo.Bar />;\n"
+AAg "var v = <foo<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(\"foo\", {}, undefined, false, undefined, this);\n"
+     tsc check: TS2558@13+1 Expected 0 type arguments, but got 1. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <foo />;\n"
+AAg "var v = <foo-bar<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(\"foo-bar\", {}, undefined, false, undefined, this);\n"
+     tsc check: TS2558@17+1 Expected 0 type arguments, but got 1. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <foo-bar />;\n"
+AAg "var v = <a:b<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(\"a:b\", {}, undefined, false, undefined, this);\n"
+     tsc check: TS2558@13+1 Expected 0 type arguments, but got 1. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <a:b />;\n"
+AA  "var v = <this<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(\"this\", {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <this />;\n"
+AA  "var v = <this.a<T> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(this.a, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <this.a />;\n"
+RR  "var v = <Foo<T><U> />;"
+     bun: Expected ">" but found "<" @15
+     tsc parse: TS1003@15+1 Identifier expected. ; TS1382@20+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@16+1 JSX element 'U' has no corresponding closing tag. ; TS1005@22+0 '</' expected. ; TS2657@8+14 JSX expressions must have one parent element.
+B  "var v = <Foo<<T>() => void> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc parse: TS1003@12+2 Identifier expected. ; TS1109@17+1 Expression expected. ; TS1005@19+2 ';' expected. ; TS1109@26+1 Expression expected. ; TS1161@28+2 Unterminated regular expression literal.
+AA  "var v = <Foo<A<B>> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo<A<B<C>>> />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+AA  "var v = <Foo<A<B>>></Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo></Foo>;\n"
+AA  "var v = <Foo<T> {...a} />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  ...a\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo {...a}/>;\n"
+AA  "var v = <Foo<T>/>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo />;\n"
+RR  "var v = <<T>Foo />;"
+     bun: Unexpected << @8
+     tsc parse: TS1109@8+2 Expression expected. ; TS1109@17+1 Expression expected. ; TS1109@18+1 Expression expected.
+AA  "var v = <></>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {}, undefined, false, undefined, this);\n"
+     tsc emit: "\"use strict\";\nvar v = <></>;\n"
+AA  "var v = <Foo<T>>text</Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  children: \"text\"\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo>text</Foo>;\n"
+RR  "var v = <Foo<T>>text</Foo<T>>;"
+     bun: Expected ">" but found "<" @25 | Expected ";" but found "T" @26 | Unexpected >> @27
+     tsc parse: TS1005@25+1 '>' expected. ; TS1382@28+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@26+1 JSX element 'T' has no corresponding closing tag. ; TS1005@30+0 '</' expected. ; TS2657@8+22 JSX expressions must have one parent element.
+AA  "var v = <T,>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+AA  "var v = <T extends unknown>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+RR  "var v = <T>(x: T) => x;"
+     bun: Syntax Error @11
+     tsc parse: TS1382@19+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@9+1 JSX element 'T' has no corresponding closing tag. ; TS1005@23+0 '</' expected.
+AA  "var v = <T = any>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+AA  "var v = <const T,>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+RR  "var v = <const T>(x: T) => x;"
+     bun: Syntax Error @17
+     tsc parse: TS1382@25+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@9+5 JSX element 'const' has no corresponding closing tag. ; TS1005@29+0 '</' expected.
+AA  "var v = <T, U>(x: T) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+AA  "var v = async <T,>(x: T) => x;"
+     bun: ok "var v = async (x) => x;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar v = async (x) => x;\n"
+RR  "var v = async <T>(x: T) => x;"
+     bun: Expected ")" but found ":" @19 | Expected ";" but found "T" @21 | Unexpected ) @22
+     tsc parse: TS1005@19+1 ',' expected. ; TS1005@24+2 ';' expected.
+AA  "var v = <T,>(x) => x;"
+     bun: ok "var v = (x) => x;\n"
+     tsc emit: "\"use strict\";\nvar v = (x) => x;\n"
+AA  "var v = <T,>() => 1;"
+     bun: ok "var v = () => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = () => 1;\n"
+RR  "var v = <in T,>(x: T) => x;"
+     bun: Expected ">" but found "," @13
+     tsc parse: TS1003@13+1 Identifier expected. ; TS1382@23+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@9+2 JSX element 'in' has no corresponding closing tag. ; TS1005@27+0 '</' expected.
+RR  "var v = <out T,>(x: T) => x;"
+     bun: Expected ">" but found "," @14
+     tsc parse: TS1003@14+1 Identifier expected. ; TS1382@24+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? ; TS17008@9+3 JSX element 'out' has no corresponding closing tag. ; TS1005@28+0 '</' expected.
+RR  "var v = a ? <T,>(b) : c => d;"
+     bun: Expected ":" but found ";" @28 | Unexpected end of file @29
+     tsc parse: TS1005@28+1 ':' expected.
+AA  "var v = a ? <T,>(b) : c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = a ? <T,>(b): c => d : e;"
+     bun: ok "var v = a ? (b) => d : e;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = a ? (b) => d : e;\n"
+AA  "var v = <T,>(a?) => 1;"
+     bun: ok "var v = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar v = (a) => 1;\n"
+A2  "var v = <T,>(this: T) => 1;"
+     bun: Invalid binding pattern @13
+     tsc check: TS2730@13+7 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar v = () => 1;\n"
+A1  "var v = <Foo a=<b/> />;"
+     bun: Expected "{" but found "<" @15 | Unexpected > @18
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a=<b />/>;\n"
+A1  "var v = <Foo a=<b></b> />;"
+     bun: Expected "{" but found "<" @15 | Expected JSX element name but found "/" @19
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a=<b></b>/>;\n"
+A1  "var v = <Foo a=<></> />;"
+     bun: Expected "{" but found "<" @15 | Unexpected > @16
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a=<></>/>;\n"
+AA  "var v = <Foo a={<b/>} />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  a: jsxDEV_7x81h0kn(\"b\", {}, undefined, false, undefined, this)\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a={<b />}/>;\n"
+AA  "var v = <Foo a=\"b\" as />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  a: \"b\",\n  as: true\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a=\"b\" as/>;\n"
+AA  "var v = <Foo as=\"b\" />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  as: \"b\"\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo as=\"b\"/>;\n"
+AA  "var v = <Foo type=\"b\" />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  type: \"b\"\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo type=\"b\"/>;\n"
+AA  "var v = x as any as <T,>() => void;"
+     bun: ok "var v = x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x;\n"
+AA  "var v = <Foo>{x as any}</Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  children: x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo>{x}</Foo>;\n"
+AA  "var v = <Foo>{x!}</Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  children: x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo>{x}</Foo>;\n"
+AA  "var v = <Foo>{x satisfies any}</Foo>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  children: x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo>{x}</Foo>;\n"
+AA  "var v = <Foo a={x as any} />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  a: x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo a={x}/>;\n"
+AA  "var v = <Foo {...x as any} />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  ...x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo {...x}/>;\n"
+AA  "var v = <Foo {...(x as any)} />;"
+     bun: ok "var v = jsxDEV_7x81h0kn(Foo, {\n  ...x\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <Foo {...x}/>;\n"
+AA  "var v = x < y > z;"
+     bun: ok "var v = x < y > z;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = x < y > z;\n"
+AA  "var v = f<T>(x);"
+     bun: ok "var v = f(x);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = f(x);\n"
+AA  "var v = <div>{f<T>(x)}</div>;"
+     bun: ok "var v = jsxDEV_7x81h0kn(\"div\", {\n  children: f(x)\n}, undefined, false, undefined, this);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = <div>{f(x)}</div>;\n"

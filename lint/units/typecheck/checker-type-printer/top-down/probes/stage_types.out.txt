@@ -1,0 +1,9 @@
+stage_types.ts(18,139): error TS2583: Cannot find name 'Map'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2015' or later.
+stage_types.ts(23,1): error TS2322: Type '[any, unknown, string, number, bigint, boolean, symbol, void, undefined, null, never, object]' is not assignable to type 'never'.
+stage_types.ts(23,11): error TS2322: Type '["a", 1, -1, 1n, -1n, true, false, "a\nb\"c'", "é😀", 1e+21, 0.1, 0]' is not assignable to type 'never'.
+stage_types.ts(23,21): error TS2322: Type '[Foo, Gen<number, string>, Gen<number, boolean>, C, typeof C, E, E.A, typeof E, CE, Alias<string>, T2, K]' is not assignable to type 'never'.
+stage_types.ts(23,31): error TS2322: Type '[string[], readonly string[], (string | number)[], (() => void)[], (new () => Foo)[], "a"[], (unique symbol)[], string[], [a: string, b?: number | undefined, ...c: boolean[]], readonly [string, (number | undefined)?], [string, ...number[], boolean]]' is not assignable to type 'never'.
+stage_types.ts(23,41): error TS2322: Type '[string | number, boolean | undefined, E | null, 1 | true, Foo & C, (string | number) & Foo, "a", (x: number) => string, string, unique symbol]' is not assignable to type 'never'.
+stage_types.ts(23,51): error TS2322: Type '[NA.Foo, NB.Foo]' is not assignable to type 'never'.
+stage_types.ts(23,61): error TS2322: Type '{ k: `a${string}b${number}`; u: Uppercase<string>; p: Partial<Foo>; r: Record<string, number>; pr: Promise<string>; m: Map<string, number>; }' is not assignable to type 'never'.
+stage_types.ts(23,71): error TS2322: Type '<T, K extends keyof T>() => [Cond<T>, Mapped<T>, Mapped2<T>, T[K], keyof T, T extends infer V extends string ? V : never]' is not assignable to type 'never'.

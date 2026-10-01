@@ -1,0 +1,128 @@
+A1c	importType	"import defer \"x\";"	[-]	bun: Expected "from" but found ""x"" @13	tsc: parses
+A1c	importType	"import.defer(\"x\");"	[-]	bun: Expected "meta" but found "defer" @7	tsc: parses
+A1c	exportType	"export type { default };"	[-]	bun: Expected identifier but found "default" @14	tsc: parses
+A1c	exportType	"export type { \"a\" };"	[-]	bun: Expected identifier but found "" @14	tsc: parses
+A1c	exportType	"export type { if };"	[-]	bun: Expected identifier but found "if" @14	tsc: parses
+A1c	importEquals	"namespace N { import(\"x\"); }"	[-]	bun: Expected identifier but found "(" @20	tsc: parses
+A1c	importEquals	"namespace N { import.meta; }"	[-]	bun: Expected identifier but found "." @20	tsc: parses
+A1c	exportDecl	"export abstract declare class C {}"	[-]	bun: Expected ";" but found "declare" @16	tsc: parses
+A1c	attributes	"import A from \"x\"\nwith { type: \"json\" };"	[-]	bun: Expected "(" but found "{" @23	tsc: parses
+A1c	importSpec	"arguments"	[import,importWithDefault,importType,importTwo]	bun: Cannot use "arguments" as an identifier here @0	tsc: parses
+A1c	importSpec	"eval"	[import,importWithDefault,importType,importTwo]	bun: Cannot use "eval" as an identifier here @0	tsc: parses
+A1c	exportSpec	"type default"	[exportLocal]	bun: Expected identifier but found "default" @5	tsc: parses
+A1c	exportSpec	"type default as A"	[exportLocal]	bun: Expected identifier but found "default" @5	tsc: parses
+A1c	exportSpec	"default as A"	[exportLocal,exportType]	bun: Expected identifier but found "default" @0	tsc: parses
+A1c	exportSpec	"default"	[exportLocal]	bun: Expected identifier but found "default" @0	tsc: parses
+A1c	exportSpec	"type \"a\""	[exportLocal]	bun: Expected identifier but found "" @5	tsc: parses
+A1c	exportSpec	"\"a\""	[exportLocal]	bun: Expected identifier but found "" @0	tsc: parses
+A1c	exportSpec	"type if"	[exportLocal]	bun: Expected identifier but found "if" @5	tsc: parses
+A1c	exportSpec	"type if as A"	[exportLocal]	bun: Expected identifier but found "if" @5	tsc: parses
+A1c	exportSpec	"if as A"	[exportLocal,exportType]	bun: Expected identifier but found "if" @0	tsc: parses
+A1c	exportSpec	"if"	[exportLocal]	bun: Expected identifier but found "if" @0	tsc: parses
+A1c	exportSpec	"type this"	[exportLocal]	bun: Expected identifier but found "this" @5	tsc: parses
+A1c	exportSpec	"type null"	[exportLocal]	bun: Expected identifier but found "null" @5	tsc: parses
+A1c	exportSpec	"type true"	[exportLocal]	bun: Expected identifier but found "true" @5	tsc: parses
+A1c	exportSpec	"default as default"	[exportLocal,exportType]	bun: Expected identifier but found "default" @0	tsc: parses
+A1c	exportSpec	"type default as default"	[exportLocal]	bun: Expected identifier but found "default" @5	tsc: parses
+A1s	importType	"import type A from \"x\" with { a: 1 };"	[-]	bun: Expected string but found "1" @33	tsc: parses also TS2857 TS2858
+A1s	importType	"import type A from \"x\"\nwith { a: \"b\" };"	[-]	bun: Expected "(" but found "{" @28	tsc: parses also TS2857
+A1s	attributes	"import A from \"x\" with { a: 1 };"	[-]	bun: Expected string but found "1" @28	tsc: parses also TS2858
+A1s	attributes	"import A from \"x\" with { a: `b` };"	[-]	bun: Expected string but found "`b`" @28	tsc: parses also TS2858
+A1s	attributes	"import A from \"x\" with { a: \"b\" + \"c\" };"	[-]	bun: Expected "}" but found "+" @32	tsc: parses also TS2858
+A1s	attributes	"import A from \"x\" with { a: b };"	[-]	bun: Expected string but found "b" @28	tsc: parses also TS2858
+A1s	exportSpec	"type default"	[exportType]	bun: Expected identifier but found "default" @5	tsc: parses also TS2207
+A1s	exportSpec	"type default as A"	[exportType]	bun: Expected identifier but found "default" @5	tsc: parses also TS2207
+A1s	exportSpec	"type \"a\""	[exportType]	bun: Expected identifier but found "" @5	tsc: parses also TS2207
+A1s	exportSpec	"type if"	[exportType]	bun: Expected identifier but found "if" @5	tsc: parses also TS2207
+A1s	exportSpec	"type if as A"	[exportType]	bun: Expected identifier but found "if" @5	tsc: parses also TS2207
+A1s	exportSpec	"type this"	[exportType]	bun: Expected identifier but found "this" @5	tsc: parses also TS2207
+A1s	exportSpec	"type null"	[exportType]	bun: Expected identifier but found "null" @5	tsc: parses also TS2207
+A1s	exportSpec	"type true"	[exportType]	bun: Expected identifier but found "true" @5	tsc: parses also TS2207
+A1s	exportSpec	"type default as default"	[exportType]	bun: Expected identifier but found "default" @5	tsc: parses also TS2207
+A2	importType	"import type A, { B } from \"x\";"	[-]	bun: Expected "from" but found "," @13	tsc: TS1363 @7+13 A type-only import can specify a default import or named bindings, but not both.
+A2	importType	"import type A, * as B from \"x\";"	[-]	bun: Expected "from" but found "," @13	tsc: TS1363 @7+14 A type-only import can specify a default import or named bindings, but not both.
+A2	importType	"import type A = require(x);"	[-]	bun: Expected string but found "x" @24	tsc: TS1141 @24+1 String literal expected.
+A2	importType	"import type A from x;"	[-]	bun: Expected string but found "x" @19	tsc: TS1141 @19+1 String literal expected.
+A2	importType	"import defer A from \"x\";"	[-]	bun: Expected "from" but found "A" @13	tsc: TS18058 @7+7 Default imports are not allowed in a deferred import.
+A2	importType	"import defer { A } from \"x\";"	[-]	bun: Expected "from" but found "{" @13	tsc: TS18059 @7+11 Named imports are not allowed in a deferred import.
+A2	importType	"import.source(\"x\");"	[-]	bun: Expected "meta" but found "source" @7	tsc: TS18061 @7+6 'source' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?
+A2	importType	"import.x;"	[-]	bun: Expected "meta" but found "x" @7	tsc: TS17012 @7+1 'x' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?
+A2	importType	"import(\"x\", y, z);"	[-]	bun: Expected ")" but found "z" @15	tsc: TS1450 @0+17 Dynamic imports can only accept a module specifier and an optional set of attributes as arguments
+A2	importType	"import();"	[-]	bun: Unexpected ) @7	tsc: TS1450 @0+8 Dynamic imports can only accept a module specifier and an optional set of attributes as arguments
+A2	importType	"import(...x);"	[-]	bun: Unexpected ... @7	tsc: TS1325 @7+4 Argument of dynamic import cannot be spread element.
+A2	importType	"import<T>(\"x\");"	[-]	bun: Unexpected < @6	tsc: TS1326 @0+14 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.
+A2	importType	"function f() { import type A from \"x\"; }"	[-]	bun: Unexpected type @22	tsc: TS1232 @15+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importType	"if (a) import type A from \"x\";"	[-]	bun: Unexpected type @14	tsc: TS1232 @7+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importType	"{ import type A from \"x\"; }"	[-]	bun: Unexpected type @9	tsc: TS1232 @2+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importType	"export import type from \"x\";"	[-]	bun: Expected "=" but found "from" @19	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importType	"declare import A from \"x\";"	[-]	bun: Unexpected "import" @8	tsc: TS1079 @0+7 A 'declare' modifier cannot be used with an import declaration.
+A2	importType	"declare import \"x\";"	[-]	bun: Unexpected "import" @8	tsc: TS1079 @0+7 A 'declare' modifier cannot be used with an import declaration.
+A2	importType	"async import type A from \"x\";"	[-]	bun: Expected ";" but found "import" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	importType	"abstract import type A from \"x\";"	[-]	bun: Expected ";" but found "import" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	importType	"@d import type A from \"x\";"	[-]	bun: Expected "class" but found "import" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	exportType	"export type { A } from x;"	[-]	bun: Expected string but found "x" @23	tsc: TS1141 @23+1 String literal expected.
+A2	exportType	"function f() { export type { A }; }"	[-]	bun: Unexpected export @15	tsc: TS1233 @15+6 An export declaration can only be used at the top level of a namespace or module.
+A2	exportType	"if (a) export type { A };"	[-]	bun: Unexpected export @7	tsc: TS1233 @7+6 An export declaration can only be used at the top level of a namespace or module.
+A2	exportType	"{ export type { A }; }"	[-]	bun: Unexpected export @2	tsc: TS1233 @2+6 An export declaration can only be used at the top level of a namespace or module.
+A2	exportType	"namespace N { export { A }; }"	[-]	bun: Unexpected { @21	tsc: TS1194 @14+13 Export declarations are not permitted in a namespace.
+A2	exportType	"namespace N { export { type A }; }"	[-]	bun: Unexpected { @21	tsc: TS1194 @14+18 Export declarations are not permitted in a namespace.
+A2	exportType	"namespace N { export * from \"x\"; }"	[-]	bun: Unexpected * @21	tsc: TS1194 @28+3 Export declarations are not permitted in a namespace.
+A2	exportType	"@d export type { A };"	[-]	bun: Expected "class" but found "type" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	importEquals	"import A = require(`x`);"	[-]	bun: Expected string but found "`x`" @19	tsc: TS1141 @19+3 String literal expected.
+A2	importEquals	"import A = require(x);"	[-]	bun: Expected string but found "x" @19	tsc: TS1141 @19+1 String literal expected.
+A2	importEquals	"export import A from \"x\";"	[-]	bun: Expected "=" but found "from" @16	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importEquals	"export import { A } from \"x\";"	[-]	bun: Expected identifier but found "{" @14	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importEquals	"export import * as A from \"x\";"	[-]	bun: Expected identifier but found "*" @14	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importEquals	"export import \"x\";"	[-]	bun: Expected identifier but found ""x"" @14	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importEquals	"export import defer * as A from \"x\";"	[-]	bun: Expected "=" but found "*" @20	tsc: TS1191 @0+6 An import declaration cannot have modifiers.
+A2	importEquals	"namespace N { import A from \"x\"; }"	[-]	bun: Expected "=" but found "from" @23	tsc: TS1147 @28+3 Import declarations in a namespace cannot reference a module.
+A2	importEquals	"namespace N { import { A } from \"x\"; }"	[-]	bun: Expected identifier but found "{" @21	tsc: TS1147 @32+3 Import declarations in a namespace cannot reference a module.
+A2	importEquals	"namespace N { import * as A from \"x\"; }"	[-]	bun: Expected identifier but found "*" @21	tsc: TS1147 @33+3 Import declarations in a namespace cannot reference a module.
+A2	importEquals	"namespace N { import \"x\"; }"	[-]	bun: Expected identifier but found ""x"" @21	tsc: TS1147 @21+3 Import declarations in a namespace cannot reference a module.
+A2	importEquals	"function f() { import A = B.C; }"	[-]	bun: Unexpected A @22	tsc: TS1232 @15+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importEquals	"if (a) import A = B.C;"	[-]	bun: Unexpected A @14	tsc: TS1232 @7+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importEquals	"{ import A = B.C; }"	[-]	bun: Unexpected A @9	tsc: TS1232 @2+6 An import declaration can only be used at the top level of a namespace or module.
+A2	importEquals	"label: import A = B.C;"	[-]	bun: Unexpected A @14	tsc: TS1344 @0+5 'A label is not allowed here.
+A2	exportAssign	"function f() { export = x; }"	[-]	bun: Unexpected export @15	tsc: TS1231 @15+6 An export assignment must be at the top level of a file or module declaration.
+A2	exportAssign	"if (a) export = x;"	[-]	bun: Unexpected export @7	tsc: TS1231 @7+6 An export assignment must be at the top level of a file or module declaration.
+A2	exportAssign	"{ export = x; }"	[-]	bun: Unexpected export @2	tsc: TS1231 @2+6 An export assignment must be at the top level of a file or module declaration.
+A2	exportAssign	"declare export = x;"	[-]	bun: Unexpected "export" @8	tsc: TS1120 @0+7 An export assignment cannot have modifiers.
+A2	exportAssign	"@d export = x;"	[-]	bun: Expected "class" but found "=" @10	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	exportAssign	"function f() { export as namespace X; }"	[-]	bun: Unexpected export @15	tsc: TS1316 @15+22 Global module exports may only appear at top level.
+A2	exportAssign	"if (a) export as namespace X;"	[-]	bun: Unexpected export @7	tsc: TS1316 @7+22 Global module exports may only appear at top level.
+A2	exportAssign	"{ export as namespace X; }"	[-]	bun: Unexpected export @2	tsc: TS1316 @2+22 Global module exports may only appear at top level.
+A2	exportAssign	"@d export as namespace X;"	[-]	bun: Expected "class" but found "as" @10	tsc: TS1184 @0+25 Modifiers cannot appear here.
+A2	exportDecl	"export declare using x: T;"	[-]	bun: Cannot use "export" with a "using" declaration @15	tsc: TS1491 @0+6 'export' modifier cannot appear on a 'using' declaration.
+A2	exportDecl	"export default let;"	[-]	bun: "let" is a reserved word and cannot be used in strict mode @15	tsc: TS1214 @15+3 Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode.
+A2	exportDecl	"export default static;"	[-]	bun: "static" is a reserved word and cannot be used in strict mode @15	tsc: TS1214 @15+6 Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode.
+A2	exportDecl	"export const x: T;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	exportDecl	"export using x: T = y;"	[-]	bun: Unexpected using @7	tsc: TS1491 @0+6 'export' modifier cannot appear on a 'using' declaration.
+A2	exportDecl	"export await using x: T = y;"	[-]	bun: Unexpected await @7	tsc: TS1495 @0+6 'export' modifier cannot appear on an 'await using' declaration.
+A2	exportDecl	"export public class C {}"	[-]	bun: Unexpected public @7	tsc: TS1044 @7+6 'public' modifier cannot appear on a module or namespace element.
+A2	exportDecl	"export private class C {}"	[-]	bun: Unexpected private @7	tsc: TS1044 @7+7 'private' modifier cannot appear on a module or namespace element.
+A2	exportDecl	"export readonly class C {}"	[-]	bun: Unexpected readonly @7	tsc: TS1024 @7+8 'readonly' modifier can only appear on a property declaration or index signature.
+A2	exportDecl	"export static class C {}"	[-]	bun: Unexpected static @7	tsc: TS1044 @7+6 'static' modifier cannot appear on a module or namespace element.
+A2	exportDecl	"export accessor class C {}"	[-]	bun: Unexpected accessor @7	tsc: TS1275 @7+8 'accessor' modifier can only appear on a property declaration.
+A2	exportDecl	"export async class C {}"	[-]	bun: Expected "function" but found "class" @13	tsc: TS1042 @7+5 'async' modifier cannot be used here.
+A2	exportDecl	"export abstract interface I {}"	[-]	bun: Expected ";" but found "interface" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract function f() {}"	[-]	bun: Expected ";" but found "function" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract enum E {}"	[-]	bun: Expected ";" but found "enum" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract namespace N {}"	[-]	bun: Expected ";" but found "namespace" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract type T = 1;"	[-]	bun: Expected ";" but found "type" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract const x = 1;"	[-]	bun: Expected ";" but found "const" @16	tsc: TS1242 @7+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	exportDecl	"export abstract abstract class C {}"	[-]	bun: Expected ";" but found "abstract" @16	tsc: TS1030 @16+8 'abstract' modifier already seen.
+A2	exportDecl	"export let;"	[-]	bun: "let" is a reserved word and cannot be used in strict mode @7	tsc: TS1123 @10+0 Variable declaration list cannot be empty.
+A2	exportDecl	"export export const x = 1;"	[-]	bun: Unexpected export @7	tsc: TS1030 @7+6 'export' modifier already seen.
+A2	exportSpec	"type \"a\" as A"	[exportLocal,exportType]	bun: Expected identifier but found "" @5	tsc: TS1003 @5+3 Identifier expected.
+A2	exportSpec	"\"a\" as A"	[exportLocal,exportType]	bun: Expected identifier but found "" @0	tsc: TS1003 @0+3 Identifier expected.
+A2	exportSpec	"type \"a\" as \"b\""	[exportLocal,exportType]	bun: Expected identifier but found "" @5	tsc: TS1003 @5+3 Identifier expected.
+A2	exportSpec	"\"a\" as \"b\""	[exportLocal,exportType]	bun: Expected identifier but found "" @0	tsc: TS1003 @0+3 Identifier expected.
+B	exportAssign	"export = x, y;"	[-]	bun: accepts	tsc: TS1005 @10+1 ';' expected.
+B	exportAssign	"export declare = x;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportAssign	"export abstract = x;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export declare;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export declare = 1;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export abstract;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export abstract = 1;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export namespace;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.
+B	exportDecl	"export module;"	[-]	bun: accepts	tsc: TS1128 @0+6 Declaration or statement expected.

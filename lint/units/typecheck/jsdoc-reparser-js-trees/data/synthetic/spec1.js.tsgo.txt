@@ -1,0 +1,41 @@
+file /spec1.js scriptKind=1 variant=1 dts=false textLen=96
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=39 identifiers=12 text=14 reparsedClones=2
+root KindSourceFile [0,96) f=0x10000
+  .Statements: list [0,95) n=4
+    - KindJSTypeAliasDeclaration [13,37) f=0x210008
+      .Type: KindNumberKeyword [23,29) f=0x410008
+      .name: KindIdentifier [31,37) f=0x410008 Text="Leaked"
+    - KindVariableStatement [0,44) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [0,43) f=0x10000
+        .Declarations: list [3,43) n=1
+          - KindVariableDeclaration [3,43) f=0x10000
+            .Initializer: KindParenthesizedExpression [7,43) f=0x10000
+              .Expression: KindIdentifier [9,42) f=0x10000 Text="x"
+            .name: KindIdentifier [3,5) f=0x10000 Text="a"
+    - KindJSTypeAliasDeclaration [58,83) f=0x210008
+      .Type: KindNumberKeyword [68,74) f=0x410008
+      .name: KindIdentifier [76,83) f=0x410008 Text="InArrow"
+      .jsdoc: KindJSDoc [54,86) f=0x410000 parent=KindParameter[54,88)
+        .Comment: list [54,58) n=0
+        .Tags: list [58,83) n=1
+          - KindJSDocTypedefTag [58,83) f=0x410000
+            .TagName: KindIdentifier [59,66) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [67,75) f=0x410000
+              .Type: KindNumberKeyword [68,74) f=0x410000
+            .name: KindIdentifier [76,83) f=0x410000 Text="InArrow"
+    - KindVariableStatement [44,95) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [44,94) f=0x10000
+        .Declarations: list [48,94) n=1
+          - KindVariableDeclaration [48,94) f=0x10000
+            .Initializer: KindArrowFunction [52,94) f=0x10000
+              .Body: KindIdentifier [92,94) f=0x10000 Text="y"
+              .EqualsGreaterThanToken: KindEqualsGreaterThanToken [89,92) f=0x10000
+              .Parameters: list [54,88) n=1
+                - KindParameter [54,88) f=0x210000
+                  .name: KindIdentifier [54,88) f=0x10000 Text="y"
+                  .jsdoc: KindJSDoc [54,86) f=0x410000 SHARED
+            .name: KindIdentifier [48,50) f=0x10000 Text="b"
+  .EndOfFileToken: KindEndOfFile [95,96) f=0x10000

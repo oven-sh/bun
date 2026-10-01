@@ -1,0 +1,15 @@
+site	function	layer	upstream	port: fault kind, then what the function does
+checker.go:9612, 9627	pickLongestCandidateSignature	E-CALL	candidates[bestIndex] with bestIndex -1 when the list is empty (resolveCall returns at 8956 before that)	Panic("index out of range [-1]"); return unknownSignature
+checker.go:8435	checkCallExpression	E-CALL	node.Arguments()[0] of a require call	isCommonJSRequire guarantees one argument; List::at gives the nil node otherwise, no fault
+checker.go:8638	resolveCallExpression	E-CALL	text[SkipTriviaEx(...) - 1]	a checked read: no line break when the index is out of the text
+checker.go:30212-30213	getEffectiveCallArguments	E-CALL	elementInfos[i] of the target tuple, indexed along the element types	List::at gives the zero info (flags 0, no label)
+checker.go:29626, 29648	getSpreadArgumentType	E-CTX	args[argCount-1] and args[i] when argCount is above len(args)	List::at gives the nil node: kind 0 is no spread argument, and checkExpressionWorker gives errorType for kind 0
+checker.go:9729 and every signature.parameters[i] of these layers	several	E-CALL, E-CTX	index out of range when the flags and the parameters of a signature disagree	List::at gives the nil symbol, whose type is errorType
+flow.go:131, 2527, 2613	getTypeAtFlowNode, isReachableFlowNodeWorker, isPostSuperFlowNodeWorker	F-NARROW, F-REACH	flow.Flags of a nil flow node (an antecedent that was never set)	the nil flow node reads flags 0: the default arm of each switch; one fault
+flow.go:2524	isReachableFlowNodeWorker	F-REACH	flow == c.lastFlowNode is also true for two nil values in the port	test the nil flow node first (the row above) so that nil never matches the empty cache
+flow.go:1060, 2571, 182, 2579, 2643	AsFlowSwitchClauseData, AsFlowReduceLabelData	F-NARROW, F-REACH	a cast of flow.Node that the binder guarantees	BadCast; the nil record: ClauseStart == ClauseEnd == 0 and no switch statement, no target
+flow.go:2469, 2491	getFlowTypeInConstructor, getFlowTypeInStaticBlocks	F-NARROW	symbol.Name[strings.Index(symbol.Name, "@")+1:]	no fault: without '@' the index is -1 + 1 = 0 and the whole name is taken
+checker.go:30275	getEffectiveDecoratorArguments	X-DECORATOR (called by E-CALL)	panic("Decorator signature not found")	Panic; return the nil list; resolveDecorator tests the signature at 8860 before resolveCall, so only a foreign caller gets here
+checker.go:30305, 30597	getLegacyDecoratorCallSignature, newClassMemberDecoratorContextTypeForNode	X-DECORATOR	debug.Assert(index >= 0); panic("Unhandled case in createClassMemberDecoratorContextTypeForNode")	Assert, go on; Panic with detail = kind, return errorType
+the rows of ../../bottom-up/data/fallbacks.tsv	-	-	-	agreed as written there (among them: 8085 takes the path of evaluated == nil; 9318 stops the loop; 12284 returns the last node of the parent chain; flow.go:2641 returns true)
+the last row of ../../bottom-up/data/fallbacks.tsv (stack limit)	-	-	-	nine entries need a value other than the default of the return type: tested_entries.tsv, rows marked EXCEPTION; and one more entry exists: the closures of getInstantiationExpressionType

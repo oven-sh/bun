@@ -1,0 +1,24 @@
+10 "a ? (b) : c => (d) : e => f // Not legal JS; \"Unexpected token ':'\" at last colon"
+     bun js: rejects: Expected ";" but found ":"
+     bun ts: accepts
+11 "a ? b ? c : (d) : e => f // Legal JS"
+     bun js: accepts
+     bun ts: accepts
+12 "a ? (b) => (c): d => e // Legal JS"
+     bun js: accepts
+     bun ts: rejects: Expected ":" but found end of file
+13 "a ? () => a() : (): any => null; // Not legal JS; \"Unexpected token ')'\" at last paren"
+     bun js: rejects: Expected "=>" but found ":"
+     bun ts: accepts
+14 "a() ? (b: number, c?: string): void => d() : e; // Not legal JS; \"Unexpected token ':'\" at first colon"
+     bun js: rejects: Expected ")" but found ":"
+     bun ts: accepts
+15 "false ? (param): string => param : null // Not legal JS; \"Unexpected token ':'\" at last colon"
+     bun js: rejects: Expected ";" but found ":"
+     bun ts: accepts
+16 "true ? false ? (param): string => param : null : null // Not legal JS; \"Unexpected token ':'\" at last colon"
+     bun js: rejects: Expected ";" but found ":"
+     bun ts: accepts
+17 "a ? b : (c) : d => e // Not legal JS; \"Unexpected token ':'\" at last colon"
+     bun js: rejects: Expected ";" but found ":"
+     bun ts: accepts

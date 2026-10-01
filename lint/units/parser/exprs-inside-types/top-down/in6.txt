@@ -1,0 +1,31 @@
+# L syntax errors inside the expression sites (codes a lint parse must report)
+let g: (a = ) => void
+let g: (a = 1 +) => void
+type A = { [a b]: 1 }
+type A = { [a +]: 1 }
+type A = { [(]: 1 }
+type A = { get x() { return } y: 1 }
+type A = { get x() { let } }
+type A = { get x() { 
+type A = { a: number = }
+type A = { m(@ a): void }
+type A = { m(@dec): void }
+type A<T extends -> = T
+type A = import("x", { with: { type: } })
+type A = import("x", { with: { type: 1, , } })
+interface I extends foo( {}
+let g: ({a = }: X) => void
+let g: ({[k: v}: X) => void
+type A = { [a, b]: 1 }
+type A = { [a = 1, b]: 1 }
+type A = { [...a]: 1 }
+# M state that must not leak out of an erased expression
+import { x } from "y"; let g: (a = x) => void; export {}
+import { x } from "y"; type A = { [x + 1]: 1 }; export {}
+import { x } from "y"; type A = { [x]: 1 }; export {}
+let g: (a = () => { let z = 1; return z }) => void; function h() { let z = 2; return z }
+let g: (a = class K { static s = 1 }) => void; class K {}
+type A = { get x() { var v = 1; function f() {} return v } }; var v = 2; function f() {}
+/*! keep */ let g: (a = function () { return 1 }) => void; foo()
+let g: (a = await b) => void; export {}
+let g: (a = import.meta.url) => void; module.exports = 1

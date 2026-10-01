@@ -1,0 +1,93 @@
+[
+ [
+  "err   pos KindIdentifier",
+  [
+   "c01026u11_type-clause-bad-import.ts:9",
+   "c01026u13_type-clause-no-as.ts:8",
+   "c01026u14_type-clause-type-as-as.ts:9",
+   "c01026u1_values-bad-import.ts:9",
+   "c01026u3_values-no-as.ts:8",
+   "c01026u4_values-type-as.ts:9",
+   "c01026u6_type-decls-bad-import.ts:9",
+   "c01026u8_type-decls-no-as.ts:8",
+   "c01026u9_type-decls-type-as.ts:9"
+  ]
+ ],
+ [
+  "err   flags KindIdentifier xor=0x8000",
+  [
+   "c03430u0_jsxAndTypeAssertion.tsx:137",
+   "c05420u0_objectSpreadNegativeParse.ts:14",
+   "c07093u0_constructorWithIncompleteTypeAnnotation.ts:1127",
+   "c11689u0_superWithTypeArgument2.ts:29"
+  ]
+ ],
+ [
+  "err   flags KindCallExpression xor=0x8000",
+  [
+   "c02459u0_errorSuperCalls.ts:125",
+   "c11688u0_superWithTypeArgument.ts:17",
+   "c11690u0_superWithTypeArgument3.ts:39"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Comment:> ts<.Comment:>",
+  [
+   "c03273u1_b.ts:17",
+   "c03277u0_a.ts:10",
+   "c03281u1_b.ts:15"
+  ]
+ ],
+ [
+  "CLEAN label go<.TagName: KindIdentifier> ts<.NameExpression: KindJSDocNameReference>",
+  [
+   "c03361u0_seeTag2.ts:15",
+   "c07290u0_controlFlowPropertyDeclarations.ts:147",
+   "c09752u0_jsxComplexSignatureHasApplicabilityError.tsx:1719"
+  ]
+ ],
+ [
+  "err   pos KindJsxAttributes",
+  [
+   "c03431u0_a.tsx:64",
+   "c09741u0_jsxAttributeMissingInitializer.tsx:12"
+  ]
+ ],
+ [
+  "err   flags KindNumericLiteral xor=0x8000",
+  [
+   "c04425u0_parserSuperExpression2.ts:11",
+   "c05240u0_objectTypeWithStringNamedNumericProperty.ts:172"
+  ]
+ ],
+ [
+  "err   shape go<.Statements:> ts<.Statements:>",
+  [
+   "c03255u0_jsdocDisallowedInTypescript.ts:2"
+  ]
+ ],
+ [
+  "err   fields KindJsxText",
+  [
+   "c03442u0_jsxParserRecovery.tsx:113"
+  ]
+ ],
+ [
+  "CLEAN flags KindIdentifier xor=0x8000",
+  [
+   "c06883u0_commentsCommentParsing.ts:244"
+  ]
+ ],
+ [
+  "err   kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>",
+  [
+   "c08510u0_expressionWithJSDocTypeArguments.ts:43"
+  ]
+ ],
+ [
+  "CLEAN pos KindJSDocTypeLiteral",
+  [
+   "c09719u0_jsdocInTypeScript.ts:47"
+  ]
+ ]
+]

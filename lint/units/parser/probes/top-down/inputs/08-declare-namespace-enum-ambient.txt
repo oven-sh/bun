@@ -1,0 +1,1965 @@
+# declare, namespace, enum, ambient modules.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== file declare.001
+declare var a;
+=== file declare.002
+declare var a: A;
+=== file declare.003
+declare var a: A, b: B;
+=== file declare.004
+declare var a = 1;
+=== file declare.005
+declare var a: A = 1;
+=== file declare.006
+declare let a: A;
+=== file declare.007
+declare let a;
+=== file declare.008
+declare let a = 1;
+=== file declare.009
+declare const a: A;
+=== file declare.010
+declare const a = 1;
+=== file declare.011
+declare const a = "s";
+=== file declare.012
+declare const a = -1;
+=== file declare.013
+declare const a = 1n;
+=== file declare.014
+declare const a = true;
+=== file declare.015
+declare const a = {};
+=== file declare.016
+declare const a = E.A;
+=== file declare.017
+declare const a = b;
+=== file declare.018
+declare const a: A = 1;
+=== file declare.019
+declare const a;
+=== file declare.020
+declare const a, b;
+=== file declare.021
+declare const a: A, b = 1;
+=== file declare.022
+declare const { a }: A;
+=== file declare.023
+declare const { a } = b;
+=== file declare.024
+declare let [a]: A;
+=== file declare.025
+declare var { a, b: [c] }: A;
+=== file declare.026
+declare const a: unique symbol;
+=== file declare.027
+declare let a!: A;
+=== file declare.028
+declare using a: A;
+=== file declare.029
+declare using a = b;
+=== file declare.030
+declare await using a: A;
+=== file declare.031
+declare var
+=== file declare.032
+declare var;
+=== file declare.033
+declare const
+=== file declare.034
+declare let
+=== file declare.035
+declare let
+a: A;
+=== file declare.036
+declare var a: A
+declare var b: B
+=== file declare.037
+declare var a: A declare var b: B
+=== file declare.038
+declare var a: A; declare var b: B
+=== file declare.039
+declare function f(): void;
+=== file declare.040
+declare function f(): void
+=== file declare.041
+declare function f();
+=== file declare.042
+declare function f()
+=== file declare.043
+declare function f() {}
+=== file declare.044
+declare function f(): void {}
+=== file declare.045
+declare function f<T>(a: T): T;
+=== file declare.046
+declare function f(a?: A, ...b: B[]): C;
+=== file declare.047
+declare function f(a = 1): void;
+=== file declare.048
+declare function f(a: A = 1): void;
+=== file declare.049
+declare function f({ a }: A, [b]: B): void;
+=== file declare.050
+declare function f({ a = 1 }): void;
+=== file declare.051
+declare function f(...a, b): void;
+=== file declare.052
+declare function f(...a,): void;
+=== file declare.053
+declare function f(...a: A[],): void;
+=== file declare.054
+declare function f(a,): void;
+=== file declare.055
+declare function f(this: A): void;
+=== file declare.056
+declare function f(a: any): a is A;
+=== file declare.057
+declare function f(a: any): asserts a;
+=== file declare.058
+declare function f(a: any): asserts a is A;
+=== file declare.059
+declare function f(public a: A): void;
+=== file declare.060
+declare function f(@d a: A): void;
+=== file declare.061
+declare function* f(): A;
+=== file declare.062
+declare async function f(): A;
+=== file declare.063
+declare async function* f(): A;
+=== file declare.064
+declare function f(): void; declare function f(a: A): void;
+=== file declare.065
+declare function f(): void
+declare function f(a: A): void
+=== file declare.066
+declare function f(): void function g() {}
+=== file declare.067
+declare function f(): void declare function g(): void
+=== file declare.068
+declare function (): void;
+=== file declare.069
+declare function default(): void;
+=== file declare.070
+declare function f: A;
+=== file declare.071
+declare function f<T>;
+=== file declare.072
+declare function
+=== file declare.073
+declare function f(): A<B>
+declare function g(): C
+=== file declare.074
+declare function f(): typeof a
+declare function g(): C
+=== file declare.075
+declare function f(): A
+(b)
+=== file declare.076
+declare class C {}
+=== file declare.077
+declare class C<T> extends D<T> implements I<T> {}
+=== file declare.078
+declare class C { a: A; m(): void; constructor(a: A); static s: A; get g(): A; set g(v: A); [k: string]: A; private p; protected q: A; readonly r: A; #x: A; declare y: A }
+=== file declare.079
+declare class C { m() {} }
+=== file declare.080
+declare class C { a = 1 }
+=== file declare.081
+declare class C { static readonly a = 1 }
+=== file declare.082
+declare class C { readonly a = 1 }
+=== file declare.083
+declare class C { static {} }
+=== file declare.084
+declare class C { constructor(public a: A); }
+=== file declare.085
+declare class C { constructor(public a: A) {} }
+=== file declare.086
+declare class C { get a() { return 1 } }
+=== file declare.087
+declare class C { accessor a: A }
+=== file declare.088
+declare class C { m(): void; m(a: A): void }
+=== file declare.089
+declare class C { @d m(): void }
+=== file declare.090
+declare class C { abstract m(): void }
+=== file declare.091
+declare class C { m?(): void; a?: A; b!: B }
+=== file declare.092
+declare abstract class C { abstract m(): void; abstract a: A; protected abstract readonly b: B }
+=== file declare.093
+declare class
+=== file declare.094
+declare class {}
+=== file declare.095
+declare class C
+=== file declare.096
+declare class C extends D
+=== file declare.097
+declare @d class C {}
+=== file declare.098
+@d declare class C {}
+=== file declare.099
+declare class C {} declare class D {}
+=== file declare.100
+declare enum E { A, B = 1, C = 'c', D = A | B }
+=== file declare.101
+declare enum E {}
+=== file declare.102
+declare const enum E { A }
+=== file declare.103
+declare const enum E { A = 'a'.length }
+=== file declare.104
+declare enum E { A = f() }
+=== file declare.105
+const declare enum E {}
+=== file declare.106
+declare enum
+=== file declare.107
+declare const enum
+=== file declare.108
+declare enum E
+=== file declare.109
+declare const
+enum E {}
+=== file declare.110
+declare namespace N {}
+=== file declare.111
+declare namespace N { const a: A; function f(): void; class C {} interface I {} type X = A; enum E {} namespace M {} export const b: B; var c; let d }
+=== file declare.112
+declare namespace N.M.O {}
+=== file declare.113
+declare namespace N { export {} }
+=== file declare.114
+declare namespace N { export { a } }
+=== file declare.115
+declare namespace N { export default a }
+=== file declare.116
+declare namespace N { export = a }
+=== file declare.117
+declare namespace N { import a = M.b }
+=== file declare.118
+declare namespace N { export import a = M.b }
+=== file declare.119
+declare namespace N { import a from 'm' }
+=== file declare.120
+declare namespace N { export * from 'm' }
+=== file declare.121
+declare namespace N { declare const a: A }
+=== file declare.122
+declare namespace N { function f() {} }
+=== file declare.123
+declare namespace N { const a = 1; let b = 2; var c = 3 }
+=== file declare.124
+declare namespace N { a; }
+=== file declare.125
+declare namespace N { if (a) {} }
+=== file declare.126
+declare namespace N { f(); }
+=== file declare.127
+declare namespace N { class C { m() {} } }
+=== file declare.128
+declare namespace N { ; }
+=== file declare.129
+declare namespace N { {} }
+=== file declare.130
+declare namespace N { label: a }
+=== file declare.131
+declare namespace N { return }
+=== file declare.132
+declare namespace N { export function f(): void }
+=== file declare.133
+declare namespace N { export function f(): void
+export function g(): void }
+=== file declare.134
+declare namespace N { function f(): void function g(): void }
+=== file declare.135
+declare namespace N
+=== file declare.136
+declare namespace N;
+=== file declare.137
+declare namespace
+=== file declare.138
+declare namespace {}
+=== file declare.139
+declare namespace N { namespace M { const a: A } }
+=== file declare.140
+declare module M {}
+=== file declare.141
+declare module M.N {}
+=== file declare.142
+declare module M { const a: A }
+=== file declare.143
+declare module "m" {}
+=== file declare.144
+declare module "m";
+=== file declare.145
+declare module "m"
+=== file declare.146
+declare module 'm' {}
+=== file declare.147
+declare module `m` {}
+=== file declare.148
+declare module "*.css" { const a: string; export default a }
+=== file declare.149
+declare module "m" { export = A }
+=== file declare.150
+declare module "m" { import a from "n"; export { a } }
+=== file declare.151
+declare module "m" { export * from "n" }
+=== file declare.152
+declare module "m" { export default function f(): void }
+=== file declare.153
+declare module "m" { export default class {} }
+=== file declare.154
+declare module "m" { export default interface I {} }
+=== file declare.155
+declare module "m" { const a: A; export default a }
+=== file declare.156
+declare module "m" { export const a: A; export function f(): void; export class C {} export type X = A; export interface I {} export enum E {} export namespace N {} }
+=== file declare.157
+declare module "m" { function f() {} }
+=== file declare.158
+declare module "m" { const a = f() }
+=== file declare.159
+declare module "m" { a; }
+=== file declare.160
+declare module "m" { declare const a: A }
+=== file declare.161
+declare module "m" { declare module "n" {} }
+=== file declare.162
+declare module "m" { namespace N {} module O {} }
+=== file declare.163
+declare module "m" { export as namespace A }
+=== file declare.164
+declare module "m" { import type { A } from "n"; export type { A } }
+=== file declare.165
+declare module "m" { import a = require("n"); export import b = a.c }
+=== file declare.166
+declare module "m" {} declare module "n" {}
+=== file declare.167
+declare module "m" {}
+declare module "n" {}
+=== file declare.168
+declare module "m"
+declare module "n"
+=== file declare.169
+declare module "m"; declare module "n";
+=== file declare.170
+declare module "m" "n"
+=== file declare.171
+declare module "m".n {}
+=== file declare.172
+declare module "m" extends A {}
+=== file declare.173
+declare module "m"<T> {}
+=== file declare.174
+declare module "m" {
+=== file declare.175
+declare module 1 {}
+=== file declare.176
+declare module {}
+=== file declare.177
+declare module
+=== file declare.178
+declare module;
+=== file declare.179
+declare module
+"m" {}
+=== file declare.180
+declare module "m"
+{}
+=== file declare.181
+declare global {}
+=== file declare.182
+declare global { interface Window { a: A } }
+=== file declare.183
+declare global { var a: A }
+=== file declare.184
+declare global { const a: A; function f(): void }
+=== file declare.185
+declare global;
+=== file declare.186
+declare global
+=== file declare.187
+declare global { a; }
+=== file declare.188
+declare global {} declare global {}
+=== file declare.189
+declare global.a {}
+=== file declare.190
+declare global a {}
+=== file declare.191
+declare
+global {}
+=== file declare.192
+declare global
+{}
+=== file declare.193
+declare namespace global {}
+=== file declare.194
+declare module global {}
+=== file declare.195
+export declare global {}
+=== file declare.196
+declare global { export {} }
+=== file declare.197
+declare module "m" { global { var a: A } }
+=== file declare.198
+declare namespace N { global {} }
+=== file declare.199
+global {}
+=== file declare.200
+global { var a: A }
+=== file declare.201
+global;
+=== file declare.202
+global = 1;
+=== file declare.203
+global();
+=== file declare.204
+global.a;
+=== file declare.205
+global
+{}
+=== file declare.206
+var global = 1;
+=== file declare.207
+global + 1;
+=== file declare.208
+module "m" {}
+=== file declare.209
+module "m";
+=== file declare.210
+module "m"
+=== file declare.211
+namespace "m" {}
+=== file declare.212
+export module "m" {}
+=== file declare.213
+module
+"m" {}
+=== file declare.214
+module "m"
+{}
+=== file declare.215
+declare type X = A;
+=== file declare.216
+declare interface I {}
+=== file declare.217
+declare import a = b;
+=== file declare.218
+declare import a from 'm';
+=== file declare.219
+declare import 'm';
+=== file declare.220
+declare export default a;
+=== file declare.221
+declare export { a };
+=== file declare.222
+declare export * from 'm';
+=== file declare.223
+declare;
+=== file declare.224
+declare = 1;
+=== file declare.225
+declare();
+=== file declare.226
+declare.a;
+=== file declare.227
+declare
+const a: A = 1;
+=== file declare.228
+declare
+const a: A;
+=== file declare.229
+declare
+function f(): void
+=== file declare.230
+declare
+function f() {}
+=== file declare.231
+declare
+class C {}
+=== file declare.232
+declare
+var a;
+=== file declare.233
+declare
+enum E {}
+=== file declare.234
+declare
+namespace N {}
+=== file declare.235
+declare
+module M {}
+=== file declare.236
+declare
+interface I {}
+=== file declare.237
+declare
+type X = A;
+=== file declare.238
+declare
+let a;
+=== file declare.239
+declare declare const a: A;
+=== file declare.240
+declare async function f(): void;
+=== file declare.241
+declare a;
+=== file declare.242
+declare a: A;
+=== file declare.243
+declare {}
+=== file declare.244
+declare if (a) {}
+=== file declare.245
+declare return;
+=== file declare.246
+declare 1;
+=== file declare.247
+declare +a;
+=== file declare.248
+declare ? a : b;
+=== file declare.249
+declare => 1;
+=== file declare.250
+(declare) => 1;
+=== file declare.251
+a = declare;
+=== file declare.252
+var declare = 1;
+=== file declare.253
+let declare: declare;
+=== file declare.254
+declare `t`;
+=== file declare.255
+declare
+(a);
+=== file declare.256
+declare in a;
+=== file declare.257
+declare instanceof A;
+=== file declare.258
+declare++;
+=== file declare.259
+declare as A;
+=== file declare.260
+declare!;
+=== file declare.261
+declare<A>(b);
+=== file declare.262
+declare<A>;
+=== file declare.263
+namespace N { declare const a: A }
+=== file declare.264
+namespace N { export declare const a: A }
+=== file declare.265
+namespace N { declare function f(): void }
+=== file declare.266
+function f() { declare const a: A }
+=== file declare.267
+function f() { declare function g(): void }
+=== file declare.268
+{ declare const a: A }
+=== file declare.269
+{ declare class C {} }
+=== file declare.270
+if (a) declare const b: B;
+=== file declare.271
+label: declare const a: A;
+=== file declare.272
+for (;;) declare const a: A;
+=== file declare.273
+class C { declare a: A }
+=== file declare.274
+declare label: a
+=== file declare.275
+declare public class C {}
+=== file declare.276
+declare static const a: A;
+=== file declare.277
+declare readonly a: A;
+=== file declare.278
+declare abstract;
+=== file declare.279
+declare abstract
+class C {}
+=== file declare.280
+declare const a: A<B>
+declare const c: C
+=== file declare.281
+declare const a: typeof b
+declare const c: C
+=== file declare.282
+declare var a: A.B
+<C>d;
+=== file namespace.001
+namespace N {}
+=== file namespace.002
+namespace N { export const a = 1 }
+=== file namespace.003
+namespace N.M {}
+=== file namespace.004
+namespace N.M.O { export const a = 1 }
+=== file namespace.005
+namespace N { namespace M {} }
+=== file namespace.006
+namespace N { export namespace M {} }
+=== file namespace.007
+module M {}
+=== file namespace.008
+module M.N {}
+=== file namespace.009
+module M { export const a = 1 }
+=== file namespace.010
+namespace
+N {}
+=== file namespace.011
+module
+M {}
+=== file namespace.012
+namespace N
+{}
+=== file namespace.013
+module M
+{}
+=== file namespace.014
+namespace N.
+M {}
+=== file namespace.015
+namespace N
+.M {}
+=== file namespace.016
+namespace N {
+=== file namespace.017
+namespace {}
+=== file namespace.018
+namespace N.{}
+=== file namespace.019
+namespace N. M {}
+=== file namespace.020
+namespace N..M {}
+=== file namespace.021
+namespace .N {}
+=== file namespace.022
+namespace "N" {}
+=== file namespace.023
+namespace 1 {}
+=== file namespace.024
+namespace N<T> {}
+=== file namespace.025
+namespace N extends M {}
+=== file namespace.026
+namespace N()
+=== file namespace.027
+namespace N = M;
+=== file namespace.028
+namespace N;
+=== file namespace.029
+namespace N
+=== file namespace.030
+namespace N {};
+=== file namespace.031
+namespace N {} namespace N {}
+=== file namespace.032
+namespace N { } namespace M { }
+=== file namespace.033
+namespace N.default {}
+=== file namespace.034
+namespace N.class.if {}
+=== file namespace.035
+namespace N.type.as {}
+=== file namespace.036
+namespace N.#a {}
+=== file namespace.037
+namespace N."a" {}
+=== file namespace.038
+namespace N.1 {}
+=== file namespace.039
+namespace N { export default a }
+=== file namespace.040
+namespace N { import a = M.b }
+=== file namespace.041
+namespace N { export import a = M.b }
+=== file namespace.042
+namespace N { import a = require('m') }
+=== file namespace.043
+namespace N { import a from 'm' }
+=== file namespace.044
+namespace N { import 'm' }
+=== file namespace.045
+namespace N { export * from 'm' }
+=== file namespace.046
+namespace N { export { a } }
+=== file namespace.047
+namespace N { export { a } from 'm' }
+=== file namespace.048
+namespace N { export {} }
+=== file namespace.049
+namespace N { export = a }
+=== file namespace.050
+namespace N { export as namespace A }
+=== file namespace.051
+namespace N { return }
+=== file namespace.052
+namespace N { await a }
+=== file namespace.053
+namespace N { yield }
+=== file namespace.054
+namespace N { break }
+=== file namespace.055
+namespace N { this.a }
+=== file namespace.056
+namespace N { super.a }
+=== file namespace.057
+namespace N { new.target }
+=== file namespace.058
+namespace N { arguments }
+=== file namespace.059
+namespace N { type X = A; interface I {} }
+=== file namespace.060
+namespace N { export type X = A }
+=== file namespace.061
+namespace N { export interface I {} }
+=== file namespace.062
+namespace N { export declare const a: A }
+=== file namespace.063
+namespace N { declare module 'm' {} }
+=== file namespace.064
+namespace N { export let a: A, b: B = 1 }
+=== file namespace.065
+namespace N { export var a: A }
+=== file namespace.066
+namespace N { export const [a, b] = c }
+=== file namespace.067
+namespace N { export const { a, b: { c } } = d }
+=== file namespace.068
+namespace N { export const { a = 1, ...b } = c }
+=== file namespace.069
+namespace N { export function f<T>(a: T): T { return a } }
+=== file namespace.070
+namespace N { export class C<T> {} }
+=== file namespace.071
+namespace N { export enum E {} }
+=== file namespace.072
+namespace N { export const enum E {} }
+=== file namespace.073
+namespace N { export abstract class C {} }
+=== file namespace.074
+namespace N { export async function f() {} }
+=== file namespace.075
+namespace N { export function* f() {} }
+=== file namespace.076
+namespace N { export using a = b }
+=== file namespace.077
+namespace N { export a }
+=== file namespace.078
+namespace N { export; }
+=== file namespace.079
+namespace N { export export const a = 1 }
+=== file namespace.080
+namespace N { export public a }
+=== file namespace.081
+namespace N { export let a }
+namespace N { a = 1 }
+=== file namespace.082
+namespace N { export const a = 1; export const b = a }
+=== file namespace.083
+namespace N { let a: A = 1; a as B; <B>a; a! }
+=== file namespace.084
+namespace N { @d class C {} }
+=== file namespace.085
+namespace N { export @d class C {} }
+=== file namespace.086
+namespace N { @d export class C {} }
+=== file namespace.087
+namespace N { export default class {} }
+=== file namespace.088
+async namespace N {}
+=== file namespace.089
+abstract namespace N {}
+=== file namespace.090
+static namespace N {}
+=== file namespace.091
+public namespace N {}
+=== file namespace.092
+const namespace N {}
+=== file namespace.093
+readonly namespace N {}
+=== file namespace.094
+export namespace N {}
+=== file namespace.095
+export default namespace N {}
+=== file namespace.096
+export declare namespace N {}
+=== file namespace.097
+declare export namespace N {}
+=== file namespace.098
+@d namespace N {}
+=== file namespace.099
+function f() { namespace N {} }
+=== file namespace.100
+{ namespace N {} }
+=== file namespace.101
+if (a) namespace N {}
+=== file namespace.102
+label: namespace N {}
+=== file namespace.103
+for (;;) namespace N {}
+=== file namespace.104
+class C { namespace N {} }
+=== file namespace.105
+function f() { module M {} }
+=== file namespace.106
+{ module M {} }
+=== file namespace.107
+namespace N { { namespace M {} } }
+=== file namespace.108
+namespace N { function f() { namespace M {} } }
+=== file namespace.109
+namespace;
+=== file namespace.110
+namespace = 1;
+=== file namespace.111
+namespace();
+=== file namespace.112
+namespace.a;
+=== file namespace.113
+var namespace = 1;
+=== file namespace.114
+namespace
+(a);
+=== file namespace.115
+namespace + 1;
+=== file namespace.116
+namespace => 1;
+=== file namespace.117
+(namespace) => 1;
+=== file namespace.118
+a = namespace;
+=== file namespace.119
+namespace
+{}
+=== file namespace.120
+namespace `t`;
+=== file namespace.121
+namespace++;
+=== file namespace.122
+namespace in a;
+=== file namespace.123
+namespace as A;
+=== file namespace.124
+namespace!;
+=== file namespace.125
+namespace<A>(b);
+=== file namespace.126
+namespace ? a : b;
+=== file namespace.127
+let namespace: namespace;
+=== file namespace.128
+module;
+=== file namespace.129
+module = 1;
+=== file namespace.130
+module();
+=== file namespace.131
+module.exports = 1;
+=== file namespace.132
+module
+.exports = 1;
+=== file namespace.133
+var module = 1;
+=== file namespace.134
+module
+(a);
+=== file namespace.135
+module + 1;
+=== file namespace.136
+module => 1;
+=== file namespace.137
+(module) => 1;
+=== file namespace.138
+a = module;
+=== file namespace.139
+module
+{}
+=== file namespace.140
+module `t`;
+=== file namespace.141
+module++;
+=== file namespace.142
+module in a;
+=== file namespace.143
+module as A;
+=== file namespace.144
+module!;
+=== file namespace.145
+module<A>(b);
+=== file namespace.146
+module ? a : b;
+=== file namespace.147
+let module: module;
+=== file namespace.148
+module
+M
+{}
+=== file namespace.149
+namespace
+N
+{}
+=== file namespace.150
+typeof module;
+=== file namespace.151
+module.id as A;
+=== file namespace.152
+namespace type {}
+=== file namespace.153
+namespace as {}
+=== file namespace.154
+namespace of {}
+=== file namespace.155
+namespace is {}
+=== file namespace.156
+namespace async {}
+=== file namespace.157
+namespace await {}
+=== file namespace.158
+namespace yield {}
+=== file namespace.159
+namespace let {}
+=== file namespace.160
+namespace static {}
+=== file namespace.161
+namespace public {}
+=== file namespace.162
+namespace implements {}
+=== file namespace.163
+namespace package {}
+=== file namespace.164
+namespace interface {}
+=== file namespace.165
+namespace abstract {}
+=== file namespace.166
+namespace declare {}
+=== file namespace.167
+namespace readonly {}
+=== file namespace.168
+namespace global {}
+=== file namespace.169
+namespace namespace {}
+=== file namespace.170
+namespace module {}
+=== file namespace.171
+namespace require {}
+=== file namespace.172
+namespace constructor {}
+=== file namespace.173
+namespace from {}
+=== file namespace.174
+namespace get {}
+=== file namespace.175
+namespace set {}
+=== file namespace.176
+namespace using {}
+=== file namespace.177
+namespace any {}
+=== file namespace.178
+namespace string {}
+=== file namespace.179
+namespace number {}
+=== file namespace.180
+namespace object {}
+=== file namespace.181
+namespace undefined {}
+=== file namespace.182
+namespace unknown {}
+=== file namespace.183
+namespace never {}
+=== file namespace.184
+namespace arguments {}
+=== file namespace.185
+namespace eval {}
+=== file namespace.186
+namespace if {}
+=== file namespace.187
+namespace class {}
+=== file namespace.188
+namespace function {}
+=== file namespace.189
+namespace default {}
+=== file namespace.190
+namespace in {}
+=== file namespace.191
+namespace new {}
+=== file namespace.192
+namespace typeof {}
+=== file namespace.193
+namespace enum {}
+=== file namespace.194
+namespace extends {}
+=== file namespace.195
+namespace import {}
+=== file namespace.196
+namespace export {}
+=== file namespace.197
+namespace var {}
+=== file namespace.198
+namespace const {}
+=== file namespace.199
+namespace void {}
+=== file namespace.200
+namespace null {}
+=== file namespace.201
+namespace this {}
+=== file namespace.202
+namespace true {}
+=== file namespace.203
+module type {}
+=== file namespace.204
+module as {}
+=== file namespace.205
+module of {}
+=== file namespace.206
+module is {}
+=== file namespace.207
+module async {}
+=== file namespace.208
+module await {}
+=== file namespace.209
+module yield {}
+=== file namespace.210
+module let {}
+=== file namespace.211
+module static {}
+=== file namespace.212
+module public {}
+=== file namespace.213
+module implements {}
+=== file namespace.214
+module package {}
+=== file namespace.215
+module interface {}
+=== file namespace.216
+module abstract {}
+=== file namespace.217
+module declare {}
+=== file namespace.218
+module readonly {}
+=== file namespace.219
+module global {}
+=== file namespace.220
+module namespace {}
+=== file namespace.221
+module module {}
+=== file namespace.222
+module require {}
+=== file namespace.223
+module constructor {}
+=== file namespace.224
+module from {}
+=== file namespace.225
+module get {}
+=== file namespace.226
+module set {}
+=== file namespace.227
+module using {}
+=== file namespace.228
+module any {}
+=== file namespace.229
+module string {}
+=== file namespace.230
+module number {}
+=== file namespace.231
+module object {}
+=== file namespace.232
+module undefined {}
+=== file namespace.233
+module unknown {}
+=== file namespace.234
+module never {}
+=== file namespace.235
+module arguments {}
+=== file namespace.236
+module eval {}
+=== file namespace.237
+module if {}
+=== file namespace.238
+module class {}
+=== file namespace.239
+module function {}
+=== file namespace.240
+module default {}
+=== file namespace.241
+module in {}
+=== file namespace.242
+module new {}
+=== file namespace.243
+module typeof {}
+=== file namespace.244
+module enum {}
+=== file namespace.245
+module extends {}
+=== file namespace.246
+module import {}
+=== file namespace.247
+module export {}
+=== file namespace.248
+module var {}
+=== file namespace.249
+module const {}
+=== file namespace.250
+module void {}
+=== file namespace.251
+module null {}
+=== file namespace.252
+module this {}
+=== file namespace.253
+module true {}
+=== file namespace.254
+namespace N.type {}
+=== file namespace.255
+namespace N.as {}
+=== file namespace.256
+namespace N.of {}
+=== file namespace.257
+namespace N.is {}
+=== file namespace.258
+namespace N.async {}
+=== file namespace.259
+namespace N.await {}
+=== file namespace.260
+namespace N.yield {}
+=== file namespace.261
+namespace N.let {}
+=== file namespace.262
+namespace N.static {}
+=== file namespace.263
+namespace N.public {}
+=== file namespace.264
+namespace N.implements {}
+=== file namespace.265
+namespace N.package {}
+=== file namespace.266
+namespace N.interface {}
+=== file namespace.267
+namespace N.abstract {}
+=== file namespace.268
+namespace N.declare {}
+=== file namespace.269
+namespace N.readonly {}
+=== file namespace.270
+namespace N.global {}
+=== file namespace.271
+namespace N.namespace {}
+=== file namespace.272
+namespace N.module {}
+=== file namespace.273
+namespace N.require {}
+=== file namespace.274
+namespace N.constructor {}
+=== file namespace.275
+namespace N.from {}
+=== file namespace.276
+namespace N.get {}
+=== file namespace.277
+namespace N.set {}
+=== file namespace.278
+namespace N.using {}
+=== file namespace.279
+namespace N.any {}
+=== file namespace.280
+namespace N.string {}
+=== file namespace.281
+namespace N.number {}
+=== file namespace.282
+namespace N.object {}
+=== file namespace.283
+namespace N.undefined {}
+=== file namespace.284
+namespace N.unknown {}
+=== file namespace.285
+namespace N.never {}
+=== file namespace.286
+namespace N.arguments {}
+=== file namespace.287
+namespace N.eval {}
+=== file namespace.288
+namespace N.if {}
+=== file namespace.289
+namespace N.class {}
+=== file namespace.290
+namespace N.function {}
+=== file namespace.291
+namespace N.in {}
+=== file namespace.292
+namespace N.new {}
+=== file namespace.293
+namespace N.typeof {}
+=== file namespace.294
+namespace N.enum {}
+=== file namespace.295
+namespace N.extends {}
+=== file namespace.296
+namespace N.import {}
+=== file namespace.297
+namespace N.export {}
+=== file namespace.298
+namespace N.var {}
+=== file namespace.299
+namespace N.const {}
+=== file namespace.300
+namespace N.void {}
+=== file namespace.301
+namespace N.null {}
+=== file namespace.302
+namespace N.this {}
+=== file namespace.303
+namespace N.true {}
+=== file namespace.304
+declare namespace type {}
+=== file namespace.305
+declare namespace as {}
+=== file namespace.306
+declare namespace of {}
+=== file namespace.307
+declare namespace is {}
+=== file namespace.308
+declare namespace async {}
+=== file namespace.309
+declare namespace await {}
+=== file namespace.310
+declare namespace yield {}
+=== file namespace.311
+declare namespace let {}
+=== file namespace.312
+declare namespace static {}
+=== file namespace.313
+declare namespace public {}
+=== file namespace.314
+declare namespace implements {}
+=== file namespace.315
+declare namespace package {}
+=== file namespace.316
+declare namespace interface {}
+=== file namespace.317
+declare namespace abstract {}
+=== file namespace.318
+declare namespace declare {}
+=== file namespace.319
+declare namespace readonly {}
+=== file namespace.320
+declare namespace global {}
+=== file namespace.321
+declare namespace namespace {}
+=== file namespace.322
+declare namespace module {}
+=== file namespace.323
+declare namespace require {}
+=== file namespace.324
+declare namespace constructor {}
+=== file namespace.325
+declare namespace from {}
+=== file namespace.326
+declare namespace get {}
+=== file namespace.327
+declare namespace set {}
+=== file namespace.328
+declare namespace using {}
+=== file namespace.329
+declare namespace any {}
+=== file namespace.330
+declare namespace string {}
+=== file namespace.331
+declare namespace number {}
+=== file namespace.332
+declare namespace object {}
+=== file namespace.333
+declare namespace undefined {}
+=== file namespace.334
+declare namespace unknown {}
+=== file namespace.335
+declare namespace never {}
+=== file namespace.336
+declare namespace arguments {}
+=== file namespace.337
+declare namespace eval {}
+=== file namespace.338
+declare namespace if {}
+=== file namespace.339
+declare namespace class {}
+=== file namespace.340
+declare namespace function {}
+=== file namespace.341
+declare namespace default {}
+=== file namespace.342
+declare namespace in {}
+=== file namespace.343
+declare namespace new {}
+=== file namespace.344
+declare namespace typeof {}
+=== file namespace.345
+declare namespace enum {}
+=== file namespace.346
+declare namespace extends {}
+=== file namespace.347
+declare namespace import {}
+=== file namespace.348
+declare namespace export {}
+=== file namespace.349
+declare namespace var {}
+=== file namespace.350
+declare namespace const {}
+=== file namespace.351
+declare namespace void {}
+=== file namespace.352
+declare namespace null {}
+=== file namespace.353
+declare namespace this {}
+=== file namespace.354
+declare namespace true {}
+=== file enum.001
+enum E {}
+=== file enum.002
+enum E { A }
+=== file enum.003
+enum E { A, }
+=== file enum.004
+enum E { A, B }
+=== file enum.005
+enum E { A = 1 }
+=== file enum.006
+enum E { A = 1, B, C = 'c' }
+=== file enum.007
+enum E { "A" }
+=== file enum.008
+enum E { "A" = 1 }
+=== file enum.009
+enum E { 'a-b' = 1 }
+=== file enum.010
+enum E { 1 }
+=== file enum.011
+enum E { 1 = 2 }
+=== file enum.012
+enum E { 1.5 }
+=== file enum.013
+enum E { 0x10 }
+=== file enum.014
+enum E { 1n }
+=== file enum.015
+enum E { -1 }
+=== file enum.016
+enum E { [a] }
+=== file enum.017
+enum E { [a] = 1 }
+=== file enum.018
+enum E { ["a"] }
+=== file enum.019
+enum E { ["a"] = 1 }
+=== file enum.020
+enum E { [`a`] = 1 }
+=== file enum.021
+enum E { [`a${b}`] = 1 }
+=== file enum.022
+enum E { [1] = 1 }
+=== file enum.023
+enum E { ["a" + "b"] = 1 }
+=== file enum.024
+enum E { [a.b] = 1 }
+=== file enum.025
+enum E { #a }
+=== file enum.026
+enum E { #a = 1 }
+=== file enum.027
+enum E { `a` }
+=== file enum.028
+enum E { `a` = 1 }
+=== file enum.029
+enum E { A B }
+=== file enum.030
+enum E { A
+B }
+=== file enum.031
+enum E { A = 1
+B }
+=== file enum.032
+enum E { A; B }
+=== file enum.033
+enum E { A; }
+=== file enum.034
+enum E { A = }
+=== file enum.035
+enum E { = 1 }
+=== file enum.036
+enum E { , }
+=== file enum.037
+enum E { ,A }
+=== file enum.038
+enum E { A,, B }
+=== file enum.039
+enum E { A,, }
+=== file enum.040
+enum E { A = B.C }
+=== file enum.041
+enum E { A = 1 << 2, B = A | 1, C = -A, D = ~A, E = 'a'.length, F = f() }
+=== file enum.042
+enum E { A = (1) }
+=== file enum.043
+enum E { A = 1 as any }
+=== file enum.044
+enum E { A = <any>1 }
+=== file enum.045
+enum E { A = 1! }
+=== file enum.046
+enum E { A = 1 satisfies number }
+=== file enum.047
+enum E { A = a ? 1 : 2 }
+=== file enum.048
+enum E { A = a, b }
+=== file enum.049
+enum E { A = (a, b) }
+=== file enum.050
+enum E { A = 1 in a }
+=== file enum.051
+enum E { A = () => 1 }
+=== file enum.052
+enum E { A = (a: A): B => a }
+=== file enum.053
+enum E { A = <T>(a: T) => a }
+=== file enum.054
+enum E { A = function () {} }
+=== file enum.055
+enum E { A = class {} }
+=== file enum.056
+enum E { A = yield }
+=== file enum.057
+enum E { A = await 1 }
+=== file enum.058
+enum E { A = await }
+=== file enum.059
+enum E { A = this }
+=== file enum.060
+enum E { A = new.target }
+=== file enum.061
+enum E { A = import.meta }
+=== file enum.062
+enum E { A = a = 1 }
+=== file enum.063
+enum E { A = [1] }
+=== file enum.064
+enum E { A = {} }
+=== file enum.065
+enum E { A = `a` }
+=== file enum.066
+enum E { A = `a${1}` }
+=== file enum.067
+enum E { A = 'a' + 'b' }
+=== file enum.068
+enum E { A = E.B, B = 1 }
+=== file enum.069
+enum E { A = B, B = 1 }
+=== file enum.070
+enum E { A = A }
+=== file enum.071
+enum E { A, A }
+=== file enum.072
+enum E { A = f<T>(a) }
+=== file enum.073
+enum E { A = a<b>(c) }
+=== file enum.074
+enum E { A = a < b > c }
+=== file enum.075
+enum E { A = a<B> }
+=== file enum.076
+enum E { A = typeof a }
+=== file enum.077
+enum E { A = void 0 }
+=== file enum.078
+enum E { if, class, default, function, new, typeof, void, null, true, this, in, instanceof }
+=== file enum.079
+enum E { type, as, of, async, await, yield, let, static }
+=== file enum.080
+enum E { if = 1 }
+=== file enum.081
+enum E { in = 1 }
+=== file enum.082
+enum E { constructor }
+=== file enum.083
+enum E { prototype }
+=== file enum.084
+enum E { __proto__ }
+=== file enum.085
+enum E { Infinity, NaN, undefined }
+=== file enum.086
+enum E { A: 1 }
+=== file enum.087
+enum E { A() {} }
+=== file enum.088
+enum E { get A }
+=== file enum.089
+enum E { get A() { return 1 } }
+=== file enum.090
+enum E { static A }
+=== file enum.091
+enum E { readonly A }
+=== file enum.092
+enum E { public A }
+=== file enum.093
+enum E { declare A }
+=== file enum.094
+enum E { ...a }
+=== file enum.095
+enum E { A? }
+=== file enum.096
+enum E { A! }
+=== file enum.097
+enum E { A?: 1 }
+=== file enum.098
+enum E { @d A }
+=== file enum.099
+enum E { A = 1, }
+=== file enum.100
+enum E {
+  A,
+  B,
+}
+=== file enum.101
+enum E {
+  A = 1
+  ,B
+}
+=== file enum.102
+enum E { /* c */ A /* d */ = /* e */ 1 /* f */ , }
+=== file enum.103
+enum {}
+=== file enum.104
+enum E
+=== file enum.105
+enum E;
+=== file enum.106
+enum
+=== file enum.107
+enum;
+=== file enum.108
+enum E {
+=== file enum.109
+enum E { A
+=== file enum.110
+enum E { A =
+=== file enum.111
+enum E }
+=== file enum.112
+enum
+E {}
+=== file enum.113
+enum E
+{}
+=== file enum.114
+enum E<T> {}
+=== file enum.115
+enum E extends F {}
+=== file enum.116
+enum E implements F {}
+=== file enum.117
+enum E.F {}
+=== file enum.118
+enum "E" {}
+=== file enum.119
+enum 1 {}
+=== file enum.120
+enum E() {}
+=== file enum.121
+enum E = {}
+=== file enum.122
+enum E {};
+=== file enum.123
+const enum E {}
+=== file enum.124
+const enum E { A = 1, B = A }
+=== file enum.125
+const enum E { A = 'a', B = `b` }
+=== file enum.126
+const
+enum E {}
+=== file enum.127
+const enum
+E {}
+=== file enum.128
+const enum
+=== file enum.129
+const enum;
+=== file enum.130
+const enum {}
+=== file enum.131
+const const enum E {}
+=== file enum.132
+enum const E {}
+=== file enum.133
+let enum E {}
+=== file enum.134
+var enum E {}
+=== file enum.135
+export enum E {}
+=== file enum.136
+export const enum E {}
+=== file enum.137
+export default enum E {}
+=== file enum.138
+export default const enum E {}
+=== file enum.139
+declare enum E {}
+=== file enum.140
+declare const enum E {}
+=== file enum.141
+export declare enum E {}
+=== file enum.142
+export declare const enum E {}
+=== file enum.143
+async enum E {}
+=== file enum.144
+abstract enum E {}
+=== file enum.145
+static enum E {}
+=== file enum.146
+public enum E {}
+=== file enum.147
+readonly enum E {}
+=== file enum.148
+@d enum E {}
+=== file enum.149
+enum E {} enum E {}
+=== file enum.150
+enum E { A } enum E { B = A }
+=== file enum.151
+enum E { A }
+enum E { B = 1 }
+=== file enum.152
+enum E { A } namespace E { export const b = 1 }
+=== file enum.153
+function f() { enum E { A } }
+=== file enum.154
+{ enum E {} }
+=== file enum.155
+if (a) enum E {}
+=== file enum.156
+label: enum E {}
+=== file enum.157
+for (;;) enum E {}
+=== file enum.158
+class C { enum E {} }
+=== file enum.159
+namespace N { enum E {} export enum F {} export const enum G {} }
+=== file enum.160
+var v = enum E {};
+=== file enum.161
+(enum E {})
+=== file enum.162
+a = enum;
+=== file enum.163
+enum.a;
+=== file enum.164
+var enum = 1;
+=== file enum.165
+enum type {}
+=== file enum.166
+enum as {}
+=== file enum.167
+enum of {}
+=== file enum.168
+enum is {}
+=== file enum.169
+enum async {}
+=== file enum.170
+enum await {}
+=== file enum.171
+enum yield {}
+=== file enum.172
+enum let {}
+=== file enum.173
+enum static {}
+=== file enum.174
+enum public {}
+=== file enum.175
+enum implements {}
+=== file enum.176
+enum package {}
+=== file enum.177
+enum interface {}
+=== file enum.178
+enum abstract {}
+=== file enum.179
+enum declare {}
+=== file enum.180
+enum readonly {}
+=== file enum.181
+enum global {}
+=== file enum.182
+enum namespace {}
+=== file enum.183
+enum module {}
+=== file enum.184
+enum require {}
+=== file enum.185
+enum constructor {}
+=== file enum.186
+enum from {}
+=== file enum.187
+enum get {}
+=== file enum.188
+enum set {}
+=== file enum.189
+enum using {}
+=== file enum.190
+enum any {}
+=== file enum.191
+enum string {}
+=== file enum.192
+enum number {}
+=== file enum.193
+enum object {}
+=== file enum.194
+enum undefined {}
+=== file enum.195
+enum unknown {}
+=== file enum.196
+enum never {}
+=== file enum.197
+enum arguments {}
+=== file enum.198
+enum eval {}
+=== file enum.199
+enum if {}
+=== file enum.200
+enum class {}
+=== file enum.201
+enum function {}
+=== file enum.202
+enum default {}
+=== file enum.203
+enum in {}
+=== file enum.204
+enum new {}
+=== file enum.205
+enum typeof {}
+=== file enum.206
+enum enum {}
+=== file enum.207
+enum extends {}
+=== file enum.208
+enum import {}
+=== file enum.209
+enum export {}
+=== file enum.210
+enum var {}
+=== file enum.211
+enum const {}
+=== file enum.212
+enum void {}
+=== file enum.213
+enum null {}
+=== file enum.214
+enum this {}
+=== file enum.215
+enum true {}
+=== file enum.216
+enum E { type }
+=== file enum.217
+enum E { as }
+=== file enum.218
+enum E { of }
+=== file enum.219
+enum E { is }
+=== file enum.220
+enum E { async }
+=== file enum.221
+enum E { await }
+=== file enum.222
+enum E { yield }
+=== file enum.223
+enum E { let }
+=== file enum.224
+enum E { static }
+=== file enum.225
+enum E { public }
+=== file enum.226
+enum E { implements }
+=== file enum.227
+enum E { package }
+=== file enum.228
+enum E { interface }
+=== file enum.229
+enum E { abstract }
+=== file enum.230
+enum E { declare }
+=== file enum.231
+enum E { readonly }
+=== file enum.232
+enum E { global }
+=== file enum.233
+enum E { namespace }
+=== file enum.234
+enum E { module }
+=== file enum.235
+enum E { require }
+=== file enum.236
+enum E { from }
+=== file enum.237
+enum E { get }
+=== file enum.238
+enum E { set }
+=== file enum.239
+enum E { using }
+=== file enum.240
+enum E { any }
+=== file enum.241
+enum E { string }
+=== file enum.242
+enum E { number }
+=== file enum.243
+enum E { object }
+=== file enum.244
+enum E { undefined }
+=== file enum.245
+enum E { unknown }
+=== file enum.246
+enum E { never }
+=== file enum.247
+enum E { arguments }
+=== file enum.248
+enum E { eval }
+=== file enum.249
+enum E { if }
+=== file enum.250
+enum E { class }
+=== file enum.251
+enum E { function }
+=== file enum.252
+enum E { default }
+=== file enum.253
+enum E { in }
+=== file enum.254
+enum E { new }
+=== file enum.255
+enum E { typeof }
+=== file enum.256
+enum E { enum }
+=== file enum.257
+enum E { extends }
+=== file enum.258
+enum E { import }
+=== file enum.259
+enum E { export }
+=== file enum.260
+enum E { var }
+=== file enum.261
+enum E { const }
+=== file enum.262
+enum E { void }
+=== file enum.263
+enum E { null }
+=== file enum.264
+enum E { this }
+=== file enum.265
+enum E { true }
+=== file enum.266
+enum E { type = 1 }
+=== file enum.267
+enum E { as = 1 }
+=== file enum.268
+enum E { of = 1 }
+=== file enum.269
+enum E { is = 1 }
+=== file enum.270
+enum E { async = 1 }
+=== file enum.271
+enum E { await = 1 }
+=== file enum.272
+enum E { yield = 1 }
+=== file enum.273
+enum E { let = 1 }
+=== file enum.274
+enum E { static = 1 }
+=== file enum.275
+enum E { public = 1 }
+=== file enum.276
+enum E { implements = 1 }
+=== file enum.277
+enum E { package = 1 }
+=== file enum.278
+enum E { interface = 1 }
+=== file enum.279
+enum E { abstract = 1 }
+=== file enum.280
+enum E { declare = 1 }
+=== file enum.281
+enum E { readonly = 1 }
+=== file enum.282
+enum E { global = 1 }
+=== file enum.283
+enum E { namespace = 1 }
+=== file enum.284
+enum E { module = 1 }
+=== file enum.285
+enum E { require = 1 }
+=== file enum.286
+enum E { constructor = 1 }
+=== file enum.287
+enum E { from = 1 }
+=== file enum.288
+enum E { get = 1 }
+=== file enum.289
+enum E { set = 1 }
+=== file enum.290
+enum E { using = 1 }
+=== file enum.291
+enum E { any = 1 }
+=== file enum.292
+enum E { string = 1 }
+=== file enum.293
+enum E { number = 1 }
+=== file enum.294
+enum E { object = 1 }
+=== file enum.295
+enum E { undefined = 1 }
+=== file enum.296
+enum E { unknown = 1 }
+=== file enum.297
+enum E { never = 1 }
+=== file enum.298
+enum E { arguments = 1 }
+=== file enum.299
+enum E { eval = 1 }
+=== file enum.300
+enum E { class = 1 }
+=== file enum.301
+enum E { function = 1 }
+=== file enum.302
+enum E { default = 1 }
+=== file enum.303
+enum E { new = 1 }
+=== file enum.304
+enum E { typeof = 1 }
+=== file enum.305
+enum E { enum = 1 }
+=== file enum.306
+enum E { extends = 1 }
+=== file enum.307
+enum E { import = 1 }
+=== file enum.308
+enum E { export = 1 }
+=== file enum.309
+enum E { var = 1 }
+=== file enum.310
+enum E { const = 1 }
+=== file enum.311
+enum E { void = 1 }
+=== file enum.312
+enum E { null = 1 }
+=== file enum.313
+enum E { this = 1 }
+=== file enum.314
+enum E { true = 1 }

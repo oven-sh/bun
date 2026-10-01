@@ -1,0 +1,17 @@
+with (o) { x === NaN }
+----
+with (o) { typeof x === undefined }
+----
+function f() { eval(""); return x === NaN }
+----
+function f() { eval(""); return typeof x === undefined }
+----
+function f(NaN) { eval(""); return x === NaN }
+----
+function f(undefined) { with (o) { typeof x === undefined } }
+----
+x === -00
+----
+function f(a = typeof x === undefined) { var undefined; }
+----
+function f(a = x === NaN) { var NaN; }

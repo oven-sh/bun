@@ -1,0 +1,10 @@
+let x: A extends keyof infer U extends B ? 1 : 2;
+let x: A extends readonly (infer U extends B)[] ? 1 : 2;
+type T = A extends infer U extends B | C ? 1 : 2
+type T = [infer U extends B | C ? 1 : 2]
+type T = [infer U extends B & C ? 1 : 2]
+type T = [infer U extends keyof B ? 1 : 2]
+type T = [infer U extends B[] ? 1 : 2]
+type T = [infer U extends () => B ? 1 : 2]
+type T = [infer U extends B | C]
+type T = `${infer U extends A | B ? 1 : 2}`

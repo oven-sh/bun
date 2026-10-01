@@ -1,0 +1,15 @@
+QUEUED 1790701119639 2026-09-29T16:58:39+00:00
+CMD bash -c 
+  if ! cmp -s build/release/bun-profile /workspace/notes/lint/units/parser/measure/base/bin/bun-profile; then cp -p build/release/bun-profile /workspace/notes/lint/units/parser/measure/base/bin/bun-profile; fi
+  if ! cmp -s build/release/bun /workspace/notes/lint/units/parser/measure/base/bin/bun; then cp -p build/release/bun /workspace/notes/lint/units/parser/measure/base/bin/bun; fi
+  sha256sum build/release/bun build/release/bun-profile /workspace/notes/lint/units/parser/measure/base/bin/bun /workspace/notes/lint/units/parser/measure/base/bin/bun-profile
+  ls -la build/release/bun build/release/bun-profile
+  /workspace/notes/lint/units/parser/measure/base/bin/bun --revision
+  git -C /workspace/wt/parser rev-parse HEAD
+  git -C /workspace/wt/parser status --short | head
+START 1790701319719 2026-09-29T17:01:59+00:00 load=509.47 368.53 356.45
+END 1790701325365 2026-09-29T17:02:06+00:00 load=514.88 371.99 357.64
+EXIT 0
+WAIT_MS 200080
+RUN_MS 5646
+DONE

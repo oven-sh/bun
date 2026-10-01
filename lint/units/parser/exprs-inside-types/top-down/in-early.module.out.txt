@@ -1,0 +1,212 @@
+
+# await / yield / in
+         | await x
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+BUN-ONLY | await
+          tsc initializer: clean (checker TS1262) | tsc computed name: clean (checker TS1262)
+          bun real default value: REJ: Unexpected )
+BUN-ONLY | yield
+          tsc initializer: clean (checker TS1214) | tsc computed name: clean (checker TS1214)
+          bun real default value: REJ: "yield" is a reserved word and cannot be used in strict mode
+BUN-ONLY | yield x
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1163)
+          bun real default value: REJ: Cannot use "yield" outside a generator function
+         | b in c
+          tsc initializer: clean | tsc computed name: clean
+          bun real default value: ok
+BUN-ONLY | () => await x
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1308)
+          bun real default value: REJ: "await" can only be used inside an "async" function
+         | async () => await x
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+         | function* () { yield 1 }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+BUN-ONLY | () => { for await (const q of r); }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1103)
+          bun real default value: REJ: Cannot use "await" outside an async function
+
+# strict mode (modules are strict)
+BUN-ONLY | (x, x) => 1
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: "x" cannot be bound multiple times in the same parameter list
+BUN-ONLY | function (q, q) {}
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: "q" cannot be bound multiple times in the same parameter list
+         | delete x
+          tsc initializer: clean (checker TS1102) | tsc computed name: clean (checker TS1170,TS1102)
+          bun real default value: ok
+TSC-ONLY | 010
+          tsc initializer: PARSE TS1121 | tsc computed name: PARSE TS1121
+          bun real default value: ok
+         | "\08"
+          tsc initializer: PARSE TS1487 | tsc computed name: PARSE TS1487
+          bun real default value: REJ: Invalid legacy octal literal
+         | function () { with (a) {} }
+          tsc initializer: clean (checker TS1101) | tsc computed name: clean (checker TS1170,TS1101)
+          bun real default value: ok
+         | function (package) {}
+          tsc initializer: clean (checker TS1214) | tsc computed name: clean (checker TS1170,TS1214)
+          bun real default value: ok
+BUN-ONLY | (arguments = 1)
+          tsc initializer: clean (checker TS1215) | tsc computed name: clean (checker TS1170,TS1215)
+          bun real default value: REJ: Invalid assignment target
+BUN-ONLY | (eval = 1)
+          tsc initializer: clean (checker TS1215) | tsc computed name: clean (checker TS1170,TS1215)
+          bun real default value: REJ: Invalid assignment target
+         | function () { var let = 1 }
+          tsc initializer: clean (checker TS1214) | tsc computed name: clean (checker TS1170,TS1214)
+          bun real default value: ok
+BUN-ONLY | function () { let let = 1 }
+          tsc initializer: clean (checker TS1214) | tsc computed name: clean (checker TS1170,TS1214)
+          bun real default value: REJ: Cannot use "let" as an identifier here
+
+# context
+         | new.target
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS17013)
+          bun real default value: ok
+BUN-ONLY | super.x
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Unexpected "super"
+BUN-ONLY | super()
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Unexpected "super"
+         | this
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+         | arguments
+          tsc initializer: clean | tsc computed name: clean
+          bun real default value: ok
+
+#x in y
+BUN-ONLY | function () { break }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1107)
+          bun real default value: REJ: Cannot use "break" here
+BUN-ONLY | function () { continue }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1107)
+          bun real default value: REJ: Cannot use "continue" here
+         | function () { x: x: ; }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1114)
+          bun real default value: ok
+         | function () { return; }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+         | class { constructor() {} constructor() {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+BUN-ONLY | class { get constructor() {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1341)
+          bun real default value: REJ: Class constructor cannot be a getter
+BUN-ONLY | class { static prototype() {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Invalid static method name "prototype"
+BUN-ONLY | class { #a; #a; }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: "#a" has already been declared
+BUN-ONLY | class { m() { this.#zz } }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Private name "#zz" must be declared in an enclosing class
+BUN-ONLY | ({ get x(a) { return 1 } })
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1054)
+          bun real default value: REJ: Getter x must have zero arguments
+BUN-ONLY | ({ set x() {} })
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1049)
+          bun real default value: REJ: Setter x must have exactly 1 argument (there are 0)
+BUN-ONLY | ({ a = 1 })
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1312)
+          bun real default value: REJ: Unexpected "="
+BUN-ONLY | ({ __proto__: 1, __proto__: 2 })
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1117)
+          bun real default value: REJ: Cannot specify the "__proto__" property more than once per object
+
+# assignment targets and operators
+BUN-ONLY | (1 = 2)
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Invalid assignment target
+         | (a + b = c)
+          tsc initializer: PARSE TS1005,TS1005,TS1005 | tsc computed name: PARSE TS1005,TS1005,TS1131
+          bun real default value: REJ: Invalid assignment target
+BUN-ONLY | (a?.b = 1)
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Invalid assignment target
+BUN-ONLY | a ?? b || c
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: Unexpected ||
+         | -x ** 2
+          tsc initializer: PARSE TS17006 | tsc computed name: PARSE TS17006
+          bun real default value: REJ: Unexpected **
+TSC-ONLY | new a?.b()
+          tsc initializer: PARSE TS1209 | tsc computed name: PARSE TS1209
+          bun real default value: ok
+BUN-ONLY | a?.`x`
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1358)
+          bun real default value: REJ: Expected identifier but found "`x`"
+BUN-ONLY | (a, ...b, c) => 1
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1014)
+          bun real default value: REJ: Unexpected "," after rest pattern
+BUN-ONLY | (...a,) => 1
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1013)
+          bun real default value: REJ: Unexpected "," after rest pattern
+         | async (a = await 1) => 1
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+BUN-ONLY | function () { const q; }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1155)
+          bun real default value: REJ: The constant "q" must be initialized
+BUN-ONLY | function () { let z; let z; }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: REJ: "z" has already been declared
+BUN-ONLY | function () { for (let i, j of k); }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1188)
+          bun real default value: REJ: for-of loops must have a single declaration
+
+# lexical
+BUN-ONLY | /a/gg
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1500)
+          bun real default value: REJ: Duplicate flag "g" in regular expression
+         | /(/
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1005)
+          bun real default value: ok
+         | 1__0
+          tsc initializer: PARSE TS6189 | tsc computed name: PARSE TS6189
+          bun real default value: REJ: Syntax Error
+         | 1_
+          tsc initializer: PARSE TS6188 | tsc computed name: PARSE TS6188
+          bun real default value: REJ: Syntax Error
+         | `\u{`
+          tsc initializer: PARSE TS1125 | tsc computed name: PARSE TS1125
+          bun real default value: REJ: Syntax Error
+         | 0b12
+          tsc initializer: PARSE TS1005 | tsc computed name: PARSE TS1005,TS1005,TS1128
+          bun real default value: REJ: Syntax Error
+         | 1n.5
+          tsc initializer: PARSE TS1005 | tsc computed name: PARSE TS1005,TS1005,TS1128
+          bun real default value: REJ: Expected ")" but found ".5"
+         | '\u{110000}'
+          tsc initializer: PARSE TS1198 | tsc computed name: PARSE TS1198
+          bun real default value: REJ: Unicode escape sequence is out of range
+
+# statements that cannot be in a function body
+BUN-ONLY | function () { import x from "y" }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1232)
+          bun real default value: REJ: Unexpected x
+BUN-ONLY | function () { export const q = 1 }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1184)
+          bun real default value: REJ: Unexpected export
+BUN-ONLY | function () { namespace N {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1235)
+          bun real default value: REJ: Expected ";" but found "N"
+         | function () { enum E { A } }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+         | function () { declare const q: number }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170,TS1184)
+          bun real default value: ok
+         | function () { type T = 1; interface I {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok
+         | function () { @dec class K {} }
+          tsc initializer: clean | tsc computed name: clean (checker TS1170)
+          bun real default value: ok

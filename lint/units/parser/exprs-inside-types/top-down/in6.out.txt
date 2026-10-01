@@ -1,0 +1,120 @@
+
+## L syntax errors inside the expression sites (codes a lint parse must report)
+P-rej / bun REJ          | let g: (a = ) => void
+    tsc parse=[TS1109@12] check=[]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found ")"
+P-rej / bun REJ          | let g: (a = 1 +) => void
+    tsc parse=[TS1109@15] check=[]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-rej / bun REJ          | type A = { [a b]: 1 }
+    tsc parse=[TS1005@14,TS1128@15,TS1128@16,TS1128@20] check=[]
+    tsc emit: "use strict"; b; 1;
+    bun: Expected "]" but found "b" | Unexpected ]
+P-rej / bun REJ          | type A = { [a +]: 1 }
+    tsc parse=[TS1109@15] check=[]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "+" | Unexpected ]
+P-rej / bun REJ          | type A = { [(]: 1 }
+    tsc parse=[TS1109@13] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected ] | Expected "]" but found "}"
+P-ok/C-err / bun REJ     | type A = { get x() { return } y: 1 }
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | type A = { get x() { let } }
+    tsc parse=[] check=[TS2378@15,TS1183@19,TS1212@21]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-rej / bun REJ          | type A = { get x() { 
+    tsc parse=[TS1005@21] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected {
+P-rej / bun REJ          | type A = { a: number = }
+    tsc parse=[TS1109@23] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected =
+P-rej / bun REJ          | type A = { m(@ a): void }
+    tsc parse=[TS1003@16] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected @
+P-rej / bun REJ          | type A = { m(@dec): void }
+    tsc parse=[TS1003@17] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected @
+P-rej / bun REJ          | type A<T extends -> = T
+    tsc parse=[TS1109@18] check=[]
+    tsc emit: "use strict";
+    bun: Expected number but found ">" | Expected ">" but found end of file
+P-rej / bun REJ          | type A = import("x", { with: { type: } })
+    tsc parse=[TS1109@37] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected }
+P-rej / bun REJ          | type A = import("x", { with: { type: 1, , } })
+    tsc parse=[TS1478@40] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected ,
+P-rej / bun REJ          | interface I extends foo( {}
+    tsc parse=[TS1005@27] check=[]
+    tsc emit: "use strict";
+    bun: Expected "{" but found "(" | Unexpected {
+P-rej / bun REJ          | let g: ({a = }: X) => void
+    tsc parse=[TS1131@9,TS1109@13,TS1128@14,TS1434@16,TS1128@17,TS1128@19,TS1109@26] check=[]
+    tsc emit: "use strict"; let g, a = ; X; void ;
+    bun: Unexpected =
+P-rej / bun REJ          | let g: ({[k: v}: X) => void
+    tsc parse=[TS1005@14,TS1005@15,TS1005@18,TS1005@20,TS1109@27] check=[]
+    tsc emit: "use strict"; let g, X; void ;
+    bun: Expected "]" but found "}" | Unexpected )
+P-ok/C-err / bun REJ     | type A = { [a, b]: 1 }
+    tsc parse=[] check=[TS1096@12]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "," | Unexpected b
+P-ok/C-err / bun REJ     | type A = { [a = 1, b]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { [...a]: 1 }
+    tsc parse=[] check=[TS1017@12]
+    tsc emit: "use strict";
+    bun: Unexpected ... | Unexpected a
+
+## M state that must not leak out of an erased expression
+P-ok/C-err / bun REJ     | import { x } from "y"; let g: (a = x) => void; export {}
+    tsc parse=[] check=[TS2371@31]
+    tsc emit: import { x } from "y"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "x"
+P-ok/C-err / bun REJ     | import { x } from "y"; type A = { [x + 1]: 1 }; export {}
+    tsc parse=[] check=[TS1170@34]
+    tsc emit: import { x } from "y";
+    bun: Expected "]" but found "+" | Unexpected 1
+valid / bun ok           | import { x } from "y"; type A = { [x]: 1 }; export {}
+    tsc parse=[] check=[]
+    tsc emit: import { x } from "y";
+    bun: import { x } from "y"; export {};
+P-ok/C-err / bun REJ     | let g: (a = () => { let z = 1; return z }) => void; function h() { let z = 2; return z }
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g; function h() { let z = 2; return z; }
+    bun: Expected ")" but found "=" | Expected ";" but found "("
+P-ok/C-err / bun REJ     | let g: (a = class K { static s = 1 }) => void; class K {}
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g; class K { }
+    bun: Expected ")" but found "=" | Expected ";" but found "class"
+P-ok/C-err / bun REJ     | type A = { get x() { var v = 1; function f() {} return v } }; var v = 2; function f() {}
+    tsc parse=[] check=[TS1183@19]
+    tsc emit: "use strict"; var v = 2; function f() { }
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | /*! keep */ let g: (a = function () { return 1 }) => void; foo()
+    tsc parse=[] check=[TS2371@20]
+    tsc emit: "use strict"; /*! keep */ let g; foo();
+    bun: Expected ")" but found "=" | Expected ";" but found "function"
+P-ok/C-err / bun REJ     | let g: (a = await b) => void; export {}
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: let g; export {};
+    bun: Expected ")" but found "=" | Expected ";" but found "await"
+P-ok/C-err / bun REJ     | let g: (a = import.meta.url) => void; module.exports = 1
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: let g; module.exports = 1; export {};
+    bun: Expected ")" but found "=" | Expected ";" but found "import"

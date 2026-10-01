@@ -1,0 +1,72 @@
+== opt-level 3 for the prototype crate only; load 745.23 714.31 702.75
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 3.4 ms; build 5.1 ms; finish 3.3 ms; freeze 0.17 ms; program 1 0.001 ms; program 2 0.000 ms (7 pages)
+  walk of 10888 nodes 0.5 ms (checksum 1466626); dump of all trees 5.4 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 43.4 ms; build 53.7 ms; finish 26.2 ms; freeze 1.05 ms; program 1 0.005 ms; program 2 0.002 ms (127 pages)
+  walk of 139412 nodes 4.9 ms (checksum 18949382); dump of all trees 53.6 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 3.3 ms; build 4.1 ms; finish 2.5 ms; freeze 0.08 ms; program 1 0.000 ms; program 2 0.000 ms (7 pages)
+  walk of 10888 nodes 0.3 ms (checksum 1466626); dump of all trees 3.4 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 27.1 ms; build 30.1 ms; finish 21.3 ms; freeze 1.13 ms; program 1 0.005 ms; program 2 0.002 ms (127 pages)
+  walk of 139412 nodes 4.5 ms (checksum 18949382); dump of all trees 43.6 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 4.4 ms; build 3.6 ms; finish 2.1 ms; freeze 0.08 ms; program 1 0.001 ms; program 2 0.000 ms (7 pages)
+  walk of 10888 nodes 0.3 ms (checksum 1466626); dump of all trees 3.2 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 25.2 ms; build 34.3 ms; finish 24.7 ms; freeze 0.97 ms; program 1 0.004 ms; program 2 0.001 ms (127 pages)
+  walk of 139412 nodes 3.8 ms (checksum 18949382); dump of all trees 43.2 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 6.5 ms; build 2.6 ms; finish 2.0 ms; freeze 0.09 ms; program 1 0.001 ms; program 2 0.000 ms (7 pages)
+  walk of 10888 nodes 0.3 ms (checksum 1466626); dump of all trees 5.7 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 26.3 ms; build 41.1 ms; finish 28.6 ms; freeze 1.16 ms; program 1 0.006 ms; program 2 0.006 ms (127 pages)
+  walk of 139412 nodes 5.5 ms (checksum 18949382); dump of all trees 68.0 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+test tests::measure_es5_closure ... es5 closure: files 3 nodes 15198 lists 4212 source bytes 233387 dump bytes 999897
+  reference digests: same 3 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 10888
+  json read 4.3 ms; build 4.9 ms; finish 3.0 ms; freeze 0.14 ms; program 1 0.001 ms; program 2 0.000 ms (7 pages)
+  walk of 10888 nodes 0.4 ms (checksum 1466626); dump of all trees 6.8 ms
+  table heap 942411 bytes (62.0 per node, source text included); arena while building 798240 bytes; ids used 6 pages
+  bytes of records, slots, list records, list items, node texts, source: [364752, 171112, 84240, 25556, 57972, 233387]; children out of source order 0, out of id order 0
+ok
+test tests::measure_esnext_closure ... esnext closure: files 93 nodes 161791 lists 41768 source bytes 2983921 dump bytes 12552275
+  reference digests: same 93 differ 0 not in the golden table 0; faults 0; nodes printed after freeze 139412
+  json read 44.3 ms; build 50.0 ms; finish 33.4 ms; freeze 1.16 ms; program 1 0.005 ms; program 2 0.002 ms (127 pages)
+  walk of 139412 nodes 5.0 ms (checksum 18949382); dump of all trees 64.9 ms
+  table heap 11535466 bytes (71.3 per node, source text included); arena while building 9518417 bytes; ids used 126 pages
+  bytes of records, slots, list records, list items, node texts, source: [3882984, 1729364, 835360, 269640, 1773213, 2983921]; children out of source order 0, out of id order 0
+ok
+== load 703.97 707.28 700.70

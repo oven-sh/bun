@@ -1,0 +1,5 @@
+file mod3.ts bytes=22 statements=1
+s_export_default @0
+  e_binary @15
+    e_identifier @19 b
+    e_identifier @15 a

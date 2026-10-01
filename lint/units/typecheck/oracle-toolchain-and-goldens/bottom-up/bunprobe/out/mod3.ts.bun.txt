@@ -1,0 +1,5 @@
+file mod3.ts bytes=22
+s_export_default 0
+  e_binary 15 op=bin_add
+    e_identifier 15 name="a"
+    e_identifier 19 name="b"

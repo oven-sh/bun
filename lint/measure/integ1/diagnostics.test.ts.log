@@ -1,0 +1,25 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/lint/diagnostics.test.ts:
+(pass) bun --lint diagnostics > stderr is not a terminal > a diagnostic is one line in the format of tsc, without colour [1604.53ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the absolute name gives the order, the printed name is relative [851.69ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > the diagnostics of a file are in the order of their positions [734.83ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > files are in the order of their names, not of the operands [1820.93ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > what belongs to no file comes first and the other files are still read [2285.25ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a file that is given more than once is reported once [1921.41ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > a column counts UTF-16 code units [1840.38ms]
+(pass) bun --lint diagnostics > stderr is not a terminal > line and column are those of tsc where Bun's own differ [2483.72ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when only warnings are reported [1343.30ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when one file of several has an error [1396.65ms]
+(pass) bun --lint diagnostics > the exit code > is 0 when nothing is reported [2524.80ms]
+(pass) bun --lint diagnostics > the exit code > is 2 when an operand cannot be read [1708.47ms]
+(pass) bun --lint diagnostics > the exit code > is 1 when no file is given [1400.14ms]
+(pass) bun --lint diagnostics > stderr is a terminal > a diagnostic is a code frame and not a line of tsc [848.18ms]
+(pass) bun --lint diagnostics > stderr is a terminal > frames have the code before the message [722.09ms]
+(pass) bun --lint diagnostics > stderr is a terminal > related information is a note under the frame, once [484.11ms]
+(pass) bun --lint diagnostics > stderr is a terminal > the frame has colour when colour is on [600.38ms]
+
+ 17 pass
+ 0 fail
+ 27 expect() calls
+Ran 17 tests across 1 file. [10.91s]

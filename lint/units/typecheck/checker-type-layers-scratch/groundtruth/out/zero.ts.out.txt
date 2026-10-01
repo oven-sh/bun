@@ -1,0 +1,2 @@
+RESOLUTIONDEPTH 0 []
+COUNTS TypeCount=86 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

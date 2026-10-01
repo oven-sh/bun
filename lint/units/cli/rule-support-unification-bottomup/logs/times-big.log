@@ -1,0 +1,12 @@
+typescript/lib/typescript.js: parse 5.812731956s, walk and rules 246.504362ms, 1 reports
+prettier/plugins/flow.js: parse 1.144319267s, walk and rules 56.492751ms, 53 reports
+prettier/plugins/typescript.js: parse 800.728392ms, walk and rules 98.906829ms, 1 reports
+react-dom/cjs/react-dom.development.js: parse 474.099906ms, walk and rules 33.20655ms, 5 reports
+oxlint/dist/lint.js: parse 852.270133ms, walk and rules 60.338391ms, 0 reports
+sass/sass.dart.js: parse 5.251457661s, walk and rules 186.849772ms, 35 reports
+svelte/compiler/index.js: parse 1.260344752s, walk and rules 70.126778ms, 0 reports
+uglify-js/lib/compress.js: parse 488.487646ms, walk and rules 15.961499ms, 0 reports
+rollup/dist/shared/rollup.js: parse 685.725927ms, walk and rules 28.415055ms, 0 reports
+prisma/build/index.js: parse 3.122473368s, walk and rules 105.680036ms, 5 reports
+jimp/dist/browser/index.js: parse 1.133877245s, walk and rules 76.27685ms, 1 reports
+xml2js/lib/xml2js.bc.js: parse 925.267456ms, walk and rules 42.46949ms, 1 reports

@@ -1,0 +1,118 @@
+# scalar properties
+$singleQuote:bool  <- StringLiteral
+$tokenFlags:int  <- BigIntLiteral, RegularExpressionLiteral, StringLiteral
+comment:string  <- JSDoc, JSDocAugmentsTag, JSDocCallbackTag, JSDocDeprecatedTag, JSDocImplementsTag, JSDocImportTag, JSDocOverloadTag, JSDocParameterTag, JSDocPropertyTag, JSDocReadonlyTag, JSDocReturnTag, JSDocSeeTag, JSDocTag, JSDocTemplateTag, JSDocThisTag, JSDocThrowsTag, JSDocTypeTag, JSDocTypedefTag
+containsOnlyTriviaWhiteSpaces:bool  <- JsxText
+hasExtendedUnicodeEscape:bool  <- NoSubstitutionTemplateLiteral, StringLiteral, TemplateHead, TemplateTail
+isArrayType:bool  <- JSDocTypeLiteral
+isBracketed:bool  <- JSDocParameterTag, JSDocPropertyTag
+isExportEquals:bool  <- ExportAssignment
+isNameFirst:bool  <- JSDocParameterTag, JSDocPropertyTag
+isTypeOf:bool  <- ImportType
+isTypeOnly:bool  <- ExportDeclaration, ExportSpecifier, ImportClause, ImportEqualsDeclaration, ImportSpecifier
+isUnterminated:bool  <- NoSubstitutionTemplateLiteral, RegularExpressionLiteral, StringLiteral
+keywordToken:kind  <- MetaProperty
+multiLine:bool  <- ArrayLiteralExpression, Block, ImportAttributes, ObjectLiteralExpression
+numericLiteralFlags:int  <- NumericLiteral
+operator:kind  <- PostfixUnaryExpression, PrefixUnaryExpression, TypeOperator
+phaseModifier:kind  <- ImportClause
+postfix:bool  <- JSDocNonNullableType, JSDocNullableType
+rawText:string  <- NoSubstitutionTemplateLiteral, TemplateHead, TemplateMiddle, TemplateTail
+templateFlags:int  <- NoSubstitutionTemplateLiteral, TemplateHead, TemplateMiddle, TemplateTail
+text:string  <- BigIntLiteral, Identifier, JSDocLink, JSDocLinkCode, JSDocLinkPlain, JSDocText, JsxText, NoSubstitutionTemplateLiteral, NumericLiteral, PrivateIdentifier, RegularExpressionLiteral, StringLiteral, TemplateHead, TemplateMiddle, TemplateTail
+token:kind  <- HeritageClause, ImportAttributes
+# child properties
+argument:node  <- ImportType
+argumentExpression:node  <- ElementAccessExpression
+arguments:list  <- CallExpression, NewExpression
+assertsModifier:node  <- TypePredicate
+asteriskToken:node  <- FunctionDeclaration, FunctionExpression, MethodDeclaration, YieldExpression
+attributes:node  <- ExportDeclaration, ImportDeclaration, ImportType, JSDocImportTag, JsxOpeningElement, JsxSelfClosingElement
+awaitModifier:node  <- ForOfStatement
+block:node  <- CatchClause
+body:node  <- ArrowFunction, ClassStaticBlockDeclaration, Constructor, FunctionDeclaration, FunctionExpression, GetAccessor, MethodDeclaration, ModuleDeclaration, SetAccessor
+caseBlock:node  <- SwitchStatement
+catchClause:node  <- TryStatement
+checkType:node  <- ConditionalType
+children:list  <- JsxElement, JsxFragment
+class:node  <- JSDocAugmentsTag, JSDocImplementsTag
+clauses:list  <- CaseBlock
+closingElement:node  <- JsxElement
+closingFragment:node  <- JsxFragment
+colonToken:node  <- ConditionalExpression
+comment:list  <- JSDoc, JSDocOverrideTag, JSDocParameterTag, JSDocPropertyTag, JSDocReturnTag, JSDocSeeTag, JSDocTag, JSDocTypedefTag
+condition:node  <- ConditionalExpression, ForStatement
+constraint:node  <- JSDocTemplateTag, TypeParameter
+declarationList:node  <- VariableStatement
+declarations:list  <- VariableDeclarationList
+default:node  <- TypeParameter
+dotDotDotToken:node  <- BindingElement, JsxExpression, NamedTupleMember, Parameter
+elementType:node  <- ArrayType
+elements:list  <- ArrayBindingPattern, ArrayLiteralExpression, ImportAttributes, NamedExports, NamedImports, ObjectBindingPattern, TupleType
+elseStatement:node  <- IfStatement
+endOfFileToken:node  <- SourceFile
+equalsGreaterThanToken:node  <- ArrowFunction
+equalsToken:node  <- ShorthandPropertyAssignment
+exclamationToken:node  <- MethodDeclaration, PropertyDeclaration, ShorthandPropertyAssignment, VariableDeclaration
+exportClause:node  <- ExportDeclaration
+exprName:node  <- TypeQuery
+expression:node  <- AsExpression, AwaitExpression, CallExpression, CaseClause, ComputedPropertyName, Decorator, DeleteExpression, DoStatement, ElementAccessExpression, ExportAssignment, ExpressionStatement, ExpressionWithTypeArguments, ExternalModuleReference, ForInStatement, ForOfStatement, IfStatement, JsxExpression, JsxSpreadAttribute, NewExpression, NonNullExpression, ParenthesizedExpression, PropertyAccessExpression, ReturnStatement, SatisfiesExpression, SpreadAssignment, SpreadElement, SwitchStatement, TemplateSpan, ThrowStatement, TypeAssertionExpression, TypeOfExpression, VoidExpression, WhileStatement, WithStatement, YieldExpression
+extendsType:node  <- ConditionalType
+falseType:node  <- ConditionalType
+finallyBlock:node  <- TryStatement
+fullName:node  <- JSDocCallbackTag, JSDocTypedefTag
+head:node  <- TemplateExpression, TemplateLiteralType
+heritageClauses:list  <- ClassDeclaration, ClassExpression, InterfaceDeclaration
+importClause:node  <- ImportDeclaration, JSDocImportTag
+incrementor:node  <- ForStatement
+indexType:node  <- IndexedAccessType
+initializer:node  <- BindingElement, EnumMember, ForInStatement, ForOfStatement, ForStatement, JsxAttribute, Parameter, PropertyAssignment, PropertyDeclaration, PropertySignature, VariableDeclaration
+jsDoc:node  <- ArrowFunction, Block, BreakStatement, CallSignature, ClassDeclaration, ConstructSignature, Constructor, ContinueStatement, DebuggerStatement, DoStatement, EmptyStatement, EndOfFileToken, EnumDeclaration, EnumMember, ExportAssignment, ExportDeclaration, ExpressionStatement, ForInStatement, ForOfStatement, ForStatement, FunctionDeclaration, FunctionExpression, GetAccessor, IfStatement, ImportDeclaration, ImportEqualsDeclaration, IndexSignature, InterfaceDeclaration, LabeledStatement, MethodDeclaration, MethodSignature, ModuleDeclaration, NamedTupleMember, Parameter, ParenthesizedExpression, PropertyAssignment, PropertyDeclaration, PropertySignature, ReturnStatement, SemicolonClassElement, SetAccessor, ShorthandPropertyAssignment, SwitchStatement, ThrowStatement, TryStatement, TypeAliasDeclaration, VariableDeclaration, VariableStatement, WhileStatement, WithStatement
+jsDocPropertyTags:list  <- JSDocTypeLiteral
+label:node  <- BreakStatement, ContinueStatement, LabeledStatement
+left:node  <- BinaryExpression, JSDocMemberName, QualifiedName
+literal:node  <- LiteralType, TemplateLiteralTypeSpan, TemplateSpan
+members:list  <- ClassDeclaration, ClassExpression, EnumDeclaration, InterfaceDeclaration, MappedType, TypeLiteral
+modifiers:list  <- ArrowFunction, ClassDeclaration, ClassExpression, ClassStaticBlockDeclaration, Constructor, ConstructorType, EnumDeclaration, ExportAssignment, ExportDeclaration, FunctionDeclaration, FunctionExpression, GetAccessor, ImportDeclaration, ImportEqualsDeclaration, IndexSignature, InterfaceDeclaration, MethodDeclaration, MethodSignature, MissingDeclaration, ModuleDeclaration, NamespaceExportDeclaration, Parameter, PropertyAssignment, PropertyDeclaration, PropertySignature, SetAccessor, TypeAliasDeclaration, TypeParameter, VariableStatement
+moduleReference:node  <- ImportEqualsDeclaration
+moduleSpecifier:node  <- ExportDeclaration, ImportDeclaration, JSDocImportTag
+name:node  <- BindingElement, ClassDeclaration, ClassExpression, EnumDeclaration, EnumMember, ExportSpecifier, FunctionDeclaration, FunctionExpression, GetAccessor, ImportAttribute, ImportClause, ImportEqualsDeclaration, ImportSpecifier, InterfaceDeclaration, JSDocLink, JSDocLinkCode, JSDocLinkPlain, JSDocNameReference, JSDocParameterTag, JSDocPropertyTag, JSDocSeeTag, JsxAttribute, JsxNamespacedName, MetaProperty, MethodDeclaration, MethodSignature, ModuleDeclaration, NamedTupleMember, NamespaceExport, NamespaceExportDeclaration, NamespaceImport, Parameter, PropertyAccessExpression, PropertyAssignment, PropertyDeclaration, PropertySignature, SetAccessor, ShorthandPropertyAssignment, TypeAliasDeclaration, TypeParameter, VariableDeclaration
+nameType:node  <- MappedType
+namedBindings:node  <- ImportClause
+namespace:node  <- JsxNamespacedName
+objectAssignmentInitializer:node  <- ShorthandPropertyAssignment
+objectType:node  <- IndexedAccessType
+openingElement:node  <- JsxElement
+openingFragment:node  <- JsxFragment
+operand:node  <- PostfixUnaryExpression, PrefixUnaryExpression
+operatorToken:node  <- BinaryExpression
+parameterName:node  <- TypePredicate
+parameters:list  <- ArrowFunction, CallSignature, ConstructSignature, Constructor, ConstructorType, FunctionDeclaration, FunctionExpression, FunctionType, GetAccessor, IndexSignature, JSDocFunctionType, JSDocSignature, MethodDeclaration, MethodSignature, SetAccessor
+properties:list  <- JsxAttributes, ObjectLiteralExpression
+propertyName:node  <- BindingElement, ExportSpecifier, ImportSpecifier
+qualifier:node  <- ImportType
+questionDotToken:node  <- CallExpression, ElementAccessExpression, PropertyAccessExpression, TaggedTemplateExpression
+questionToken:node  <- ConditionalExpression, MappedType, MethodDeclaration, MethodSignature, NamedTupleMember, Parameter, PropertyAssignment, PropertyDeclaration, PropertySignature, ShorthandPropertyAssignment
+readonlyToken:node  <- MappedType
+right:node  <- BinaryExpression, JSDocMemberName, QualifiedName
+statement:node  <- DoStatement, ForInStatement, ForOfStatement, ForStatement, LabeledStatement, WhileStatement, WithStatement
+statements:list  <- Block, CaseClause, DefaultClause, ModuleBlock, SourceFile
+tag:node  <- TaggedTemplateExpression
+tagName:node  <- JSDocAugmentsTag, JSDocCallbackTag, JSDocClassTag, JSDocDeprecatedTag, JSDocEnumTag, JSDocImplementsTag, JSDocImportTag, JSDocOverloadTag, JSDocOverrideTag, JSDocParameterTag, JSDocPrivateTag, JSDocPropertyTag, JSDocProtectedTag, JSDocPublicTag, JSDocReadonlyTag, JSDocReturnTag, JSDocSatisfiesTag, JSDocSeeTag, JSDocTag, JSDocTemplateTag, JSDocThisTag, JSDocThrowsTag, JSDocTypeTag, JSDocTypedefTag, JsxClosingElement, JsxOpeningElement, JsxSelfClosingElement
+tags:list  <- JSDoc
+template:node  <- TaggedTemplateExpression
+templateSpans:list  <- TemplateExpression, TemplateLiteralType
+thenStatement:node  <- IfStatement
+trueType:node  <- ConditionalType
+tryBlock:node  <- TryStatement
+type:node  <- ArrowFunction, AsExpression, CallSignature, ConstructSignature, Constructor, ConstructorType, FunctionDeclaration, FunctionExpression, FunctionType, GetAccessor, IndexSignature, JSDocFunctionType, JSDocNonNullableType, JSDocNullableType, JSDocOptionalType, JSDocSignature, JSDocTypeExpression, JSDocVariadicType, MappedType, MethodDeclaration, MethodSignature, NamedTupleMember, OptionalType, Parameter, ParenthesizedType, PropertyDeclaration, PropertySignature, RestType, SatisfiesExpression, SetAccessor, TemplateLiteralTypeSpan, TypeAliasDeclaration, TypeAssertionExpression, TypeOperator, TypePredicate, VariableDeclaration
+typeArguments:list  <- CallExpression, ExpressionWithTypeArguments, ImportType, JsxOpeningElement, JsxSelfClosingElement, NewExpression, TaggedTemplateExpression, TypeQuery, TypeReference
+typeExpression:node  <- JSDocCallbackTag, JSDocEnumTag, JSDocOverloadTag, JSDocParameterTag, JSDocPropertyTag, JSDocReturnTag, JSDocSatisfiesTag, JSDocThisTag, JSDocThrowsTag, JSDocTypeTag, JSDocTypedefTag
+typeName:node  <- TypeReference
+typeParameter:node  <- InferType, MappedType
+typeParameters:list  <- ArrowFunction, CallSignature, ClassDeclaration, ClassExpression, ConstructSignature, Constructor, ConstructorType, FunctionDeclaration, FunctionExpression, FunctionType, GetAccessor, InterfaceDeclaration, JSDocTemplateTag, MethodDeclaration, MethodSignature, SetAccessor, TypeAliasDeclaration
+types:list  <- HeritageClause, IntersectionType, UnionType
+value:node  <- ImportAttribute
+variableDeclaration:node  <- CatchClause
+whenFalse:node  <- ConditionalExpression
+whenTrue:node  <- ConditionalExpression

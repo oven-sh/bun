@@ -1,0 +1,1387 @@
+class B  dialect ts  config plain: 3196 inputs in 267 clusters
+
+[01-type-forms / arr]  tsc TS1005 ',' expected.   (1 inputs, 1 distinct)
+    "A[a is B]"  [arrowRet]   tsc @13+1 in "const f = (a): A[a is B] => 0;"
+
+[01-type-forms / arr]  tsc TS1005 ']' expected.   (12 inputs, 1 distinct)
+    "A[a is B]"  [alias,var,param,ret,arrowParam,as,callArg,field,…]   tsc @13+2 in "type X = A[a is B];"
+
+[01-type-forms / cond]  tsc TS1005 ',' expected.   (12 inputs, 5 distinct)
+    "A extends B ? C : D : E"  [tupleEl]   tsc @28+1 in "let x: [A extends B ? C : D : E];"
+    "extends B ? C : D"  [arrowRet,fnTypeParam]   tsc @13+1 in "const f = (a): extends B ? C : D => 0;"
+    "A extends B ? a is C : D"  [arrowRet]   tsc @13+1 in "const f = (a): A extends B ? a is C : D => 0;"
+    "A extends B ? C : a is D"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @27+2 in "let x: A extends B ? C : a is D;"
+    "A extends a is B ? C : D"  [arrowRet]   tsc @13+1 in "const f = (a): A extends a is B ? C : D => 0;"
+
+[01-type-forms / cond]  tsc TS1005 ';' expected.   (5 inputs, 3 distinct)
+    "A extends B ? a is C : D"  [callArg]   tsc @4+7 in "f<A extends B ? a is C : D>(x);"
+    "A extends B ? C : a is D"  [alias,callArg,member]   tsc @29+2 in "type X = A extends B ? C : a is D;"
+    "A extends a is B ? C : D"  [callArg]   tsc @4+7 in "f<A extends a is B ? C : D>(x);"
+
+[01-type-forms / cond]  tsc TS1005 ':' expected.   (11 inputs, 1 distinct)
+    "A extends B ? a is C : D"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @25+2 in "type X = A extends B ? a is C : D;"
+
+[01-type-forms / cond]  tsc TS1005 '?' expected.   (17 inputs, 3 distinct)
+    "A extends B ? : D"  [arrowRet,callArg,fnTypeParam]   tsc @29+1 in "const f = (a): A extends B ? : D => 0;"
+    "A extends ? C : D"  [arrowRet,callArg,fnTypeParam]   tsc @29+1 in "const f = (a): A extends ? C : D => 0;"
+    "A extends a is B ? C : D"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @21+2 in "type X = A extends a is B ? C : D;"
+
+[01-type-forms / cond]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "A extends B ? C : a is D"  [typeArg]   tsc @29+2 in "let x: A<A extends B ? C : a is D>;"
+
+[01-type-forms / cond]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "extends B ? C : D"  [callArg]   tsc @2+7 in "f<extends B ? C : D>(x);"
+
+[01-type-forms / cond]  tsc TS1110 Type expected.   (3 inputs, 1 distinct)
+    "A extends B ? C :"  [arrowRet,callArg,fnTypeParam]   tsc @33+2 in "const f = (a): A extends B ? C : => 0;"
+
+[01-type-forms / cond]  tsc TS1131 Property or signature expected.   (1 inputs, 1 distinct)
+    "A extends B ? C :"  [ret]   tsc @34+5 in "function f(): A extends B ? C : { throw 0 }"
+
+[01-type-forms / cond]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "A extends B ? C : a is D"  [ret]   tsc @34+2 in "function f(): A extends B ? C : a is D { throw 0 }"
+
+[01-type-forms / cond]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "A extends B ? C : a is D"  [field]   tsc @33+2 in "class C { p: A extends B ? C : a is D; }"
+
+[01-type-forms / core]  tsc TS1005 ',' expected.   (40 inputs, 15 distinct)
+    "A | B"  [ifaceExtends,classImplements]   tsc @22+1 in "interface I extends A | B {}"
+    "A & B"  [ifaceExtends,classImplements]   tsc @22+1 in "interface I extends A & B {}"
+    "keyof A"  [ifaceExtends,classImplements]   tsc @26+1 in "interface I extends keyof A {}"
+    "readonly A[]"  [ifaceExtends,classImplements]   tsc @29+1 in "interface I extends readonly A[] {}"
+    "unique symbol"  [ifaceExtends,classImplements]   tsc @27+6 in "interface I extends unique symbol {}"
+    "<T>(a: T) => T"  [classExtendsArg]   tsc @17+2 in "class C extends B<<T>(a: T) => T> {}"
+    "[a: A, b?: B]"  [ifaceExtends,classImplements]   tsc @22+1 in "interface I extends [a: A, b?: B] {}"
+    "A extends B ? C : D"  [ifaceExtends,classImplements]   tsc @32+1 in "interface I extends A extends B ? C : D {}"
+    "A extends infer U ? U : never"  [ifaceExtends,classImplements]   tsc @36+1 in "interface I extends A extends infer U ? U : never {}"
+    "a is B"  [satisfies,inst,method,tupleNamed,unionLeft,constraint,tpDefault,thisParam,…]   tsc @24+2 in "const v = x satisfies a is B;"
+    "this is B"  [ifaceExtends,classImplements]   tsc @25+2 in "interface I extends this is B {}"
+    "keyof () => void"  [ifaceExtends,classImplements]   tsc @29+2 in "interface I extends keyof () => void {}"
+    … 3 more
+
+[01-type-forms / core]  tsc TS1005 ';' expected.   (8 inputs, 2 distinct)
+    "a is B"  [newArg,tagArg,indexSig,condCheck,condFalse]   tsc @8+2 in "new F<a is B>(x);"
+    "keyof () => void"  [newArg,tagArg,inst]   tsc @15+2 in "new F<keyof () => void>(x);"
+
+[01-type-forms / core]  tsc TS1005 ':' expected.   (1 inputs, 1 distinct)
+    "a is B"  [condTrue]   tsc @25+2 in "type X = A extends B ? a is B : 2;"
+
+[01-type-forms / core]  tsc TS1005 '?' expected.   (1 inputs, 1 distinct)
+    "a is B"  [condExtends]   tsc @21+2 in "type X = A extends a is B ? 1 : 2;"
+
+[01-type-forms / core]  tsc TS1005 ')' expected.   (6 inputs, 3 distinct)
+    "(a: A) => B"  [ifaceExtends,classImplements]   tsc @22+1 in "interface I extends (a: A) => B {}"
+    "a is B"  [catch]   tsc @19+2 in "try {} catch (e: a is B) {}"
+    "(a: ) => void"  [keyofArg,ifaceExtends,classImplements]   tsc @15+1 in "let x: keyof (a: ) => void;"
+
+[01-type-forms / core]  tsc TS1005 ']' expected.   (1 inputs, 1 distinct)
+    "a is B"  [mapped]   tsc @17+2 in "let x: { [K in a is B]: a is B };"
+
+[01-type-forms / core]  tsc TS1005 '}' expected.   (1 inputs, 1 distinct)
+    "a is B"  [template]   tsc @15+2 in "type X = `a${a is B}b`;"
+
+[01-type-forms / core]  tsc TS1005 '>' expected.   (3 inputs, 2 distinct)
+    "a is B"  [cast,classExtendsArg]   tsc @13+2 in "const v = <a is B>x;"
+    "keyof () => void"  [cast]   tsc @17+1 in "const v = <keyof () => void>x;"
+
+[01-type-forms / core]  tsc TS1011 An element access expression should take an argument.   (2 inputs, 1 distinct)
+    "A[]"  [ifaceExtends,classImplements]   tsc @22+0 in "interface I extends A[] {}"
+
+[01-type-forms / core]  tsc TS1109 Expression expected.   (16 inputs, 8 distinct)
+    "typeof a"  [ifaceExtends,classImplements]   tsc @20+6 in "interface I extends typeof a {}"
+    "() => void"  [ifaceExtends,classImplements]   tsc @21+1 in "interface I extends () => void {}"
+    "new () => A"  [ifaceExtends,classImplements]   tsc @25+1 in "interface I extends new () => A {}"
+    "<T>(a: T) => T"  [ifaceExtends,classImplements]   tsc @20+1 in "interface I extends <T>(a: T) => T {}"
+    "void"  [ifaceExtends,classImplements]   tsc @20+4 in "interface I extends void {}"
+    "-1"  [ifaceExtends,classImplements]   tsc @20+1 in "interface I extends -1 {}"
+    "| A"  [ifaceExtends,classImplements]   tsc @20+1 in "interface I extends | A {}"
+    "& A"  [ifaceExtends,classImplements]   tsc @20+1 in "interface I extends & A {}"
+
+[01-type-forms / core]  tsc TS1110 Type expected.   (67 inputs, 5 distinct)
+    "<T>(a: T) => T"  [keyofArg]   tsc @13+1 in "let x: keyof <T>(a: T) => T;"
+    "| A"  [unionRight]   tsc @11+1 in "let x: A | | A;"
+    "(a: ) => void"  [var,ret,arrowParam,satisfies,cast,newArg,tagArg,inst,…]   tsc @11+1 in "let x: (a: ) => void;"
+    "A |"  [newArg,tagArg,inst]   tsc @9+1 in "new F<A |>(x);"
+    "keyof () => void"  [satisfies,method,fnTypeRet,tupleNamed,indexSig,mapped,unionRight,unionLeft,…]   tsc @29+1 in "const v = x satisfies keyof () => void;"
+
+[01-type-forms / core]  tsc TS1131 Property or signature expected.   (1 inputs, 1 distinct)
+    "A |"  [getterRet]   tsc @25+5 in "class C { get p(): A | { throw 0 } }"
+
+[01-type-forms / core]  tsc TS1385 Function type notation must be parenthesized when used in a union type.   (32 inputs, 3 distinct)
+    "(a: A) => B"  [unionRight]   tsc @10+12 in "let x: A | (a: A) => B;"
+    "<T>(a: T) => T"  [unionRight]   tsc @10+15 in "let x: A | <T>(a: T) => T;"
+    "A | () => void"  [satisfies,cast,newArg,tagArg,inst,method,fnTypeRet,tupleNamed,…]   tsc @25+11 in "const v = x satisfies A | () => void;"
+
+[01-type-forms / core]  tsc TS1386 Constructor type notation must be parenthesized when used in a union type.   (2 inputs, 2 distinct)
+    "new () => A"  [unionRight]   tsc @10+12 in "let x: A | new () => A;"
+    "abstract new () => A"  [unionRight]   tsc @10+21 in "let x: A | abstract new () => A;"
+
+[01-type-forms / fn]  tsc TS1005 ',' expected.   (25 inputs, 11 distinct)
+    "(this?: A) => B"  [alias,param,arrowRet,callArg,as,field]   tsc @14+1 in "type X = (this?: A) => B;"
+    "new () =>"  [arrowRet]   tsc @13+1 in "const f = (a): new () => => 0;"
+    "() =>"  [arrowRet]   tsc @13+1 in "const f = (a): () => => 0;"
+    "([this]) => void"  [param]   tsc @23+2 in "function f(a: ([this]) => void) {}"
+    "({ a: this }) => void"  [param]   tsc @28+2 in "function f(a: ({ a: this }) => void) {}"
+    "(a) => asserts a.b"  [param,arrowRet,as]   tsc @30+1 in "function f(a: (a) => asserts a.b) {}"
+    "(a) => asserts is is B"  [param,arrowRet,as]   tsc @35+1 in "function f(a: (a) => asserts is is B) {}"
+    "(a) => a is b is C"  [param,arrowRet,as]   tsc @28+2 in "function f(a: (a) => a is b is C) {}"
+    "(a) => (a is B)"  [arrowRet]   tsc @13+1 in "const f = (a): (a) => (a is B) => 0;"
+    "(a) => asserts this.x"  [param,arrowRet,as]   tsc @33+1 in "function f(a: (a) => asserts this.x) {}"
+    "(a) => asserts a<T>"  [param,arrowRet]   tsc @30+1 in "function f(a: (a) => asserts a<T>) {}"
+
+[01-type-forms / fn]  tsc TS1005 ';' expected.   (17 inputs, 8 distinct)
+    "([this]) => void"  [alias,callArg,as]   tsc @18+2 in "type X = ([this]) => void;"
+    "({ a: this }) => void"  [alias,callArg,as]   tsc @23+2 in "type X = ({ a: this }) => void;"
+    "(a) => asserts a.b"  [alias,callArg]   tsc @25+1 in "type X = (a) => asserts a.b;"
+    "(a) => asserts is is B"  [alias,callArg]   tsc @30+1 in "type X = (a) => asserts is is B;"
+    "(a) => a is b is C"  [alias,callArg]   tsc @23+2 in "type X = (a) => a is b is C;"
+    "(a) => (a is B)"  [callArg]   tsc @6+2 in "f<(a) => (a is B)>(x);"
+    "(a) => asserts this.x"  [alias,callArg]   tsc @28+1 in "type X = (a) => asserts this.x;"
+    "(a) => asserts a<T>"  [alias,callArg]   tsc @25+1 in "type X = (a) => asserts a<T>;"
+
+[01-type-forms / fn]  tsc TS1005 '(' expected.   (2 inputs, 2 distinct)
+    "<T>"  [callArg]   tsc @5+1 in "f<<T>>(x);"
+    "new A"  [callArg]   tsc @6+1 in "f<new A>(x);"
+
+[01-type-forms / fn]  tsc TS1005 ')' expected.   (4 inputs, 1 distinct)
+    "(a) => (a is B)"  [alias,param,as,field]   tsc @19+2 in "type X = (a) => (a is B);"
+
+[01-type-forms / fn]  tsc TS1005 '=>' expected.   (6 inputs, 2 distinct)
+    "new ()"  [callArg]   tsc @8+1 in "f<new ()>(x);"
+    "new (A)"  [alias,param,callArg,as,field]   tsc @16+1 in "type X = new (A);"
+
+[01-type-forms / fn]  tsc TS1109 Expression expected.   (3 inputs, 3 distinct)
+    "([this]) => void"  [arrowRet]   tsc @32+2 in "const f = (a): ([this]) => void => 0;"
+    "({ a: this }) => void"  [arrowRet]   tsc @37+2 in "const f = (a): ({ a: this }) => void => 0;"
+    "(a) => asserts a<T>"  [as]   tsc @34+1 in "const v = x as (a) => asserts a<T>;"
+
+[01-type-forms / fn]  tsc TS1110 Type expected.   (34 inputs, 8 distinct)
+    "new () =>"  [callArg]   tsc @11+1 in "f<new () =>>(x);"
+    "() =>"  [callArg]   tsc @7+1 in "f<() =>>(x);"
+    "(a: ) => void"  [alias,param,arrowRet,callArg,as,field]   tsc @13+1 in "type X = (a: ) => void;"
+    "(a:) => void"  [alias,param,arrowRet,callArg,as,field]   tsc @12+1 in "type X = (a:) => void;"
+    "(a?:) => void"  [alias,param,arrowRet,callArg,as,field]   tsc @13+1 in "type X = (a?:) => void;"
+    "({ a }: ) => void"  [alias,param,arrowRet,callArg,as,field]   tsc @17+1 in "type X = ({ a }: ) => void;"
+    "(a) => a is"  [arrowRet,callArg]   tsc @27+2 in "const f = (a): (a) => a is => 0;"
+    "(a) => asserts is"  [alias,param,arrowRet,callArg,as,field]   tsc @26+1 in "type X = (a) => asserts is;"
+
+[01-type-forms / fn]  tsc TS1131 Property or signature expected.   (5 inputs, 1 distinct)
+    "({ : a }) => void"  [alias,param,arrowRet,as,field]   tsc @12+1 in "type X = ({ : a }) => void;"
+
+[01-type-forms / fn]  tsc TS1136 Property assignment expected.   (1 inputs, 1 distinct)
+    "({ : a }) => void"  [callArg]   tsc @5+1 in "f<({ : a }) => void>(x);"
+
+[01-type-forms / fn]  tsc TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.   (6 inputs, 1 distinct)
+    "(...this: A) => B"  [alias,param,arrowRet,callArg,as,field]   tsc @13+4 in "type X = (...this: A) => B;"
+
+[01-type-forms / fn]  tsc TS1442 Expected '=' for property initializer.   (7 inputs, 7 distinct)
+    "([this]) => void"  [field]   tsc @22+2 in "class C { p: ([this]) => void; }"
+    "({ a: this }) => void"  [field]   tsc @27+2 in "class C { p: ({ a: this }) => void; }"
+    "(a) => asserts a.b"  [field]   tsc @29+1 in "class C { p: (a) => asserts a.b; }"
+    "(a) => asserts is is B"  [field]   tsc @34+1 in "class C { p: (a) => asserts is is B; }"
+    "(a) => a is b is C"  [field]   tsc @27+2 in "class C { p: (a) => a is b is C; }"
+    "(a) => asserts this.x"  [field]   tsc @32+1 in "class C { p: (a) => asserts this.x; }"
+    "(a) => asserts a<T>"  [field]   tsc @29+1 in "class C { p: (a) => asserts a<T>; }"
+
+[01-type-forms / import]  tsc TS1005 ',' expected.   (30 inputs, 12 distinct)
+    "import(\"x\").A<T>.B"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @23+1 in "let x: import(\"x\").A<T>.B;"
+    "import(\"x\", { with: { a: \"b\" } }, )"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with: { a: \"b\" } }, ) => 0;"
+    "import(\"x\", { with: { [a]: \"b\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with: { [a]: \"b\" } }) => 0;"
+    "import(\"x\", { with: { 1: \"b\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with: { 1: \"b\" } }) => 0;"
+    "import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } }) => 0;"
+    "import(\"x\", { with: y })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with: y }) => 0;"
+    "import(\"x\", { with: { a: \"b\"; c: \"d\" } })"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @37+1 in "type X = import(\"x\", { with: { a: \"b\"; c: \"d\" } });"
+    "import(\"x\", { a: \"b\" })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { a: \"b\" }) => 0;"
+    "import(\"x\", { readonly with: { a: \"b\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { readonly with: { a: \"b\" } }) => 0;"
+    "import(\"x\", { with?: { a: \"b\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with?: { a: \"b\" } }) => 0;"
+    "import(\"x\", { with(): void })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { with(): void }) => 0;"
+    "import(\"x\", { \"with\": { a: \"b\" } })"  [arrowRet]   tsc @13+1 in "const f = (a): import(\"x\", { \"with\": { a: \"b\" } }) => 0;"
+
+[01-type-forms / import]  tsc TS1005 ';' expected.   (2 inputs, 1 distinct)
+    "import(\"x\").A<T>.B"  [alias,member]   tsc @25+1 in "type X = import(\"x\").A<T>.B;"
+
+[01-type-forms / import]  tsc TS1005 ':' expected.   (48 inputs, 4 distinct)
+    "import(\"x\", { with })"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @28+1 in "type X = import(\"x\", { with });"
+    "import(\"x\", { with: { a } })"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @33+1 in "type X = import(\"x\", { with: { a } });"
+    "import(\"x\", { with?: { a: \"b\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @27+1 in "type X = import(\"x\", { with?: { a: \"b\" } });"
+    "import(\"x\", { with(): void })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @27+1 in "type X = import(\"x\", { with(): void });"
+
+[01-type-forms / import]  tsc TS1005 '(' expected.   (1 inputs, 1 distinct)
+    "import.meta"  [callArg]   tsc @8+1 in "f<import.meta>(x);"
+
+[01-type-forms / import]  tsc TS1005 ')' expected.   (11 inputs, 1 distinct)
+    "import(\"x\", { with: { a: \"b\" } }, )"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @41+1 in "type X = import(\"x\", { with: { a: \"b\" } }, );"
+
+[01-type-forms / import]  tsc TS1005 '{' expected.   (12 inputs, 2 distinct)
+    "import(\"x\",)"  [callArg]   tsc @13+1 in "f<import(\"x\",)>(x);"
+    "import(\"x\", { with: y })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @29+1 in "type X = import(\"x\", { with: y });"
+
+[01-type-forms / import]  tsc TS1005 '}' expected.   (11 inputs, 1 distinct)
+    "import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @41+6 in "type X = import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } });"
+
+[01-type-forms / import]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "import(\"x\").A<T>.B"  [typeArg]   tsc @25+1 in "let x: A<import(\"x\").A<T>.B>;"
+
+[01-type-forms / import]  tsc TS1005 'with' expected.   (46 inputs, 4 distinct)
+    "import(\"x\", {})"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @22+1 in "type X = import(\"x\", {});"
+    "import(\"x\", { a: \"b\" })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @23+1 in "type X = import(\"x\", { a: \"b\" });"
+    "import(\"x\", { readonly with: { a: \"b\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @23+8 in "type X = import(\"x\", { readonly with: { a: \"b\" } });"
+    "import(\"x\", { \"with\": { a: \"b\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @23+6 in "type X = import(\"x\", { \"with\": { a: \"b\" } });"
+
+[01-type-forms / import]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "import(\"x\")\n<T>"  [as]   tsc @30+1 in "const v = x as import(\"x\")\n<T>;"
+
+[01-type-forms / import]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "import(\"x\").A<T>.B"  [ret]   tsc @30+1 in "function f(): import(\"x\").A<T>.B { throw 0 }"
+
+[01-type-forms / import]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "import(\"x\").A<T>.B"  [field]   tsc @29+1 in "class C { p: import(\"x\").A<T>.B; }"
+
+[01-type-forms / import]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "import(\"x\").A<T>.B"  [callArg]   tsc @15+3 in "f<import(\"x\").A<T>.B>(x);"
+
+[01-type-forms / import]  tsc TS1478 Identifier or string literal expected.   (22 inputs, 2 distinct)
+    "import(\"x\", { with: { [a]: \"b\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @31+1 in "type X = import(\"x\", { with: { [a]: \"b\" } });"
+    "import(\"x\", { with: { 1: \"b\" } })"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @31+1 in "type X = import(\"x\", { with: { 1: \"b\" } });"
+
+[01-type-forms / infer]  tsc TS1005 ',' expected.   (10 inputs, 4 distinct)
+    "A extends infer U[] ? U : never"  [arrowRet]   tsc @13+1 in "const f = (a): A extends infer U[] ? U : never => 0;"
+    "A extends readonly infer U[] ? U : never"  [arrowRet]   tsc @13+1 in "const f = (a): A extends readonly infer U[] ? U : never => 0;"
+    "infer U[]"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @14+1 in "let x: infer U[];"
+    "A extends infer U.V ? 1 : 2"  [arrowRet]   tsc @13+1 in "const f = (a): A extends infer U.V ? 1 : 2 => 0;"
+
+[01-type-forms / infer]  tsc TS1005 ';' expected.   (6 inputs, 4 distinct)
+    "A extends infer U[] ? U : never"  [callArg]   tsc @4+7 in "f<A extends infer U[] ? U : never>(x);"
+    "A extends readonly infer U[] ? U : never"  [callArg]   tsc @4+7 in "f<A extends readonly infer U[] ? U : never>(x);"
+    "infer U[]"  [alias,callArg,member]   tsc @16+1 in "type X = infer U[];"
+    "A extends infer U.V ? 1 : 2"  [callArg]   tsc @4+7 in "f<A extends infer U.V ? 1 : 2>(x);"
+
+[01-type-forms / infer]  tsc TS1005 '?' expected.   (46 inputs, 4 distinct)
+    "A extends infer U[] ? U : never"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @26+1 in "type X = A extends infer U[] ? U : never;"
+    "A extends readonly infer U[] ? U : never"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @35+1 in "type X = A extends readonly infer U[] ? U : never;"
+    "A extends infer U extends ? 1 : 2"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @39+1 in "type X = A extends infer U extends ? 1 : 2;"
+    "A extends infer U.V ? 1 : 2"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @26+1 in "type X = A extends infer U.V ? 1 : 2;"
+
+[01-type-forms / infer]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "infer U[]"  [typeArg]   tsc @16+1 in "let x: A<infer U[]>;"
+
+[01-type-forms / infer]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "infer U[]"  [ret]   tsc @21+1 in "function f(): infer U[] { throw 0 }"
+
+[01-type-forms / infer]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "infer U[]"  [field]   tsc @20+1 in "class C { p: infer U[]; }"
+
+[01-type-forms / jsdoc]  tsc TS1005 ',' expected.   (8 inputs, 2 distinct)
+    "A\n?"  [tupleEl]   tsc @10+1 in "let x: [A\n?];"
+    "A!.B"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @9+1 in "let x: A!.B;"
+
+[01-type-forms / jsdoc]  tsc TS1005 ';' expected.   (2 inputs, 1 distinct)
+    "A!.B"  [alias,member]   tsc @11+1 in "type X = A!.B;"
+
+[01-type-forms / jsdoc]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "A!.B"  [typeArg]   tsc @11+1 in "let x: A<A!.B>;"
+
+[01-type-forms / jsdoc]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "A!<B>"  [as]   tsc @20+1 in "const v = x as A!<B>;"
+
+[01-type-forms / jsdoc]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "A!.B"  [ret]   tsc @16+1 in "function f(): A!.B { throw 0 }"
+
+[01-type-forms / jsdoc]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "A!.B"  [field]   tsc @15+1 in "class C { p: A!.B; }"
+
+[01-type-forms / kw]  tsc TS1005 ',' expected.   (21 inputs, 3 distinct)
+    "void.b"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @11+1 in "let x: void.b;"
+    "null.b"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @11+1 in "let x: null.b;"
+    "this.b"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @11+1 in "let x: this.b;"
+
+[01-type-forms / kw]  tsc TS1005 ';' expected.   (6 inputs, 3 distinct)
+    "void.b"  [alias,member]   tsc @13+1 in "type X = void.b;"
+    "null.b"  [alias,member]   tsc @13+1 in "type X = null.b;"
+    "this.b"  [alias,member]   tsc @13+1 in "type X = this.b;"
+
+[01-type-forms / kw]  tsc TS1005 '>' expected.   (3 inputs, 3 distinct)
+    "void.b"  [typeArg]   tsc @13+1 in "let x: A<void.b>;"
+    "null.b"  [typeArg]   tsc @13+1 in "let x: A<null.b>;"
+    "this.b"  [typeArg]   tsc @13+1 in "let x: A<this.b>;"
+
+[01-type-forms / kw]  tsc TS1109 Expression expected.   (6 inputs, 6 distinct)
+    "void.b"  [callArg]   tsc @6+1 in "f<void.b>(x);"
+    "string<T>"  [as]   tsc @24+1 in "const v = x as string<T>;"
+    "any<T>"  [as]   tsc @21+1 in "const v = x as any<T>;"
+    "void<T>"  [as]   tsc @22+1 in "const v = x as void<T>;"
+    "this<T>"  [as]   tsc @22+1 in "const v = x as this<T>;"
+    "object<T>"  [as]   tsc @24+1 in "const v = x as object<T>;"
+
+[01-type-forms / kw]  tsc TS1144 '{' or ';' expected.   (3 inputs, 3 distinct)
+    "void.b"  [ret]   tsc @18+1 in "function f(): void.b { throw 0 }"
+    "null.b"  [ret]   tsc @18+1 in "function f(): null.b { throw 0 }"
+    "this.b"  [ret]   tsc @18+1 in "function f(): this.b { throw 0 }"
+
+[01-type-forms / kw]  tsc TS1442 Expected '=' for property initializer.   (3 inputs, 3 distinct)
+    "void.b"  [field]   tsc @17+1 in "class C { p: void.b; }"
+    "null.b"  [field]   tsc @17+1 in "class C { p: null.b; }"
+    "this.b"  [field]   tsc @17+1 in "class C { p: this.b; }"
+
+[01-type-forms / label]  tsc TS1005 ',' expected.   (48 inputs, 37 distinct)
+    "[const?: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [const?: A] => 0;"
+    "[in: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [in: A] => 0;"
+    "[in?: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [in?: A] => 0;"
+    "[a: A, in: B]"  [arrowRet,callArg]   tsc @13+1 in "const f = (a): [a: A, in: B] => 0;"
+    "[class: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [class: A] => 0;"
+    "[class?: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [class?: A] => 0;"
+    "[a: A, class: B]"  [arrowRet,callArg]   tsc @13+1 in "const f = (a): [a: A, class: B] => 0;"
+    "[if: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [if: A] => 0;"
+    "[if?: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [if?: A] => 0;"
+    "[a: A, if: B]"  [arrowRet,callArg]   tsc @13+1 in "const f = (a): [a: A, if: B] => 0;"
+    "[var: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [var: A] => 0;"
+    "[var?: A]"  [arrowRet]   tsc @13+1 in "const f = (a): [var?: A] => 0;"
+    … 25 more
+
+[01-type-forms / label]  tsc TS1005 '{' expected.   (2 inputs, 2 distinct)
+    "[class: A]"  [callArg]   tsc @8+1 in "f<[class: A]>(x);"
+    "[class?: A]"  [callArg]   tsc @8+1 in "f<[class?: A]>(x);"
+
+[01-type-forms / label]  tsc TS1034 'super' must be followed by an argument list or member access.   (2 inputs, 2 distinct)
+    "[super: A]"  [callArg]   tsc @8+1 in "f<[super: A]>(x);"
+    "[super?: A]"  [callArg]   tsc @8+1 in "f<[super?: A]>(x);"
+
+[01-type-forms / label]  tsc TS1109 Expression expected.   (6 inputs, 6 distinct)
+    "[in: A]"  [callArg]   tsc @3+2 in "f<[in: A]>(x);"
+    "[in?: A]"  [callArg]   tsc @3+2 in "f<[in?: A]>(x);"
+    "[delete: A]"  [callArg]   tsc @9+1 in "f<[delete: A]>(x);"
+    "[delete?: A]"  [callArg]   tsc @9+1 in "f<[delete?: A]>(x);"
+    "[instanceof: A]"  [callArg]   tsc @3+10 in "f<[instanceof: A]>(x);"
+    "[instanceof?: A]"  [callArg]   tsc @3+10 in "f<[instanceof?: A]>(x);"
+
+[01-type-forms / label]  tsc TS1110 Type expected.   (11 inputs, 10 distinct)
+    "[const?: A]"  [alias,param]   tsc @10+5 in "type X = [const?: A];"
+    "[default: A]"  [arrowRet]   tsc @16+7 in "const f = (a): [default: A] => 0;"
+    "[default?: A]"  [arrowRet]   tsc @16+7 in "const f = (a): [default?: A] => 0;"
+    "[a: A, default: B]"  [arrowRet]   tsc @22+7 in "const f = (a): [a: A, default: B] => 0;"
+    "[export: A]"  [arrowRet]   tsc @16+6 in "const f = (a): [export: A] => 0;"
+    "[export?: A]"  [arrowRet]   tsc @16+6 in "const f = (a): [export?: A] => 0;"
+    "[a: A, export: B]"  [arrowRet]   tsc @22+6 in "const f = (a): [a: A, export: B] => 0;"
+    "[extends: A]"  [arrowRet]   tsc @16+7 in "const f = (a): [extends: A] => 0;"
+    "[extends?: A]"  [arrowRet]   tsc @16+7 in "const f = (a): [extends?: A] => 0;"
+    "[a: A, extends: B]"  [arrowRet]   tsc @22+7 in "const f = (a): [a: A, extends: B] => 0;"
+
+[01-type-forms / label]  tsc TS1137 Expression or comma expected.   (19 inputs, 19 distinct)
+    "[const?: A]"  [callArg]   tsc @3+5 in "f<[const?: A]>(x);"
+    "[if: A]"  [callArg]   tsc @3+2 in "f<[if: A]>(x);"
+    "[if?: A]"  [callArg]   tsc @3+2 in "f<[if?: A]>(x);"
+    "[var: A]"  [callArg]   tsc @3+3 in "f<[var: A]>(x);"
+    "[var?: A]"  [callArg]   tsc @3+3 in "f<[var?: A]>(x);"
+    "[default: A]"  [callArg]   tsc @3+7 in "f<[default: A]>(x);"
+    "[default?: A]"  [callArg]   tsc @3+7 in "f<[default?: A]>(x);"
+    "[enum: A]"  [callArg]   tsc @3+4 in "f<[enum: A]>(x);"
+    "[enum?: A]"  [callArg]   tsc @3+4 in "f<[enum?: A]>(x);"
+    "[export: A]"  [callArg]   tsc @3+6 in "f<[export: A]>(x);"
+    "[export?: A]"  [callArg]   tsc @3+6 in "f<[export?: A]>(x);"
+    "[extends: A]"  [callArg]   tsc @3+7 in "f<[extends: A]>(x);"
+    … 7 more
+
+[01-type-forms / op]  tsc TS1005 ',' expected.   (32 inputs, 7 distinct)
+    "keyof new () => A"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @17+1 in "let x: keyof new () => A;"
+    "keyof <T>() => void"  [arrowRet]   tsc @13+1 in "const f = (a): keyof <T>() => void => 0;"
+    "keyof abstract new () => A"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @22+3 in "let x: keyof abstract new () => A;"
+    "keyof (a: A) => B"  [arrowRet,callArg]   tsc @13+1 in "const f = (a): keyof (a: A) => B => 0;"
+    "keyof a is B"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @15+2 in "let x: keyof a is B;"
+    "readonly new () => A"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @20+1 in "let x: readonly new () => A;"
+    "readonly <T>() => T"  [arrowRet]   tsc @13+1 in "const f = (a): readonly <T>() => T => 0;"
+
+[01-type-forms / op]  tsc TS1005 ';' expected.   (16 inputs, 8 distinct)
+    "keyof () => void"  [callArg]   tsc @11+2 in "f<keyof () => void>(x);"
+    "keyof new () => A"  [alias,callArg,member]   tsc @19+1 in "type X = keyof new () => A;"
+    "keyof <T>() => void"  [callArg]   tsc @14+2 in "f<keyof <T>() => void>(x);"
+    "keyof abstract new () => A"  [alias,callArg,member]   tsc @24+3 in "type X = keyof abstract new () => A;"
+    "keyof a is B"  [alias,callArg,member]   tsc @17+2 in "type X = keyof a is B;"
+    "readonly () => void"  [callArg]   tsc @14+2 in "f<readonly () => void>(x);"
+    "readonly new () => A"  [alias,callArg,member]   tsc @22+1 in "type X = readonly new () => A;"
+    "readonly <T>() => T"  [callArg]   tsc @17+2 in "f<readonly <T>() => T>(x);"
+
+[01-type-forms / op]  tsc TS1005 ')' expected.   (11 inputs, 1 distinct)
+    "keyof (a: A) => B"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @17+1 in "type X = keyof (a: A) => B;"
+
+[01-type-forms / op]  tsc TS1005 '>' expected.   (4 inputs, 4 distinct)
+    "keyof new () => A"  [typeArg]   tsc @19+1 in "let x: A<keyof new () => A>;"
+    "keyof abstract new () => A"  [typeArg]   tsc @24+3 in "let x: A<keyof abstract new () => A>;"
+    "keyof a is B"  [typeArg]   tsc @17+2 in "let x: A<keyof a is B>;"
+    "readonly new () => A"  [typeArg]   tsc @22+1 in "let x: A<readonly new () => A>;"
+
+[01-type-forms / op]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "unique symbol<T>"  [as]   tsc @31+1 in "const v = x as unique symbol<T>;"
+
+[01-type-forms / op]  tsc TS1110 Type expected.   (76 inputs, 7 distinct)
+    "keyof |"  [ret,arrowRet,callArg,fnTypeParam]   tsc @20+1 in "function f(): keyof | { throw 0 }"
+    "keyof | A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @15+1 in "type X = keyof | A;"
+    "keyof & A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @15+1 in "type X = keyof & A;"
+    "keyof () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,field,…]   tsc @16+1 in "type X = keyof () => void;"
+    "keyof <T>() => void"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @15+1 in "type X = keyof <T>() => void;"
+    "readonly () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,field,…]   tsc @19+1 in "type X = readonly () => void;"
+    "readonly <T>() => T"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @18+1 in "type X = readonly <T>() => T;"
+
+[01-type-forms / op]  tsc TS1144 '{' or ';' expected.   (4 inputs, 4 distinct)
+    "keyof new () => A"  [ret]   tsc @24+1 in "function f(): keyof new () => A { throw 0 }"
+    "keyof abstract new () => A"  [ret]   tsc @29+3 in "function f(): keyof abstract new () => A { throw 0 }"
+    "keyof a is B"  [ret]   tsc @22+2 in "function f(): keyof a is B { throw 0 }"
+    "readonly new () => A"  [ret]   tsc @27+1 in "function f(): readonly new () => A { throw 0 }"
+
+[01-type-forms / op]  tsc TS1441 Cannot start a function call in a type annotation.   (2 inputs, 2 distinct)
+    "keyof new () => A"  [field]   tsc @23+1 in "class C { p: keyof new () => A; }"
+    "readonly new () => A"  [field]   tsc @26+1 in "class C { p: readonly new () => A; }"
+
+[01-type-forms / op]  tsc TS1442 Expected '=' for property initializer.   (2 inputs, 2 distinct)
+    "keyof abstract new () => A"  [field]   tsc @28+3 in "class C { p: keyof abstract new () => A; }"
+    "keyof a is B"  [field]   tsc @21+2 in "class C { p: keyof a is B; }"
+
+[01-type-forms / paren]  tsc TS1005 ',' expected.   (9 inputs, 3 distinct)
+    "(a is B)"  [arrowRet]   tsc @13+1 in "const f = (a): (a is B) => 0;"
+    "(a).b"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @10+1 in "let x: (a).b;"
+    "(a: A) =>"  [arrowRet]   tsc @13+1 in "const f = (a): (a: A) => => 0;"
+
+[01-type-forms / paren]  tsc TS1005 ';' expected.   (2 inputs, 1 distinct)
+    "(a).b"  [alias,member]   tsc @12+1 in "type X = (a).b;"
+
+[01-type-forms / paren]  tsc TS1005 ')' expected.   (12 inputs, 1 distinct)
+    "(a is B)"  [alias,var,param,ret,arrowParam,as,callArg,field,…]   tsc @12+2 in "type X = (a is B);"
+
+[01-type-forms / paren]  tsc TS1005 '=>' expected.   (5 inputs, 4 distinct)
+    "()"  [callArg,fnTypeParam]   tsc @4+1 in "f<()>(x);"
+    "(A, B)"  [callArg]   tsc @8+1 in "f<(A, B)>(x);"
+    "(a, b)"  [callArg]   tsc @8+1 in "f<(a, b)>(x);"
+    "(a = 1)"  [callArg]   tsc @9+1 in "f<(a = 1)>(x);"
+
+[01-type-forms / paren]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "(a).b"  [typeArg]   tsc @12+1 in "let x: A<(a).b>;"
+
+[01-type-forms / paren]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "(a)<T>"  [as]   tsc @21+1 in "const v = x as (a)<T>;"
+
+[01-type-forms / paren]  tsc TS1110 Type expected.   (2 inputs, 1 distinct)
+    "(a: A) =>"  [callArg,fnTypeParam]   tsc @11+1 in "f<(a: A) =>>(x);"
+
+[01-type-forms / paren]  tsc TS1131 Property or signature expected.   (1 inputs, 1 distinct)
+    "(a: A) =>"  [ret]   tsc @26+5 in "function f(): (a: A) => { throw 0 }"
+
+[01-type-forms / paren]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "(a).b"  [ret]   tsc @17+1 in "function f(): (a).b { throw 0 }"
+
+[01-type-forms / paren]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "(a).b"  [field]   tsc @16+1 in "class C { p: (a).b; }"
+
+[01-type-forms / pred]  tsc TS1005 ',' expected.   (78 inputs, 18 distinct)
+    "a is B"  [var,param,arrowParam,as,fnTypeParam]   tsc @9+2 in "let x: a is B;"
+    "a is"  [fnTypeParam]   tsc @13+2 in "let x: (a: a is) => void;"
+    "a is B | C"  [var,param,arrowParam,as,fnTypeParam,tupleEl]   tsc @9+2 in "let x: a is B | C;"
+    "a is B extends C ? D : E"  [var,param,arrowParam,as,fnTypeParam,tupleEl]   tsc @9+2 in "let x: a is B extends C ? D : E;"
+    "a is b is C"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @9+2 in "let x: a is b is C;"
+    "asserts a is b is C"  [arrowRet]   tsc @13+1 in "const f = (a): asserts a is b is C => 0;"
+    "asserts a.b"  [arrowRet]   tsc @13+1 in "const f = (a): asserts a.b => 0;"
+    "a is B[]"  [var,param,arrowParam,as,fnTypeParam,tupleEl]   tsc @9+2 in "let x: a is B[];"
+    "a is (B)"  [var,param,arrowParam,as,fnTypeParam,tupleEl]   tsc @9+2 in "let x: a is (B);"
+    "asserts this.x"  [arrowRet]   tsc @13+1 in "const f = (a): asserts this.x => 0;"
+    "asserts is is B"  [arrowRet]   tsc @13+1 in "const f = (a): asserts is is B => 0;"
+    "is is B"  [var,param,arrowParam,as,fnTypeParam,tupleEl]   tsc @10+2 in "let x: is is B;"
+    … 6 more
+
+[01-type-forms / pred]  tsc TS1005 ';' expected.   (37 inputs, 13 distinct)
+    "a is B"  [alias,callArg,member]   tsc @11+2 in "type X = a is B;"
+    "a is"  [callArg]   tsc @4+2 in "f<a is>(x);"
+    "a is B | C"  [alias,callArg,member]   tsc @11+2 in "type X = a is B | C;"
+    "a is B extends C ? D : E"  [alias,callArg,member]   tsc @11+2 in "type X = a is B extends C ? D : E;"
+    "a is b is C"  [alias,callArg,member]   tsc @11+2 in "type X = a is b is C;"
+    "a is B[]"  [alias,callArg,member]   tsc @11+2 in "type X = a is B[];"
+    "a is (B)"  [alias,callArg,member]   tsc @11+2 in "type X = a is (B);"
+    "is is B"  [alias,callArg,member]   tsc @12+2 in "type X = is is B;"
+    "a is this"  [alias,callArg,member]   tsc @11+2 in "type X = a is this;"
+    "a is\nB"  [alias,callArg,member]   tsc @11+2 in "type X = a is\nB;"
+    "undefined is B"  [alias,callArg,member]   tsc @19+2 in "type X = undefined is B;"
+    "any is B"  [alias,callArg,member]   tsc @13+2 in "type X = any is B;"
+    … 1 more
+
+[01-type-forms / pred]  tsc TS1005 '>' expected.   (11 inputs, 11 distinct)
+    "a is B | C"  [typeArg]   tsc @11+2 in "let x: A<a is B | C>;"
+    "a is B extends C ? D : E"  [typeArg]   tsc @11+2 in "let x: A<a is B extends C ? D : E>;"
+    "a is b is C"  [typeArg]   tsc @11+2 in "let x: A<a is b is C>;"
+    "a is B[]"  [typeArg]   tsc @11+2 in "let x: A<a is B[]>;"
+    "a is (B)"  [typeArg]   tsc @11+2 in "let x: A<a is (B)>;"
+    "is is B"  [typeArg]   tsc @12+2 in "let x: A<is is B>;"
+    "a is this"  [typeArg]   tsc @11+2 in "let x: A<a is this>;"
+    "a is\nB"  [typeArg]   tsc @11+2 in "let x: A<a is\nB>;"
+    "undefined is B"  [typeArg]   tsc @19+2 in "let x: A<undefined is B>;"
+    "any is B"  [typeArg]   tsc @13+2 in "let x: A<any is B>;"
+    "string is B"  [typeArg]   tsc @16+2 in "let x: A<string is B>;"
+
+[01-type-forms / pred]  tsc TS1110 Type expected.   (6 inputs, 4 distinct)
+    "a is"  [arrowRet]   tsc @20+2 in "const f = (a): a is => 0;"
+    "asserts a is"  [arrowRet]   tsc @28+2 in "const f = (a): asserts a is => 0;"
+    "asserts is"  [arrowRet]   tsc @26+2 in "const f = (a): asserts is => 0;"
+    "this is"  [arrowRet,callArg,fnTypeParam]   tsc @23+2 in "const f = (a): this is => 0;"
+
+[01-type-forms / pred]  tsc TS1131 Property or signature expected.   (6 inputs, 6 distinct)
+    "a is"  [ret]   tsc @21+5 in "function f(): a is { throw 0 }"
+    "a\nis B"  [member]   tsc @14+2 in "let x: { a: a\nis B };"
+    "this\nis B"  [member]   tsc @17+2 in "let x: { a: this\nis B };"
+    "asserts a is"  [ret]   tsc @29+5 in "function f(): asserts a is { throw 0 }"
+    "asserts is"  [ret]   tsc @27+5 in "function f(): asserts is { throw 0 }"
+    "this is"  [ret]   tsc @24+5 in "function f(): this is { throw 0 }"
+
+[01-type-forms / pred]  tsc TS1144 '{' or ';' expected.   (6 inputs, 6 distinct)
+    "a is b is C"  [ret]   tsc @21+2 in "function f(): a is b is C { throw 0 }"
+    "asserts a is b is C"  [ret]   tsc @29+2 in "function f(): asserts a is b is C { throw 0 }"
+    "asserts a.b"  [ret]   tsc @23+1 in "function f(): asserts a.b { throw 0 }"
+    "asserts this.x"  [ret]   tsc @26+1 in "function f(): asserts this.x { throw 0 }"
+    "asserts is is B"  [ret]   tsc @28+1 in "function f(): asserts is is B { throw 0 }"
+    "asserts a is b is c"  [ret]   tsc @29+2 in "function f(): asserts a is b is c { throw 0 }"
+
+[01-type-forms / pred]  tsc TS1442 Expected '=' for property initializer.   (12 inputs, 12 distinct)
+    "a is B"  [field]   tsc @15+2 in "class C { p: a is B; }"
+    "a is B | C"  [field]   tsc @15+2 in "class C { p: a is B | C; }"
+    "a is B extends C ? D : E"  [field]   tsc @15+2 in "class C { p: a is B extends C ? D : E; }"
+    "a is b is C"  [field]   tsc @15+2 in "class C { p: a is b is C; }"
+    "a is B[]"  [field]   tsc @15+2 in "class C { p: a is B[]; }"
+    "a is (B)"  [field]   tsc @15+2 in "class C { p: a is (B); }"
+    "is is B"  [field]   tsc @16+2 in "class C { p: is is B; }"
+    "a is this"  [field]   tsc @15+2 in "class C { p: a is this; }"
+    "a is\nB"  [field]   tsc @15+2 in "class C { p: a is\nB; }"
+    "undefined is B"  [field]   tsc @23+2 in "class C { p: undefined is B; }"
+    "any is B"  [field]   tsc @17+2 in "class C { p: any is B; }"
+    "string is B"  [field]   tsc @20+2 in "class C { p: string is B; }"
+
+[01-type-forms / query]  tsc TS1003 Identifier expected.   (40 inputs, 4 distinct)
+    "typeof a.#b"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @20+0 in "type X = typeof a.#b;"
+    "typeof a.b.#c"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @22+0 in "type X = typeof a.b.#c;"
+    "typeof a.#b.c"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @20+0 in "type X = typeof a.#b.c;"
+    "typeof [a]"  [callArg]   tsc @9+1 in "f<typeof [a]>(x);"
+
+[01-type-forms / query]  tsc TS1005 ',' expected.   (14 inputs, 2 distinct)
+    "typeof a<B>.c"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @18+1 in "let x: typeof a<B>.c;"
+    "typeof a!.b"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @16+1 in "let x: typeof a!.b;"
+
+[01-type-forms / query]  tsc TS1005 ';' expected.   (4 inputs, 2 distinct)
+    "typeof a<B>.c"  [alias,member]   tsc @20+1 in "type X = typeof a<B>.c;"
+    "typeof a!.b"  [alias,member]   tsc @18+1 in "type X = typeof a!.b;"
+
+[01-type-forms / query]  tsc TS1005 '(' expected.   (1 inputs, 1 distinct)
+    "typeof import.meta"  [callArg]   tsc @15+1 in "f<typeof import.meta>(x);"
+
+[01-type-forms / query]  tsc TS1005 '>' expected.   (2 inputs, 2 distinct)
+    "typeof a<B>.c"  [typeArg]   tsc @20+1 in "let x: A<typeof a<B>.c>;"
+    "typeof a!.b"  [typeArg]   tsc @18+1 in "let x: A<typeof a!.b>;"
+
+[01-type-forms / query]  tsc TS1109 Expression expected.   (2 inputs, 2 distinct)
+    "typeof a<B><C>"  [as]   tsc @29+1 in "const v = x as typeof a<B><C>;"
+    "typeof a\n<B>"  [as]   tsc @27+1 in "const v = x as typeof a\n<B>;"
+
+[01-type-forms / query]  tsc TS1144 '{' or ';' expected.   (2 inputs, 2 distinct)
+    "typeof a<B>.c"  [ret]   tsc @25+1 in "function f(): typeof a<B>.c { throw 0 }"
+    "typeof a!.b"  [ret]   tsc @23+1 in "function f(): typeof a!.b { throw 0 }"
+
+[01-type-forms / query]  tsc TS1442 Expected '=' for property initializer.   (2 inputs, 2 distinct)
+    "typeof a<B>.c"  [field]   tsc @24+1 in "class C { p: typeof a<B>.c; }"
+    "typeof a!.b"  [field]   tsc @22+1 in "class C { p: typeof a!.b; }"
+
+[01-type-forms / query]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "typeof a<B>.c"  [callArg]   tsc @10+3 in "f<typeof a<B>.c>(x);"
+
+[01-type-forms / ref]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "infer"  [callArg]   tsc @7+1 in "f<infer>(x);"
+
+[01-type-forms / ref]  tsc TS1005 ',' expected.   (7 inputs, 1 distinct)
+    "A<B>.C"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @11+1 in "let x: A<B>.C;"
+
+[01-type-forms / ref]  tsc TS1005 ';' expected.   (2 inputs, 1 distinct)
+    "A<B>.C"  [alias,member]   tsc @13+1 in "type X = A<B>.C;"
+
+[01-type-forms / ref]  tsc TS1005 '>' expected.   (2 inputs, 2 distinct)
+    "A<B>.C"  [typeArg]   tsc @13+1 in "let x: A<A<B>.C>;"
+    "const"  [typeArg]   tsc @9+5 in "let x: A<const>;"
+
+[01-type-forms / ref]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "const"  [callArg]   tsc @2+5 in "f<const>(x);"
+
+[01-type-forms / ref]  tsc TS1110 Type expected.   (51 inputs, 8 distinct)
+    "const"  [tupleEl]   tsc @8+5 in "let x: [const];"
+    "keyof"  [arrowRet,callArg,fnTypeParam]   tsc @21+2 in "const f = (a): keyof => 0;"
+    "readonly"  [arrowRet,callArg,fnTypeParam]   tsc @24+2 in "const f = (a): readonly => 0;"
+    "unique"  [alias,var,param,arrowParam,arrowRet,as,callArg,field,…]   tsc @15+1 in "type X = unique;"
+    "unique.x"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @15+1 in "type X = unique.x;"
+    "keyof.x"  [arrowRet,callArg,fnTypeParam]   tsc @20+1 in "const f = (a): keyof.x => 0;"
+    "readonly.x"  [arrowRet,callArg,fnTypeParam]   tsc @23+1 in "const f = (a): readonly.x => 0;"
+    "unique<T>"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @15+1 in "type X = unique<T>;"
+
+[01-type-forms / ref]  tsc TS1131 Property or signature expected.   (3 inputs, 3 distinct)
+    "keyof"  [ret]   tsc @22+5 in "function f(): keyof { throw 0 }"
+    "readonly"  [ret]   tsc @25+5 in "function f(): readonly { throw 0 }"
+    "unique"  [ret]   tsc @23+5 in "function f(): unique { throw 0 }"
+
+[01-type-forms / ref]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "A<B>.C"  [ret]   tsc @18+1 in "function f(): A<B>.C { throw 0 }"
+
+[01-type-forms / ref]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "A<B>.C"  [field]   tsc @17+1 in "class C { p: A<B>.C; }"
+
+[01-type-forms / ref]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "A<B>.C"  [callArg]   tsc @3+3 in "f<A<B>.C>(x);"
+
+[01-type-forms / targs]  tsc TS1005 ',' expected.   (2 inputs, 2 distinct)
+    "A<a is B>"  [arrowRet]   tsc @13+1 in "const f = (a): A<a is B> => 0;"
+    "A<const>"  [arrowRet]   tsc @13+1 in "const f = (a): A<const> => 0;"
+
+[01-type-forms / targs]  tsc TS1005 ';' expected.   (1 inputs, 1 distinct)
+    "A<a is B>"  [callArg]   tsc @6+2 in "f<A<a is B>>(x);"
+
+[01-type-forms / targs]  tsc TS1005 '(' expected.   (1 inputs, 1 distinct)
+    "A<<B>>"  [callArg]   tsc @7+1 in "f<A<<B>>>(x);"
+
+[01-type-forms / targs]  tsc TS1005 '>' expected.   (21 inputs, 2 distinct)
+    "A<a is B>"  [alias,var,param,ret,arrowParam,as,field,typeArg,…]   tsc @13+2 in "type X = A<a is B>;"
+    "A<const>"  [alias,param,ret,arrowParam,as,field,typeArg,fnTypeParam,…]   tsc @11+5 in "type X = A<const>;"
+
+[01-type-forms / targs]  tsc TS1109 Expression expected.   (3 inputs, 3 distinct)
+    "A\n<B>"  [as]   tsc @20+1 in "const v = x as A\n<B>;"
+    "A<B><C>"  [as]   tsc @22+1 in "const v = x as A<B><C>;"
+    "A<const>"  [callArg]   tsc @4+5 in "f<A<const>>(x);"
+
+[01-type-forms / targs]  tsc TS1110 Type expected.   (6 inputs, 2 distinct)
+    "A<B,,C>"  [arrowRet,callArg,fnTypeParam]   tsc @19+1 in "const f = (a): A<B,,C> => 0;"
+    "A<,B>"  [arrowRet,callArg,fnTypeParam]   tsc @17+1 in "const f = (a): A<,B> => 0;"
+
+[01-type-forms / tmpl]  tsc TS1005 ',' expected.   (8 inputs, 2 distinct)
+    "`${a is B}`"  [arrowRet]   tsc @13+1 in "const f = (a): `${a is B}` => 0;"
+    "`${A}`.length"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @13+1 in "let x: `${A}`.length;"
+
+[01-type-forms / tmpl]  tsc TS1005 ';' expected.   (2 inputs, 1 distinct)
+    "`${A}`.length"  [alias,member]   tsc @15+1 in "type X = `${A}`.length;"
+
+[01-type-forms / tmpl]  tsc TS1005 '}' expected.   (12 inputs, 1 distinct)
+    "`${a is B}`"  [alias,var,param,ret,arrowParam,as,callArg,field,…]   tsc @14+2 in "type X = `${a is B}`;"
+
+[01-type-forms / tmpl]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "`${A}`.length"  [typeArg]   tsc @15+1 in "let x: A<`${A}`.length>;"
+
+[01-type-forms / tmpl]  tsc TS1109 Expression expected.   (1 inputs, 1 distinct)
+    "`${A}`<T>"  [as]   tsc @24+1 in "const v = x as `${A}`<T>;"
+
+[01-type-forms / tmpl]  tsc TS1110 Type expected.   (6 inputs, 2 distinct)
+    "`${}`"  [arrowRet,callArg,fnTypeParam]   tsc @18+1 in "const f = (a): `${}` => 0;"
+    "`${A}${}`"  [arrowRet,callArg,fnTypeParam]   tsc @22+1 in "const f = (a): `${A}${}` => 0;"
+
+[01-type-forms / tmpl]  tsc TS1125 Hexadecimal digit expected.   (13 inputs, 1 distinct)
+    "`${A}\\u`"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @16+0 in "type X = `${A}\\u`;"
+
+[01-type-forms / tmpl]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "`${A}`.length"  [ret]   tsc @20+1 in "function f(): `${A}`.length { throw 0 }"
+
+[01-type-forms / tmpl]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "`${A}`.length"  [field]   tsc @19+1 in "class C { p: `${A}`.length; }"
+
+[01-type-forms / tuple]  tsc TS1005 ',' expected.   (90 inputs, 7 distinct)
+    "[a!: A]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+1 in "type X = [a!: A];"
+    "[\"a\": A]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = [\"a\": A];"
+    "[1: A]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @11+1 in "type X = [1: A];"
+    "[a.b: A]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = [a.b: A];"
+    "[a<T>: A]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @14+1 in "type X = [a<T>: A];"
+    "[a[]: A]"  [alias,var,param,ret,arrowParam,arrowRet,as,field,…]   tsc @13+1 in "type X = [a[]: A];"
+    "[a is B]"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+2 in "type X = [a is B];"
+
+[01-type-forms / tuple]  tsc TS1011 An element access expression should take an argument.   (1 inputs, 1 distinct)
+    "[a[]: A]"  [callArg]   tsc @5+0 in "f<[a[]: A]>(x);"
+
+[01-type-forms / tuple]  tsc TS1110 Type expected.   (20 inputs, 7 distinct)
+    "[,]"  [arrowRet,callArg,fnTypeParam]   tsc @16+1 in "const f = (a): [,] => 0;"
+    "[,A]"  [arrowRet,callArg,fnTypeParam]   tsc @16+1 in "const f = (a): [,A] => 0;"
+    "[A,,B]"  [arrowRet,callArg,fnTypeParam]   tsc @18+1 in "const f = (a): [A,,B] => 0;"
+    "[...]"  [arrowRet,callArg,fnTypeParam]   tsc @19+1 in "const f = (a): [...] => 0;"
+    "[a:]"  [arrowRet,callArg,fnTypeParam]   tsc @18+1 in "const f = (a): [a:] => 0;"
+    "[a?:]"  [arrowRet,callArg,fnTypeParam]   tsc @19+1 in "const f = (a): [a?:] => 0;"
+    "[: A]"  [arrowRet,fnTypeParam]   tsc @16+1 in "const f = (a): [: A] => 0;"
+
+[01-type-forms / tuple]  tsc TS1137 Expression or comma expected.   (1 inputs, 1 distinct)
+    "[: A]"  [callArg]   tsc @3+1 in "f<[: A]>(x);"
+
+[01-type-forms / union]  tsc TS1005 ',' expected.   (7 inputs, 1 distinct)
+    "A | a is B"  [var,param,arrowParam,arrowRet,as,fnTypeParam,tupleEl]   tsc @13+2 in "let x: A | a is B;"
+
+[01-type-forms / union]  tsc TS1005 ';' expected.   (3 inputs, 1 distinct)
+    "A | a is B"  [alias,callArg,member]   tsc @15+2 in "type X = A | a is B;"
+
+[01-type-forms / union]  tsc TS1005 '>' expected.   (1 inputs, 1 distinct)
+    "A | a is B"  [typeArg]   tsc @15+2 in "let x: A<A | a is B>;"
+
+[01-type-forms / union]  tsc TS1110 Type expected.   (103 inputs, 11 distinct)
+    "& | A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @11+1 in "type X = & | A;"
+    "| | A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @11+1 in "type X = | | A;"
+    "& & A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @11+1 in "type X = & & A;"
+    "| & | A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = | & | A;"
+    "A | | B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = A | | B;"
+    "A & & B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = A & & B;"
+    "A & | B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @13+1 in "type X = A & | B;"
+    "A |"  [arrowRet,callArg,fnTypeParam]   tsc @19+2 in "const f = (a): A | => 0;"
+    "A &"  [arrowRet,callArg,fnTypeParam]   tsc @19+2 in "const f = (a): A & => 0;"
+    "|"  [arrowRet,callArg,fnTypeParam]   tsc @17+2 in "const f = (a): | => 0;"
+    "&"  [arrowRet,callArg,fnTypeParam]   tsc @17+2 in "const f = (a): & => 0;"
+
+[01-type-forms / union]  tsc TS1131 Property or signature expected.   (4 inputs, 4 distinct)
+    "A |"  [ret]   tsc @20+5 in "function f(): A | { throw 0 }"
+    "A &"  [ret]   tsc @20+5 in "function f(): A & { throw 0 }"
+    "|"  [ret]   tsc @18+5 in "function f(): | { throw 0 }"
+    "&"  [ret]   tsc @18+5 in "function f(): & { throw 0 }"
+
+[01-type-forms / union]  tsc TS1144 '{' or ';' expected.   (1 inputs, 1 distinct)
+    "A | a is B"  [ret]   tsc @20+2 in "function f(): A | a is B { throw 0 }"
+
+[01-type-forms / union]  tsc TS1385 Function type notation must be parenthesized when used in a union type.   (65 inputs, 5 distinct)
+    "A | () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+11 in "type X = A | () => void;"
+    "| () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @10+11 in "type X = | () => void;"
+    "A | <T>() => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+14 in "type X = A | <T>() => void;"
+    "A | (a: B) => C"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+12 in "type X = A | (a: B) => C;"
+    "A | (a) => C"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+9 in "type X = A | (a) => C;"
+
+[01-type-forms / union]  tsc TS1386 Constructor type notation must be parenthesized when used in a union type.   (39 inputs, 3 distinct)
+    "A | new () => B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+12 in "type X = A | new () => B;"
+    "| new () => A"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @10+12 in "type X = | new () => A;"
+    "A | abstract new () => B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+21 in "type X = A | abstract new () => B;"
+
+[01-type-forms / union]  tsc TS1387 Function type notation must be parenthesized when used in an intersection type.   (39 inputs, 3 distinct)
+    "A & () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+11 in "type X = A & () => void;"
+    "& () => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @10+11 in "type X = & () => void;"
+    "A & <T>() => void"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+14 in "type X = A & <T>() => void;"
+
+[01-type-forms / union]  tsc TS1388 Constructor type notation must be parenthesized when used in an intersection type.   (13 inputs, 1 distinct)
+    "A & new () => B"  [alias,var,param,ret,arrowParam,arrowRet,as,callArg,…]   tsc @12+12 in "type X = A & new () => B;"
+
+[01-type-forms / union]  tsc TS1442 Expected '=' for property initializer.   (1 inputs, 1 distinct)
+    "A | a is B"  [field]   tsc @19+2 in "class C { p: A | a is B; }"
+
+[02-object-types / aliasHead]  tsc TS1005 ';' expected.   (2 inputs, 2 distinct)
+    "type X = intrinsic<T>"  [-]   tsc @18+1 in "type X = intrinsic<T>"
+    "type X = intrinsic | A"  [-]   tsc @19+1 in "type X = intrinsic | A"
+
+[02-object-types / aliasHead]  tsc TS1005 '=' expected.   (1 inputs, 1 distinct)
+    "type as any"  [-]   tsc @8+3 in "type as any"
+
+[02-object-types / aliasName]  tsc TS1005 '{' expected.   (4 inputs, 2 distinct)
+    "as"  [exportAlias,nsAlias]   tsc @12+2 in "export type as = 1"
+    "\\u{61}s"  [exportAlias,nsAlias]   tsc @12+7 in "export type \\u{61}s = 1"
+
+[02-object-types / ifaceHead]  tsc TS1005 ',' expected.   (10 inputs, 10 distinct)
+    "interface I extends A | B {}"  [-]   tsc @22+1 in "interface I extends A | B {}"
+    "interface I extends A & B {}"  [-]   tsc @22+1 in "interface I extends A & B {}"
+    "interface I extends keyof A {}"  [-]   tsc @26+1 in "interface I extends keyof A {}"
+    "interface I extends A extends B ? C : D {}"  [-]   tsc @32+1 in "interface I extends A extends B ? C : D {}"
+    "interface I extends A<B>[] {}"  [-]   tsc @24+1 in "interface I extends A<B>[] {}"
+    "interface I extends unique symbol {}"  [-]   tsc @27+6 in "interface I extends unique symbol {}"
+    "interface I extends readonly A[] {}"  [-]   tsc @29+1 in "interface I extends readonly A[] {}"
+    "interface I extends infer U {}"  [-]   tsc @26+1 in "interface I extends infer U {}"
+    "interface I extends a is B {}"  [-]   tsc @22+2 in "interface I extends a is B {}"
+    "interface I extends abstract new () => A {}"  [-]   tsc @29+3 in "interface I extends abstract new () => A {}"
+
+[02-object-types / ifaceHead]  tsc TS1011 An element access expression should take an argument.   (1 inputs, 1 distinct)
+    "interface I extends A[] {}"  [-]   tsc @22+0 in "interface I extends A[] {}"
+
+[02-object-types / ifaceHead]  tsc TS1109 Expression expected.   (4 inputs, 4 distinct)
+    "interface I extends () => void {}"  [-]   tsc @21+1 in "interface I extends () => void {}"
+    "interface I extends typeof a {}"  [-]   tsc @20+6 in "interface I extends typeof a {}"
+    "interface I extends void {}"  [-]   tsc @20+4 in "interface I extends void {}"
+    "interface I extends -1 {}"  [-]   tsc @20+1 in "interface I extends -1 {}"
+
+[02-object-types / ifaceHead]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "interface I extends A<B>.C {}"  [-]   tsc @21+3 in "interface I extends A<B>.C {}"
+
+[02-object-types / mapped]  tsc TS1005 ';' expected.   (17 inputs, 11 distinct)
+    "[K in A]: B,"  [typeLit,param]   tsc @22+1 in "type X = { [K in A]: B, };"
+    "[K in A]!: B"  [typeLit,iface,param]   tsc @19+1 in "type X = { [K in A]!: B };"
+    "[K in A](): B"  [typeLit,param]   tsc @19+1 in "type X = { [K in A](): B };"
+    "[K in A]<T>(): B"  [typeLit,param]   tsc @19+1 in "type X = { [K in A]<T>(): B };"
+    "[K in A]?(): B"  [typeLit,param]   tsc @20+1 in "type X = { [K in A]?(): B };"
+    "[K in A]+?: B"  [iface]   tsc @22+1 in "interface I { [K in A]+?: B }"
+    "[K in A]-?: B"  [iface]   tsc @22+1 in "interface I { [K in A]-?: B }"
+    "[K in A]+?"  [iface]   tsc @22+1 in "interface I { [K in A]+? }"
+    "[K in A]-?"  [iface]   tsc @22+1 in "interface I { [K in A]-? }"
+    "[K in A]+: B"  [iface]   tsc @22+1 in "interface I { [K in A]+: B }"
+    "[K in A]-: B"  [iface]   tsc @22+1 in "interface I { [K in A]-: B }"
+
+[02-object-types / mapped]  tsc TS1005 '?' expected.   (4 inputs, 2 distinct)
+    "[K in A]+: B"  [typeLit,param]   tsc @20+1 in "type X = { [K in A]+: B };"
+    "[K in A]-: B"  [typeLit,param]   tsc @20+1 in "type X = { [K in A]-: B };"
+
+[02-object-types / mapped]  tsc TS1005 '[' expected.   (2 inputs, 1 distinct)
+    "+readonly readonly [K in A]: B"  [typeLit,param]   tsc @21+8 in "type X = { +readonly readonly [K in A]: B };"
+
+[02-object-types / mapped]  tsc TS1005 ']' expected.   (4 inputs, 4 distinct)
+    "[K in keyof A]: A[K]"  [iface]   tsc @26+1 in "interface I { [K in keyof A]: A[K] }"
+    "[K in keyof A as K extends B ? C : never]: A[K]"  [iface]   tsc @26+1 in "interface I { [K in keyof A as K extends B ? C : never]: A[K] }"
+    "[K in A extends B ? C : D]: E"  [iface]   tsc @22+7 in "interface I { [K in A extends B ? C : D]: E }"
+    "[K in infer U]: B"  [iface]   tsc @26+1 in "interface I { [K in infer U]: B }"
+
+[02-object-types / mapped]  tsc TS1011 An element access expression should take an argument.   (1 inputs, 1 distinct)
+    "[K in A[]]: B"  [iface]   tsc @22+0 in "interface I { [K in A[]]: B }"
+
+[02-object-types / mapped]  tsc TS1109 Expression expected.   (9 inputs, 5 distinct)
+    "[void in A]: B"  [typeLit,iface,param]   tsc @17+2 in "type X = { [void in A]: B };"
+    "[const in A]: B"  [typeLit,iface,param]   tsc @12+5 in "type X = { [const in A]: B };"
+    "[K in () => void]: B"  [iface]   tsc @21+1 in "interface I { [K in () => void]: B }"
+    "[yield in A]: B"  [iface]   tsc @21+2 in "interface I { [yield in A]: B }"
+    "[await in A]: B"  [iface]   tsc @21+2 in "interface I { [await in A]: B }"
+
+[02-object-types / mapped]  tsc TS1131 Property or signature expected.   (12 inputs, 8 distinct)
+    "+[K in A]: B"  [typeLit,iface,param]   tsc @11+1 in "type X = { +[K in A]: B };"
+    "-[K in A]: B"  [typeLit,iface,param]   tsc @11+1 in "type X = { -[K in A]: B };"
+    "+readonly [K in A]: B"  [iface]   tsc @14+1 in "interface I { +readonly [K in A]: B }"
+    "-readonly [K in A]: B"  [iface]   tsc @14+1 in "interface I { -readonly [K in A]: B }"
+    "-readonly [K in A]-?: B"  [iface]   tsc @14+1 in "interface I { -readonly [K in A]-?: B }"
+    "+readonly [K in A]+?: B"  [iface]   tsc @14+1 in "interface I { +readonly [K in A]+?: B }"
+    "+readonly readonly [K in A]: B"  [iface]   tsc @14+1 in "interface I { +readonly readonly [K in A]: B }"
+    "+\nreadonly [K in A]: B"  [iface]   tsc @14+1 in "interface I { +\nreadonly [K in A]: B }"
+
+[02-object-types / member]  tsc TS1005 ';' expected.   (24 inputs, 8 distinct)
+    "default a: A"  [typeLit,iface,varLit]   tsc @19+1 in "type X = { default a: A };"
+    "const a: A"  [typeLit,iface,varLit]   tsc @17+1 in "type X = { const a: A };"
+    "[k: string]?: A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string]?: A };"
+    "[k: string](): A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string](): A };"
+    "[k: string]<T>(): A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string]<T>(): A };"
+    "[k: string]!: A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string]!: A };"
+    "[k: string]-?: A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string]-?: A };"
+    "[k: string]+?: A"  [typeLit,iface,varLit]   tsc @22+1 in "type X = { [k: string]+?: A };"
+
+[02-object-types / member]  tsc TS1005 '(' expected.   (27 inputs, 9 distinct)
+    "a<T>: A"  [typeLit,iface,varLit]   tsc @15+1 in "type X = { a<T>: A };"
+    "get a?(): A"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { get a?(): A };"
+    "set a?(v: A)"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { set a?(v: A) };"
+    "get a: A"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { get a: A };"
+    "get a"  [typeLit,iface,varLit]   tsc @17+1 in "type X = { get a };"
+    "get a?"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { get a? };"
+    "get a?: A"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { get a?: A };"
+    "set a: A"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { set a: A };"
+    "get async a(): A"  [typeLit,iface,varLit]   tsc @21+1 in "type X = { get async a(): A };"
+
+[02-object-types / member]  tsc TS1005 ']' expected.   (9 inputs, 3 distinct)
+    "[{ k }: string]: A"  [typeLit,iface,varLit]   tsc @17+1 in "type X = { [{ k }: string]: A };"
+    "[[k]: string]: A"  [typeLit,iface,varLit]   tsc @15+1 in "type X = { [[k]: string]: A };"
+    "[this: string]: A"  [typeLit,iface,varLit]   tsc @16+1 in "type X = { [this: string]: A };"
+
+[02-object-types / member]  tsc TS1005 'in' expected.   (4 inputs, 2 distinct)
+    "-readonly [k: string]: A"  [typeLit,varLit]   tsc @23+1 in "type X = { -readonly [k: string]: A };"
+    "+readonly [k: string]: A"  [typeLit,varLit]   tsc @23+1 in "type X = { +readonly [k: string]: A };"
+
+[02-object-types / member]  tsc TS1110 Type expected.   (3 inputs, 1 distinct)
+    "{ a: }"  [arrowRet,callArg,fnTypeParam]   tsc @20+1 in "const f = (a): { a: } => 0;"
+
+[02-object-types / member]  tsc TS1131 Property or signature expected.   (35 inputs, 13 distinct)
+    "-1: A"  [typeLit,iface,varLit]   tsc @11+1 in "type X = { -1: A };"
+    "a!: A"  [typeLit,iface,varLit]   tsc @11+1 in "type X = { a!: A };"
+    "a!"  [typeLit,iface,varLit]   tsc @11+1 in "type X = { a! };"
+    "a A"  [typeLit,iface,varLit]   tsc @11+1 in "type X = { a A };"
+    "readonly get a(): A"  [typeLit,iface,varLit]   tsc @11+8 in "type X = { readonly get a(): A };"
+    "static get a(): A"  [typeLit,iface,varLit]   tsc @11+6 in "type X = { static get a(): A };"
+    "public set a(v: A)"  [typeLit,iface,varLit]   tsc @11+6 in "type X = { public set a(v: A) };"
+    "a!(): A"  [typeLit,iface,varLit]   tsc @11+1 in "type X = { a!(): A };"
+    "new new (): A"  [typeLit,iface,varLit]   tsc @11+3 in "type X = { new new (): A };"
+    "new a(): A"  [typeLit,iface,varLit]   tsc @11+3 in "type X = { new a(): A };"
+    "async get a(): A"  [typeLit,iface,varLit]   tsc @11+5 in "type X = { async get a(): A };"
+    "-readonly [k: string]: A"  [iface]   tsc @14+1 in "interface I { -readonly [k: string]: A }"
+    … 1 more
+
+[02-object-types / memberSep]  tsc TS1005 '(' expected.   (2 inputs, 1 distinct)
+    "get\nset"  [typeLit,iface]   tsc @19+1 in "type X = { get\nset };"
+
+[03-signatures / arrowSig]  tsc TS1003 Identifier expected.   (6 inputs, 1 distinct)
+    "{ ...{ a } }"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]   tsc @16+1 in "const f = ({ ...{ a } }) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ',' expected.   (16 inputs, 9 distinct)
+    "a: a is B"  [arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]   tsc @16+2 in "const f = (a: a is B) => 0;"
+    "a!"  [arrowRet]   tsc @14+1 in "const f = (a!): void => {};"
+    "(a)"  [arrowRet]   tsc @15+1 in "const f = ((a)): void => {};"
+    "a as A"  [arrowRet,genericArrow]   tsc @18+1 in "const f = (a as A): void => {};"
+    "a satisfies A"  [arrowRet,genericArrow]   tsc @25+1 in "const f = (a satisfies A): void => {};"
+    "<A>a"  [arrowRet]   tsc @16+1 in "const f = (<A>a): void => {};"
+    "a<A>"  [arrowRet]   tsc @16+1 in "const f = (a<A>): void => {};"
+    "a!: A"  [asyncArrow]   tsc @19+1 in "const f = async (a!: A) => 0;"
+    "(a): A"  [asyncArrow]   tsc @20+1 in "const f = async ((a): A) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ';' expected.   (12 inputs, 6 distinct)
+    "a!"  [arrow,asyncArrow]   tsc @15+2 in "const f = (a!) => 0;"
+    "(a)"  [arrow,asyncArrow]   tsc @16+2 in "const f = ((a)) => 0;"
+    "a as A"  [arrow,asyncArrow]   tsc @19+2 in "const f = (a as A) => 0;"
+    "a satisfies A"  [arrow,asyncArrow]   tsc @26+2 in "const f = (a satisfies A) => 0;"
+    "<A>a"  [arrow,asyncArrow]   tsc @17+2 in "const f = (<A>a) => 0;"
+    "a<A>"  [arrow,asyncArrow]   tsc @17+2 in "const f = (a<A>) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 ':' expected.   (6 inputs, 6 distinct)
+    "a!"  [arrowInCond]   tsc @19+2 in "const f = a ? (a!) => 0 : 1;"
+    "(a)"  [arrowInCond]   tsc @20+2 in "const f = a ? ((a)) => 0 : 1;"
+    "a as A"  [arrowInCond]   tsc @23+2 in "const f = a ? (a as A) => 0 : 1;"
+    "a satisfies A"  [arrowInCond]   tsc @30+2 in "const f = a ? (a satisfies A) => 0 : 1;"
+    "<A>a"  [arrowInCond]   tsc @21+2 in "const f = a ? (<A>a) => 0 : 1;"
+    "a<A>"  [arrowInCond]   tsc @21+2 in "const f = a ? (a<A>) => 0 : 1;"
+
+[03-signatures / arrowSig]  tsc TS1005 ')' expected.   (8 inputs, 2 distinct)
+    "a!: A"  [arrow,arrowRet,arrowInCond,arrowInCondRet]   tsc @13+1 in "const f = (a!: A) => 0;"
+    "(a): A"  [arrow,arrowRet,arrowInCond,arrowInCondRet]   tsc @14+1 in "const f = ((a): A) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1005 '>' expected.   (6 inputs, 6 distinct)
+    "a!"  [genericArrow]   tsc @12+1 in "const f = <T,>(a!) => 0;"
+    "a!: A"  [genericArrow]   tsc @12+1 in "const f = <T,>(a!: A) => 0;"
+    "(a)"  [genericArrow]   tsc @12+1 in "const f = <T,>((a)) => 0;"
+    "(a): A"  [genericArrow]   tsc @12+1 in "const f = <T,>((a): A) => 0;"
+    "<A>a"  [genericArrow]   tsc @12+1 in "const f = <T,>(<A>a) => 0;"
+    "a<A>"  [genericArrow]   tsc @12+1 in "const f = <T,>(a<A>) => 0;"
+
+[03-signatures / arrowSig]  tsc TS1109 Expression expected.   (6 inputs, 6 distinct)
+    "a!"  [arrowInCondRet]   tsc @25+2 in "const f = a ? (a!): void => {} : 1;"
+    "(a)"  [arrowInCondRet]   tsc @26+2 in "const f = a ? ((a)): void => {} : 1;"
+    "a as A"  [arrowInCondRet]   tsc @29+2 in "const f = a ? (a as A): void => {} : 1;"
+    "a satisfies A"  [arrowInCondRet]   tsc @36+2 in "const f = a ? (a satisfies A): void => {} : 1;"
+    "<A>a"  [arrowInCondRet]   tsc @27+2 in "const f = a ? (<A>a): void => {} : 1;"
+    "a<A>"  [arrowInCondRet]   tsc @27+2 in "const f = a ? (a<A>): void => {} : 1;"
+
+[03-signatures / declSig]  tsc TS1005 ',' expected.   (21 inputs, 3 distinct)
+    "a: a is B"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @16+2 in "function f(a: a is B) {}"
+    "public\na: A"  [ctor,ctorOverload,declareCtor]   tsc @29+1 in "class C { constructor(public\na: A) {} }"
+    "readonly\na: A"  [ctor,ctorOverload,declareCtor]   tsc @31+1 in "class C { constructor(readonly\na: A) {} }"
+
+[03-signatures / declSig]  tsc TS1005 ':' expected.   (45 inputs, 3 distinct)
+    "{ if }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @16+1 in "function f({ if }) {}"
+    "{ this }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @18+1 in "function f({ this }) {}"
+    "{ enum }"  [fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,…]   tsc @18+1 in "function f({ enum }) {}"
+
+[03-signatures / memberSig]  tsc TS1005 ',' expected.   (10 inputs, 2 distinct)
+    "this?: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @16+1 in "type X = { (this?: A): void };"
+    "a: a is B"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @17+2 in "type X = { (a: a is B): void };"
+
+[03-signatures / memberSig]  tsc TS1181 Array element destructuring pattern expected.   (5 inputs, 1 distinct)
+    "[this]"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @13+4 in "type X = { ([this]): void };"
+
+[03-signatures / memberSig]  tsc TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.   (10 inputs, 2 distinct)
+    "{ a: this }"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @17+4 in "type X = { ({ a: this }): void };"
+    "...this: A"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]   tsc @15+4 in "type X = { (...this: A): void };"
+
+[03-signatures / typeSig]  tsc TS1005 ',' expected.   (14 inputs, 2 distinct)
+    "this?: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @12+1 in "let x: (this?: A) => void;"
+    "a: a is B"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @13+2 in "let x: (a: a is B) => void;"
+
+[03-signatures / typeSig]  tsc TS1005 ';' expected.   (4 inputs, 2 distinct)
+    "[this]"  [fnType,fnTypeAsArg]   tsc @16+2 in "let x: ([this]) => void;"
+    "{ a: this }"  [fnType,fnTypeAsArg]   tsc @21+2 in "let x: ({ a: this }) => void;"
+
+[03-signatures / typeSig]  tsc TS1005 ')' expected.   (4 inputs, 2 distinct)
+    "[this]"  [fnTypeInUnion,fnTypeArrowRet]   tsc @21+2 in "let x: A | (([this]) => void);"
+    "{ a: this }"  [fnTypeInUnion,fnTypeArrowRet]   tsc @26+2 in "let x: A | (({ a: this }) => void);"
+
+[03-signatures / typeSig]  tsc TS1110 Type expected.   (35 inputs, 5 distinct)
+    "{ a }: "  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @15+1 in "let x: ({ a }: ) => void;"
+    "a:"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @10+1 in "let x: (a:) => void;"
+    "a?:"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+1 in "let x: (a?:) => void;"
+    "a: "  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+1 in "let x: (a: ) => void;"
+    "a: |"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @12+1 in "let x: (a: |) => void;"
+
+[03-signatures / typeSig]  tsc TS1131 Property or signature expected.   (3 inputs, 1 distinct)
+    "{ : a }"  [fnType,fnTypeInUnion,fnTypeArrowRet]   tsc @10+1 in "let x: ({ : a }) => void;"
+
+[03-signatures / typeSig]  tsc TS1136 Property assignment expected.   (1 inputs, 1 distinct)
+    "{ : a }"  [fnTypeAsArg]   tsc @5+1 in "f<({ : a }) => void>(x);"
+
+[03-signatures / typeSig]  tsc TS1180 Property destructuring pattern expected.   (3 inputs, 1 distinct)
+    "{ : a }"  [ctorType,abstractCtorType,genericFnType]   tsc @14+1 in "let x: new ({ : a }) => A;"
+
+[03-signatures / typeSig]  tsc TS1181 Array element destructuring pattern expected.   (3 inputs, 1 distinct)
+    "[this]"  [ctorType,abstractCtorType,genericFnType]   tsc @13+4 in "let x: new ([this]) => A;"
+
+[03-signatures / typeSig]  tsc TS1359 Identifier expected. 'this' is a reserved word that cannot be used here.   (10 inputs, 2 distinct)
+    "...this: A"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]   tsc @11+4 in "let x: (...this: A) => void;"
+    "{ a: this }"  [ctorType,abstractCtorType,genericFnType]   tsc @17+4 in "let x: new ({ a: this }) => A;"
+
+[04-type-params-args / targsExpr]  tsc TS1003 Identifier expected.   (3 inputs, 3 distinct)
+    "<a is B>"  [optionalCall3]   tsc @3+1 in "a?.<a is B>(x);"
+    "<const>"  [optionalCall3]   tsc @3+1 in "a?.<const>(x);"
+    "<keyof () => void>"  [optionalCall3]   tsc @3+1 in "a?.<keyof () => void>(x);"
+
+[04-type-params-args / targsExpr]  tsc TS1005 ',' expected.   (23 inputs, 2 distinct)
+    "<a is B>"  [inst,instNewline,instMember,instOptional,instAs,instSatisfies,instComma,instObj,…]   tsc @14+2 in "const v = f<a is B>;"
+    "<keyof () => void>"  [instComma,instObj,instSpread,instArg]   tsc @22+2 in "const v = [f<keyof () => void>, g<keyof () => void>];"
+
+[04-type-params-args / targsExpr]  tsc TS1005 ';' expected.   (66 inputs, 2 distinct)
+    "<a is B>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @4+2 in "f<a is B>(x);"
+    "<keyof () => void>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @11+2 in "f<keyof () => void>(x);"
+
+[04-type-params-args / targsExpr]  tsc TS1005 '>' expected.   (5 inputs, 3 distinct)
+    "<a is B>"  [instClassExtends,instClassExtendsCall]   tsc @20+2 in "class C extends f<a is B> {}"
+    "<const>"  [instClassExtends,instClassExtendsCall]   tsc @18+5 in "class C extends f<const> {}"
+    "<keyof () => void>"  [instAsync]   tsc @12+1 in "async<keyof () => void>(x);"
+
+[04-type-params-args / targsExpr]  tsc TS1109 Expression expected.   (45 inputs, 1 distinct)
+    "<const>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @2+5 in "f<const>(x);"
+
+[04-type-params-args / targsExpr]  tsc TS1110 Type expected.   (281 inputs, 7 distinct)
+    "<,>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @2+1 in "f<,>(x);"
+    "<A,,B>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @4+1 in "f<A,,B>(x);"
+    "<,A>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @2+1 in "f<,A>(x);"
+    "<A | >"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @6+1 in "f<A | >(x);"
+    "<A & >"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,newCall,newNoArgs,newMember,…]   tsc @6+1 in "f<A & >(x);"
+    "<(a: ) => void>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]   tsc @6+1 in "f<(a: ) => void>(x);"
+    "<keyof () => void>"  [instClassExtends,instClassExtendsCall]   tsc @25+1 in "class C extends f<keyof () => void> {}"
+
+[04-type-params-args / targsExpr]  tsc TS1146 Declaration expected.   (43 inputs, 40 distinct)
+    "<a is B>"  [instDecorator,instDecoratorNoCall]   tsc @2+0 in "@f<a is B>(x) class C {}"
+    "<const>"  [instDecorator,instDecoratorNoCall]   tsc @2+0 in "@f<const>(x) class C {}"
+    "<keyof () => void>"  [instDecorator,instDecoratorNoCall]   tsc @2+0 in "@f<keyof () => void>(x) class C {}"
+    "<A>"  [instDecoratorNoCall]   tsc @2+0 in "@f<A> class C {}"
+    "<A, B>"  [instDecoratorNoCall]   tsc @2+0 in "@f<A, B> class C {}"
+    "<A, B, C>"  [instDecoratorNoCall]   tsc @2+0 in "@f<A, B, C> class C {}"
+    "<A | B>"  [instDecoratorNoCall]   tsc @2+0 in "@f<A | B> class C {}"
+    "<| A>"  [instDecoratorNoCall]   tsc @2+0 in "@f<| A> class C {}"
+    "<A extends B ? C : D>"  [instDecoratorNoCall]   tsc @2+0 in "@f<A extends B ? C : D> class C {}"
+    "<() => void>"  [instDecoratorNoCall]   tsc @2+0 in "@f<() => void> class C {}"
+    "<(a: A) => B>"  [instDecoratorNoCall]   tsc @2+0 in "@f<(a: A) => B> class C {}"
+    "<new () => A>"  [instDecoratorNoCall]   tsc @2+0 in "@f<new () => A> class C {}"
+    … 28 more
+
+[04-type-params-args / targsExpr]  tsc TS1385 Function type notation must be parenthesized when used in a union type.   (49 inputs, 1 distinct)
+    "<A | () => void>"  [call,callNoArgs,memberCall,optionalCall,optionalCall2,optionalCall3,newCall,newNoArgs,…]   tsc @5+11 in "f<A | () => void>(x);"
+
+[04-type-params-args / targsExpr]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (74 inputs, 37 distinct)
+    "<A>"  [instMember,instOptional]   tsc @11+3 in "const v = f<A>.x;"
+    "<A, B>"  [instMember,instOptional]   tsc @11+6 in "const v = f<A, B>.x;"
+    "<A, B, C>"  [instMember,instOptional]   tsc @11+9 in "const v = f<A, B, C>.x;"
+    "<A,>"  [instMember,instOptional]   tsc @11+4 in "const v = f<A,>.x;"
+    "<>"  [instMember,instOptional]   tsc @11+2 in "const v = f<>.x;"
+    "<A | B>"  [instMember,instOptional]   tsc @11+7 in "const v = f<A | B>.x;"
+    "<| A>"  [instMember,instOptional]   tsc @11+5 in "const v = f<| A>.x;"
+    "<A extends B ? C : D>"  [instMember,instOptional]   tsc @11+21 in "const v = f<A extends B ? C : D>.x;"
+    "<() => void>"  [instMember,instOptional]   tsc @11+12 in "const v = f<() => void>.x;"
+    "<(a: A) => B>"  [instMember,instOptional]   tsc @11+13 in "const v = f<(a: A) => B>.x;"
+    "<new () => A>"  [instMember,instOptional]   tsc @11+13 in "const v = f<new () => A>.x;"
+    "<{ a: A }>"  [instMember,instOptional]   tsc @11+10 in "const v = f<{ a: A }>.x;"
+    … 25 more
+
+[04-type-params-args / targsHeritage]  tsc TS1005 ',' expected.   (9 inputs, 9 distinct)
+    "class C implements A | B {}"  [-]   tsc @21+1 in "class C implements A | B {}"
+    "class C implements A & B {}"  [-]   tsc @21+1 in "class C implements A & B {}"
+    "class C implements keyof A {}"  [-]   tsc @25+1 in "class C implements keyof A {}"
+    "class C implements A extends B ? D : E {}"  [-]   tsc @31+1 in "class C implements A extends B ? D : E {}"
+    "class C implements unique symbol {}"  [-]   tsc @26+6 in "class C implements unique symbol {}"
+    "class C implements readonly A[] {}"  [-]   tsc @28+1 in "class C implements readonly A[] {}"
+    "class C implements abstract new () => A {}"  [-]   tsc @28+3 in "class C implements abstract new () => A {}"
+    "class C implements a is B {}"  [-]   tsc @21+2 in "class C implements a is B {}"
+    "class C extends await b {}"  [-]   tsc @22+1 in "class C extends await b {}"
+
+[04-type-params-args / targsHeritage]  tsc TS1011 An element access expression should take an argument.   (1 inputs, 1 distinct)
+    "class C implements string[] {}"  [-]   tsc @26+0 in "class C implements string[] {}"
+
+[04-type-params-args / targsHeritage]  tsc TS1109 Expression expected.   (6 inputs, 6 distinct)
+    "class C implements () => void {}"  [-]   tsc @20+1 in "class C implements () => void {}"
+    "class C implements typeof x {}"  [-]   tsc @19+6 in "class C implements typeof x {}"
+    "class C implements void {}"  [-]   tsc @19+4 in "class C implements void {}"
+    "class C extends <any>B {}"  [-]   tsc @16+1 in "class C extends <any>B {}"
+    "class C extends typeof b {}"  [-]   tsc @16+6 in "class C extends typeof b {}"
+    "class C extends void 0 {}"  [-]   tsc @16+4 in "class C extends void 0 {}"
+
+[04-type-params-args / targsHeritage]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (2 inputs, 2 distinct)
+    "class C extends B<A>.D {}"  [-]   tsc @17+3 in "class C extends B<A>.D {}"
+    "class C implements A<B>.D {}"  [-]   tsc @20+3 in "class C implements A<B>.D {}"
+
+[04-type-params-args / tparams]  tsc TS1005 ',' expected.   (36 inputs, 2 distinct)
+    "<T extends a is B>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]   tsc @23+2 in "function f<T extends a is B>() {}"
+    "<out\nT>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]   tsc @12+1 in "class C<out\nT> {}"
+
+[04-type-params-args / tparams]  tsc TS1359 Identifier expected. 'const' is a reserved word that cannot be used here.   (26 inputs, 1 distinct)
+    "<const\nT>"  [fnDecl,fnExpr,namedFnExpr,asyncFn,generator,declareFn,classDecl,classExpr,…]   tsc @11+5 in "function f<const\nT>() {}"
+
+[04-type-params-args / tparams]  tsc TS1359 Identifier expected. 'extends' is a reserved word that cannot be used here.   (16 inputs, 2 distinct)
+    "<out extends A>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]   tsc @12+7 in "class C<out extends A> {}"
+    "<out out extends A>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]   tsc @16+7 in "class C<out out extends A> {}"
+
+[04-type-params-args / tparams]  tsc TS1359 Identifier expected. 'in' is a reserved word that cannot be used here.   (8 inputs, 1 distinct)
+    "<in\nT>"  [classDecl,classExpr,namedClassExpr,abstractClass,declareClass,classExtends,iface,alias]   tsc @8+2 in "class C<in\nT> {}"
+
+[04-type-params-args / tparamsArrow]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "<infer>"  [castParen]   tsc @16+1 in "const v = <infer>(x);"
+
+[04-type-params-args / tparamsArrow]  tsc TS1005 ',' expected.   (21 inputs, 11 distinct)
+    "<T extends A ? B : C>"  [arrow,arrowParam,arrowRet,arrowStmt]   tsc @23+1 in "const f = <T extends A ? B : C>() => 0;"
+    "<T extends a is B>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]   tsc @23+2 in "const f = <T extends a is B>() => 0;"
+    "<T.U>"  [arrow,arrowParam,arrowRet,arrowStmt]   tsc @12+1 in "const f = <T.U>() => 0;"
+    "<T!>"  [arrowRet]   tsc @17+1 in "const f = <T!>(a): T => a;"
+    "<T[]>"  [arrowRet]   tsc @18+1 in "const f = <T[]>(a): T => a;"
+    "<T<U>>"  [arrowRet]   tsc @19+1 in "const f = <T<U>>(a): T => a;"
+    "<\"T\">"  [arrowRet]   tsc @18+1 in "const f = <\"T\">(a): T => a;"
+    "<1>"  [arrowRet]   tsc @16+1 in "const f = <1>(a): T => a;"
+    "<void>"  [arrowRet]   tsc @19+1 in "const f = <void>(a): T => a;"
+    "<null>"  [arrowRet]   tsc @19+1 in "const f = <null>(a): T => a;"
+    "<this>"  [arrowRet]   tsc @19+1 in "const f = <this>(a): T => a;"
+
+[04-type-params-args / tparamsArrow]  tsc TS1005 ')' expected.   (8 inputs, 8 distinct)
+    "<T!>"  [arrowParam]   tsc @16+1 in "const f = <T!>(a: T) => a;"
+    "<T[]>"  [arrowParam]   tsc @17+1 in "const f = <T[]>(a: T) => a;"
+    "<T<U>>"  [arrowParam]   tsc @18+1 in "const f = <T<U>>(a: T) => a;"
+    "<\"T\">"  [arrowParam]   tsc @17+1 in "const f = <\"T\">(a: T) => a;"
+    "<1>"  [arrowParam]   tsc @15+1 in "const f = <1>(a: T) => a;"
+    "<void>"  [arrowParam]   tsc @18+1 in "const f = <void>(a: T) => a;"
+    "<null>"  [arrowParam]   tsc @18+1 in "const f = <null>(a: T) => a;"
+    "<this>"  [arrowParam]   tsc @18+1 in "const f = <this>(a: T) => a;"
+
+[04-type-params-args / tparamsArrow]  tsc TS1005 '>' expected.   (3 inputs, 3 distinct)
+    "<T, U>"  [castParen]   tsc @12+1 in "const v = <T, U>(x);"
+    "<T, U, V>"  [castParen]   tsc @12+1 in "const v = <T, U, V>(x);"
+    "<T\n,\nU>"  [castParen]   tsc @13+1 in "const v = <T\n,\nU>(x);"
+
+[04-type-params-args / tparamsArrow]  tsc TS1109 Expression expected.   (21 inputs, 9 distinct)
+    "<T extends>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]   tsc @20+1 in "const f = <T extends>() => 0;"
+    "<T!>"  [arrow,arrowStmt]   tsc @15+1 in "const f = <T!>() => 0;"
+    "<T[]>"  [arrow,arrowStmt]   tsc @16+1 in "const f = <T[]>() => 0;"
+    "<T<U>>"  [arrow,arrowStmt]   tsc @17+1 in "const f = <T<U>>() => 0;"
+    "<\"T\">"  [arrow,arrowStmt]   tsc @16+1 in "const f = <\"T\">() => 0;"
+    "<1>"  [arrow,arrowStmt]   tsc @14+1 in "const f = <1>() => 0;"
+    "<void>"  [arrow,arrowStmt]   tsc @17+1 in "const f = <void>() => 0;"
+    "<null>"  [arrow,arrowStmt]   tsc @17+1 in "const f = <null>() => 0;"
+    "<this>"  [arrow,arrowStmt]   tsc @17+1 in "const f = <this>() => 0;"
+
+[04-type-params-args / tparamsArrow]  tsc TS1110 Type expected.   (9 inputs, 4 distinct)
+    "<T extends = A>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]   tsc @21+1 in "const f = <T extends = A>() => 0;"
+    "<unique>"  [cast,castParen]   tsc @17+1 in "const v = <unique>x;"
+    "<keyof>"  [castParen]   tsc @16+1 in "const v = <keyof>(x);"
+    "<readonly>"  [castParen]   tsc @19+1 in "const v = <readonly>(x);"
+
+[04-type-params-args / tparamsArrow]  tsc TS1359 Identifier expected. 'const' is a reserved word that cannot be used here.   (9 inputs, 2 distinct)
+    "<const>"  [arrow,arrowParam,arrowRet,arrowStmt]   tsc @11+5 in "const f = <const>() => 0;"
+    "<const\nT>"  [arrow,arrowParam,arrowRet,asyncArrow,arrowStmt]   tsc @11+5 in "const f = <const\nT>() => 0;"
+
+[05-assertions / arrow]  tsc TS1005 ',' expected.   (28 inputs, 10 distinct)
+    "(a): => a"  [init,arg,condFalse]   tsc @13+1 in "const v = (a): => a;"
+    "((a)): T => x"  [init,arg,condTrue,condFalse]   tsc @15+1 in "const v = ((a)): T => x;"
+    "async (a): => x"  [init,arg,condFalse]   tsc @19+1 in "const v = async (a): => x;"
+    "a ? (b as T): c => d : e"  [init,arg,condTrue,condFalse]   tsc @31+1 in "const v = a ? (b as T): c => d : e;"
+    "<T>(x): => y"  [init,arg,condFalse]   tsc @16+1 in "const v = <T>(x): => y;"
+    "<T>async (x: T) => y"  [init,stmt,arg,condTrue,condFalse]   tsc @21+1 in "const v = <T>async (x: T) => y;"
+    "<T>(x) = y"  [init,arg,condFalse]   tsc @17+1 in "const v = <T>(x) = y;"
+    "(a!) => x"  [arg]   tsc @7+2 in "f((a!) => x);"
+    "(a as A) => x"  [arg]   tsc @11+2 in "f((a as A) => x);"
+    "(<A>a) => x"  [arg]   tsc @9+2 in "f((<A>a) => x);"
+
+[05-assertions / arrow]  tsc TS1005 ';' expected.   (16 inputs, 10 distinct)
+    "(a!) => x"  [init,stmt,condFalse]   tsc @15+2 in "const v = (a!) => x;"
+    "(a as A) => x"  [init,stmt,condFalse]   tsc @19+2 in "const v = (a as A) => x;"
+    "(<A>a) => x"  [init,stmt,condFalse]   tsc @17+2 in "const v = (<A>a) => x;"
+    "(a): => a"  [stmt]   tsc @3+1 in "(a): => a;"
+    "((a)): T => x"  [stmt]   tsc @5+1 in "((a)): T => x;"
+    "async (a): => x"  [stmt]   tsc @9+1 in "async (a): => x;"
+    "a ? (b as T): c => d : e"  [stmt]   tsc @21+1 in "a ? (b as T): c => d : e;"
+    "<T>(x): => y"  [stmt]   tsc @6+1 in "<T>(x): => y;"
+    "<T>(x) = y"  [stmt]   tsc @7+1 in "<T>(x) = y;"
+    "<T>x => y"  [condFalse]   tsc @23+2 in "const v = y ? z : <T>x => y;"
+
+[05-assertions / arrow]  tsc TS1005 ':' expected.   (5 inputs, 5 distinct)
+    "(a!) => x"  [condTrue]   tsc @19+2 in "const v = y ? (a!) => x : z;"
+    "(a as A) => x"  [condTrue]   tsc @23+2 in "const v = y ? (a as A) => x : z;"
+    "(<A>a) => x"  [condTrue]   tsc @21+2 in "const v = y ? (<A>a) => x : z;"
+    "<T>x => y"  [condTrue]   tsc @19+2 in "const v = y ? <T>x => y : z;"
+    "<T>(x) = y"  [condTrue]   tsc @21+1 in "const v = y ? <T>(x) = y : z;"
+
+[05-assertions / arrow]  tsc TS1005 '(' expected.   (1 inputs, 1 distinct)
+    "<T>(x): => y"  [condTrue]   tsc @22+2 in "const v = y ? <T>(x): => y : z;"
+
+[05-assertions / arrow]  tsc TS1005 ')' expected.   (15 inputs, 3 distinct)
+    "(a!: A) => x"  [init,stmt,arg,condTrue,condFalse]   tsc @13+1 in "const v = (a!: A) => x;"
+    "((a): A) => x"  [init,stmt,arg,condTrue,condFalse]   tsc @14+1 in "const v = ((a): A) => x;"
+    "(a, (b): T) => x"  [init,stmt,arg,condTrue,condFalse]   tsc @17+1 in "const v = (a, (b): T) => x;"
+
+[05-assertions / arrow]  tsc TS1109 Expression expected.   (15 inputs, 3 distinct)
+    "a ? (b,) : c"  [init,stmt,arg,condTrue,condFalse]   tsc @17+1 in "const v = a ? (b,) : c;"
+    "<T>(x,)"  [init,stmt,arg,condTrue,condFalse]   tsc @16+1 in "const v = <T>(x,);"
+    "<T>(x, y,)"  [init,stmt,arg,condTrue,condFalse]   tsc @19+1 in "const v = <T>(x, y,);"
+
+[05-assertions / as]  tsc TS1005 ',' expected.   (3 inputs, 1 distinct)
+    "x as a is B"  [init,arg,element]   tsc @17+2 in "const v = x as a is B;"
+
+[05-assertions / as]  tsc TS1005 ';' expected.   (3 inputs, 2 distinct)
+    "x as a is B"  [stmt,return]   tsc @7+2 in "x as a is B;"
+    "await as T"  [return]   tsc @31+1 in "function f() { return await as T }"
+
+[05-assertions / as]  tsc TS1005 '=' expected.   (1 inputs, 1 distinct)
+    "type as T"  [stmt]   tsc @8+1 in "type as T;"
+
+[05-assertions / cast]  tsc TS1003 Identifier expected.   (4 inputs, 1 distinct)
+    "<infer>(x)"  [init,stmt,arg,operand]   tsc @16+1 in "const v = <infer>(x);"
+
+[05-assertions / cast]  tsc TS1005 ',' expected.   (6 inputs, 4 distinct)
+    "<T>x = y"  [init,arg]   tsc @15+1 in "const v = <T>x = y;"
+    "<T>async x => y"  [init,arg]   tsc @19+1 in "const v = <T>async x => y;"
+    "<T>async () => x"  [arg]   tsc @14+2 in "f(<T>async () => x);"
+    "<T>x => y"  [arg]   tsc @7+2 in "f(<T>x => y);"
+
+[05-assertions / cast]  tsc TS1005 ';' expected.   (6 inputs, 4 distinct)
+    "<T>async () => x"  [init,stmt]   tsc @22+2 in "const v = <T>async () => x;"
+    "<T>x => y"  [init,stmt]   tsc @15+2 in "const v = <T>x => y;"
+    "<T>x = y"  [stmt]   tsc @5+1 in "<T>x = y;"
+    "<T>async x => y"  [stmt]   tsc @9+1 in "<T>async x => y;"
+
+[05-assertions / cast]  tsc TS1005 '>' expected.   (8 inputs, 2 distinct)
+    "<T, U>(x)"  [init,stmt,arg,operand]   tsc @12+1 in "const v = <T, U>(x);"
+    "<a is B>x"  [init,stmt,arg,operand]   tsc @13+2 in "const v = <a is B>x;"
+
+[05-assertions / cast]  tsc TS1110 Type expected.   (16 inputs, 4 distinct)
+    "<unique>x"  [init,stmt,arg,operand]   tsc @17+1 in "const v = <unique>x;"
+    "<readonly>(x)"  [init,stmt,arg,operand]   tsc @19+1 in "const v = <readonly>(x);"
+    "<keyof>(x)"  [init,stmt,arg,operand]   tsc @16+1 in "const v = <keyof>(x);"
+    "<unique>(x)"  [init,stmt,arg,operand]   tsc @17+1 in "const v = <unique>(x);"
+
+[05-assertions / cast]  tsc TS1359 Identifier expected. 'const' is a reserved word that cannot be used here.   (3 inputs, 1 distinct)
+    "<const>(x) => x"  [init,stmt,arg]   tsc @11+5 in "const v = <const>(x) => x;"
+
+[05-assertions / catch]  tsc TS1005 ')' expected.   (1 inputs, 1 distinct)
+    "try {} catch (e: a is B) {}"  [-]   tsc @19+2 in "try {} catch (e: a is B) {}"
+
+[05-assertions / nonNull]  tsc TS1005 ',' expected.   (2 inputs, 2 distinct)
+    "(x!) => y"  [arg]   tsc @7+2 in "f((x!) => y);"
+    "(x!, y) => z"  [arg]   tsc @10+2 in "f((x!, y) => z);"
+
+[05-assertions / nonNull]  tsc TS1005 ';' expected.   (6 inputs, 4 distinct)
+    "(x!) => y"  [stmt,init]   tsc @5+2 in "(x!) => y;"
+    "(x!, y) => z"  [stmt,init]   tsc @8+2 in "(x!, y) => z;"
+    "label!: x"  [stmt]   tsc @6+1 in "label!: x;"
+    "x!: y"  [stmt]   tsc @2+1 in "x!: y;"
+
+[05-assertions / objLit]  tsc TS1005 '(' expected.   (3 inputs, 1 distinct)
+    "{ a<T>: 1 }"  [init,arg,paren]   tsc @16+1 in "const v = { a<T>: 1 };"
+
+[05-assertions / target]  tsc TS1005 ',' expected.   (3 inputs, 3 distinct)
+    "([x as T]) => y"  [-]   tsc @4+2 in "([x as T]) => y"
+    "({ a: x as T }) => y"  [-]   tsc @8+2 in "({ a: x as T }) => y"
+    "(...x as T) => y"  [-]   tsc @6+2 in "(...x as T) => y"
+
+[05-assertions / target]  tsc TS1005 ';' expected.   (9 inputs, 9 distinct)
+    "<T>x = y"  [-]   tsc @5+1 in "<T>x = y"
+    "(x as T) => y"  [-]   tsc @9+2 in "(x as T) => y"
+    "(x!) => y"  [-]   tsc @5+2 in "(x!) => y"
+    "(<T>x) => y"  [-]   tsc @7+2 in "(<T>x) => y"
+    "(x satisfies T) => y"  [-]   tsc @16+2 in "(x satisfies T) => y"
+    "(x as T, z) => y"  [-]   tsc @12+2 in "(x as T, z) => y"
+    "async (x as T) => y"  [-]   tsc @15+2 in "async (x as T) => y"
+    "label as T: x"  [-]   tsc @10+1 in "label as T: x"
+    "label!: x"  [-]   tsc @6+1 in "label!: x"
+
+[05-assertions / varAnnot]  tsc TS1005 ',' expected.   (5 inputs, 5 distinct)
+    "let { a }!: T = b"  [-]   tsc @9+1 in "let { a }!: T = b"
+    "let [a]!: T = b"  [-]   tsc @7+1 in "let [a]!: T = b"
+    "for (let x!: T of y) {}"  [-]   tsc @10+1 in "for (let x!: T of y) {}"
+    "for (let x!: T = 0;;) {}"  [-]   tsc @10+1 in "for (let x!: T = 0;;) {}"
+    "let x: a is B = y"  [-]   tsc @9+2 in "let x: a is B = y"
+
+[06-class-members / classHead]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export abstract\nclass C {}"  [-]   tsc @0+6 in "export abstract\nclass C {}"
+
+[06-class-members / heritage]  tsc TS1005 ',' expected.   (1 inputs, 1 distinct)
+    "class C extends await B {}"  [-]   tsc @22+1 in "class C extends await B {}"
+
+[06-class-members / heritage]  tsc TS1109 Expression expected.   (4 inputs, 4 distinct)
+    "class C extends <any>B {}"  [-]   tsc @16+1 in "class C extends <any>B {}"
+    "class C extends void 0 {}"  [-]   tsc @16+4 in "class C extends void 0 {}"
+    "class C extends typeof B {}"  [-]   tsc @16+6 in "class C extends typeof B {}"
+    "class C extends -B {}"  [-]   tsc @16+1 in "class C extends -B {}"
+
+[06-class-members / heritage]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (1 inputs, 1 distinct)
+    "class C extends B<T>.D {}"  [-]   tsc @17+3 in "class C extends B<T>.D {}"
+
+[06-class-members / member]  tsc TS1005 '(' expected.   (16 inputs, 4 distinct)
+    "constructor?() {}"  [class,abstractClass,declareClass,classExpr]   tsc @21+1 in "class C { constructor?() {} }"
+    "constructor!() {}"  [class,abstractClass,declareClass,classExpr]   tsc @21+1 in "class C { constructor!() {} }"
+    "get x?() { return 1 }"  [class,abstractClass,declareClass,classExpr]   tsc @15+1 in "class C { get x?() { return 1 } }"
+    "set x?(v) {}"  [class,abstractClass,declareClass,classExpr]   tsc @15+1 in "class C { set x?(v) {} }"
+
+[06-class-members / member]  tsc TS1441 Cannot start a function call in a type annotation.   (8 inputs, 2 distinct)
+    "m!() {}"  [class,abstractClass,declareClass,classExpr]   tsc @12+1 in "class C { m!() {} }"
+    "m!(): void;"  [class,abstractClass,declareClass,classExpr]   tsc @12+1 in "class C { m!(): void; }"
+
+[06-class-members / member]  tsc TS1442 Expected '=' for property initializer.   (4 inputs, 1 distinct)
+    "x: a is B;"  [class,abstractClass,declareClass,classExpr]   tsc @15+2 in "class C { x: a is B; }"
+
+[06-class-members / modifier]  tsc TS1005 ']' expected.   (8 inputs, 2 distinct)
+    "get [k: string]: T;"  [class,abstractClass,declareClass,classExpr]   tsc @16+1 in "class C { get [k: string]: T; }"
+    "set [k: string]: T;"  [class,abstractClass,declareClass,classExpr]   tsc @16+1 in "class C { set [k: string]: T; }"
+
+[06-class-members / paramProp]  tsc TS1005 ',' expected.   (42 inputs, 6 distinct)
+    "...public x"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @32+1 in "class C { constructor(...public x) {} }"
+    "...readonly x"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @34+1 in "class C { constructor(...readonly x) {} }"
+    "public\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @29+1 in "class C { constructor(public\nx: T) {} }"
+    "readonly\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @31+1 in "class C { constructor(readonly\nx: T) {} }"
+    "public\nreadonly\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @29+8 in "class C { constructor(public\nreadonly\nx: T) {} }"
+    "public // c\nx: T"  [ctor,ctorOverload,ctorExpr,ctorDerived,declareCtor,abstractCtor,stringCtor]   tsc @34+1 in "class C { constructor(public // c\nx: T) {} }"
+
+[07-module-syntax / exportAssign]  tsc TS1005 ';' expected.   (1 inputs, 1 distinct)
+    "export = x, y;"  [-]   tsc @10+1 in "export = x, y;"
+
+[07-module-syntax / exportAssign]  tsc TS1128 Declaration or statement expected.   (2 inputs, 2 distinct)
+    "export declare = x;"  [-]   tsc @0+6 in "export declare = x;"
+    "export abstract = x;"  [-]   tsc @0+6 in "export abstract = x;"
+
+[07-module-syntax / exportDecl]  tsc TS1128 Declaration or statement expected.   (6 inputs, 6 distinct)
+    "export declare;"  [-]   tsc @0+6 in "export declare;"
+    "export declare = 1;"  [-]   tsc @0+6 in "export declare = 1;"
+    "export abstract;"  [-]   tsc @0+6 in "export abstract;"
+    "export abstract = 1;"  [-]   tsc @0+6 in "export abstract = 1;"
+    "export namespace;"  [-]   tsc @0+6 in "export namespace;"
+    "export module;"  [-]   tsc @0+6 in "export module;"
+
+[08-declare-namespace-enum / declare]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "declare namespace \"N\" {}"  [-]   tsc @18+3 in "declare namespace \"N\" {}"
+
+[08-declare-namespace-enum / declare]  tsc TS1005 ';' expected.   (1 inputs, 1 distinct)
+    "declare module \"m\".n {}"  [-]   tsc @18+1 in "declare module \"m\".n {}"
+
+[08-declare-namespace-enum / declare]  tsc TS1005 '{' expected.   (3 inputs, 3 distinct)
+    "declare namespace N;"  [-]   tsc @19+1 in "declare namespace N;"
+    "declare namespace N"  [-]   tsc @19+0 in "declare namespace N"
+    "declare namespace N.M;"  [-]   tsc @21+1 in "declare namespace N.M;"
+
+[08-declare-namespace-enum / declName]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "in"  [exportNamespace]   tsc @0+6 in "export namespace in {}"
+
+[08-declare-namespace-enum / enum]  tsc TS1357 An enum member name must be followed by a ',', '=', or '}'.   (5 inputs, 5 distinct)
+    "enum E { a; b }"  [-]   tsc @10+1 in "enum E { a; b }"
+    "enum E { a = 1; b = 2 }"  [-]   tsc @14+1 in "enum E { a = 1; b = 2 }"
+    "enum E { a, b; c }"  [-]   tsc @13+1 in "enum E { a, b; c }"
+    "enum E { a; }"  [-]   tsc @10+1 in "enum E { a; }"
+    "enum E { a = 1; }"  [-]   tsc @14+1 in "enum E { a = 1; }"
+
+[08-declare-namespace-enum / namespace]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "namespace N.\"M\" {}"  [-]   tsc @12+3 in "namespace N.\"M\" {}"
+
+[08-declare-namespace-enum / namespace]  tsc TS1005 '{' expected.   (1 inputs, 1 distinct)
+    "module as any"  [-]   tsc @10+3 in "module as any"
+
+[08-declare-namespace-enum / namespace]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export namespace;"  [-]   tsc @0+6 in "export namespace;"
+
+[09-decorators / classPos]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export declare @d class C {}"  [-]   tsc @0+6 in "export declare @d class C {}"
+
+[09-decorators / classPos]  tsc TS1146 Declaration expected.   (1 inputs, 1 distinct)
+    "@d abstract = 1"  [-]   tsc @2+0 in "@d abstract = 1"
+
+[09-decorators / expr]  tsc TS1003 Identifier expected.   (8 inputs, 3 distinct)
+    "@d.\ne"  [classDecl,classExpr,field,method,staticField,param]   tsc @3+0 in "@d.\ne class C {}"
+    "@d<T>"  [param]   tsc @14+1 in "class C { m(@d<T> a) {} }"
+    "@d<T><U>()"  [param]   tsc @14+1 in "class C { m(@d<T><U>() a) {} }"
+
+[09-decorators / expr]  tsc TS1109 Expression expected.   (2 inputs, 2 distinct)
+    "@d<T>"  [classExpr]   tsc @12+0 in "const c = @d<T> class {};"
+    "@d<T><U>()"  [classExpr]   tsc @12+0 in "const c = @d<T><U>() class {};"
+
+[09-decorators / expr]  tsc TS1146 Declaration expected.   (14 inputs, 2 distinct)
+    "@d<T>"  [classDecl,field,method,computed,computedField,staticField]   tsc @2+0 in "@d<T> class C {}"
+    "@d<T><U>()"  [classDecl,classDeclNewline,field,fieldNewline,method,computed,computedField,staticField]   tsc @2+0 in "@d<T><U>() class C {}"
+
+[09-decorators / expr]  tsc TS1477 An instantiation expression cannot be followed by a property access.   (20 inputs, 2 distinct)
+    "@d<T>.e"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,…]   tsc @2+3 in "@d<T>.e class C {}"
+    "@d<T>.e()"  [classDecl,classDeclNewline,classExpr,field,fieldNewline,method,computed,computedField,…]   tsc @2+3 in "@d<T>.e() class C {}"
+
+[09-decorators / memberPos]  tsc TS1146 Declaration expected.   (4 inputs, 1 distinct)
+    "@d<T> x;"  [abstractClass,declareClass,classExpr,decoratedClass]   tsc @21+0 in "abstract class C { @d<T> x; }"
+
+[09-decorators / paramPos]  tsc TS1005 ',' expected.   (11 inputs, 1 distinct)
+    "@d a: a is B"  [method,decoratedMethod,staticMethod,ctor,decoratedClassCtor,setter,overload,abstractMethod,…]   tsc @20+2 in "class C { m(@d a: a is B) {} }"
+
+[10-declaration-files / directive]  tsc TS1084 Invalid 'reference' directive syntax.   (1 inputs, 1 distinct)
+    "/// <reference />\nexport {};"  [-]   tsc @0+17 in "/// <reference />\nexport {};"

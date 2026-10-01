@@ -1,0 +1,19 @@
+typeerr: /workspace/ref/typescript-go/internal/json/json.go:86:29: undefined: jsontext.Value
+typeerr: /workspace/ref/typescript-go/internal/json/json.go:87:29: undefined: jsontext.Kind
+typeerr: /workspace/ref/typescript-go/internal/json/json.go:88:25: undefined: json.UnmarshalerFrom
+typeerr: /workspace/ref/typescript-go/internal/json/json.go:89:25: undefined: json.MarshalerTo
+typeerr: /workspace/ref/typescript-go/internal/json/json.go:90:29: undefined: jsontext.Decoder
+typeerr: /workspace/ref/typescript-go/internal/collections/ordered_map.go:245:23: undefined: reflect.TypeAssert
+typeerr: /workspace/ref/typescript-go/internal/core/workgroup.go:94:22: undefined: errgroup.Group
+typeerr: /workspace/ref/typescript-go/internal/core/workgroup.go:39:7: w.wg.Go undefined (type "sync".WaitGroup has no field or method Go)
+typeerr: /workspace/ref/typescript-go/internal/core/workgroup.go:99:19: undefined: errgroup.WithContext
+typeerr: /workspace/ref/typescript-go/internal/locale/locale.go:11:22: undefined: language.Tag
+typeerr: /workspace/ref/typescript-go/internal/locale/locale.go:19:18: undefined: language.Tag
+typeerr: /workspace/ref/typescript-go/internal/locale/locale.go:33:23: undefined: language.Parse
+typeerr: /workspace/ref/typescript-go/internal/diagnostics/diagnostics.go:89:40: undefined: language.Tag
+typeerr: /workspace/ref/typescript-go/internal/diagnostics/loc_generated.go:15:24: undefined: language.NewMatcher
+typeerr: /workspace/ref/typescript-go/internal/diagnostics/loc_generated.go:15:46: undefined: language.Tag
+typeerr: /workspace/ref/typescript-go/internal/diagnostics/loc_generated.go:16:11: undefined: language.English
+typeerr: /workspace/ref/typescript-go/internal/diagnostics/loc_generated.go:17:11: undefined: language.MustParse
+typeerr: /workspace/ref/typescript-go/internal/ast/ast.go:2524:24: undefined: xxh3.Uint128
+type errors per package: internal/ast=1 internal/collections=1 internal/core=3 internal/diagnostics=20 internal/json=40 internal/locale=3

@@ -1,0 +1,215 @@
+# decorators before non-class declarations (standard decorators)
+@d function f() {}
+@d const a = 1
+@d let a
+@d var a
+@d interface I {}
+@d type T = 1
+@d enum E {}
+@d namespace N {}
+@d declare class C {}
+@d declare function f(): void
+@d declare const a: number
+@d abstract class C {}
+@d export class C {}
+@d export default class C {}
+@d export default class {}
+@d export abstract class C {}
+@d export declare class C {}
+@d export function f() {}
+@d export const a = 1
+@d export interface I {}
+@d export type T = 1
+@d export enum E {}
+@d export default function f() {}
+@d export default 1
+@d export {}
+@d export * from "m"
+@d import a from "m"
+@d import "m"
+@d;
+@d
+@d x
+@d 1
+@d {}
+@d if (x) {}
+@d async function f() {}
+@d declare abstract class C {}
+@d abstract declare class C {}
+@d declare global {}
+@d declare module "m" {}
+@d declare namespace N {}
+@d declare enum E {}
+@d declare interface I {}
+@d declare type T = 1
+export @d class C {}
+export default @d class C {}
+export @d abstract class C {}
+export @d declare class C {}
+export @d function f() {}
+export @d const a = 1
+export @d interface I {}
+@d export @e class C {}
+@d export default @e class C {}
+@d\nclass C {}
+@d @e class C {}
+@d() class C {}
+@d.e class C {}
+@(d) class C {}
+# experimental decorators
+deco: @d function f() {}
+deco: @d const a = 1
+deco: @d interface I {}
+deco: @d type T = 1
+deco: @d enum E {}
+deco: @d namespace N {}
+deco: @d declare class C {}
+deco: @d declare function f(): void
+deco: @d abstract class C {}
+deco: @d export class C {}
+deco: @d export default class C {}
+deco: @d export declare class C {}
+deco: @d export function f() {}
+deco: @d export interface I {}
+deco: @d export default function f() {}
+deco: export @d class C {}
+deco: export default @d class C {}
+deco: @d export @e class C {}
+deco: @d abstract declare class C {}
+deco: @d declare abstract class C {}
+# heritage
+class C extends B {}
+class C extends B<T> {}
+class C extends B implements I {}
+class C implements I {}
+class C implements I, J {}
+class C implements I extends B {}
+class C extends B extends D {}
+class C implements I implements J {}
+class C extends B, D {}
+class C extends {}
+class C extends
+class C implements {}
+class C extends B<T>.D {}
+class C extends a.b.c<T> {}
+class C extends (a, b) {}
+class C extends f() {}
+class C extends f()<T> {}
+class C extends f<T>() {}
+class C extends new B {}
+class C extends new B() {}
+class C extends a?.b {}
+class C extends a! {}
+class C extends a!<T> {}
+class C extends (a as B) {}
+class C extends a as B {}
+class C extends a`x` {}
+class C extends a<T>`x` {}
+class C extends a[0] {}
+class C extends class {} {}
+class C extends function () {} {}
+class C extends {} {}
+class C extends {}.x {}
+class C extends null {}
+class C extends this {}
+class C extends super.b {}
+class C extends void 0 {}
+class C extends typeof a {}
+class C extends -a {}
+class C extends a + b {}
+class C extends a = b {}
+class C extends a ? b : c {}
+class C extends async () => {} {}
+class C extends (() => {}) {}
+class C extends await a {}
+class C extends yield {}
+class C extends import("m") {}
+class C extends import.meta {}
+class C extends 1 {}
+class C extends "a" {}
+class C extends [] {}
+class C extends /x/ {}
+class C extends `x` {}
+class C extends B<> {}
+class C implements I<T>, J<U> {}
+class C implements a.b.c {}
+class C implements a.b.c<T> {}
+class C implements typeof a {}
+class C implements I[] {}
+class C implements { a: 1 } {}
+class C implements (I) {}
+class C implements I | J {}
+class C implements I & J {}
+class C implements keyof I {}
+class C implements "a" {}
+class C implements 1 {}
+class C implements () => void {}
+class C implements new () => I {}
+class C implements [I] {}
+class C implements I.J[] {}
+class C implements import("m").I {}
+class C implements this {}
+class C implements void {}
+class C implements any {}
+class C implements string {}
+class C implements I, {}
+class C implements f() {}
+class C implements a?.b {}
+class C implements a! {}
+class C implements new I {}
+class C implements I<T>() {}
+interface I extends J {}
+interface I extends J, K {}
+interface I extends J<T> {}
+interface I extends a.b.c<T> {}
+interface I extends {}
+interface I extends J extends K {}
+interface I implements J {}
+interface I extends J implements K {}
+interface I extends typeof a {}
+interface I extends J[] {}
+interface I extends { a: 1 } {}
+interface I extends (J) {}
+interface I extends J | K {}
+interface I extends "a" {}
+interface I extends () => void {}
+interface I extends f() {}
+interface I extends a?.b {}
+interface I extends new J {}
+interface I extends import("m").J {}
+interface I extends any {}
+interface I extends string {}
+interface I extends J, {}
+export const v = class extends B implements I {}
+export const v = class implements I {}
+export const v = class C<T> extends B<T> implements I<T> {}
+export const v = class implements {}
+export const v = class implements\n{}
+export const v = class implements I implements J {}
+class implements {}
+class implements extends B {}
+class implements implements I {}
+class C<T> {}
+class C<> {}
+class C<T,> {}
+class C<in T> {}
+class C<const T> {}
+class C <T> extends B {}
+abstract class C<T> {}
+class\nC {}
+class await {}
+class yield {}
+class type {}
+class of {}
+class as {}
+class async {}
+class let {}
+class static {}
+class implements {}
+class interface {}
+class any {}
+class string {}
+class number {}
+class undefined {}
+class declare {}
+class abstract {}

@@ -1,0 +1,70 @@
+file /p3.ts scriptKind=3 variant=0 dts=false textLen=119
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=61 identifiers=14 text=20 reparsedClones=0
+root KindSourceFile [0,119) f=0x0
+  .Statements: list [0,118) n=3
+    - KindExpressionStatement [0,14) f=0x0
+      .Expression: KindParenthesizedExpression [0,13) f=0x0
+        .Expression: KindBinaryExpression [1,12) f=0x0
+          .Left: KindObjectLiteralExpression [1,8) f=0x0
+            .Properties: list [2,7) n=1
+              - KindShorthandPropertyAssignment [2,7) f=0x0
+                .EqualsToken: KindEqualsToken [3,5) f=0x0
+                .ObjectAssignmentInitializer: KindNumericLiteral [5,7) f=0x0 Text="1" TokenFlags=0x0
+                .name: KindIdentifier [2,3) f=0x0 Text="a"
+          .OperatorToken: KindEqualsToken [8,10) f=0x0
+          .Right: KindIdentifier [10,12) f=0x0 Text="x"
+    - KindExpressionStatement [14,30) f=0x0
+      .Expression: KindBinaryExpression [14,29) f=0x0
+        .Left: KindArrayLiteralExpression [14,25) f=0x0
+          .Elements: list [16,24) n=2
+            - KindIdentifier [16,17) f=0x0 Text="a"
+            - KindBinaryExpression [18,24) f=0x0
+              .Left: KindIdentifier [18,20) f=0x0 Text="b"
+              .OperatorToken: KindEqualsToken [20,22) f=0x0
+              .Right: KindNumericLiteral [22,24) f=0x0 Text="2" TokenFlags=0x0
+        .OperatorToken: KindEqualsToken [25,27) f=0x0
+        .Right: KindIdentifier [27,29) f=0x0 Text="y"
+    - KindExpressionStatement [30,118) f=0x0
+      .Expression: KindParenthesizedExpression [30,117) f=0x0
+        .Expression: KindObjectLiteralExpression [32,116) f=0x0
+          .Properties: list [33,114) n=6
+            - KindMethodDeclaration [33,46) f=0x0
+              .Body: KindBlock [43,46) f=0x2000
+                .Statements: list [45,45) n=0
+              .Parameters: list [42,42) n=0
+              .modifiers.flags=0x400
+              .modifiers: list [33,39) n=1
+                - KindAsyncKeyword [33,39) f=0x0
+              .name: KindIdentifier [39,41) f=0x0 Text="m"
+            - KindGetAccessor [47,71) f=0x0
+              .Body: KindBlock [57,71) f=0x0
+                .Statements: list [59,69) n=1
+                  - KindReturnStatement [59,69) f=0x0
+                    .Expression: KindNumericLiteral [66,68) f=0x0 Text="1" TokenFlags=0x0
+              .Parameters: list [56,56) n=0
+              .name: KindStringLiteral [51,55) f=0x0 Text="g" TokenFlags=0x10000
+            - KindSetAccessor [72,84) f=0x0
+              .Body: KindBlock [81,84) f=0x0
+                .Statements: list [83,83) n=0
+              .Parameters: list [79,80) n=1
+                - KindParameter [79,80) f=0x0
+                  .name: KindIdentifier [79,80) f=0x0 Text="v"
+              .name: KindNumericLiteral [76,78) f=0x0 Text="2" TokenFlags=0x0
+            - KindMethodDeclaration [85,95) f=0x0
+              .AsteriskToken: KindAsteriskToken [85,87) f=0x0
+              .Body: KindBlock [92,95) f=0x800
+                .Statements: list [94,94) n=0
+              .Parameters: list [91,91) n=0
+              .name: KindIdentifier [87,90) f=0x0 Text="gen"
+            - KindMethodDeclaration [96,105) f=0x0
+              .Body: KindBlock [102,105) f=0x0
+                .Statements: list [104,104) n=0
+              .Parameters: list [101,101) n=0
+              .name: KindComputedPropertyName [96,100) f=0x0
+                .Expression: KindIdentifier [98,99) f=0x0 Text="k"
+            - KindSpreadAssignment [106,114) f=0x0
+              .Expression: KindIdentifier [110,114) f=0x0 Text="rest"
+  .EndOfFileToken: KindEndOfFile [118,119) f=0x0

@@ -1,0 +1,1121 @@
+g01	"a<b>(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) > Parenthesized(c));
+	parse: clean
+g02	"a < b > c"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ((a < b) > c);
+	parse: clean
+g03	"a<b>\nc"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) > c);
+	parse: clean
+g04	"f(a<b,c>(d))"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Call(f (a < b) (c > Parenthesized(d)));
+	parse: clean
+g05	"a<b>`t`"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) > TemplateToken);
+	parse: clean
+g06	"new a<b>(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((New(a) < b) > Parenthesized(c));
+	parse: clean
+g07	"a<b<c>>(d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) < (c >> Parenthesized(d)));
+	parse: clean
+g08	"a < b > /re/.test(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: ((a < b) > Call(PropertyAccess(RegularExpressionLiteral test) c));
+	parse: clean
+g09	"async<T>(x)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((async < T) > Parenthesized(x));
+	parse: clean
+g10	"a<b>>(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (a < (b >> Parenthesized(c)));
+	parse: clean
+g11	"a<<b>(c)>(d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: (((a << b) > Parenthesized(c)) > Parenthesized(d));
+	parse: clean
+g12	"a?.b<c>(d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((PropertyAccess(a QuestionDotToken b) < c) > Parenthesized(d));
+	parse: clean
+g14	"a<b>=c"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ((a < b) >= c);
+	parse: clean
+g15	"a<b>>=c"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: (a < b); c;
+	parse: TS1005@3+3 ';' expected.
+g16	"if (a < b && c > (d)) {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: If(((a < b) && (c > Parenthesized(d))) Block)
+	parse: clean
+g17	"a < b, c > (d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) , (c > Parenthesized(d)));
+	parse: clean
+g19	"a < b > -c"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ((a < b) > PrefixUnary(c));
+	parse: clean
+g21	"a < b > [c]"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ((a < b) > ArrayLiteral(c));
+	parse: clean
+g22	"x = a < b > {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (x = ((a < b) > ObjectLiteral));
+	parse: clean
+g24	"a<b>;"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ((a < b) > );
+	parse: TS1109@4+1 Expression expected.
+g27	"a < typeof b > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < TypeOf(b)) > Parenthesized(c));
+	parse: clean
+g29	"a < this > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < ThisKeyword) > Parenthesized(c));
+	parse: clean
+g30	"a < 's' > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < "s") > Parenthesized(c));
+	parse: clean
+g31	"a < 1 > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < "1") > Parenthesized(c));
+	parse: clean
+g32	"a < -1 > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < PrefixUnary("1")) > Parenthesized(c));
+	parse: clean
+g33	"a < [b] > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < ArrayLiteral(b)) > Parenthesized(c));
+	parse: clean
+g33b	"a < {b} > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < ObjectLiteral(ShorthandPropertyAssignment(b))) > Parenthesized(c));
+	parse: clean
+g34	"a < b | c > (d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) | (c > Parenthesized(d)));
+	parse: clean
+g36	"a < b.c > (d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < PropertyAccess(b c)) > Parenthesized(d));
+	parse: clean
+g37	"a < b[c] > (d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < ElementAccess(b c)) > Parenthesized(d));
+	parse: clean
+g39	"a < !b > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ((a < PrefixUnary(b)) > Parenthesized(c));
+	parse: clean
+g42	"a < (b) > (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < Parenthesized(b)) > Parenthesized(c));
+	parse: clean
+g43	"a < b > (c) > (d)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: (((a < b) > Parenthesized(c)) > Parenthesized(d));
+	parse: clean
+g44	"a?.<b>(c)"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ((PropertyAccess(a QuestionDotToken ) < b) > Parenthesized(c));
+	parse: TS1003@3+1 Identifier expected.
+g45	"class A extends B<C> {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A HeritageClause(ExpressionWithTypeArguments(B TypeReference(C))))
+	parse: clean
+	javascript-only: TS8011@18+1 Type arguments can only be used in TypeScript files.
+g46	"a < b >\n(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: ((a < b) > Parenthesized(c));
+	parse: clean
+g47	"for (var i = 0; i < n > (0); i++) {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: For(VariableDeclarationList(Variable(i "0")) ((i < n) > Parenthesized("0")) PostfixUnary(i) Block)
+	parse: clean
+g48	"x = a<b>(c) ? d : e"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: (x = Conditional(((a < b) > Parenthesized(c)) QuestionToken d ColonToken e));
+	parse: clean
+g49	"a<b>>>(c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (a < (b >>> Parenthesized(c)));
+	parse: clean
+g50	"a<b>\n.c"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ((a < b) > PropertyAccess( c));
+	parse: TS1109@5+1 Expression expected.
+c01	"class A { public\n x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(public) Property(x "1"))
+	parse: clean
+c02	"class A { readonly\n *gen() {} }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(readonly) Method(AsteriskToken gen Block))
+	parse: clean
+c03	"class A { declare\n x }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(declare) Property(x))
+	parse: clean
+c04	"class A { abstract\n x }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(abstract) Property(x))
+	parse: clean
+c05	"class A { override\n ['x']() {} }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(override) Method(ComputedPropertyName("x") Block))
+	parse: clean
+c06	"class A { private\n #x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(private) Property(#x "1"))
+	parse: clean
+c07	"class A { protected\n 0 = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(protected) Property("0" "1"))
+	parse: clean
+c08	"class A { static\n x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(StaticKeyword x "1"))
+	parse: clean
+c09	"class A { accessor\n x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(accessor) Property(x "1"))
+	parse: clean
+c10	"class A { accessor x = 1 }"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(AccessorKeyword x "1"))
+	parse: clean
+c11	"class A { public = 1; readonly; override() {}; declare = 2; abstract() {} }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(public "1") Property(readonly) Method(override Block) SemicolonClassElement Property(declare "2") Method(abstract Block))
+	parse: clean
+c12	"class A { get\n x() { return 1 } }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A GetAccessor(x Block(Return("1"))))
+	parse: clean
+c13	"class A { async\n x() {} }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(async) Method(x Block))
+	parse: clean
+c15	"class A { public\n static x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(public) Property(StaticKeyword x "1"))
+	parse: clean
+c16	"class A { readonly\n; x }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(readonly) Property(x))
+	parse: clean
+c17	"class A { declare; static; accessor; abstract }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(declare) Property(static) Property(accessor) Property(abstract))
+	parse: clean
+c19	"(class implements {})"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Parenthesized(Class(implements));
+	parse: clean
+c20	"class A { public\n 'x' = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(public) Property("x" "1"))
+	parse: clean
+c21	"class A { static accessor x = 1 }"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Property(StaticKeyword AccessorKeyword x "1"))
+	parse: clean
+c22	"class A { public x = 1 }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Property(PublicKeyword x "1"))
+	parse: clean
+	javascript-only: TS8009@10+6 The 'public' modifier can only be used in TypeScript files.
+c23	"class A { private\n get x() { return 1 } }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(private) GetAccessor(x Block(Return("1"))))
+	parse: clean
+c24	"class A { override\n static\n x = 1 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Property(override) Property(StaticKeyword x "1"))
+	parse: clean
+c25	"x = { public\n, readonly: 1, get declare() { return 1 }, async override() {}, static: 2 }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (x = ObjectLiteral(ShorthandPropertyAssignment(public) PropertyAssignment(readonly "1") GetAccessor(declare Block(Return("1"))) Method(AsyncKeyword override Block) PropertyAssignment(static "2")));
+	parse: clean
+s01	"type\nFoo = 1"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: type; (Foo = "1");
+	parse: clean
+s03	"namespace\nfoo\n{}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: namespace; foo; Block
+	parse: clean
+s04	"module\nfoo\n{}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: module; foo; Block
+	parse: clean
+s05	"abstract\nclass A {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: abstract; Class(A)
+	parse: clean
+s06	"declare\nclass A {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: declare; Class(A)
+	parse: clean
+s07	"interface\nFoo\n{}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: interface; Foo; Block
+	parse: clean
+s08	"global\n{}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Module(global ModuleBlock)
+	parse: clean
+	(tsc 6.0.2 reports instead: TS8006@0+6)
+s09	"declare\nglobal\n{}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: declare; Module(global ModuleBlock)
+	parse: clean
+	(tsc 6.0.2 reports instead: TS8006@8+6)
+s10	"type = 1; type(1); type.x; type\n= 2"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (type = "1"); Call(type "1"); PropertyAccess(type x); (type = "2");
+	parse: clean
+s11	"namespace.x = 1; module.exports = 1; declare(x); abstract = 2"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (PropertyAccess(namespace x) = "1"); (PropertyAccess(module exports) = "1"); Call(declare x); (abstract = "2");
+	parse: clean
+s12	"module\n'x'"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: module; "x";
+	parse: clean
+s13	"type: for (;;) break type;"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Labeled(type For(Break(type)))
+	parse: clean
+s14	"declare: x; namespace: y; abstract: z; module: w; global: u;"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Labeled(declare x;) Labeled(namespace y;) Labeled(abstract z;) Labeled(module w;) Labeled(global u;)
+	parse: clean
+s18	"export default abstract\nclass A {}"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: ExportAssignment(abstract) Class(A)
+	parse: clean
+s19	"import type from 'x'; type;"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Import(ImportClause(type) "x") type;
+	parse: clean
+s20	"import type, { a } from 'x'; import typ, * as ns from 'y';"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Import(ImportClause(type NamedImports(ImportSpecifier(a))) "x") Import(ImportClause(typ NamespaceImport(ns)) "y")
+	parse: clean
+s21	"import { type } from 'x'; import { type as t } from 'x'; import { type as as } from 'x';"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(type))) "x") Import(ImportClause(NamedImports(ImportSpecifier(type t))) "x") Import(ImportClause(NamedImports(ImportSpecifier(type as))) "x")
+	parse: clean
+s22	"var type; export { type }; export { type as t };"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(type))) Export(NamedExports(ExportSpecifier(type))) Export(NamedExports(ExportSpecifier(type t)))
+	parse: clean
+s24	"import { as } from 'x'; import { as as as2 } from 'x';"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(as))) "x") Import(ImportClause(NamedImports(ImportSpecifier(as as2))) "x")
+	parse: clean
+s25	"export * as type from 'x'"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Export(NamespaceExport(type) "x")
+	parse: clean
+s29	"var as = 1, satisfies = 2, x, y; x\nas\ny; x\nsatisfies\ny"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(as "1") Variable(satisfies "2") Variable(x) Variable(y))) x; as; y; x; satisfies; y;
+	parse: clean
+s32	"var any, unknown, never, string, number, keyof, infer, is, asserts, readonly, unique, out, override, accessor, satisfies, type, declare, abstract, namespace, module, global;"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(any) Variable(unknown) Variable(never) Variable(string) Variable(number) Variable(keyof) Variable(infer) Variable(is) Variable(asserts) Variable(readonly) Variable(unique) Variable(out) Variable(override) Variable(accessor) Variable(satisfies) Variable(type) Variable(declare) Variable(abstract) Variable(namespace) Variable(module) Variable(global)))
+	parse: clean
+s33	"function f(readonly, override, declare, abstract, type, of, async) {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Function(f Parameter(readonly) Parameter(override) Parameter(declare) Parameter(abstract) Parameter(type) Parameter(of) Parameter(async) Block)
+	parse: clean
+s34	"function f(public, private, protected, static, interface, implements, package) {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Function(f Parameter(public) Parameter(private) Parameter(protected) Parameter(static) Parameter(interface) Parameter(implements) Parameter(package) Block)
+	parse: clean
+s35	"async\nfunction f() {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: async; Function(f Block)
+	parse: clean
+s36	"let async; async\nx => 1"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(async))) async; ArrowFunction(Parameter(x) EqualsGreaterThanToken "1");
+	parse: clean
+s37	"x = async y => 1; z = async (y) => 1; w = async(y)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (x = ArrowFunction(AsyncKeyword Parameter(y) EqualsGreaterThanToken "1")); (z = ArrowFunction(AsyncKeyword Parameter(y) EqualsGreaterThanToken "1")); (w = Call(async y));
+	parse: clean
+s38	"import { a } from 'x'; class a {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(a))) "x") Class(a)
+	parse: clean
+s39	"try {} catch (e) {} finally {}"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Try(Block CatchClause(Variable(e) Block) Block)
+	parse: clean
+s40	"var x = 1; export { x as default }"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x "1"))) Export(NamedExports(ExportSpecifier(x default)))
+	parse: clean
+s41	"interface\n= 1"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (interface = "1");
+	parse: clean
+s42	"enum = 1"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Enum() "1";
+	parse: TS1003@5+1 Identifier expected.
+	javascript-only: TS8006@5+-1 'enum' declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8006@4+0)
+s43	"declare\nconst x = 1"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: declare; (VariableDeclarationList(Variable(x "1")))
+	parse: clean
+s44	"abstract\n(class {})"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Call(abstract Class);
+	parse: clean
+a01	"a ? (b) : c => d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(b) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken d));
+	parse: clean
+a02	"a ? (b, c) : d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized((b , c)) ColonToken d);
+	parse: clean
+a03	"a ? b ? (c) : d => e : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(a QuestionToken Conditional(b QuestionToken ArrowFunction(Parameter(c) TypeReference(d) EqualsGreaterThanToken e) ColonToken f) ColonToken );
+	parse: TS1005@24+0 ':' expected.
+	javascript-only: TS8010@14+1 Type annotations can only be used in TypeScript files.
+a04	"switch (x) { case (a): b => c; }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Switch(x CaseBlock(CaseClause(ArrowFunction(Parameter(a) TypeReference(b) EqualsGreaterThanToken c) Empty)))
+	parse: TS1005@29+1 ':' expected.
+	javascript-only: TS8010@23+1 Type annotations can only be used in TypeScript files.
+a05	"a ? (b) : c => d ? e : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(b) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken Conditional(d QuestionToken e ColonToken f)));
+	parse: clean
+a06	"a ? (b = 1) : c => d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized((b = "1")) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken d));
+	parse: clean
+a07	"a ? ({b}) : c => d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(ObjectLiteral(ShorthandPropertyAssignment(b))) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken d));
+	parse: clean
+a08	"a ? async (b) : c => d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Call(async b) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken d));
+	parse: clean
+a10	"a ? (b) : (c) => d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(b) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken d));
+	parse: clean
+a12	"a ? (b) => c : d"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken ArrowFunction(Parameter(b) EqualsGreaterThanToken c) ColonToken d);
+	parse: clean
+a14	"a ? (b) : c => (d) : e => f"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Conditional(a QuestionToken ArrowFunction(Parameter(b) TypeReference(c) EqualsGreaterThanToken Parenthesized(d)) ColonToken ArrowFunction(Parameter(e) EqualsGreaterThanToken f));
+	parse: clean
+	javascript-only: TS8010@10+1 Type annotations can only be used in TypeScript files.
+a15	"a ? b ? (c) : (d) => e : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Conditional(b QuestionToken Parenthesized(c) ColonToken ArrowFunction(Parameter(d) EqualsGreaterThanToken e)) ColonToken f);
+	parse: clean
+a16	"a ? (b ? (c) : d => e) : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(Conditional(b QuestionToken Parenthesized(c) ColonToken ArrowFunction(Parameter(d) EqualsGreaterThanToken e))) ColonToken f);
+	parse: clean
+a19	"switch (x) { case (a): (b); }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Switch(x CaseBlock(CaseClause(Parenthesized(a) Parenthesized(b);)))
+	parse: clean
+a21	"switch (x) { case (a): (b) => c; }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Switch(x CaseBlock(CaseClause(Parenthesized(a) ArrowFunction(Parameter(b) EqualsGreaterThanToken c);)))
+	parse: clean
+a23	"x = { a: (b) }; y = a ? (b) : (c)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (x = ObjectLiteral(PropertyAssignment(a Parenthesized(b)))); (y = Conditional(a QuestionToken Parenthesized(b) ColonToken Parenthesized(c)));
+	parse: clean
+a24	"a ? b ? (c) : d => (e) : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(a QuestionToken Conditional(b QuestionToken ArrowFunction(Parameter(c) TypeReference(d) EqualsGreaterThanToken Parenthesized(e)) ColonToken f) ColonToken );
+	parse: TS1005@26+0 ':' expected.
+	javascript-only: TS8010@14+1 Type annotations can only be used in TypeScript files.
+a25	"a ? (b) : c => { d } "
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Parenthesized(b) ColonToken ArrowFunction(Parameter(c) EqualsGreaterThanToken Block(d;)));
+	parse: clean
+a26	"a ? b ? c : (d) : e => f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(a QuestionToken Conditional(b QuestionToken c ColonToken Parenthesized(d)) ColonToken ArrowFunction(Parameter(e) EqualsGreaterThanToken f));
+	parse: clean
+a27	"switch (x) { case (a): async => c; }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Switch(x CaseBlock(CaseClause(ArrowFunction(Parameter(a) TypeReference(async) EqualsGreaterThanToken c) Empty)))
+	parse: TS1005@33+1 ':' expected.
+	javascript-only: TS8010@23+5 Type annotations can only be used in TypeScript files.
+a28	"a ? b ? async (c) : d => e : f"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(a QuestionToken Conditional(b QuestionToken ArrowFunction(AsyncKeyword Parameter(c) TypeReference(d) EqualsGreaterThanToken e) ColonToken f) ColonToken );
+	parse: TS1005@30+0 ':' expected.
+	javascript-only: TS8010@20+1 Type annotations can only be used in TypeScript files.
+a30	"x ? y => ({ y }) : z => ({ z })"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(ObjectLiteral(ShorthandPropertyAssignment(y)))) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken Parenthesized(ObjectLiteral(ShorthandPropertyAssignment(z)))));
+	parse: clean
+a31	"a ? (b) => (c): d => e"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(a QuestionToken ArrowFunction(Parameter(b) EqualsGreaterThanToken Parenthesized(c)) ColonToken ArrowFunction(Parameter(d) EqualsGreaterThanToken e));
+	parse: clean
+a32	"x ? y => (y) : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y)) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a33	"x ? () => (y) : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(EqualsGreaterThanToken ArrowFunction(Parameter(y) TypeReference(z) EqualsGreaterThanToken z)) ColonToken );
+	parse: TS1005@22+0 ':' expected.
+	javascript-only: TS8010@16+1 Type annotations can only be used in TypeScript files.
+a34	"f(x ? y => (y) : z => z)"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Call(f Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y)) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z)));
+	parse: clean
+a35	"x ? y => z => (w) : v => v"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken ArrowFunction(Parameter(z) EqualsGreaterThanToken Parenthesized(w))) ColonToken ArrowFunction(Parameter(v) EqualsGreaterThanToken v));
+	parse: clean
+a36	"x ? y => (y) : (z) => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y)) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a37	"x ? async y => (y) : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(AsyncKeyword Parameter(y) EqualsGreaterThanToken Parenthesized(y)) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a40	"x ? [y => (y)] : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(x QuestionToken ArrayLiteral(ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y))) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a41	"x ? y => (y, w) : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized((y , w))) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a42	"x ? y => (y) ? (w) : u => u : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Conditional(Parenthesized(y) QuestionToken ArrowFunction(Parameter(w) TypeReference(u) EqualsGreaterThanToken u) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z))) ColonToken );
+	parse: TS1005@36+0 ':' expected.
+	javascript-only: TS8010@21+1 Type annotations can only be used in TypeScript files.
+a43	"x ? (y => (y)) : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(x QuestionToken Parenthesized(ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y))) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+a44	"switch (x) { case y => (y): z => z; }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=error tsx=error
+	tree: Switch(x CaseBlock(CaseClause(ArrowFunction(Parameter(y) EqualsGreaterThanToken ArrowFunction(Parameter(y) TypeReference(z) EqualsGreaterThanToken z)) Empty)))
+	parse: TS1005@34+1 ':' expected.
+	javascript-only: TS8010@28+1 Type annotations can only be used in TypeScript files.
+a45	"x ? y => (y) : z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Parenthesized(y)) ColonToken z);
+	parse: clean
+a46	"x ? y => { return (y) } : z => z"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Conditional(x QuestionToken ArrowFunction(Parameter(y) EqualsGreaterThanToken Block(Return(Parenthesized(y)))) ColonToken ArrowFunction(Parameter(z) EqualsGreaterThanToken z));
+	parse: clean
+j01	"const x = <div/>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxSelfClosingElement(div JsxAttributes))))
+	parse: clean
+j02	"const x = <A extends b>y</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=error
+	tree: (VariableDeclarationList(Variable(x ArrowFunction(TypeParameter(A TypeReference(b)) EqualsGreaterThanToken y)) Variable(A))) ( > );
+	parse: TS1005@23+1 '(' expected. | TS1005@24+2 ',' expected. | TS1005@27+1 ',' expected. | TS1109@28+0 Expression expected.
+	javascript-only: TS8004@11+11 Type parameter declarations can only be used in TypeScript files.
+j03	"const x = <A extends>y</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(A JsxAttributes(JsxAttribute(extends))) JsxText JsxClosingElement(A)))))
+	parse: clean
+j04	"const x = <A extends={1}>y</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(A JsxAttributes(JsxAttribute(extends Jsx("1")))) JsxText JsxClosingElement(A)))))
+	parse: clean
+j05	"const x = <T,>(y) => y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x ArrowFunction(TypeParameter(T) Parameter(y) EqualsGreaterThanToken y))))
+	parse: clean
+	javascript-only: TS8004@11+2 Type parameter declarations can only be used in TypeScript files.
+j06	"const x = <A b='1'>{/* c */}</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(A JsxAttributes(JsxAttribute(b "1"))) Jsx JsxClosingElement(A)))))
+	parse: clean
+j08	"const x = <div>{a<b>(c)}</div>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok (jsx and tsx outputs differ)
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(div JsxAttributes) Jsx(((a < b) > Parenthesized(c))) JsxClosingElement(div)))))
+	parse: clean
+j11	"const x = <T>y</T>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement(T)))))
+	parse: clean
+j12	"const x = <div\n  // line\n  a='1' /* block */ />"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxSelfClosingElement(div JsxAttributes(JsxAttribute(a "1"))))))
+	parse: clean
+j14	"const x = <A<T> b='1' />"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x (JsxSelfClosingElement(A JsxAttributes) , JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement())))))
+	parse: TS1003@12+1 Identifier expected. | TS1382@23+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? | TS17008@13+1 JSX element 'T' has no corresponding closing tag. | TS1005@24+0 '</' expected. | TS2657@10+14 JSX expressions must have one parent element.
+j15	"f(<T>() => x</T>)"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: Call(f JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement(T)));
+	parse: TS1382@9+1 Unexpected token. Did you mean `{'>'}` or `&gt;`?
+j16	"const x = <T>y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=error
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement()))))
+	parse: TS17008@11+1 JSX element 'T' has no corresponding closing tag. | TS1005@14+0 '</' expected.
+j17	"const x = <A const>y</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(A JsxAttributes(JsxAttribute(const))) JsxText JsxClosingElement(A)))))
+	parse: clean
+j18	"const x = <const>y</const>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(x JsxElement(JsxOpeningElement(const JsxAttributes) JsxText JsxClosingElement(const)))))
+	parse: clean
+j19	"const x = <A extends b='1'>y</A>"
+	valid JavaScript (V8): no	base bun: js=error jsx=ok ts=error tsx=error
+	tree: (VariableDeclarationList(Variable(x ArrowFunction(TypeParameter(A TypeReference(b) LiteralType("1")) EqualsGreaterThanToken y)) Variable(A))) ( > );
+	parse: TS1005@27+1 '(' expected. | TS1005@28+2 ',' expected. | TS1005@31+1 ',' expected. | TS1109@32+0 Expression expected.
+	javascript-only: TS8004@11+15 Type parameter declarations can only be used in TypeScript files.
+x01	"let x: number = 1"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x NumberKeyword "1")))
+	parse: clean
+	javascript-only: TS8010@7+6 Type annotations can only be used in TypeScript files.
+x02	"function f(a?: number): void {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(a QuestionToken NumberKeyword) VoidKeyword Block)
+	parse: clean
+	javascript-only: TS8009@12+1 The '?' modifier can only be used in TypeScript files. | TS8010@15+6 Type annotations can only be used in TypeScript files. | TS8010@24+4 Type annotations can only be used in TypeScript files.
+x03	"interface I {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Interface(I)
+	parse: clean
+	javascript-only: TS8006@10+1 'interface' declarations can only be used in TypeScript files.
+x04	"type T = number"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: TypeAlias(T NumberKeyword)
+	parse: clean
+	javascript-only: TS8008@5+1 Type aliases can only be used in TypeScript files.
+x05	"enum E { A }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Enum(E EnumMember(A))
+	parse: clean
+	javascript-only: TS8006@5+1 'enum' declarations can only be used in TypeScript files.
+x06	"namespace N {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Module(N ModuleBlock)
+	parse: clean
+	javascript-only: TS8006@10+1 'namespace' declarations can only be used in TypeScript files.
+x06b	"module M {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Module(M ModuleBlock)
+	parse: clean
+	javascript-only: TS8006@7+1 'module' declarations can only be used in TypeScript files.
+x07	"declare const x"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (DeclareKeyword VariableDeclarationList(Variable(x)))
+	parse: clean
+	javascript-only: TS8009@0+7 The 'declare' modifier can only be used in TypeScript files.
+x08	"x!"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: NonNull(x);
+	parse: clean
+	javascript-only: TS8013@0+2 Non-null assertions can only be used in TypeScript files.
+x08b	"x as y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: As(x TypeReference(y));
+	parse: clean
+	javascript-only: TS8016@5+1 Type assertion expressions can only be used in TypeScript files.
+x08c	"x satisfies y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Satisfies(x TypeReference(y));
+	parse: clean
+	javascript-only: TS8037@12+1 Type satisfaction expressions can only be used in TypeScript files.
+x09	"class A implements B {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A HeritageClause(ExpressionWithTypeArguments(B)))
+	parse: clean
+	javascript-only: TS8005@8+12 'implements' clauses can only be used in TypeScript files.
+x10	"class A<T> {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A TypeParameter(T))
+	parse: clean
+	javascript-only: TS8004@8+1 Type parameter declarations can only be used in TypeScript files.
+x10b	"function f<T>() {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f TypeParameter(T) Block)
+	parse: clean
+	javascript-only: TS8004@11+1 Type parameter declarations can only be used in TypeScript files.
+x10c	"x = <T,>(y) => y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (x = ArrowFunction(TypeParameter(T) Parameter(y) EqualsGreaterThanToken y));
+	parse: clean
+	javascript-only: TS8004@5+2 Type parameter declarations can only be used in TypeScript files.
+x11	"class A { public x; private y() {}; readonly z; override u() {}; static s }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Property(PublicKeyword x) Method(PrivateKeyword y Block) SemicolonClassElement Property(ReadonlyKeyword z) Method(OverrideKeyword u Block) SemicolonClassElement Property(StaticKeyword s))
+	parse: clean
+	javascript-only: TS8009@10+6 The 'public' modifier can only be used in TypeScript files. | TS8009@20+7 The 'private' modifier can only be used in TypeScript files. | TS8009@36+8 The 'readonly' modifier can only be used in TypeScript files. | TS8009@48+8 The 'override' modifier can only be used in TypeScript files.
+x11b	"class A { abstract w; declare v }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Property(ContextualKeyword w) Property(DeclareKeyword v))
+	parse: clean
+	javascript-only: TS8009@10+8 The 'abstract' modifier can only be used in TypeScript files. | TS8009@22+7 The 'declare' modifier can only be used in TypeScript files.
+x12	"class A { constructor(public x) {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Constructor(Parameter(PublicKeyword x) Block))
+	parse: clean
+	javascript-only: TS8012@22+6 Parameter modifiers can only be used in TypeScript files.
+x13	"import type { A } from 'x'"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(A))) "x")
+	parse: clean
+	javascript-only: TS8006@0+26 'import type' declarations can only be used in TypeScript files.
+x13b	"export type { A }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Export(NamedExports(ExportSpecifier(A)))
+	parse: clean
+	javascript-only: TS8006@0+17 'export type' declarations can only be used in TypeScript files.
+x13c	"import { type A } from 'x'"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(A))) "x")
+	parse: clean
+	javascript-only: TS8006@9+6 'import...type' declarations can only be used in TypeScript files.
+x13d	"var A; export { type A }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(A))) Export(NamedExports(ExportSpecifier(A)))
+	parse: clean
+	javascript-only: TS8006@16+6 'export...type' declarations can only be used in TypeScript files.
+x14	"import x = require('y')"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ImportEquals(x ExternalModuleReference("y"))
+	parse: clean
+	javascript-only: TS8002@0+23 'import ... =' can only be used in TypeScript files.
+x14b	"export = x"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ExportAssignment(x)
+	parse: clean
+	javascript-only: TS8003@0+10 'export =' can only be used in TypeScript files.
+x14c	"export as namespace X"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: NamespaceExport(X)
+	parse: clean
+x15	"function f(); function f() {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f) Function(f Block)
+	parse: clean
+	javascript-only: TS8017@0+13 Signature declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8017@9+1)
+x16	"class A { m(); m() {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Method(m) Method(m Block))
+	parse: clean
+	javascript-only: TS8017@10+4 Signature declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8017@10+1)
+x18	"class A extends B<T> {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A HeritageClause(ExpressionWithTypeArguments(B TypeReference(T))))
+	parse: clean
+	javascript-only: TS8011@18+1 Type arguments can only be used in TypeScript files.
+x19	"function f(this: any) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(this AnyKeyword) Block)
+	parse: clean
+	javascript-only: TS8010@17+3 Type annotations can only be used in TypeScript files.
+x21	"@dec class A {}"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(Decorator(dec) A)
+	parse: clean
+x21b	"class A { @dec m() {} }"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A Method(Decorator(dec) m Block))
+	parse: clean
+x21c	"@dec export class A {}"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(Decorator(dec) ExportKeyword A)
+	parse: clean
+x21d	"export @dec class A {}"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(ExportKeyword Decorator(dec) A)
+	parse: clean
+x21e	"@dec export @dec2 class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Class(Decorator(dec) ExportKeyword Decorator(dec2) A)
+	parse: clean
+	javascript-only: TS8038@12+5 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.
+x21f	"function f(@dec x) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Function(f Parameter(Decorator(dec) x) Block)
+	parse: clean
+	(tsc 6.0.2 reports instead: TS1206@11+4)
+x22	"var v = function f<T>() {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(v Function(f TypeParameter(T) Block))))
+	parse: clean
+	javascript-only: TS8004@19+1 Type parameter declarations can only be used in TypeScript files.
+x23	"try {} catch (e: any) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Try(Block CatchClause(Variable(e AnyKeyword) Block))
+	parse: clean
+	javascript-only: TS8010@17+3 Type annotations can only be used in TypeScript files.
+x25	"abstract class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(ContextualKeyword A)
+	parse: clean
+	javascript-only: TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files.
+x27	"class A { x?: number; y!: string; m?() {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Property(x QuestionToken NumberKeyword) Property(y ExclamationToken StringKeyword) Method(m QuestionToken Block))
+	parse: clean
+	javascript-only: TS8009@11+1 The '?' modifier can only be used in TypeScript files. | TS8010@14+6 Type annotations can only be used in TypeScript files. | TS8010@26+6 Type annotations can only be used in TypeScript files. | TS8009@35+1 The '?' modifier can only be used in TypeScript files.
+x28	"const enum E {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Enum(ConstKeyword E)
+	parse: clean
+	javascript-only: TS8006@11+1 'enum' declarations can only be used in TypeScript files.
+x28b	"declare module 'm' {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Module(DeclareKeyword "m" ModuleBlock)
+	parse: clean
+	(tsc 6.0.2 reports instead: TS8006@15+3)
+x28c	"declare global {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Module(DeclareKeyword global ModuleBlock)
+	parse: clean
+	(tsc 6.0.2 reports instead: TS8006@8+6)
+x29	"export default interface I {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Interface(ExportKeyword DefaultKeyword I)
+	parse: clean
+	javascript-only: TS8006@25+1 'interface' declarations can only be used in TypeScript files.
+x31	"function f(a: number = 1, ...r: any[]) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(a NumberKeyword "1") Parameter(DotDotDotToken r ArrayType(AnyKeyword)) Block)
+	parse: clean
+	javascript-only: TS8010@14+6 Type annotations can only be used in TypeScript files. | TS8010@32+5 Type annotations can only be used in TypeScript files.
+x32	"let f = (a: number): string => ''"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(f ArrowFunction(Parameter(a NumberKeyword) StringKeyword EqualsGreaterThanToken ""))))
+	parse: clean
+	javascript-only: TS8010@12+6 Type annotations can only be used in TypeScript files. | TS8010@21+6 Type annotations can only be used in TypeScript files.
+x33	"let g = async <T,>(a: T) => a"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(g ArrowFunction(AsyncKeyword TypeParameter(T) Parameter(a TypeReference(T)) EqualsGreaterThanToken a))))
+	parse: clean
+	javascript-only: TS8010@22+1 Type annotations can only be used in TypeScript files. | TS8004@15+2 Type parameter declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8004@15+2,TS8010@22+1)
+x34	"let h = <T>y"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=error
+	tree: (VariableDeclarationList(Variable(h JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement()))))
+	parse: TS17008@9+1 JSX element 'T' has no corresponding closing tag. | TS1005@12+0 '</' expected.
+x35	"new A<T>()"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ((New(A) < T) > Parenthesized());
+	parse: TS1109@9+1 Expression expected.
+x36	"f<T>()"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ((f < T) > Parenthesized());
+	parse: TS1109@5+1 Expression expected.
+x37	"let x = y as const"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x As(y TypeReference(const)))))
+	parse: clean
+	javascript-only: TS8016@13+5 Type assertion expressions can only be used in TypeScript files.
+x38	"class A { [k: string]: number }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A IndexSignature(Parameter(k StringKeyword) NumberKeyword))
+	parse: clean
+	javascript-only: TS8017@10+19 Signature declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8010@14+6)
+x39	"import { a } from 'x'; var a;"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Import(ImportClause(NamedImports(ImportSpecifier(a))) "x") (VariableDeclarationList(Variable(a)))
+	parse: clean
+x40	"var v: typeof import('y')"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(v TypeNode(LiteralType("y")))))
+	parse: clean
+	javascript-only: TS8010@7+18 Type annotations can only be used in TypeScript files.
+x50	"let x!: number"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x ExclamationToken NumberKeyword)))
+	parse: clean
+	javascript-only: TS8010@8+6 Type annotations can only be used in TypeScript files.
+x51	"class A { declare x; static y; accessor z; async m() {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Property(DeclareKeyword x) Property(StaticKeyword y) Property(AccessorKeyword z) Method(AsyncKeyword m Block))
+	parse: clean
+	javascript-only: TS8009@10+7 The 'declare' modifier can only be used in TypeScript files.
+x52	"declare function f(a: number): void"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(DeclareKeyword f Parameter(a NumberKeyword) VoidKeyword)
+	parse: clean
+	javascript-only: TS8010@22+6 Type annotations can only be used in TypeScript files. | TS8017@0+35 Signature declarations can only be used in TypeScript files. | TS8009@0+7 The 'declare' modifier can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8017@17+1)
+x53	"function f(a?) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(a QuestionToken) Block)
+	parse: clean
+	javascript-only: TS8009@12+1 The '?' modifier can only be used in TypeScript files.
+x54	"var f = function (this: any, a) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(f Function(Parameter(this AnyKeyword) Parameter(a) Block))))
+	parse: clean
+	javascript-only: TS8010@24+3 Type annotations can only be used in TypeScript files.
+x55	"class A { get x(): number { return 1 } set x(v: number) {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A GetAccessor(x NumberKeyword Block(Return("1"))) SetAccessor(x Parameter(v NumberKeyword) Block))
+	parse: clean
+	javascript-only: TS8010@19+6 Type annotations can only be used in TypeScript files. | TS8010@48+6 Type annotations can only be used in TypeScript files.
+x56	"class A { constructor(); constructor(a: number) {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Constructor Constructor(Parameter(a NumberKeyword) Block))
+	parse: clean
+	javascript-only: TS8017@10+14 Signature declarations can only be used in TypeScript files. | TS8010@40+6 Type annotations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8017@10+11,TS8010@40+6)
+x57	"export default class<T> {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(ExportKeyword DefaultKeyword TypeParameter(T))
+	parse: clean
+	javascript-only: TS8004@21+1 Type parameter declarations can only be used in TypeScript files.
+x58	"var o = { m<T>() {}, get x(): number { return 1 } }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(o ObjectLiteral(Method(m TypeParameter(T) Block) GetAccessor(x NumberKeyword Block(Return("1")))))))
+	parse: clean
+	javascript-only: TS8004@12+1 Type parameter declarations can only be used in TypeScript files. | TS8010@30+6 Type annotations can only be used in TypeScript files.
+x59	"const x = y!.z!()"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x Call(NonNull(PropertyAccess(NonNull(y) z))))))
+	parse: clean
+	javascript-only: TS8013@10+2 Non-null assertions can only be used in TypeScript files. | TS8013@10+5 Non-null assertions can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8013@10+5)
+x61	"import type X from 'x'; import type * as N from 'y'; export type * from 'z'; export type * as M from 'w';"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Import(ImportClause(X) "x") Import(ImportClause(NamespaceImport(N)) "y") Export("z") Export(NamespaceExport(M) "w")
+	parse: clean
+	javascript-only: TS8006@0+23 'import type' declarations can only be used in TypeScript files. | TS8006@24+28 'import type' declarations can only be used in TypeScript files. | TS8006@53+23 'export type' declarations can only be used in TypeScript files. | TS8006@77+28 'export type' declarations can only be used in TypeScript files.
+x62	"export import a = b.c"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ImportEquals(ExportKeyword a Node(b c))
+	parse: clean
+	javascript-only: TS8002@0+21 'import ... =' can only be used in TypeScript files.
+x63	"import a = b.c"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: ImportEquals(a Node(b c))
+	parse: clean
+	javascript-only: TS8002@0+14 'import ... =' can only be used in TypeScript files.
+x64	"export declare const x: number; export abstract class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (ExportKeyword DeclareKeyword VariableDeclarationList(Variable(x NumberKeyword))) Class(ExportKeyword ContextualKeyword A)
+	parse: clean
+	javascript-only: TS8010@24+6 Type annotations can only be used in TypeScript files. | TS8009@7+7 The 'declare' modifier can only be used in TypeScript files. | TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8009@7+7,TS8010@24+6,TS8009@39+8)
+x65	"namespace A.B.C {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Module(A Module(B Module(C ModuleBlock)))
+	parse: clean
+	javascript-only: TS8006@14+1 'namespace' declarations can only be used in TypeScript files. | TS8006@12+1 'namespace' declarations can only be used in TypeScript files. | TS8006@10+1 'namespace' declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8006@10+1)
+x66	"let x: number, y: string"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x NumberKeyword) Variable(y StringKeyword)))
+	parse: clean
+	javascript-only: TS8010@7+6 Type annotations can only be used in TypeScript files. | TS8010@18+6 Type annotations can only be used in TypeScript files.
+x67	"for (let i: number = 0;;) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: For(VariableDeclarationList(Variable(i NumberKeyword "0")) Block)
+	parse: clean
+	javascript-only: TS8010@12+6 Type annotations can only be used in TypeScript files.
+x69	"class A<in out T> {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A TypeParameter(InKeyword OutKeyword T))
+	parse: clean
+	javascript-only: TS8004@8+8 Type parameter declarations can only be used in TypeScript files.
+x70	"function f(x): x is string { return true }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(x) TypeNode(x StringKeyword) Block(Return(TrueKeyword)))
+	parse: clean
+	javascript-only: TS8010@15+11 Type annotations can only be used in TypeScript files.
+x71	"@dec function f() {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Function(Decorator(dec) f Block)
+	parse: clean
+	javascript-only: TS1206@0+4 Decorators are not valid here.
+x72	"@dec var x"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: (Decorator(dec) VariableDeclarationList(Variable(x)))
+	parse: clean
+	javascript-only: TS1206@0+4 Decorators are not valid here.
+x73	"export @dec default class {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Class(ExportKeyword Decorator(dec) DefaultKeyword)
+	parse: clean
+	javascript-only: TS1206@7+4 Decorators are not valid here.
+x74	"class A { @dec constructor() {} }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: Class(A Constructor(Decorator(dec) Block))
+	parse: clean
+	javascript-only: TS1206@10+4 Decorators are not valid here.
+x75	"a = b satisfies c as d"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (a = As(Satisfies(b TypeReference(c)) TypeReference(d)));
+	parse: clean
+	javascript-only: TS8037@16+1 Type satisfaction expressions can only be used in TypeScript files. | TS8016@21+1 Type assertion expressions can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8016@21+1)
+x76	"enum E { A = 1, B }; declare enum F {}; const enum G {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Enum(E EnumMember(A "1") EnumMember(B)) Empty Enum(DeclareKeyword F) Empty Enum(ConstKeyword G)
+	parse: clean
+	javascript-only: TS8006@5+1 'enum' declarations can only be used in TypeScript files. | TS8006@34+1 'enum' declarations can only be used in TypeScript files. | TS8006@51+1 'enum' declarations can only be used in TypeScript files.
+x80	"abstract class A { abstract m(): void; abstract x: number }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(ContextualKeyword A Method(ContextualKeyword m VoidKeyword) Property(ContextualKeyword x NumberKeyword))
+	parse: clean
+	javascript-only: TS8017@19+19 Signature declarations can only be used in TypeScript files. | TS8009@19+8 The 'abstract' modifier can only be used in TypeScript files. | TS8010@51+6 Type annotations can only be used in TypeScript files. | TS8009@39+8 The 'abstract' modifier can only be used in TypeScript files. | TS8009@0+8 The 'abstract' modifier can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8009@0+8,TS8017@28+1,TS8009@39+8,TS8010@51+6)
+x82	"type A<T> = T"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: TypeAlias(A TypeParameter(T) TypeReference(T))
+	parse: clean
+	javascript-only: TS8008@5+1 Type aliases can only be used in TypeScript files.
+x83	"interface I<T> extends J<T> { m<U>(): void }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Interface(I TypeParameter(T) HeritageClause(ExpressionWithTypeArguments(J TypeReference(T))) MethodSignature(m TypeParameter(U) VoidKeyword))
+	parse: clean
+	javascript-only: TS8006@10+1 'interface' declarations can only be used in TypeScript files.
+x84	"function f<const T>(x: T) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f TypeParameter(ConstKeyword T) Parameter(x TypeReference(T)) Block)
+	parse: clean
+	javascript-only: TS8010@23+1 Type annotations can only be used in TypeScript files. | TS8004@11+7 Type parameter declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8004@11+7,TS8010@23+1)
+x85	"class A { m<T>(this: A, ...a: T[]): a is any { return true } }"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A Method(m TypeParameter(T) Parameter(this TypeReference(A)) Parameter(DotDotDotToken a ArrayType(TypeReference(T))) TypeNode(a AnyKeyword) Block(Return(TrueKeyword))))
+	parse: clean
+	javascript-only: TS8010@21+1 Type annotations can only be used in TypeScript files. | TS8010@30+3 Type annotations can only be used in TypeScript files. | TS8010@36+8 Type annotations can only be used in TypeScript files. | TS8004@12+1 Type parameter declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8004@12+1,TS8010@21+1,TS8010@30+3,TS8010@36+8)
+x86	"var type; export { type as default }"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(type))) Export(NamedExports(ExportSpecifier(type default)))
+	parse: clean
+x87	"function f(this) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(f Parameter(this) Block)
+	parse: clean
+x88	"let x!"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=error
+	tree: (VariableDeclarationList(Variable(x ExclamationToken)))
+	parse: clean
+x89	"class A { static { } static x; static m() {} static async *g() {} }"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A ClassStaticBlock(Block) Property(StaticKeyword x) Method(StaticKeyword m Block) Method(StaticKeyword AsyncKeyword AsteriskToken g Block))
+	parse: clean
+x90	"export default function <T>(a: T) {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Function(ExportKeyword DefaultKeyword TypeParameter(T) Parameter(a TypeReference(T)) Block)
+	parse: clean
+	javascript-only: TS8010@31+1 Type annotations can only be used in TypeScript files. | TS8004@25+1 Type parameter declarations can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: TS8004@25+1,TS8010@31+1)
+x91	"class A extends B implements C, D {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(A HeritageClause(ExpressionWithTypeArguments(B)) HeritageClause(ExpressionWithTypeArguments(C) ExpressionWithTypeArguments(D)))
+	parse: clean
+	javascript-only: TS8005@18+15 'implements' clauses can only be used in TypeScript files.
+x92	"x = function* <T>() {}; y = async function <T>() {}; z = async <T,>() => {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (x = Function(AsteriskToken TypeParameter(T) Block)); (y = Function(AsyncKeyword TypeParameter(T) Block)); (z = ArrowFunction(AsyncKeyword TypeParameter(T) EqualsGreaterThanToken Block));
+	parse: clean
+	javascript-only: TS8004@15+1 Type parameter declarations can only be used in TypeScript files. | TS8004@44+1 Type parameter declarations can only be used in TypeScript files. | TS8004@64+2 Type parameter declarations can only be used in TypeScript files.
+x93	"@x<y> class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Missing(Decorator(x)) JsxElement(JsxOpeningElement(y JsxAttributes) JsxText Jsx JsxClosingElement());
+	parse: TS1146@2+0 Declaration expected. | TS17008@3+1 JSX element 'y' has no corresponding closing tag. | TS1005@16+0 '</' expected.
+	(tsc 6.0.2 reports instead: TS1206@0+2)
+x94	"@x<y>() class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Missing(Decorator(x)) JsxElement(JsxOpeningElement(y JsxAttributes) JsxText Jsx JsxClosingElement());
+	parse: TS1146@2+0 Declaration expected. | TS17008@3+1 JSX element 'y' has no corresponding closing tag. | TS1005@18+0 '</' expected.
+	(tsc 6.0.2 reports instead: TS1206@0+2)
+x95	"@x! class A {}"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: Class(Decorator(NonNull(x)) A)
+	parse: clean
+	javascript-only: TS8013@1+2 Non-null assertions can only be used in TypeScript files.
+	(tsc 6.0.2 reports instead: nothing)
+x96	"class A { @(a<b>(c)) m() {} }"
+	valid JavaScript (V8): no	base bun: js=ok jsx=ok ts=ok tsx=ok (jsx and tsx outputs differ)
+	tree: Class(A Method(Decorator(Parenthesized(((a < b) > Parenthesized(c)))) m Block))
+	parse: clean
+x97	"var a = b?.<c>(d)"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(a ((PropertyAccess(b QuestionDotToken ) < c) > Parenthesized(d)))))
+	parse: TS1003@11+1 Identifier expected.
+x98	"var a = <A<T> />"
+	valid JavaScript (V8): no	base bun: js=error jsx=error ts=error tsx=ok
+	tree: (VariableDeclarationList(Variable(a (JsxSelfClosingElement(A JsxAttributes) , JsxElement(JsxOpeningElement(T JsxAttributes) JsxText JsxClosingElement())))))
+	parse: TS1003@10+1 Identifier expected. | TS1382@15+1 Unexpected token. Did you mean `{'>'}` or `&gt;`? | TS17008@11+1 JSX element 'T' has no corresponding closing tag. | TS1005@16+0 '</' expected. | TS2657@8+8 JSX expressions must have one parent element.
+p01	"// @ts-check\n/** @type {number} */\nvar x = /** @type {any} */ (y);"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x Parenthesized(y))))
+	parse: clean
+p02	"// @ts-nocheck\nvar x = (1, 2);"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x Parenthesized(("1" , "2")))))
+	parse: clean
+p03	"/// <reference path='a.d.ts' />\n/// <reference types='node' />\nvar x;"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x)))
+	parse: clean
+p04	"#!/usr/bin/env node\n// @ts-check\nvar x = ((a)), y = (a) => (b), z = typeof (a), w = (a).b, v = (a, b);"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (VariableDeclarationList(Variable(x Parenthesized(Parenthesized(a))) Variable(y ArrowFunction(Parameter(a) EqualsGreaterThanToken Parenthesized(b))) Variable(z TypeOf(Parenthesized(a))) Variable(w PropertyAccess(Parenthesized(a) b)) Variable(v Parenthesized((a , b)))))
+	parse: clean
+p05	"delete (a.b); (a) = 1; (a.b)++; [(a)] = b; ({ x: (a) } = b); for ((a) of b) ; (a)?.b; (a?.b).c; new (a.b()); (function(){})(); (() => 1)(); (a, b) => 1; async (a) => 1;"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Delete(Parenthesized(PropertyAccess(a b))); (Parenthesized(a) = "1"); PostfixUnary(Parenthesized(PropertyAccess(a b))); (ArrayLiteral(Parenthesized(a)) = b); Parenthesized((ObjectLiteral(PropertyAssignment(x Parenthesized(a))) = b)); ForOf(Parenthesized(a) b Empty) PropertyAccess(Parenthesized(a) QuestionDotToken b); PropertyAccess(Parenthesized(PropertyAccess(a QuestionDotToken b)) c); New(Parenthesized(Call(PropertyAccess(a b)))); Call(Parenthesized(Function(Block))); Call(Parenthesized(ArrowFunction(EqualsGreaterThanToken "1"))); ArrowFunction(Parameter(a) Parameter(b) EqualsGreaterThanToken "1"); ArrowFunction(AsyncKeyword Parameter(a) EqualsGreaterThanToken "1");
+	parse: clean
+p06	"if ((a)) (b); while ((a)) ; do ; while ((a)); for ((a); (b); (c)) ; switch ((a)) { case (b): } with ((a)) ; throw (a);"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: If(Parenthesized(a) Parenthesized(b);) While(Parenthesized(a) Empty) Do(Empty Parenthesized(a)) For(Parenthesized(a) Parenthesized(b) Parenthesized(c) Empty) Switch(Parenthesized(a) CaseBlock(CaseClause(Parenthesized(b)))) With(Parenthesized(a) Empty) Throw(Parenthesized(a))
+	parse: clean
+p07	"x = a ? (b) : (c); y = `${(a)}`; z = [(a), ...(b)]; w = { ...(a), [(b)]: (c) }; f((a), ...(b)); new A((a));"
+	valid JavaScript (V8): script	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: (x = Conditional(a QuestionToken Parenthesized(b) ColonToken Parenthesized(c))); (y = Template(TemplateHead TemplateSpan(Parenthesized(a) TemplateToken))); (z = ArrayLiteral(Parenthesized(a) SpreadElement(Parenthesized(b)))); (w = ObjectLiteral(SpreadAssignment(Parenthesized(a)) PropertyAssignment(ComputedPropertyName(Parenthesized(b)) Parenthesized(c)))); Call(f Parenthesized(a) SpreadElement(Parenthesized(b))); New(A Parenthesized(a));
+	parse: clean
+p08	"class A extends (B) { [(a)] = (b); static { (c); } } export default (a);"
+	valid JavaScript (V8): module	base bun: js=ok jsx=ok ts=ok tsx=ok
+	tree: Class(A HeritageClause(ExpressionWithTypeArguments(Parenthesized(B))) Property(ComputedPropertyName(Parenthesized(a)) Parenthesized(b)) ClassStaticBlock(Block(Parenthesized(c);))) ExportAssignment(Parenthesized(a))
+	parse: clean

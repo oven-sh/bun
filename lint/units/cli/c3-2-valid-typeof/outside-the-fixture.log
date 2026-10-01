@@ -1,0 +1,37 @@
+valid-typeof: 39 cases: same 22, missing 2, other-text 1, extra 5, bun-rejects 2, eslint-rejects 2, both-reject 5
+extra: "/* global undefined: off */ typeof a === undefined" [script]
+    eslint: (none)
+    bun:    1:42 Invalid typeof comparison value.
+extra: "/* eslint valid-typeof: off */ typeof a === \"strnig\"" [script]
+    eslint: (none)
+    bun:    1:45 Invalid typeof comparison value.
+extra: "typeof a === \"strnig\" // eslint-disable-line" [script]
+    eslint: (none)
+    bun:    1:14 Invalid typeof comparison value.
+extra: "// eslint-disable-next-line valid-typeof\ntypeof a === \"strnig\"" [script]
+    eslint: (none)
+    bun:    2:14 Invalid typeof comparison value.
+extra: "/* eslint-disable */ typeof a === undefined" [script]
+    eslint: (none)
+    bun:    1:35 Invalid typeof comparison value.
+missing: "/* eslint valid-typeof: [\"error\", { requireStringLiterals: true }] */ typeof a === b" [script]
+    eslint: 1:84 Typeof comparisons should be to string literals.
+    bun:    (none)
+other-text: "/* eslint valid-typeof: [\"error\", { requireStringLiterals: true }] */ typeof a === undefined" [script]
+    eslint: 1:84 Typeof comparisons should be to string literals.
+    bun:    1:84 Invalid typeof comparison value.
+eslint-rejects: "typeof a === \"strnig\"; return" [script]
+    eslint: FATAL Parsing error: 'return' outside of function
+    bun:    1:14 Invalid typeof comparison value.
+eslint-rejects: "typeof a === undefined; return" [script]
+    eslint: FATAL Parsing error: 'return' outside of function
+    bun:    1:14 Invalid typeof comparison value.
+bun-rejects: "typeof a === \"strnig\" <!-- c" [script]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    PARSE
+bun-rejects: "typeof a === \"\\08\"" [script]
+    eslint: 1:14 Invalid typeof comparison value.
+    bun:    PARSE
+missing: "{ using undefined = o; } typeof x === undefined" [script]
+    eslint: 1:39 Invalid typeof comparison value.
+    bun:    (none)

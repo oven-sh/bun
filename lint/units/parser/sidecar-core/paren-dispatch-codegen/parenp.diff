@@ -1,0 +1,16 @@
+188c188
+< R_X86_64_PLT32	.text._RNvMs0_CshGkpdesyg8c_1aNtB5_1P21try_arrow_return_type-0x4
+---
+> R_X86_64_PLT32	.text._RNvMs0_CskJ4n2NjG6jE_1bNtB5_1P21try_arrow_return_type-0x4
+195c195
+< R_X86_64_PLT32	.text._RNvMs0_CshGkpdesyg8c_1aNtB5_1P10log_errors-0x4
+---
+> R_X86_64_PLT32	.text._RNvMs0_CskJ4n2NjG6jE_1bNtB5_1P10log_errors-0x4
+202c202
+< R_X86_64_PLT32	.text._RNvMs0_CshGkpdesyg8c_1aNtB5_1P10arrow_body-0x4
+---
+> R_X86_64_PLT32	.text._RNvMs0_CskJ4n2NjG6jE_1bNtB5_1P10arrow_body-0x4
+247c247
+< R_X86_64_PLT32	.text._RNvMs0_CshGkpdesyg8c_1aNtB5_1P10log_errors-0x4
+---
+> R_X86_64_PLT32	.text._RNvMs0_CskJ4n2NjG6jE_1bNtB5_1P10log_errors-0x4

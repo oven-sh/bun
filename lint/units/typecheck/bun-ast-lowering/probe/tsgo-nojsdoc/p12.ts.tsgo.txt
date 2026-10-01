@@ -1,0 +1,36 @@
+file /p12.ts scriptKind=3 variant=0 dts=false textLen=61
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=25 identifiers=4 text=11 reparsedClones=0
+diagnostic [52,52) TS1125 cat=1 "Hexadecimal digit expected."
+root KindSourceFile [0,61) f=0x0
+  .Statements: list [0,60) n=3
+    - KindExpressionStatement [0,22) f=0x0
+      .Expression: KindTemplateExpression [0,21) f=0x0
+        .Head: KindTemplateHead [0,4) f=0x0 RawText="a" TemplateFlags=0x0 Text="a" TokenFlags=0x0
+        .TemplateSpans: list [4,21) n=1
+          - KindTemplateSpan [4,21) f=0x0
+            .Expression: KindObjectLiteralExpression [4,17) f=0x0
+              .Properties: list [6,16) n=1
+                - KindPropertyAssignment [6,16) f=0x0
+                  .Initializer: KindTemplateExpression [8,16) f=0x0
+                    .Head: KindTemplateHead [8,13) f=0x0 RawText="c" TemplateFlags=0x0 Text="c" TokenFlags=0x0
+                    .TemplateSpans: list [13,16) n=1
+                      - KindTemplateSpan [13,16) f=0x0
+                        .Expression: KindIdentifier [13,14) f=0x0 Text="d"
+                        .Literal: KindTemplateTail [14,16) f=0x0 RawText="" TemplateFlags=0x0 Text="" TokenFlags=0x0
+                  .name: KindIdentifier [6,7) f=0x0 Text="b"
+            .Literal: KindTemplateTail [17,21) f=0x0 RawText="e" TemplateFlags=0x0 Text="e" TokenFlags=0x0
+    - KindExpressionStatement [22,48) f=0x0
+      .Expression: KindTaggedTemplateExpression [22,47) f=0x0
+        .Tag: KindIdentifier [22,24) f=0x0 Text="f"
+        .Template: KindTemplateExpression [24,47) f=0x0
+          .Head: KindTemplateHead [24,36) f=0x0 RawText="\\unicode " TemplateFlags=0xc00 Text="\\unicode " TokenFlags=0x0
+          .TemplateSpans: list [36,47) n=1
+            - KindTemplateSpan [36,47) f=0x0
+              .Expression: KindIdentifier [36,37) f=0x0 Text="x"
+              .Literal: KindTemplateTail [37,47) f=0x0 RawText=" \\xerxes" TemplateFlags=0x800 Text=" \\xerxes" TokenFlags=0x0
+    - KindExpressionStatement [48,60) f=0x0
+      .Expression: KindNoSubstitutionTemplateLiteral [48,59) f=0x8000 RawText="" TemplateFlags=0xc00 Text="\\unicode" TokenFlags=0x0
+  .EndOfFileToken: KindEndOfFile [60,61) f=0x0

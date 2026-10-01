@@ -1,0 +1,281 @@
+--- prefix:112 private-id bare outside class [ts] "#x in y;"
+   bun: @0+2 Unexpected #x
+   chk: @0+2 TS18016 Private identifiers are not allowed outside class bodies.
+--- prefix:112 private-id at compare level [ts] "class A { #x; m() { return 1 + #x in this } }"
+   bun: @31+2 Unexpected #x
+   chk: @31+2 TS1451 Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
+--- prefix:121 expected(TIn) [ts] "class A { #x; m() { #x; } }"
+   bun: @22+1 Expected "in" but found ";"
+   chk: @20+2 TS1451 Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an 'in' expression
+--- prefix:183 await x ** 2 [ts] "async function f() { await x ** 2 }"
+   bun: @29+2 Unexpected **
+   tsc: @21+7 TS17006 An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:351 void x ** 2 [ts] "void x ** 2"
+   bun: @7+2 Unexpected **
+   tsc: @0+6 TS17006 An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:370 typeof x ** 2 [ts] "typeof x ** 2"
+   bun: @9+2 Unexpected **
+   tsc: @0+8 TS17006 An unary expression with the 'typeof' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:393 delete x ** 2 [ts] "delete x ** 2"
+   bun: @9+2 Unexpected **
+   tsc: @0+8 TS17006 An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+   chk: @7+1 TS1102 'delete' cannot be called on an identifier in strict mode.
+   chk: @7+1 TS2703 The operand of a 'delete' operator must be a property reference.
+--- prefix:436 +x ** 2 [ts] "+x ** 2"
+   bun: @3+2 Unexpected **
+   tsc: @0+2 TS17006 An unary expression with the '+' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:455 -x ** 2 [ts] "-x ** 2"
+   bun: @3+2 Unexpected **
+   tsc: @0+2 TS17006 An unary expression with the '-' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:474 ~x ** 2 [ts] "~x ** 2"
+   bun: @3+2 Unexpected **
+   tsc: @0+2 TS17006 An unary expression with the '~' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:493 !x ** 2 [ts] "!x ** 2"
+   bun: @3+2 Unexpected **
+   tsc: @0+2 TS17006 An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:<T>x ** 2 (no bun site) [ts] "<number>x ** 2"
+   tsc: @0+9 TS17007 A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+--- prefix:676 new.foo [ts] "function f() { new.foo }"
+   bun: @19+3 Unexpected foo
+   chk: @19+3 TS17012 'foo' is not a valid meta-property for keyword 'new'. Did you mean 'target'?
+--- prefix:676 new.5 [ts] "function f() { new.5 }"
+--- prefix:988 < in js [js] "x = <T>y"
+   bun: @4+1 Unexpected <
+   tsc: @5+1 TS17008 JSX element 'T' has no corresponding closing tag.
+   tsc: @8+0 TS1005 '</' expected.
+--- prefix:988 < at EOF ts [ts] "x = <"
+   bun: @5+0 Unexpected end of file
+   tsc: @5+0 TS1110 Type expected.
+--- prefix:1039 default in expr [ts] "x = );"
+   bun: @4+1 Unexpected )
+   tsc: @4+1 TS1109 Expression expected.
+--- prefix:1039 default stmt start ) [ts] ")"
+   bun: @0+1 Unexpected )
+   tsc: @0+1 TS1128 Declaration or statement expected.
+--- prefix:1039 default stmt start } [ts] "}"
+   bun: @0+1 Unexpected }
+   tsc: @0+1 TS1128 Declaration or statement expected.
+--- prefix:1039 default in block [ts] "{ ) }"
+   bun: @2+1 Unexpected )
+   tsc: @2+1 TS1128 Declaration or statement expected.
+--- prefix:1039 default EOF [ts] "x = "
+   bun: @4+0 Unexpected end of file
+   tsc: @3+0 TS1109 Expression expected.
+--- prefix:1039 default in call args [ts] "f(1, ;"
+   bun: @5+1 Unexpected ;
+   tsc: @5+1 TS1005 ')' expected.
+--- prefix:1039 default in array [ts] "x = [1, ;"
+   bun: @8+1 Unexpected ;
+   tsc: @8+1 TS1137 Expression or comma expected.
+   tsc: @9+0 TS1005 ']' expected.
+--- prefix:1039 default in object value [ts] "x = {a: ;"
+   bun: @8+1 Unexpected ;
+   tsc: @8+1 TS1109 Expression expected.
+   tsc: @9+0 TS1005 '}' expected.
+--- prefix:1039 default after binary [ts] "x = 1 + ;"
+   bun: @8+1 Unexpected ;
+   tsc: @8+1 TS1109 Expression expected.
+--- prefix:1039 default case keyword [ts] "x = case;"
+   bun: @4+4 Unexpected case
+   tsc: @4+4 TS1109 Expression expected.
+--- prefix:1039 default in template [ts] "x = `${}`;"
+   bun: @7+1 Unexpected }
+   tsc: @7+1 TS1109 Expression expected.
+--- prefix:1039 default in paren [ts] "x = ();"
+   bun: @6+1 Expected "=>" but found ";"
+   tsc: @5+1 TS1109 Expression expected.
+--- prefix:1039 default in if cond [ts] "if () {}"
+   bun: @4+1 Unexpected )
+   tsc: @4+1 TS1109 Expression expected.
+--- prefix:1039 default return [ts] "function f() { return ) }"
+   bun: @22+1 Unexpected )
+   tsc: @22+1 TS1109 Expression expected.
+--- prefix:602 @dec non-class expr [ts] "x = @dec 5"
+   bun: @9+1 Expected "class" but found "5"
+   tsc: @8+0 TS1109 Expression expected.
+   tsc: @9+1 TS1005 ';' expected.
+--- prefix:42 super outside [ts] "super.x"
+   bun: @0+5 Unexpected "super"
+   chk: @0+5 TS2660 'super' can only be referenced in members of derived classes or object literal expressions.
+--- prefix:42 super bare [ts] "class A extends B { m() { super; } }"
+   bun: @26+5 Unexpected "super"
+   tsc: @31+1 TS1034 'super' must be followed by an argument list or member access.
+--- stmt:70 enum in js [js] "enum A {}"
+   bun: @0+4 Unexpected enum
+   syn: @5+1 TS8006 'enum' declarations can only be used in TypeScript files.
+--- stmt:120 @dec let [ts] "@dec\nlet x = 1"
+   bun: @5+3 Expected "class" but found "let"
+   chk: @0+1 TS1206 Decorators are not valid here.
+--- stmt:120 @dec function [ts] "@dec function f() {}"
+   bun: @5+8 Expected "class" but found "function"
+   chk: @0+1 TS1206 Decorators are not valid here.
+--- stmt:648 for await in [ts] "async function f(){ for await (let x in y) {} }"
+   bun: @37+2 Expected "of" but found "in"
+   tsc: @37+2 TS1005 'of' expected.
+--- stmt:650 for await ;; [ts] "async function f(){ for await (;;) {} }"
+   bun: @31+1 Unexpected ;
+   tsc: @31+1 TS1005 'of' expected.
+--- stmt:835 export nested block [ts] "{ export const a = 1 }"
+   bun: @2+6 Unexpected export
+   chk: @2+6 TS1184 Modifiers cannot appear here.
+--- stmt:835 export nested fn [ts] "function f(){ export const a = 1 }"
+   bun: @14+6 Unexpected export
+   chk: @14+6 TS1184 Modifiers cannot appear here.
+--- stmt:870 export import in js [js] "export import a = b;"
+   bun: @7+6 Unexpected import
+   syn: @0+20 TS8002 'import ... =' can only be used in TypeScript files.
+--- stmt:876 export enum in js [js] "export enum A {}"
+   bun: @7+4 Unexpected enum
+   syn: @12+1 TS8006 'enum' declarations can only be used in TypeScript files.
+--- stmt:967 export ident [ts] "export foo;"
+   bun: @7+3 Unexpected foo
+   tsc: @0+6 TS1128 Declaration or statement expected.
+--- stmt:967 export ident js [js] "export foo;"
+   bun: @7+3 Unexpected foo
+   tsc: @0+6 TS1128 Declaration or statement expected.
+--- stmt:973 export default nested [ts] "namespace N { export default 1 }"
+   bun: @21+7 Unexpected default
+   chk: @14+16 TS1319 A default export can only be used in an ECMAScript-style module.
+--- stmt:1201 export * nested [ts] "function f(){ export * from 'x' }"
+   bun: @14+6 Unexpected export
+   chk: @14+6 TS1233 An export declaration can only be used at the top level of a namespace or module.
+--- stmt:1281 export { nested [ts] "function f(){ export { a } }"
+   bun: @14+6 Unexpected export
+   chk: @14+6 TS1233 An export declaration can only be used at the top level of a namespace or module.
+--- stmt:1383 export = in js [js] "export = x;"
+   bun: @7+1 Unexpected =
+   syn: @0+11 TS8003 'export =' can only be used in TypeScript files.
+--- stmt:1387 export 5 [ts] "export 5;"
+   bun: @7+1 Unexpected 5
+   tsc: @0+6 TS1128 Declaration or statement expected.
+--- stmt:1435 import 'x' nested [ts] "function f(){ import 'x' }"
+   bun: @21+3 Unexpected 'x'
+   chk: @14+6 TS1232 An import declaration can only be used at the top level of a namespace or module.
+--- stmt:1443 import * nested [ts] "function f(){ import * as a from 'x' }"
+   bun: @21+1 Unexpected *
+   chk: @14+6 TS1232 An import declaration can only be used at the top level of a namespace or module.
+--- stmt:1461 import { nested [ts] "function f(){ import { a } from 'x' }"
+   bun: @21+1 Unexpected {
+   chk: @14+6 TS1232 An import declaration can only be used at the top level of a namespace or module.
+--- stmt:1489 import ident nested [ts] "function f(){ import a from 'x' }"
+   bun: @21+1 Unexpected a
+   chk: @14+6 TS1232 An import declaration can only be used at the top level of a namespace or module.
+--- stmt:1649 import a, 5 [ts] "import a, 5 from 'x'"
+   bun: @10+1 Unexpected 5
+   tsc: @10+1 TS1005 '{' expected.
+   tsc: @12+4 TS1005 ';' expected.
+   chk: @10+1 TS1141 String literal expected.
+--- stmt:1658 import 5 [ts] "import 5 from 'x'"
+   bun: @7+1 Unexpected 5
+   tsc: @0+6 TS1128 Declaration or statement expected.
+   tsc: @9+4 TS1005 ';' expected.
+--- stmt:1413 export import 5 [ts] "export import 5 = a;"
+   bun: @14+1 Expected identifier but found "5"
+   tsc: @0+6 TS1128 Declaration or statement expected.
+   tsc: @7+6 TS1128 Declaration or statement expected.
+   chk: @14+1 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- stmt:854 @dec export let [ts] "@dec export let x = 1"
+   bun: @12+3 Expected "class" but found "let"
+   chk: @0+1 TS1206 Decorators are not valid here.
+--- stmt:987 export abstract x [ts] "export abstract x"
+   bun: @16+1 Expected ";" but found "x"
+   tsc: @0+6 TS1128 Declaration or statement expected.
+   tsc: @7+8 TS1434 Unexpected keyword or identifier.
+--- stmt:1184 export default abstract x [ts] "export default abstract x"
+   bun: @24+1 Expected ";" but found "x"
+   tsc: @24+1 TS1005 ';' expected.
+--- stmt:1874 @dec declare let [ts] "@dec declare let x: number"
+   bun: @13+3 Expected "class" but found "let"
+   chk: @0+1 TS1206 Decorators are not valid here.
+--- stmt:894 export as x [ts] "export as foo;"
+   bun: @10+0 Expected "namespace" but found "foo"
+   tsc: @10+3 TS1005 'namespace' expected.
+   chk: @0+14 TS1314 Global module exports may only appear in module files.
+--- stmt:1221 export * as ns nofrom [ts] "export * as ns;"
+   bun: @14+0 Expected "from" but found ";"
+   tsc: @14+1 TS1005 'from' expected.
+--- stmt:1448 import * nofrom [ts] "import * from 'x'"
+   bun: @9+0 Expected "as" but found "from"
+   tsc: @9+4 TS1005 'as' expected.
+   tsc: @14+3 TS1005 'from' expected.
+--- stmt:1456 import * as a nofrom [ts] "import * as a 'x'"
+   bun: @14+0 Expected "from" but found "'x'"
+   tsc: @14+3 TS1005 'from' expected.
+--- stmt:1483 import {a} nofrom [ts] "import {a} 'x'"
+   bun: @11+0 Expected "from" but found "'x'"
+   tsc: @11+3 TS1005 'from' expected.
+--- stmt:355 two defaults [ts] "switch (x) { default: default: }"
+   bun: @22+7 Multiple default clauses are not allowed
+   chk: @22+8 TS1113 A 'default' clause cannot appear more than once in a 'switch' statement.
+--- stmt:502 for await outside async [ts] "function f(){ for await (const x of y) {} }"
+   bun: @18+5 Cannot use "await" outside an async function
+   chk: @18+5 TS1103 'for await' loops are only allowed within async functions and at the top levels of modules.
+--- stmt:625 for (let in [ts] "for (let in x) {}"
+   chk: @8+0 TS1123 Variable declaration list cannot be empty.
+--- stmt:638 for (async of [ts] "for (async of x) {}"
+   bun: @5+8 For loop initializers cannot start with "async of"
+   chk: @5+5 TS1106 The left-hand side of a 'for...of' statement may not be 'async'.
+--- stmt:749 return top-level [ts] "return 1"
+   chk: @0+6 TS1108 A 'return' statement can only be used within a function body.
+--- stmt:774 throw newline [ts] "throw\n1"
+   bun: @5+0 Unexpected newline after "throw"
+   chk: @5+0 TS1142 Line break not permitted here.
+--- stmt:906 export async newline [ts] "export async\nfunction f() {}"
+   bun: @7+5 Unexpected newline after "async"
+   tsc: @0+6 TS1128 Declaration or statement expected.
+--- stmt:931 export type newline [ts] "export type\nA = 1"
+   bun: @11+0 Unexpected newline after "type"
+   tsc: @0+6 TS1128 Declaration or statement expected.
+--- stmt:1826 export interface newline [ts] "export interface\nA {}"
+   bun: @7+9 Unexpected "interface"
+   tsc: @0+6 TS1128 Declaration or statement expected.
+   tsc: @17+1 TS1434 Unexpected keyword or identifier.
+--- stmt:1839 @dec abstract x [ts] "@dec abstract\nclass A {}"
+   bun: @5+8 Unexpected "abstract"
+   tsc: @4+0 TS1146 Declaration expected.
+--- stmt:1860 @dec declare newline [ts] "@dec declare\nclass A {}"
+   bun: @5+7 Unexpected "declare"
+   tsc: @4+0 TS1146 Declaration expected.
+--- stmt:1902 declare foo [ts] "declare foo"
+   bun: @8+3 Unexpected "foo"
+--- stmt:1902 declare if [ts] "declare if (x) {}"
+   bun: @8+2 Unexpected "if"
+--- stmt:1090 export default unexpected [ts] "export default enum A {}"
+   bun: @15+4 Unexpected enum
+   tsc: @15+4 TS1109 Expression expected.
+--- stmt: switch bad clause [ts] "switch (x) { foo }"
+   bun: @13+3 Expected "case" but found "foo"
+   bun: @17+1 Unexpected }
+   tsc: @13+3 TS1130 'case' or 'default' expected.
+   tsc: @17+1 TS1128 Declaration or statement expected.
+--- stmt: try without catch [ts] "try {}"
+   bun: @6+0 Expected "finally" but found end of file
+   tsc: @6+0 TS1472 'catch' or 'finally' expected.
+--- stmt: do without while [ts] "do {} x"
+   bun: @6+1 Expected "while" but found "x"
+   bun: @7+0 Expected "(" but found end of file
+   tsc: @6+1 TS1005 'while' expected.
+   tsc: @7+0 TS1005 ')' expected.
+--- stmt: if missing paren [ts] "if x {}"
+   bun: @3+1 Expected "(" but found "x"
+   bun: @7+0 Expected ")" but found end of file
+   tsc: @3+1 TS1005 '(' expected.
+   tsc: @5+1 TS1005 ')' expected.
+--- stmt: label on decl [ts] "a: let x = 1"
+   bun: @3+0 Cannot use a declaration in a single-statement context
+   chk: @0+1 TS1344 'A label is not allowed here.
+--- stmt: const without init [ts] "const x;"
+   bun: @6+1 The constant "x" must be initialized
+   chk: @6+1 TS1155 'const' declarations must be initialized.
+--- stmt: for-in with init [ts] "for (let x = 1 in y) {}"
+   bun: @13+0 for-in loop variables cannot have an initializer
+   chk: @9+1 TS1189 The variable declaration of a 'for...in' statement cannot have an initializer.
+--- stmt: for-of two decls [ts] "for (let x, z of y) {}"
+   bun: @9+0 for-of loops must have a single declaration
+   chk: @12+1 TS1188 Only a single variable declaration is allowed in a 'for...of' statement.
+--- stmt: lexical in single-stmt [ts] "if (x) let y = 1"
+   bun: @7+0 Cannot use a declaration in a single-statement context
+   chk: @7+9 TS1156 'let' declarations can only be declared inside a block.
+--- stmt: break label missing [ts] "break foo;"
+   bun: @6+3 There is no containing label named "foo"
+   chk: @0+10 TS1116 A 'break' statement can only jump to a label of an enclosing statement.

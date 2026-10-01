@@ -1,0 +1,70 @@
+class C { #a = 1; m(): typeof this.#a { return 1 } }
+class C { #a = 1; m(x: C): typeof x.#a { return 1 } }
+type T = typeof this
+type T = typeof this.a
+type T = typeof class
+type T = typeof if.else
+type T = typeof import
+type T = typeof import("x")
+type T = typeof import("x").a
+type T = typeof import("x").a<B>
+type T = typeof import.meta
+type T = typeof\nimport("x")
+type T = typeof a\n<b>
+type T = typeof a<b>
+type T = typeof a<b>[]
+type T = typeof a<b><c>
+type T = typeof a.b\n.c
+type T = typeof
+type T = typeof 1
+type T = typeof "a"
+type T = typeof (a)
+type T = typeof a | b
+type T = typeof a extends b ? c : d
+type T = typeof a[]
+type T = typeof typeof a
+type T = keyof typeof a
+type T = typeof keyof a
+type T = typeof new
+let x: function
+let x: function(string): number
+let x: function(): void
+let x: new
+let x: class
+let x: const
+let x: if
+let x: void
+let x: delete
+let x: A.B.C<D>.E
+let x: const[]
+let x: const | 1
+let v = x as const
+let v = x as const[]
+let v = x as const | 1
+let v = <const>x
+let v = <const[]>x
+type T = const
+type T = [const: number]
+type T = [const]
+type T = import
+type T = import.a
+type T = import("x", { with: { type: "json" } })
+type T = import("x", { assert: { type: "json" } })
+type T = import("x", { with: { type: "json" } }, )
+type T = import("x", )
+type T = import("x", { with: { type: "json", } })
+type T = import("x", { foo: { type: "json" } })
+type T = import("x", { with: { "type": "json" } })
+type T = import("x", { with: { type: 1 } })
+type T = import("x", { with: {} })
+type T = import("x", {})
+type T = import("x", { with })
+type T = import(A)
+type T = import(`x`)
+type T = import(1)
+type T = import("x" | "y")
+type T = import()
+type T = import("x").default
+type T = import("x").A.B.C
+type T = import("x")\n<A>
+type T = import("x")\n.A

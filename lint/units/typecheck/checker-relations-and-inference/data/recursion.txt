@@ -1,0 +1,54 @@
+Static call graph of ../../checker-core-scratch (3060 functions, largest strongly connected component 1444).
+Of the 266 functions of relater.go and inference.go, 189 are inside that component. Calls through function values
+(compareTypes, errorReporter, isRelatedTo, the action of invokeOnce, the callbacks of applyToParameterTypes) are not edges of the graph.
+
+Self recursive:
+ relater.go: createDiagnosticChainFromErrorChain@400 elaborateError@438 isOrHasGenericConditional@474 isWeakType@679 isKnownProperty@717
+  isExcessPropertyCheckTarget@747 isDeeplyNestedType@766 hasMatchingRecursionIdentity@797 getRecursionIdentityTarget@820
+  typeCouldHaveTopLevelSingletonTypes@1298 getVariancesWorker@1334 compareSignaturesRelated@1491 getTupleElementLabelFromBindingElement@1992
+  getTypePredicateOfSignature@2049 isResolvingReturnTypeOfSignature@2145 isValidTypeForTemplateLiteralPlaceholder@2509
+  isMemberOfStringMapping@2531 applyTargetStringMappingToSource@2551 isObjectTypeWithInferableIndex@4656 reportError@4862 isTypeDerivedFrom@4993
+ inference.go: inferFromTypes@65 inferToMappedType@948 isPartiallyInferableType@1060 isTypeParameterAtTopLevel@1493 getCombinedTypeFlags@1589
+
+Components inside the two files alone:
+ 68 functions: inferTypes inferFromTypes inferFromTypeArguments inferWithPriority inferFromContravariantTypesWithPriority
+  inferFromContravariantTypes inferFromContravariantTypesIfStrictFunctionTypes inferFromMatchingTypes inferToMultipleTypes
+  inferToMultipleTypesWithPriority inferToConditionalType inferToTemplateLiteralType inferFromGenericMappedTypes inferFromObjectTypes
+  inferFromProperties inferFromSignatures inferFromSignature inferFromIndexTypes inferToMappedType inferTypeForHomomorphicMappedType
+  createReverseMappedType inferReverseMappedType inferReverseMappedTypeWorker isTypeOrBaseIdenticalTo | isTypeIdenticalTo
+  compareTypesIdentical isTypeAssignableTo isTypeRelatedTo checkTypeRelatedTo checkTypeRelatedToEx getVariances getAliasVariances
+  getVariancesWorker isTypeMatchedByTemplateLiteralType inferTypesFromTemplateLiteralType isValidTypeForTemplateLiteralPlaceholder
+  isMemberOfStringMapping r.isRelatedToSimple r.isRelatedToWorker r.isRelatedTo r.isRelatedToEx r.hasExcessProperties
+  r.unionOrIntersectionRelatedTo r.someTypeRelatedToType r.eachTypeRelatedToType r.typeRelatedToSomeType r.typeRelatedToEachType
+  r.eachTypeRelatedToSomeType r.recursiveTypeRelatedTo r.structuredTypeRelatedTo r.structuredTypeRelatedToWorker r.typeArgumentsRelatedTo
+  r.mappedTypeRelatedTo r.typeRelatedToDiscriminatedType r.propertiesRelatedTo r.propertyRelatedTo r.isPropertySymbolTypeRelated
+  r.propertiesIdenticalTo r.signaturesRelatedTo r.signatureRelatedTo r.signaturesIdenticalTo r.indexSignaturesRelatedTo
+  r.typeRelatedToIndexInfo r.membersRelatedToIndexInfo r.indexInfoRelatedTo r.indexSignaturesIdenticalTo r.reportErrorResults
+  r.reportRelationError
+ 5 functions: elaborateError elaborateObjectLiteral elaborateArrayLiteral elaborateElement elaborateArrowFunction
+ 2 functions: getTypePredicateOfSignature getUnionOrIntersectionTypePredicate
+ 2 functions: getTypeDepth getTypeListDepth
+
+Bounds that upstream has (operators as written):
+ relater.go:369   relationCount = (16_000_000 - relation.size()) / 8; 3116 `relationCount <= 0` sets overflow and returns False
+ relater.go:3133  `len(sourceStack) == 100 || len(targetStack) == 100` returns Maybe
+ relater.go:3145  isDeeplyNestedType(source, sourceStack, 3), 3151 the same for the target; both flags set returns Maybe (3158)
+ relater.go:3575  isDeeplyNestedType(target, targetStack, 10), 3756 isDeeplyNestedType(source, sourceStack, 10): conditional types, returns Maybe
+ relater.go:767   `len(stack) >= maxDepth`; 783 `t.id >= lastTypeId`; 785 `count >= maxDepth`
+ relater.go:4044  `numCombinations > 25` returns False; 4050 `numCombinations == 0` returns False
+ relater.go:1134  `len(types) < 10`, PrimitiveUnion, fewer than 10 object or instantiable constituents: no key property map; 1193 `count >= 10 && count*2 >= len(types)`
+ relater.go:2729  skipCaching: a source union with `< 4` constituents against a non-union, or a target union with `< 4` against a non-structured source
+ checker.go:17580 (writeGenericTypeReferences, called by getRelationKey) `depth < 4`
+ inference.go:352 isDeeplyNestedType(source, n.sourceStack, 2), 355 the same for the target; both flags: inferencePriority = Circularity
+ inference.go:1074, 1077 the same with the reverse mapped stacks of the checker; both flags: the result is nil
+ inference.go:411 getTypeDepth(t, 3); 1496 `depth < 3` in isTypeParameterAtTopLevel
+ checker.go:14088 diagnostics are dropped while serializationLevel >= 2 (addDiagnostic)
+
+Recursion that only the stack of the host bounds upstream (a guard is needed in the port):
+ r.isRelatedToEx (a nested relation takes a fresh Relater, so the 100 levels are per Relater, not per thread)
+ c.inferFromTypes (union, intersection and type argument recursion follows the type structure)
+ c.elaborateError (follows the expression tree) and createDiagnosticChainFromErrorChain (chain length)
+ getRecursionIdentityTarget (chain of indexed access object types), c.compareSignaturesRelated (callback parameters),
+ c.isTypeDerivedFrom, c.isWeakType, c.isKnownProperty, isExcessPropertyCheckTarget, c.typeCouldHaveTopLevelSingletonTypes,
+ c.isObjectTypeWithInferableIndex, c.getCombinedTypeFlags, c.isPartiallyInferableType, c.inferToMappedType (constraint chain),
+ c.isMemberOfStringMapping and c.applyTargetStringMappingToSource (nested string mappings), c.getTypePredicateOfSignature (target chain)

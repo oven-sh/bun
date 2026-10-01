@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests lib.rs (/tmp/c2arb/shadow-target/miri/x86_64-unknown-linux-gnu/debug/build/bun_lint/24575ba99f30baea/out/bun_lint-24575ba99f30baea)
+
+running 7 tests
+test tests::a_typescript_code_and_a_rule_name ... ok
+test tests::names ... ok
+test tests::order_and_duplicates ... ok
+test tests::the_line_map_is_the_one_of_tsc ... ok
+test tests::the_plain_position_is_the_one_of_tsc ... ok
+test tests::what_the_parser_logged ... ok
+test tests::without_a_file_chains_and_the_other_categories ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.56s
+

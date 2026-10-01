@@ -1,0 +1,42 @@
+site	function	layer	upstream	port: fault kind, then what the function does
+checker.go:16643	getTypeOfVariableOrParameterOrProperty	T-SYMTYPE	panic("Unexpected nil type")	Panic; t = error_type, then the store at 16650-16652 and the return run as written
+checker.go:16681	getTypeOfVariableOrParameterOrPropertyWorker	T-SYMTYPE	debug.Assert(symbol.ValueDeclaration != nil)	Assert; go on with the nil node, which reaches the default arm of 16723
+checker.go:16724	getTypeOfVariableOrParameterOrPropertyWorker	T-SYMTYPE	panic("Unhandled case in getTypeOfVariableOrParameterOrPropertyWorker: " + kind)	Panic with detail = kind; result = error_type and fall through to the pop of 16726 so that the push of 16691 is balanced
+checker.go:16820	getTypeForVariableLikeDeclaration	T-SYMTYPE	debug.Assert(thisParameter.Type() == nil)	Assert; go on
+checker.go:17886	getBindingElementTypeFromParentType	T-SYMTYPE	panic("Unhandled case in getBindingElementTypeFromParentType")	Panic with detail = kind of the pattern; return error_type
+checker.go:18179	getWidenedTypeForAssignmentDeclaration	T-SYMTYPE	panic("location should not be nil when this assignment has a type.")	Panic; t stays nil and the declarations loop of 18190-18215 computes the type
+checker.go:18184	getWidenedTypeForAssignmentDeclaration	T-SYMTYPE	panic("constructor should not be nil when this assignment is in a constructor.")	Panic; t stays nil, as above
+checker.go:18308	isConstructorDeclaredThisProperty	T-SYMTYPE	panic("location should be cached whenever this expando symbol is cached")	Panic; return (kind, NodeId::NIL)
+checker.go:18755	getOptionalType	T-SYMTYPE	debug.Assert(c.strictNullChecks)	Assert; go on
+checker.go:19192	resolveStructuredTypeMembers	T-MEMBERS	panic("Unhandled case in resolveStructuredTypeMembers") for an object type of no known kind	Panic; set_structured_type_members(t, NIL, NIL, NIL, NIL) so that the type counts as resolved, return its structured part
+checker.go:19199	resolveStructuredTypeMembers	T-MEMBERS	panic("Unhandled case in resolveStructuredTypeMembers") for a type that is no object, union or intersection	Panic; return the nil structured section, no write
+checker.go:19301	getBaseTypes	T-BASE	panic("Unhandled case in getBaseTypes")	Panic; resolved_base_types stays nil, the pop of 19303 and the writes of 19314-19315 run
+checker.go:21277	getUnionSignatures	T-UIMEMBERS	debug.Assert(signature != nil, ...) after signatures[0]	Assert when the list is empty; skip that list
+checker.go:22025	getTypeArguments	T-INSTANTIATE	panic("Unhandled case in getTypeArguments")	Panic with detail = kind; type_arguments stays nil, the pop of 22028 runs
+checker.go:23090	getTypeFromTypeOperatorNode	T-TYPENODE	panic("Unhandled case in getTypeFromTypeOperatorNode")	Panic with detail = operator; links.resolved_type = error_type
+checker.go:23363	isDeferredTypeReferenceNode	T-TYPENODE	panic("Unhandled case in isDeferredTypeReferenceNode")	Panic with detail = kind; return false
+checker.go:23853	getOuterTypeParametersOfClassOrInterface	T-DECLARED	debug.Assert(declaration != nil, ...)	Assert; get_outer_type_parameters of the nil node gives List::NIL
+checker.go:24197	evaluateEntity	T-ENUMVAL	panic("Unhandled case in evaluateEntity")	Panic with detail = kind; return Result with value Nil and the three flags false
+checker.go:25504	getEnumLiteralType	K-LIT	panic("Unhandled case in getEnumLiteralType") for a value that is no string and no number	Panic; return error_type, nothing cached
+evaluator.go:153	AnyToString	K1	panic("Unhandled case in AnyToString")	Panic for LiteralValue::Nil; return the empty text
+evaluator.go:167	IsTruthy	K1	panic("Unhandled case in IsTruthy")	Panic for LiteralValue::Nil; return false
+checker.go:25469-25482	getStringLiteralValue, getNumberLiteralValue, getBigIntLiteralValue, getBooleanLiteralValue	K-LIT	type assertion t.AsLiteralType().value.(T)	BadCast; return the empty text, 0, the zero PseudoBigInt, false
+every x.AsT() on a type of another kind	casts of types.go 705-734	all	nil dereference or failed type assertion	BadCast; the read goes to the nil section of the kind, a write goes to the scratch section (conventions: casts)
+checker.go:23770-23774	getTypeAliasInstantiation	T-TYPENODE	links.instantiations[key] = instantiation on a nil map (alias without type parameters or with a circular declared type)	NilMapWrite; the instantiation is returned uncached
+checker.go:22625	getConditionalTypeInstantiation	K-COND	root.instantiations[key] = result on a nil map (before 24416 ran)	NilMapWrite; the result is returned uncached
+checker.go:23968-23969	getDeclaredTypeOfTypeAlias	T-DECLARED	declaration.Type() when no declaration is a type alias declaration	nil node: get_type_from_type_node(NIL) gives error_type through the default arm of 23009, no fault
+checker.go:22428	getObjectTypeInstantiation	T-INSTANTIATE	t.symbol.Declarations[0] on a type without symbol or declarations	List::at(0) gives NodeId::NIL; typeNodeLinks of the nil node is the scratch link; Panic("index out of range [0]"); return t
+checker.go:26245	getIntersectionTypeEx	K-INTERSECT	typeSet[slices.Index(typeSet, c.undefinedType)] with index -1	Panic("index out of range [-1]"); skip the replacement
+checker.go:26353	isUnionWithNull	K-PRED	t.Types()[1]	List::at gives TypeId::NIL whose flags are 0, no fault
+checker.go:23449 23484 23503	createNormalizedTupleTypeEx, TupleNormalizer.normalize	T-TUPLE	elementTypes[:len(d.elementInfos)], elementInfos[i], spreadInfos[j]	slice to the shorter length; a missing info is the zero TupleElementInfo; Panic("slice bounds out of range") once per call when the lengths differ
+checker.go:23588 23629	getElementTypes, getElementTypeOfArrayType	T-TUPLE	typeArguments[0:arity], getTypeArguments(t)[0]	slice to the shorter length, List::at(0) gives NIL; no fault
+relater.go:1729 1747 1784 1807 1870 1901 1967 checker.go:9729	signature.parameters[len-1] and [paramCount]	T-SIGSHAPE	index out of range when the flag HasRestParameter is set on a signature without parameters, or pos >= paramCount without rest parameter (1967)	List::at gives SymbolId::NIL; get_type_of_symbol(NIL) gives error_type; no fault
+checker.go:21200	getArrayMemberCallSignatures	T-UIMEMBERS	t.Mapper() on a type without mapper, TypeParameters()[0]	Panic of Type.Mapper (core table), List::at(0) gives NIL
+checker.go:21507	includeMixinType	T-UIMEMBERS	getSignaturesOfType(...)[0]	List::at(0) gives SignatureId::NIL, whose return type is error_type
+checker.go:21692 21746	createUnionOrIntersectionProperty	T-UIMEMBERS	ValueDeclaration.Symbol().Parent with a declaration that has no symbol	nil symbol read: parent NIL, no fault
+checker.go:29286 29293 29295	getTemplateLiteralType	K-TEMPLATE	texts[0], texts[i+1] when texts is not one longer than types	List::at gives the empty text; no fault
+checker.go:29372-29376	applyStringMapping	K-TEMPLATE	str[:size] with size from DecodeJSStringRune	size is at most len(str); no fault possible
+checker.go:18891	popTypeResolution	T-RSTACK	index out of range on an empty stack	core table: Panic, return false
+checker.go:22276-22282	popActiveMapper	T-INSTANTIATE	index out of range on an empty stack	Panic("index out of range [-1]"); return
+checker.go:17267	getInferredTypeParameterConstraint	T-CONSTRAINT	core.IfElse evaluates c.getTypeFromTypeNode(Constraint) also when Constraint is nil	evaluate both arguments in order; the nil node gives error_type through the default arm, the value is then not used
+every entry of data/recursion.txt that tests the stack	-	all	unbounded Go stack	StackLimit; fallback of the result type: error_type, List::NIL, SymbolId::NIL, false, the argument itself for the functions that return their argument when nothing applies (getActualTypeVariable, getReducedType, getApparentType, getSimplifiedType, mapTypeEx, getWidenedTypeWithContext, getRegularTypeOfObjectLiteral, getTypeWithThisArgument, getLowerBoundOfKeyType)

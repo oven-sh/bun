@@ -1,0 +1,245 @@
+# Cross-check of the pre-link results on LINKED code that the parallel pass of this unit produced (its variants: ../variants.py).
+# Part 1: tools/lcmp.py, relinked base of this pass (/tmp/pes/link/base0, .text equal to the release build) vs its full links.
+
+### relinked base vs other pass 'stub' (full link)
+functions a 1176 b 1176: identical 1174, different 2, only a 0 (0 bytes), only b 0 (0 bytes)
+DIFF  bytes   9190 ->   9206 (  +16)  insns  1856 ->  1857 (  +1)  jcc  179 ->  179 ( +0)  calls  98 ->  98  <bun_js_parser::parse::parse_entry::Parser>::parse_only::<bun_js_parser::function_identities::FunctionIdentities, <bun_js_parser::
+DIFF  bytes    130 ->    208 (  +78)  insns    37 ->    52 ( +15)  jcc    7 ->   11 ( +4)  calls   6 ->   9  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+SUM of DIFF: bytes +94, insns +16, jcc +4
+
+### relinked base vs other pass 'v1' (full link)
+functions a 1176 b 1192: identical 1166, different 10, only a 0 (0 bytes), only b 16 (2874 bytes)
+DIFF  bytes   3064 ->   3106 (  +42)  insns   649 ->   656 (  +7)  jcc   64 ->   65 ( +1)  calls  40 ->  41  <bun_js_parser::p::P<false, false>>::parse_paren_expr
+DIFF  bytes  14869 ->  15007 ( +138)  insns  2959 ->  2976 ( +17)  jcc  353 ->  355 ( +2)  calls 173 -> 174  <bun_js_parser::p::P<false, false>>::parse_prefix
+DIFF  bytes   3050 ->   3092 (  +42)  insns   640 ->   647 (  +7)  jcc   61 ->   62 ( +1)  calls  39 ->  40  <bun_js_parser::p::P<false, true>>::parse_paren_expr
+DIFF  bytes  14869 ->  15023 ( +154)  insns  2960 ->  2978 ( +18)  jcc  353 ->  355 ( +2)  calls 173 -> 174  <bun_js_parser::p::P<false, true>>::parse_prefix
+DIFF  bytes   6542 ->   6637 (  +95)  insns  1307 ->  1332 ( +25)  jcc  121 ->  125 ( +4)  calls  64 ->  68  <bun_js_parser::p::P<true, false>>::parse_paren_expr
+DIFF  bytes  15583 ->  15681 (  +98)  insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  calls 191 -> 192  <bun_js_parser::p::P<true, false>>::parse_prefix
+DIFF  bytes   6492 ->   6618 ( +126)  insns  1298 ->  1326 ( +28)  jcc  119 ->  123 ( +4)  calls  64 ->  68  <bun_js_parser::p::P<true, true>>::parse_paren_expr
+DIFF  bytes  15706 ->  15760 (  +54)  insns  3138 ->  3154 ( +16)  jcc  381 ->  382 ( +1)  calls 193 -> 194  <bun_js_parser::p::P<true, true>>::parse_prefix
+DIFF  bytes   9190 ->   9206 (  +16)  insns  1856 ->  1857 (  +1)  jcc  179 ->  179 ( +0)  calls  98 ->  98  <bun_js_parser::parse::parse_entry::Parser>::parse_only::<bun_js_parser::function_identities::FunctionIdentities, <bun_js_parser::
+DIFF  bytes    130 ->    208 (  +78)  insns    37 ->    52 ( +15)  jcc    7 ->   11 ( +4)  calls   6 ->   9  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+SUM of DIFF: bytes +843, insns +151, jcc +21
+ONLY B bytes    136 insns    41 jcc    3  <bun_js_parser::p::P<false, false>>::lint_paren
+ONLY B bytes    136 insns    41 jcc    3  <bun_js_parser::p::P<false, true>>::lint_paren
+ONLY B bytes    172 insns    49 jcc    5  <bun_js_parser::p::P<true, false>>::lint_arrow_param_type
+ONLY B bytes    160 insns    45 jcc    4  <bun_js_parser::p::P<true, false>>::lint_arrow_return_type
+ONLY B bytes     73 insns    20 jcc    2  <bun_js_parser::p::P<true, false>>::lint_mark
+ONLY B bytes    136 insns    41 jcc    3  <bun_js_parser::p::P<true, false>>::lint_paren
+ONLY B bytes     84 insns    21 jcc    5  <bun_js_parser::p::P<true, false>>::lint_rewind
+ONLY B bytes    534 insns   111 jcc    5  <bun_js_parser::p::P<true, false>>::lint_try_arrow_return_type
+ONLY B bytes    142 insns    43 jcc    3  <bun_js_parser::p::P<true, false>>::lint_type
+ONLY B bytes    172 insns    49 jcc    5  <bun_js_parser::p::P<true, true>>::lint_arrow_param_type
+ONLY B bytes    160 insns    45 jcc    4  <bun_js_parser::p::P<true, true>>::lint_arrow_return_type
+ONLY B bytes     73 insns    20 jcc    2  <bun_js_parser::p::P<true, true>>::lint_mark
+ONLY B bytes    136 insns    41 jcc    3  <bun_js_parser::p::P<true, true>>::lint_paren
+ONLY B bytes     84 insns    21 jcc    5  <bun_js_parser::p::P<true, true>>::lint_rewind
+ONLY B bytes    534 insns   111 jcc    5  <bun_js_parser::p::P<true, true>>::lint_try_arrow_return_type
+ONLY B bytes    142 insns    43 jcc    3  <bun_js_parser::p::P<true, true>>::lint_type
+
+### relinked base vs other pass 'v2m' (full link)
+functions a 1176 b 1190: identical 1168, different 8, only a 0 (0 bytes), only b 14 (6809 bytes)
+DIFF  bytes   8370 ->   8370 (   +0)  insns  1762 ->  1762 (  +0)  jcc  181 ->  181 ( +0)  calls  86 ->  86  <bun_js_parser::p::P<false, false>>::parse_property
+DIFF  bytes   8370 ->   8370 (   +0)  insns  1762 ->  1762 (  +0)  jcc  181 ->  181 ( +0)  calls  86 ->  86  <bun_js_parser::p::P<false, true>>::parse_property
+DIFF  bytes   3122 ->   3194 (  +72)  insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  calls  31 ->  33  <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+DIFF  bytes  15583 ->  15693 ( +110)  insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  calls 191 -> 192  <bun_js_parser::p::P<true, false>>::parse_prefix
+DIFF  bytes  10091 ->  10091 (   +0)  insns  2101 ->  2101 (  +0)  jcc  243 ->  243 ( +0)  calls  98 ->  98  <bun_js_parser::p::P<true, false>>::parse_property
+DIFF  bytes  10123 ->  10123 (   +0)  insns  2110 ->  2110 (  +0)  jcc  245 ->  245 ( +0)  calls  99 ->  99  <bun_js_parser::p::P<true, true>>::parse_property
+DIFF  bytes   9190 ->   9206 (  +16)  insns  1856 ->  1857 (  +1)  jcc  179 ->  179 ( +0)  calls  98 ->  98  <bun_js_parser::parse::parse_entry::Parser>::parse_only::<bun_js_parser::function_identities::FunctionIdentities, <bun_js_parser::
+DIFF  bytes    130 ->    208 (  +78)  insns    37 ->    52 ( +15)  jcc    7 ->   11 ( +4)  calls   6 ->   9  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<bun_js_parser::p::StartsForParseOnly>>>
+SUM of DIFF: bytes +276, insns +60, jcc +9
+ONLY B bytes    172 insns    49 jcc    5  <bun_js_parser::p::P<true, false>>::lint_arrow_param_type
+ONLY B bytes    160 insns    45 jcc    4  <bun_js_parser::p::P<true, false>>::lint_arrow_return_type
+ONLY B bytes    177 insns    62 jcc    4  <bun_js_parser::p::P<true, false>>::lint_decide_arrow_return_type
+ONLY B bytes    638 insns   173 jcc   19  <bun_js_parser::p::P<true, false>>::lint_is_arrow_return_type_after_question
+ONLY B bytes    116 insns    34 jcc    2  <bun_js_parser::p::P<true, false>>::lint_log_arrow_arg_errors
+ONLY B bytes     73 insns    20 jcc    2  <bun_js_parser::p::P<true, false>>::lint_mark
+ONLY B bytes    136 insns    41 jcc    3  <bun_js_parser::p::P<true, false>>::lint_paren
+ONLY B bytes    855 insns   144 jcc    1  <bun_js_parser::p::P<true, false>>::lint_parser_snapshot
+ONLY B bytes    243 insns    68 jcc    7  <bun_js_parser::p::P<true, false>>::lint_pop_and_flatten_scope
+ONLY B bytes     84 insns    21 jcc    5  <bun_js_parser::p::P<true, false>>::lint_rewind
+ONLY B bytes    534 insns   111 jcc    5  <bun_js_parser::p::P<true, false>>::lint_try_arrow_return_type
+ONLY B bytes    142 insns    43 jcc    3  <bun_js_parser::p::P<true, false>>::lint_type
+ONLY B bytes   3189 insns   644 jcc   59  <bun_js_parser::p::P<true, false>>::parse_paren_expr_for_lint
+ONLY B bytes    290 insns    85 jcc    6  <bun_js_parser::p::P<true, false>>::pfx_t_open_paren_for_lint
+
+# Part 2: its objfn.py on its post-LTO objects of the bun_js_parser module (harvested from the ThinLTO cache, before ICF).
+
+### other pass: stub vs v1t
+functions a 1587 b 1603: identical 1583, different 4, only a 0, only b 16; text bytes a 1628154 b 1631327 (+3173)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    6637   1307   1332   121   125  <p::P<true, false>>::parse_paren_expr
+DIFF     15583   15681   3114   3131   376   378  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, i32)>>::grow_one
+ONLY-B             172            49           5  <p::P<true, false>>::lint_arrow_param_type
+ONLY-B             160            45           4  <p::P<true, false>>::lint_arrow_return_type
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B             136            41           3  <p::P<true, false>>::lint_paren
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+ONLY-B             534           111           5  <p::P<true, false>>::lint_try_arrow_return_type
+ONLY-B             142            43           3  <p::P<true, false>>::lint_type
+
+### other pass: stub vs v1types
+functions a 1587 b 1600: identical 1585, different 2, only a 0, only b 13; text bytes a 1628154 b 1630763 (+2609)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    6601   1307   1325   121   124  <p::P<true, false>>::parse_paren_expr
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, i32)>>::grow_one
+ONLY-B             172            49           5  <p::P<true, false>>::lint_arrow_param_type
+ONLY-B             160            45           4  <p::P<true, false>>::lint_arrow_return_type
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+ONLY-B             534           111           5  <p::P<true, false>>::lint_try_arrow_return_type
+ONLY-B             142            43           3  <p::P<true, false>>::lint_type
+
+### other pass: stub vs v3
+functions a 1587 b 1596: identical 1579, different 8, only a 0, only b 9; text bytes a 1628154 b 1633109 (+4955)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      1830    2024    396    435    33    35  <p::P<false, false>>::parse_async_prefix_expr
+DIFF     14869   15265   2959   3011   353   357  <p::P<false, false>>::parse_prefix
+DIFF      3122    3594    608    685    42    46  <p::P<true, false>>::parse_async_prefix_expr
+DIFF     15583   16428   3114   3233   376   384  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B             141            43           4  <p::P<false, false>>::lint_after_paren_expr
+ONLY-B             136            41           3  <p::P<false, false>>::lint_paren
+ONLY-B             141            43           4  <p::P<true, false>>::lint_after_paren_expr
+ONLY-B             136            41           3  <p::P<true, false>>::lint_paren
+
+### other pass: stub vs v3t
+functions a 1587 b 1592: identical 1579, different 8, only a 0, only b 5; text bytes a 1628154 b 1631643 (+3489)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      1830    1884    396    410    33    34  <p::P<false, false>>::parse_async_prefix_expr
+DIFF     14869   14949   2959   2976   353   354  <p::P<false, false>>::parse_prefix
+DIFF      3122    3594    608    685    42    46  <p::P<true, false>>::parse_async_prefix_expr
+DIFF     15583   16428   3114   3233   376   384  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B             141            43           4  <p::P<true, false>>::lint_after_paren_expr
+ONLY-B             136            41           3  <p::P<true, false>>::lint_paren
+
+### other pass: stub vs v3open
+functions a 1587 b 1592: identical 1583, different 4, only a 0, only b 5; text bytes a 1628154 b 1629708 (+1554)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF     14869   15130   2959   2985   353   355  <p::P<false, false>>::parse_prefix
+DIFF     15583   15800   3114   3140   376   378  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B             141            43           4  <p::P<false, false>>::lint_after_paren_expr
+ONLY-B             141            43           4  <p::P<true, false>>::lint_after_paren_expr
+
+### other pass: stub vs v3opent
+functions a 1587 b 1590: identical 1583, different 4, only a 0, only b 3; text bytes a 1628154 b 1629064 (+910)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF     14869   14949   2959   2976   353   354  <p::P<false, false>>::parse_prefix
+DIFF     15583   15800   3114   3140   376   378  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B             141            43           4  <p::P<true, false>>::lint_after_paren_expr
+
+### other pass: stub vs v5
+functions a 1587 b 1606: identical 1585, different 2, only a 0, only b 19; text bytes a 1628154 b 1630837 (+2683)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    5793   1307   1177   121   116  <p::P<true, false>>::parse_paren_expr
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, i32)>>::grow_one
+ONLY-B             172            49           5  <p::P<true, false>>::lint_arrow_param_type
+ONLY-B             160            45           4  <p::P<true, false>>::lint_arrow_return_type
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+ONLY-B             534           111           5  <p::P<true, false>>::lint_try_arrow_return_type
+ONLY-B             142            43           3  <p::P<true, false>>::lint_type
+ONLY-B              30            10           1  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+ONLY-B              33            10           1  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+ONLY-B             848           167           8  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+
+### other pass: stub vs v5n
+functions a 1587 b 1608: identical 1585, different 2, only a 0, only b 21; text bytes a 1628154 b 1630941 (+2787)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    5711   1307   1178   121   115  <p::P<true, false>>::parse_paren_expr
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, i32)>>::grow_one
+ONLY-B             165            47           4  <p::P<true, false>>::lint_arrow_param_type_by_scope
+ONLY-B             160            45           4  <p::P<true, false>>::lint_arrow_return_type
+ONLY-B              74            21           4  <p::P<true, false>>::lint_loc_of_current_scope
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+ONLY-B             534           111           5  <p::P<true, false>>::lint_try_arrow_return_type
+ONLY-B             142            43           3  <p::P<true, false>>::lint_type
+ONLY-B              30            10           1  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+ONLY-B              52            17           1  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+ONLY-B             858           170           8  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+
+### other pass: stub vs v5p
+functions a 1587 b 1611: identical 1581, different 6, only a 0, only b 24; text bytes a 1628154 b 1632240 (+4086)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF     14869   14949   2959   2976   353   354  <p::P<false, false>>::parse_prefix
+DIFF      6542    5793   1307   1177   121   116  <p::P<true, false>>::parse_paren_expr
+DIFF     15583   15935   3114   3166   376   380  <p::P<true, false>>::parse_prefix
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, bun_ast::expr::Expr)>>::grow_one
+ONLY-B              99            30           1  <alloc::raw_vec::RawVec<(i32, i32, i32)>>::grow_one
+ONLY-B             141            43           4  <p::P<true, false>>::lint_after_paren_expr
+ONLY-B             172            49           5  <p::P<true, false>>::lint_arrow_param_type
+ONLY-B             160            45           4  <p::P<true, false>>::lint_arrow_return_type
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B             136            41           3  <p::P<true, false>>::lint_paren
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+ONLY-B             534           111           5  <p::P<true, false>>::lint_try_arrow_return_type
+ONLY-B             142            43           3  <p::P<true, false>>::lint_type
+ONLY-B              30            10           1  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+ONLY-B              33            10           1  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+ONLY-B             848           167           8  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+
+### other pass: stub vs w1
+functions a 1587 b 1591: identical 1575, different 12, only a 0, only b 4; text bytes a 1628154 b 1630698 (+2544)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF       781     879    146    165     6    10  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF      6542    7108   1307   1388   121   126  <p::P<true, false>>::parse_paren_expr
+DIFF      1311    1347    289    296    35    36  <p::P<true, false>>::restore_parser_snapshot
+DIFF      1052    1150    216    233    18    20  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+DIFF       958    1202    190    236    17    19  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF       726     818    136    155     4     8  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+
+### other pass: stub vs w1b
+functions a 1587 b 1591: identical 1577, different 10, only a 0, only b 4; text bytes a 1628154 b 1629788 (+1634)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF       781     879    146    165     6    10  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF      6542    6661   1307   1326   121   125  <p::P<true, false>>::parse_paren_expr
+DIFF      1052    1150    216    233    18    20  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+DIFF       958    1202    190    236    17    19  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF       726     818    136    155     4     8  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+
+### other pass: stub vs w1f
+functions a 1587 b 1589: identical 1577, different 10, only a 0, only b 2; text bytes a 1628154 b 1629147 (+993)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF       781     835    146    158     6     9  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+DIFF      6542    6642   1307   1322   121   124  <p::P<true, false>>::parse_paren_expr
+DIFF      1052    1097    216    224    18    19  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+DIFF       958     991    190    198    17    18  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF       726     783    136    148     4     7  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY-B             217            53          11  <p::P<true, false>>::lint_rewind_to
+
+### other pass: stub vs w1s
+functions a 1587 b 1591: identical 1583, different 4, only a 0, only b 4; text bytes a 1628154 b 1629393 (+1239)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    6946   1307   1365   121   122  <p::P<true, false>>::parse_paren_expr
+DIFF      1311    1347    289    296    35    36  <p::P<true, false>>::restore_parser_snapshot
+ONLY-B              73            20           2  <p::P<true, false>>::lint_mark
+ONLY-B              84            21           5  <p::P<true, false>>::lint_rewind
+
+### other pass: stub vs w2
+functions a 1587 b 1589: identical 1585, different 2, only a 0, only b 2; text bytes a 1628154 b 1628660 (+506)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      1311    1347    289    296    35    36  <p::P<true, false>>::restore_parser_snapshot
+ONLY-B             217            53          11  <p::P<true, false>>::lint_rewind_to
+
+### other pass: stub vs p1a
+functions a 1587 b 1587: identical 1583, different 4, only a 0, only b 0; text bytes a 1628154 b 1628183 (+29)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      6542    6683   1307   1309   121   117  <p::P<true, false>>::parse_paren_expr
+       (2 more functions differ outside --match: <parse::parse_entry::Parser>::parse_only::<function_identiti; core::ptr::drop_glue::<core::option::Option<alloc::boxed::Bo)
+
+### other pass: stub vs p1b
+functions a 1587 b 1587: identical 1581, different 6, only a 0, only b 0; text bytes a 1628154 b 1628145 (-9)
+        bytesA  bytesB  insnA  insnB  jccA  jccB  function
+DIFF      3122    3139    608    612    42    42  <p::P<true, false>>::parse_async_prefix_expr
+DIFF     15583   15599   3114   3119   376   376  <p::P<true, false>>::parse_prefix
+       (2 more functions differ outside --match: <parse::parse_entry::Parser>::parse_only::<function_identiti; core::ptr::drop_glue::<core::option::Option<alloc::boxed::Bo)

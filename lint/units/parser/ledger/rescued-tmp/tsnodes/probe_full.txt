@@ -1,0 +1,918 @@
+RUN /root/.rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/bin/rustc 211 args
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1171:26
+     |
+1171 | const _: Probe75<0, 0> = Probe75::<{ core::mem::size_of::<Option<Expr>>() }, { core::mem::align_of::<Option<Expr>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `16`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe75<0, 0>`
+                found struct `Probe75<16, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1173:26
+     |
+1173 | const _: Probe76<0, 0> = Probe76::<{ core::mem::size_of::<E::EString>() }, { core::mem::align_of::<E::EString>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `40`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe76<0, 0>`
+                found struct `Probe76<40, 8>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1149:26
+     |
+1149 | const _: Probe64<0, 0> = Probe64::<{ core::mem::size_of::<Option<Type>>() }, { core::mem::align_of::<Option<Type>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe64<0, 0>`
+                found struct `Probe64<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1129:26
+     |
+1129 | const _: Probe54<0, 0> = Probe54::<{ core::mem::size_of::<PropertySignature>() }, { core::mem::align_of::<PropertySignature>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `84`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe54<0, 0>`
+                found struct `Probe54<84, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1131:26
+     |
+1131 | const _: Probe55<0, 0> = Probe55::<{ core::mem::size_of::<MethodSignature>() }, { core::mem::align_of::<MethodSignature>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `108`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe55<0, 0>`
+                found struct `Probe55<108, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1161:26
+     |
+1161 | const _: Probe70<0, 0> = Probe70::<{ core::mem::size_of::<Option<Name>>() }, { core::mem::align_of::<Option<Name>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe70<0, 0>`
+                found struct `Probe70<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1151:26
+     |
+1151 | const _: Probe65<0, 0> = Probe65::<{ core::mem::size_of::<Option<Token>>() }, { core::mem::align_of::<Option<Token>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe65<0, 0>`
+                found struct `Probe65<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1163:26
+     |
+1163 | ..._: Probe71<0, 0> = Probe71::<{ core::mem::size_of::<Option<StoreRef<ImportAttributes>>>() }, { core::mem::align_of::<Option<StoreRef<ImportAttributes>>>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `8`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe71<0, 0>`
+                found struct `Probe71<8, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1175:26
+     |
+1175 | const _: Probe77<0, 0> = Probe77::<{ core::mem::size_of::<E::BigInt>() }, { core::mem::align_of::<E::BigInt>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe77<0, 0>`
+                found struct `Probe77<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1165:26
+     |
+1165 | ..._: Probe72<0, 0> = Probe72::<{ core::mem::size_of::<StoreSlice<Modifier>>() }, { core::mem::align_of::<StoreSlice<Modifier>>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe72<0, 0>`
+                found struct `Probe72<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1177:26
+     |
+1177 | ..._: Probe78<0, 0> = Probe78::<{ core::mem::size_of::<Option<HeritageClause>>() }, { core::mem::align_of::<Option<HeritageClause>>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `32`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe78<0, 0>`
+                found struct `Probe78<32, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1153:26
+     |
+1153 | const _: Probe66<0, 0> = Probe66::<{ core::mem::size_of::<Option<EntityName>>() }, { core::mem::align_of::<Option<EntityName>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe66<0, 0>`
+                found struct `Probe66<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1119:26
+     |
+1119 | const _: Probe49<0, 0> = Probe49::<{ core::mem::size_of::<HeritageClause>() }, { core::mem::align_of::<HeritageClause>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `32`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe49<0, 0>`
+                found struct `Probe49<32, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1167:26
+     |
+1167 | const _: Probe73<0, 0> = Probe73::<{ core::mem::size_of::<Expr>() }, { core::mem::align_of::<Expr>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `16`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe73<0, 0>`
+                found struct `Probe73<16, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1139:26
+     |
+1139 | const _: Probe59<0, 0> = Probe59::<{ core::mem::size_of::<GetAccessor>() }, { core::mem::align_of::<GetAccessor>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `116`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe59<0, 0>`
+                found struct `Probe59<116, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1121:26
+     |
+1121 | const _: Probe50<0, 0> = Probe50::<{ core::mem::size_of::<PropertyName>() }, { core::mem::align_of::<PropertyName>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe50<0, 0>`
+                found struct `Probe50<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1155:26
+     |
+1155 | const _: Probe67<0, 0> = Probe67::<{ core::mem::size_of::<Option<Body>>() }, { core::mem::align_of::<Option<Body>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe67<0, 0>`
+                found struct `Probe67<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1179:26
+     |
+1179 | ..._: Probe79<0, 0> = Probe79::<{ core::mem::size_of::<Option<TypeParameter>>() }, { core::mem::align_of::<Option<TypeParameter>>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `96`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe79<0, 0>`
+                found struct `Probe79<96, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1169:26
+     |
+1169 | const _: Probe74<0, 0> = Probe74::<{ core::mem::size_of::<Binding>() }, { core::mem::align_of::<Binding>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `16`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe74<0, 0>`
+                found struct `Probe74<16, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1181:26
+     |
+1181 | const _: Probe80<0, 0> = Probe80::<{ core::mem::size_of::<Option<Parameter>>() }, { core::mem::align_of::<Option<Parameter>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `96`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe80<0, 0>`
+                found struct `Probe80<96, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1123:26
+     |
+1123 | ..._: Probe51<0, 0> = Probe51::<{ core::mem::size_of::<ComputedPropertyName>() }, { core::mem::align_of::<ComputedPropertyName>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe51<0, 0>`
+                found struct `Probe51<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1141:26
+     |
+1141 | const _: Probe60<0, 0> = Probe60::<{ core::mem::size_of::<SetAccessor>() }, { core::mem::align_of::<SetAccessor>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `116`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe60<0, 0>`
+                found struct `Probe60<116, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1125:26
+     |
+1125 | const _: Probe52<0, 0> = Probe52::<{ core::mem::size_of::<Member>() }, { core::mem::align_of::<Member>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe52<0, 0>`
+                found struct `Probe52<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1097:26
+     |
+1097 | const _: Probe38<0, 0> = Probe38::<{ core::mem::size_of::<ParenthesizedType>() }, { core::mem::align_of::<ParenthesizedType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe38<0, 0>`
+                found struct `Probe38<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1133:26
+     |
+1133 | const _: Probe56<0, 0> = Probe56::<{ core::mem::size_of::<CallSignature>() }, { core::mem::align_of::<CallSignature>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `60`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe56<0, 0>`
+                found struct `Probe56<60, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1143:26
+     |
+1143 | const _: Probe61<0, 0> = Probe61::<{ core::mem::size_of::<Body>() }, { core::mem::align_of::<Body>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe61<0, 0>`
+                found struct `Probe61<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1183:26
+     |
+1183 | ..._: Probe81<0, 0> = Probe81::<{ core::mem::size_of::<Option<PropertyName>>() }, { core::mem::align_of::<Option<PropertyName>>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe81<0, 0>`
+                found struct `Probe81<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1127:26
+     |
+1127 | const _: Probe53<0, 0> = Probe53::<{ core::mem::size_of::<MemberData>() }, { core::mem::align_of::<MemberData>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe53<0, 0>`
+                found struct `Probe53<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1135:26
+     |
+1135 | const _: Probe57<0, 0> = Probe57::<{ core::mem::size_of::<ConstructSignature>() }, { core::mem::align_of::<ConstructSignature>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `60`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe57<0, 0>`
+                found struct `Probe57<60, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1185:26
+     |
+1185 | const _: Probe82<0, 0> = Probe82::<{ core::mem::size_of::<Option<Modifier>>() }, { core::mem::align_of::<Option<Modifier>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe82<0, 0>`
+                found struct `Probe82<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1157:26
+     |
+1157 | const _: Probe68<0, 0> = Probe68::<{ core::mem::size_of::<Option<Member>>() }, { core::mem::align_of::<Option<Member>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe68<0, 0>`
+                found struct `Probe68<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1137:26
+     |
+1137 | const _: Probe58<0, 0> = Probe58::<{ core::mem::size_of::<IndexSignature>() }, { core::mem::align_of::<IndexSignature>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `52`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe58<0, 0>`
+                found struct `Probe58<52, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1087:26
+     |
+1087 | const _: Probe33<0, 0> = Probe33::<{ core::mem::size_of::<ImportType>() }, { core::mem::align_of::<ImportType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `76`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe33<0, 0>`
+                found struct `Probe33<76, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1109:26
+     |
+1109 | const _: Probe44<0, 0> = Probe44::<{ core::mem::size_of::<ModifierData>() }, { core::mem::align_of::<ModifierData>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `16`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe44<0, 0>`
+                found struct `Probe44<16, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1159:26
+     |
+1159 | const _: Probe69<0, 0> = Probe69::<{ core::mem::size_of::<Option<Literal>>() }, { core::mem::align_of::<Option<Literal>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe69<0, 0>`
+                found struct `Probe69<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1099:26
+     |
+1099 | const _: Probe39<0, 0> = Probe39::<{ core::mem::size_of::<TypePredicate>() }, { core::mem::align_of::<TypePredicate>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `52`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe39<0, 0>`
+                found struct `Probe39<52, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1111:26
+     |
+1111 | const _: Probe45<0, 0> = Probe45::<{ core::mem::size_of::<ModifierKind>() }, { core::mem::align_of::<ModifierKind>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe45<0, 0>`
+                found struct `Probe45<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1145:26
+     |
+1145 | const _: Probe62<0, 0> = Probe62::<{ core::mem::size_of::<List<Type>>() }, { core::mem::align_of::<List<Type>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe62<0, 0>`
+                found struct `Probe62<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1089:26
+     |
+1089 | ..._: Probe34<0, 0> = Probe34::<{ core::mem::size_of::<ImportAttributesToken>() }, { core::mem::align_of::<ImportAttributesToken>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe34<0, 0>`
+                found struct `Probe34<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1077:26
+     |
+1077 | const _: Probe28<0, 0> = Probe28::<{ core::mem::size_of::<ConstructorType>() }, { core::mem::align_of::<ConstructorType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `72`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe28<0, 0>`
+                found struct `Probe28<72, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1101:26
+     |
+1101 | ..._: Probe40<0, 0> = Probe40::<{ core::mem::size_of::<TypePredicateParameterName>() }, { core::mem::align_of::<TypePredicateParameterName>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe40<0, 0>`
+                found struct `Probe40<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1079:26
+     |
+1079 | const _: Probe29<0, 0> = Probe29::<{ core::mem::size_of::<TypeLiteral>() }, { core::mem::align_of::<TypeLiteral>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe29<0, 0>`
+                found struct `Probe29<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1113:26
+     |
+1113 | const _: Probe46<0, 0> = Probe46::<{ core::mem::size_of::<TypeParameter>() }, { core::mem::align_of::<TypeParameter>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `96`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe46<0, 0>`
+                found struct `Probe46<96, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1067:26
+     |
+1067 | const _: Probe23<0, 0> = Probe23::<{ core::mem::size_of::<IndexedAccessType>() }, { core::mem::align_of::<IndexedAccessType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `40`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe23<0, 0>`
+                found struct `Probe23<40, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1147:26
+     |
+1147 | const _: Probe63<0, 0> = Probe63::<{ core::mem::size_of::<Option<List<Type>>>() }, { core::mem::align_of::<Option<List<Type>>>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe63<0, 0>`
+                found struct `Probe63<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1103:26
+     |
+1103 | const _: Probe41<0, 0> = Probe41::<{ core::mem::size_of::<JSDocNullableType>() }, { core::mem::align_of::<JSDocNullableType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe41<0, 0>`
+                found struct `Probe41<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1091:26
+     |
+1091 | const _: Probe35<0, 0> = Probe35::<{ core::mem::size_of::<ImportAttributes>() }, { core::mem::align_of::<ImportAttributes>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `32`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe35<0, 0>`
+                found struct `Probe35<32, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1081:26
+     |
+1081 | const _: Probe30<0, 0> = Probe30::<{ core::mem::size_of::<TemplatePiece>() }, { core::mem::align_of::<TemplatePiece>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `16`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe30<0, 0>`
+                found struct `Probe30<16, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1057:26
+     |
+1057 | const _: Probe18<0, 0> = Probe18::<{ core::mem::size_of::<UnionType>() }, { core::mem::align_of::<UnionType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe18<0, 0>`
+                found struct `Probe18<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1069:26
+     |
+1069 | const _: Probe24<0, 0> = Probe24::<{ core::mem::size_of::<TypeOperatorKind>() }, { core::mem::align_of::<TypeOperatorKind>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe24<0, 0>`
+                found struct `Probe24<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1105:26
+     |
+1105 | ..._: Probe42<0, 0> = Probe42::<{ core::mem::size_of::<JSDocNonNullableType>() }, { core::mem::align_of::<JSDocNonNullableType>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe42<0, 0>`
+                found struct `Probe42<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1083:26
+     |
+1083 | ..._: Probe31<0, 0> = Probe31::<{ core::mem::size_of::<TemplateLiteralType>() }, { core::mem::align_of::<TemplateLiteralType>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `36`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe31<0, 0>`
+                found struct `Probe31<36, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1093:26
+     |
+1093 | const _: Probe36<0, 0> = Probe36::<{ core::mem::size_of::<ImportAttribute>() }, { core::mem::align_of::<ImportAttribute>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `48`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe36<0, 0>`
+                found struct `Probe36<48, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1107:26
+     |
+1107 | const _: Probe43<0, 0> = Probe43::<{ core::mem::size_of::<Modifier>() }, { core::mem::align_of::<Modifier>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe43<0, 0>`
+                found struct `Probe43<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1095:26
+     |
+1095 | ..._: Probe37<0, 0> = Probe37::<{ core::mem::size_of::<ImportAttributeName>() }, { core::mem::align_of::<ImportAttributeName>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe37<0, 0>`
+                found struct `Probe37<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1085:26
+     |
+1085 | ..._: Probe32<0, 0> = Probe32::<{ core::mem::size_of::<TemplateLiteralTypeSpan>() }, { core::mem::align_of::<TemplateLiteralTypeSpan>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `44`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe32<0, 0>`
+                found struct `Probe32<44, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1115:26
+     |
+1115 | const _: Probe47<0, 0> = Probe47::<{ core::mem::size_of::<Parameter>() }, { core::mem::align_of::<Parameter>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `96`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe47<0, 0>`
+                found struct `Probe47<96, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1045:26
+     |
+1045 | ..._: Probe12<0, 0> = Probe12::<{ core::mem::size_of::<ExpressionWithTypeArguments>() }, { core::mem::align_of::<ExpressionWithTypeArguments>() }>;
+     |       -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `36`
+     |       |
+     |       expected because of the type of the constant
+     |
+     = note: expected struct `Probe12<0, 0>`
+                found struct `Probe12<36, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1059:26
+     |
+1059 | const _: Probe19<0, 0> = Probe19::<{ core::mem::size_of::<IntersectionType>() }, { core::mem::align_of::<IntersectionType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe19<0, 0>`
+                found struct `Probe19<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1117:26
+     |
+1117 | const _: Probe48<0, 0> = Probe48::<{ core::mem::size_of::<HeritageToken>() }, { core::mem::align_of::<HeritageToken>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe48<0, 0>`
+                found struct `Probe48<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1035:25
+     |
+1035 | const _: Probe7<0, 0> = Probe7::<{ core::mem::size_of::<QualifiedName>() }, { core::mem::align_of::<QualifiedName>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `48`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe7<0, 0>`
+                found struct `Probe7<48, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1061:26
+     |
+1061 | const _: Probe20<0, 0> = Probe20::<{ core::mem::size_of::<ConditionalType>() }, { core::mem::align_of::<ConditionalType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `80`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe20<0, 0>`
+                found struct `Probe20<80, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1071:26
+     |
+1071 | const _: Probe25<0, 0> = Probe25::<{ core::mem::size_of::<TypeOperator>() }, { core::mem::align_of::<TypeOperator>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe25<0, 0>`
+                found struct `Probe25<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1025:25
+     |
+1025 | const _: Probe2<0, 0> = Probe2::<{ core::mem::size_of::<KeywordKind>() }, { core::mem::align_of::<KeywordKind>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe2<0, 0>`
+                found struct `Probe2<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1037:25
+     |
+1037 | const _: Probe8<0, 0> = Probe8::<{ core::mem::size_of::<Literal>() }, { core::mem::align_of::<Literal>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe8<0, 0>`
+                found struct `Probe8<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1047:26
+     |
+1047 | const _: Probe13<0, 0> = Probe13::<{ core::mem::size_of::<ArrayType>() }, { core::mem::align_of::<ArrayType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe13<0, 0>`
+                found struct `Probe13<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1027:25
+     |
+1027 | const _: Probe3<0, 0> = Probe3::<{ core::mem::size_of::<Token>() }, { core::mem::align_of::<Token>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe3<0, 0>`
+                found struct `Probe3<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1049:26
+     |
+1049 | const _: Probe14<0, 0> = Probe14::<{ core::mem::size_of::<TupleType>() }, { core::mem::align_of::<TupleType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe14<0, 0>`
+                found struct `Probe14<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1039:25
+     |
+1039 | const _: Probe9<0, 0> = Probe9::<{ core::mem::size_of::<LiteralData>() }, { core::mem::align_of::<LiteralData>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe9<0, 0>`
+                found struct `Probe9<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1051:26
+     |
+1051 | const _: Probe15<0, 0> = Probe15::<{ core::mem::size_of::<NamedTupleMember>() }, { core::mem::align_of::<NamedTupleMember>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `64`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe15<0, 0>`
+                found struct `Probe15<64, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1073:26
+     |
+1073 | const _: Probe26<0, 0> = Probe26::<{ core::mem::size_of::<TypeQuery>() }, { core::mem::align_of::<TypeQuery>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `40`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe26<0, 0>`
+                found struct `Probe26<40, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1041:26
+     |
+1041 | const _: Probe10<0, 0> = Probe10::<{ core::mem::size_of::<LiteralType>() }, { core::mem::align_of::<LiteralType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `24`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe10<0, 0>`
+                found struct `Probe10<24, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1043:26
+     |
+1043 | const _: Probe11<0, 0> = Probe11::<{ core::mem::size_of::<TypeReference>() }, { core::mem::align_of::<TypeReference>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `40`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe11<0, 0>`
+                found struct `Probe11<40, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1075:26
+     |
+1075 | const _: Probe27<0, 0> = Probe27::<{ core::mem::size_of::<FunctionType>() }, { core::mem::align_of::<FunctionType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `60`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe27<0, 0>`
+                found struct `Probe27<60, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1053:26
+     |
+1053 | const _: Probe16<0, 0> = Probe16::<{ core::mem::size_of::<OptionalType>() }, { core::mem::align_of::<OptionalType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe16<0, 0>`
+                found struct `Probe16<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1029:25
+     |
+1029 | const _: Probe4<0, 0> = Probe4::<{ core::mem::size_of::<TokenKind>() }, { core::mem::align_of::<TokenKind>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `1`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe4<0, 0>`
+                found struct `Probe4<1, 1>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1031:25
+     |
+1031 | const _: Probe5<0, 0> = Probe5::<{ core::mem::size_of::<Name>() }, { core::mem::align_of::<Name>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe5<0, 0>`
+                found struct `Probe5<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1055:26
+     |
+1055 | const _: Probe17<0, 0> = Probe17::<{ core::mem::size_of::<RestType>() }, { core::mem::align_of::<RestType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe17<0, 0>`
+                found struct `Probe17<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1021:25
+     |
+1021 | const _: Probe0<0, 0> = Probe0::<{ core::mem::size_of::<Type>() }, { core::mem::align_of::<Type>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe0<0, 0>`
+                found struct `Probe0<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1023:25
+     |
+1023 | const _: Probe1<0, 0> = Probe1::<{ core::mem::size_of::<TypeData>() }, { core::mem::align_of::<TypeData>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `12`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe1<0, 0>`
+                found struct `Probe1<12, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1033:25
+     |
+1033 | const _: Probe6<0, 0> = Probe6::<{ core::mem::size_of::<EntityName>() }, { core::mem::align_of::<EntityName>() }>;
+     |          ------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `20`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe6<0, 0>`
+                found struct `Probe6<20, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1063:26
+     |
+1063 | const _: Probe21<0, 0> = Probe21::<{ core::mem::size_of::<InferType>() }, { core::mem::align_of::<InferType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `96`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe21<0, 0>`
+                found struct `Probe21<96, 4>`
+
+error[E0308]: mismatched types
+    --> /tmp/tsnodes/ast/ts_nodes.rs:1065:26
+     |
+1065 | const _: Probe22<0, 0> = Probe22::<{ core::mem::size_of::<MappedType>() }, { core::mem::align_of::<MappedType>() }>;
+     |          -------------   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `0`, found `180`
+     |          |
+     |          expected because of the type of the constant
+     |
+     = note: expected struct `Probe22<0, 0>`
+                found struct `Probe22<180, 4>`
+
+error: aborting due to 83 previous errors
+
+For more information about this error, try `rustc --explain E0308`.
+EXIT 1

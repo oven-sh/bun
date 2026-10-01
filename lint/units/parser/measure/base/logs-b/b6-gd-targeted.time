@@ -1,0 +1,8 @@
+QUEUED 1790703205175 2026-09-29T17:33:25+00:00
+CMD /workspace/notes/lint/units/parser/measure/base/bin/bun harness.mjs corpus.targeted.json /workspace/notes/lint/units/parser/measure/base/grammar-diff/base.targeted.jsonl.gz --jobs=8
+START 1790703837315 2026-09-29T17:43:57+00:00 load=512.34 404.74 338.88
+END 1790703841717 2026-09-29T17:44:02+00:00 load=508.79 405.79 339.58
+EXIT 0
+WAIT_MS 632140
+RUN_MS 4402
+DONE

@@ -1,0 +1,5 @@
+E-LITERAL	checker.go:8085	c.checkTemplateExpression	d.(string)
+E-CORE	checker.go:11125	c.checkSyntheticExpression	e.(*Type)
+E-OPER	checker.go:12498	c.checkBinaryLikeExpression	e.(jsnum.Number)
+E-CTX	checker.go:29632	c.getSpreadArgumentType	e.(*Type)
+E-CTX	checker.go:29654	c.getSpreadArgumentType	e.(*Type)

@@ -1,0 +1,2 @@
+RESOLUTIONDEPTH 3 [symbol:exports symbol:z symbol:module]
+COUNTS TypeCount=90 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

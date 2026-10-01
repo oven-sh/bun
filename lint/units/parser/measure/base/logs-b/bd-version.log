@@ -1,0 +1,2 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet --version
+1.4.3-debug

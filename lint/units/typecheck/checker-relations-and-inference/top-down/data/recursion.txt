@@ -1,0 +1,61 @@
+functions 3060 largest component 1444
+== R-REL: 74 of 102 inside the largest component
+  outside: asRecursionId Relation.get Relation.set Relation.size c.compareTypesAssignableWorker createDiagnosticChainFromErrorChain c.reportDiagnostic isHyphenatedJsxName isExcessPropertyCheckTarget getRecursionIdentityFromTarget excludeProperties c.symbolValueDeclarationIsContextSensitive c.getRelater c.putRelater shouldCheckAsExcessProperty isIgnoredJsxProperty r.getUndefinedStrippedTargetIfNeeded r.resetMaybeStack r.getErrorState r.restoreErrorState r.reportError addToDottedName r.getChainMessage r.chainArgsMatch getPropertyNameArg isConversionOrInterfaceImplementationMessage chainDepth r.traceUnionsOrIntersectionsTooLarge
+  self recursive: createDiagnosticChainFromErrorChain c.isWeakType c.isKnownProperty isExcessPropertyCheckTarget c.isDeeplyNestedType hasMatchingRecursionIdentity getRecursionIdentityTarget c.typeCouldHaveTopLevelSingletonTypes c.isObjectTypeWithInferableIndex r.reportError c.isTypeDerivedFrom
+== R-SIGREL: 11 of 14 inside the largest component
+  outside: c.compareTypePredicatesIdentical visibilityToString r.constructorVisibilitiesAreCompatible
+  self recursive: c.compareSignaturesRelated
+== R-VARIANCE: 5 of 9 inside the largest component
+  outside: c.getVarianceStackIndex c.isMarkerType c.getTypeParameterModifiers c.hasCovariantVoidArgument
+  self recursive: c.getVariancesWorker
+== R-DISCRIM: 15 of 22 inside the largest component
+  outside: c.findMatchingTypeReferenceOrTypeAliasReference TypeDiscriminator.len TypeDiscriminator.name TypeDiscriminator.matches isObjectOrInstantiableNonPrimitive c.filterPrimitivesIfContainsNonPrimitive isNonPrimitiveType
+  self recursive: 
+== R-ELAB: 10 of 11 inside the largest component
+  outside: c.isOrHasGenericConditional
+  self recursive: c.elaborateError c.isOrHasGenericConditional
+== I-INFER: 41 of 68 inside the largest component
+  outside: c.getInferenceState c.putInferenceState getSingleTypeVariableFromIntersectionTypes tupleTypesDefinitelyUnrelated c.isTupleTypeStructureMatching c.isTypeCloselyMatchedBy c.newInferenceContext c.cloneInferenceContext c.cloneInferredPartOfContext c.newInferenceContextWorker c.addIntraExpressionInferenceSite c.inferFromIntraExpressionSites c.getMapperFromContext c.createOuterReturnMapper getInferenceInfoForType c.findLeftmostType c.getCombinedTypeFlags c.isFromInferenceBlockedSource c.isSkipDirectInferenceNode newInferenceInfo cloneInferenceInfo clearCachedInferences hasInferenceCandidates hasInferenceCandidatesOrDefault hasTypeParameterDefault hasOverlappingInferences c.mergeInferences
+  self recursive: c.inferFromTypes c.inferToMappedType c.isTypeParameterAtTopLevel c.getCombinedTypeFlags
+== I-REVMAP: 9 of 9 inside the largest component
+  outside: 
+  self recursive: c.isPartiallyInferableType
+cycles inside the unit alone: components [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 64, 1, 1, 5, 1]
+   c.getNormalizedType c.getNormalizedUnionOrIntersectionType
+   isExcessPropertyCheckTarget
+   c.isKnownProperty
+   c.isWeakType
+   r.reportError
+   getRecursionIdentityTarget
+   hasMatchingRecursionIdentity
+   c.isDeeplyNestedType
+   c.isObjectTypeWithInferableIndex
+   c.compareSignaturesRelated
+   c.typeCouldHaveTopLevelSingletonTypes
+   createDiagnosticChainFromErrorChain
+   getTypeDepth getTypeListDepth
+   c.isPartiallyInferableType
+   c.isTypeParameterAtTopLevel
+   c.inferTypes c.inferFromTypes c.inferFromTypeArguments c.inferWithPriority c.inferFromContravariantTypesWithPriority c.inferFromContravariantTypes c.inferFromContravariantTypesIfStrictFunctionTypes c.inferFromMatchingTypes c.inferToMultipleTypes c.inferToMultipleTypesWithPriority c.inferToConditionalType c.inferToTemplateLiteralType c.inferFromGenericMappedTypes c.inferFromObjectTypes c.inferFromProperties c.inferFromSignatures c.inferFromSignature c.inferFromIndexTypes c.inferToMappedType c.inferTypeForHomomorphicMappedType c.createReverseMappedType c.inferReverseMappedType c.inferReverseMappedTypeWorker c.isTypeOrBaseIdenticalTo c.isTypeIdenticalTo c.compareTypesIdentical c.isTypeAssignableTo c.isTypeRelatedTo c.checkTypeRelatedTo c.checkTypeRelatedToEx c.getVariances c.getAliasVariances c.getVariancesWorker r.isRelatedToSimple r.isRelatedToWorker r.isRelatedTo r.isRelatedToEx r.hasExcessProperties r.unionOrIntersectionRelatedTo r.someTypeRelatedToType r.eachTypeRelatedToType r.typeRelatedToSomeType r.typeRelatedToEachType r.eachTypeRelatedToSomeType r.recursiveTypeRelatedTo r.structuredTypeRelatedTo r.structuredTypeRelatedToWorker r.typeArgumentsRelatedTo r.mappedTypeRelatedTo r.typeRelatedToDiscriminatedType r.propertiesRelatedTo r.propertyRelatedTo r.isPropertySymbolTypeRelated r.propertiesIdenticalTo r.signaturesRelatedTo r.signatureRelatedTo r.signaturesIdenticalTo r.indexSignaturesRelatedTo r.typeRelatedToIndexInfo r.membersRelatedToIndexInfo r.indexInfoRelatedTo r.indexSignaturesIdenticalTo r.reportErrorResults r.reportRelationError
+   c.getCombinedTypeFlags
+   c.isOrHasGenericConditional
+   c.elaborateError c.elaborateObjectLiteral c.elaborateArrayLiteral c.elaborateElement c.elaborateArrowFunction
+   c.isTypeDerivedFrom
+after removing hubs ['r.isRelatedToEx', 'c.inferFromTypes', 'c.compareSignaturesRelated', 'c.getVariancesWorker', 'c.elaborateError', 'c.checkTypeRelatedToEx', 'c.getInferredType', 'c.inferReverseMappedType', 'c.getNormalizedType']
+  left: getRecursionIdentityTarget
+  left: hasMatchingRecursionIdentity
+  left: c.isDeeplyNestedType
+  left: getTypeDepth getTypeListDepth
+  left: c.isObjectTypeWithInferableIndex
+  left: c.isPartiallyInferableType
+  left: c.inferToMappedType
+  left: c.getCombinedTypeFlags
+  left: c.isTypeParameterAtTopLevel
+  left: createDiagnosticChainFromErrorChain
+  left: c.isOrHasGenericConditional
+  left: c.isWeakType
+  left: isExcessPropertyCheckTarget
+  left: c.isKnownProperty
+  left: c.typeCouldHaveTopLevelSingletonTypes
+  left: r.reportError
+  left: c.isTypeDerivedFrom

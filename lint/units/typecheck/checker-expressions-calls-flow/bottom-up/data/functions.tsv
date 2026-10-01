@@ -1,0 +1,487 @@
+F-UNREACH	checker/c05_check_source_file.rs	checker.go:2398-2457	60	c.checkSourceElementUnreachable codes=7027
+F-UNREACH	checker/c05_check_source_file.rs	checker.go:2459-2477	19	c.isSourceElementUnreachable
+E-CORE	checker/c14_expressions.rs	checker.go:7419-7423	5	c.checkExpressionStatement
+E-CORE	checker/c14_expressions.rs	checker.go:7427-7447	21	c.getTypeOfExpression
+E-CORE	checker/c14_expressions.rs	checker.go:7451-7475	25	c.getQuickTypeOfExpression
+E-CORE	checker/c14_expressions.rs	checker.go:7477-7483	7	c.getReturnTypeOfSingleNonGenericSignature
+E-CORE	checker/c14_expressions.rs	checker.go:7485-7493	9	c.getReturnTypeOfSingleNonGenericSignatureOfCallChain
+E-CORE	checker/c14_expressions.rs	checker.go:7495-7497	3	c.checkNonNullExpression
+E-CORE	checker/c14_expressions.rs	checker.go:7499-7501	3	c.checkNonNullType
+E-CORE	checker/c14_expressions.rs	checker.go:7503-7525	23	c.checkNonNullTypeWithReporter codes=2571,18046
+E-CORE	checker/c14_expressions.rs	checker.go:7527-7544	18	c.checkNonNullNonVoidType codes=2532,18048,18050
+E-CORE	checker/c14_expressions.rs	checker.go:7546-7572	27	c.reportObjectPossiblyNullOrUndefinedError codes=2531,2532,2533,18047,18048,18049,18050
+E-CORE	checker/c14_expressions.rs	checker.go:7574-7593	20	c.checkExpressionWithContextualType
+E-CORE	checker/c14_expressions.rs	checker.go:7595-7601	7	c.getContextNode
+E-CORE	checker/c14_expressions.rs	checker.go:7603-7605	3	c.checkExpressionCached
+E-CORE	checker/c14_expressions.rs	checker.go:7607-7625	19	c.checkExpressionCachedEx links=typeNodeLinks
+E-CORE	checker/c14_expressions.rs	checker.go:7632-7641	10	c.getContextFreeTypeOfExpression
+E-CORE	checker/c14_expressions.rs	checker.go:7643-7645	3	c.checkExpression
+E-CORE	checker/c14_expressions.rs	checker.go:7647-7661	15	c.checkExpressionEx DEFER@7649
+E-CORE	checker/c14_expressions.rs	checker.go:7663-7687	25	c.checkConstEnumAccess codes=2475,2748 ASSERT@7680 PROGRAM=GetProjectReferenceFromOutputDts
+E-CORE	checker/c14_expressions.rs	checker.go:7689-7759	71	c.instantiateTypeWithSingleGenericCallSignature closures=3
+E-CORE	checker/c14_expressions.rs	checker.go:7761-7772	12	c.getOuterInferenceTypeParameters
+E-CORE	checker/c14_expressions.rs	checker.go:7774-7799	26	c.getUniqueTypeParameters
+E-CORE	checker/c14_expressions.rs	checker.go:7801-7805	5	hasTypeParameterByName closures=1
+E-CORE	checker/c14_expressions.rs	checker.go:7807-7819	13	getUniqueTypeParameterName
+E-CORE	checker/c14_expressions.rs	checker.go:7821-7925	105	c.checkExpressionWorker PANIC@7922
+E-ACCESS	checker/c14_expressions.rs	checker.go:7927-7934	8	c.checkPrivateIdentifierExpression
+E-ACCESS	checker/c14_expressions.rs	checker.go:7936-7942	7	c.getSymbolForPrivateIdentifierExpression links=symbolNodeLinks
+E-ACCESS	checker/c14_expressions.rs	checker.go:7944-8052	109	c.checkSuperExpression codes=2335,2336,2337,2338,2466,2660,17011 closures=2 links=nodeLinks
+E-ACCESS	checker/c14_expressions.rs	checker.go:8054-8064	11	c.isInConstructorArgumentInitializer closures=1
+E-LITERAL	checker/c14_expressions.rs	checker.go:8066-8091	26	c.checkTemplateExpression codes=2731 CAST@8085
+E-LITERAL	checker/c14_expressions.rs	checker.go:8093-8096	4	c.isTemplateLiteralContext
+E-LITERAL	checker/c14_expressions.rs	checker.go:8098-8100	3	c.isTemplateLiteralContextualType
+E-LITERAL	checker/c14_expressions.rs	checker.go:8102-8109	8	c.checkRegularExpressionLiteral links=nodeLinks
+E-LITERAL	checker/c14_expressions.rs	checker.go:8111-8191	81	c.checkArrayLiteral closures=1
+E-LITERAL	checker/c14_expressions.rs	checker.go:8193-8205	13	c.createArrayLiteralType
+E-LITERAL	checker/c14_expressions.rs	checker.go:8207-8210	4	isSpreadIntoCallOrNew
+E-ACCESS	checker/c14_expressions.rs	checker.go:8212-8221	10	c.checkQualifiedName
+E-ACCESS	checker/c14_expressions.rs	checker.go:8223-8228	6	c.checkIndexedAccess
+E-ACCESS	checker/c14_expressions.rs	checker.go:8230-8234	5	c.checkElementAccessChain
+E-ACCESS	checker/c14_expressions.rs	checker.go:8236-8265	30	c.checkElementAccessExpression codes=2476
+E-ACCESS	checker/c14_expressions.rs	checker.go:8269-8286	18	c.isForInVariableForNumericPropertyNames
+E-ACCESS	checker/c14_expressions.rs	checker.go:8289-8303	15	c.getForInVariableSymbol
+E-ACCESS	checker/c14_expressions.rs	checker.go:8306-8308	3	c.hasNumericPropertyNames
+E-ACCESS	checker/c14_expressions.rs	checker.go:8310-8345	36	c.checkIndexedAccessIndexType codes=2536,2542,4105 closures=1
+E-ACCESS	checker/c14_expressions.rs	checker.go:8347-8355	9	c.getConstituentProperty
+E-CALL	checker/c14_expressions.rs	checker.go:8357-8405	49	c.checkImportCallExpression codes=2880,7036
+E-CALL	checker/c15_calls.rs	checker.go:8412-8452	41	c.checkCallExpression codes=2775,2776,7009
+E-CALL	checker/c15_calls.rs	checker.go:8454-8463	10	c.checkDeprecatedSignature
+E-CALL	checker/c15_calls.rs	checker.go:8465-8469	5	c.addDeprecatedSuggestionWithSignature codes=6385,6387
+E-CALL	checker/c15_calls.rs	checker.go:8471-8488	18	c.isSymbolOrSymbolForCall
+E-CALL	checker/c15_calls.rs	checker.go:8497-8541	45	c.getResolvedSignature links=signatureLinks
+E-CALL	checker/c15_calls.rs	checker.go:8543-8559	17	c.resolveSignature PANIC@8558
+E-CALL	checker/c15_calls.rs	checker.go:8561-8663	103	c.resolveCallExpression codes=2347,2348,2734
+E-CALL	checker/c15_calls.rs	checker.go:8665-8736	72	c.resolveNewExpression codes=2347,2350,2511,2679 closures=1
+E-CALL	checker/c15_calls.rs	checker.go:8738-8768	31	c.isConstructorAccessible codes=2673,2674
+E-CALL	checker/c15_calls.rs	checker.go:8770-8798	29	c.typeHasProtectedAccessibleBase
+E-CALL	checker/c15_calls.rs	checker.go:8800-8807	8	someSignature
+E-CALL	checker/c15_calls.rs	checker.go:8809-8831	23	c.resolveTaggedTemplateExpression codes=2796
+E-CALL	checker/c15_calls.rs	checker.go:8833-8864	32	c.resolveDecorator codes=1329
+E-CALL	checker/c15_calls.rs	checker.go:8869-8873	5	c.isPotentiallyUncalledDecorator closures=1
+E-CALL	checker/c15_calls.rs	checker.go:8876-8888	13	c.getDiagnosticHeadMessageForDecoratorResolution codes=1238,1239,1240,1241 PANIC@8887
+E-CALL	checker/c15_calls.rs	checker.go:8890-8918	29	c.resolveInstanceofExpression codes=2359
+E-CALL	checker/c15_calls.rs	checker.go:8933-9045	113	c.resolveCall codes=2860 links=signatureLinks
+E-CALL	checker/c15_calls.rs	checker.go:9047-9095	49	c.reorderCandidates
+E-CALL	checker/c15_calls.rs	checker.go:9097-9099	3	signatureHasLiteralTypes
+E-CALL	checker/c15_calls.rs	checker.go:9101-9113	13	c.getOptionalCallSignature
+E-CALL	checker/c15_calls.rs	checker.go:9115-9195	81	c.chooseOverload
+E-CALL	checker/c15_calls.rs	checker.go:9197-9267	71	c.hasCorrectArity
+E-CALL	checker/c15_calls.rs	checker.go:9269-9271	3	acceptsVoid
+E-CALL	checker/c15_calls.rs	checker.go:9273-9278	6	c.getDecoratorArgumentCount
+E-CALL	checker/c15_calls.rs	checker.go:9283-9302	20	c.getLegacyDecoratorArgumentCount PANIC@9301
+E-CALL	checker/c15_calls.rs	checker.go:9304-9310	7	c.hasCorrectTypeArgumentArity
+E-CALL	checker/c15_calls.rs	checker.go:9312-9344	33	c.checkTypeArguments codes=2344 ASSERT@9318
+E-CALL	checker/c15_calls.rs	checker.go:9346-9419	74	c.isSignatureApplicable codes=2345,2684
+E-CALL	checker/c15_calls.rs	checker.go:9421-9432	12	c.maybeAddMissingAwaitInfo codes=2773
+E-CALL	checker/c15_calls.rs	checker.go:9435-9455	21	c.getThisArgumentOfCall
+E-CALL	checker/c15_calls.rs	checker.go:9457-9469	13	c.getThisArgumentType
+E-CALL	checker/c15_calls.rs	checker.go:9471-9478	8	c.getEffectiveCheckNode
+E-CALL	checker/c15_calls.rs	checker.go:9480-9585	106	c.inferTypeArguments closures=2
+E-CALL	checker/c15_calls.rs	checker.go:9588-9598	11	c.getCandidateForOverloadFailure closures=1
+E-CALL	checker/c15_calls.rs	checker.go:9600-9629	30	c.pickLongestCandidateSignature
+E-CALL	checker/c15_calls.rs	checker.go:9631-9645	15	c.getLongestCandidateIndex
+E-CALL	checker/c15_calls.rs	checker.go:9647-9663	17	c.getTypeArgumentsFromNodes
+E-CALL	checker/c15_calls.rs	checker.go:9665-9669	5	c.inferSignatureInstantiationForOverloadFailure
+E-CALL	checker/c15_calls.rs	checker.go:9671-9710	40	c.createUnionOfSignaturesForOverloadFailure closures=4
+E-CALL	checker/c15_calls.rs	checker.go:9712-9714	3	c.createCombinedSymbolFromTypes
+E-CALL	checker/c15_calls.rs	checker.go:9716-9719	4	c.createCombinedSymbolForOverloadFailure
+E-CALL	checker/c15_calls.rs	checker.go:9739-9773	35	c.reportCallResolutionErrors codes=2769,2770,2771 closures=1
+E-CALL	checker/c15_calls.rs	checker.go:9775-9793	19	c.addImplementationSuccessElaboration codes=2793 closures=1
+E-CALL	checker/c15_calls.rs	checker.go:9795-9911	117	c.getArgumentArityError codes=1278,1279,2554,2555,2556,2575,2794,2810,6210,6211,6236
+E-CALL	checker/c15_calls.rs	checker.go:9913-9931	19	c.isPromiseResolveArityError
+E-CALL	checker/c15_calls.rs	checker.go:9933-9941	9	getErrorNodeForCallNode
+E-CALL	checker/c15_calls.rs	checker.go:9943-9982	40	c.getTypeArgumentArityError codes=2558,2743
+E-CALL	checker/c15_calls.rs	checker.go:9984-9990	7	c.reportCannotInvokePossiblyNullOrUndefinedError codes=2721,2722,2723
+E-CALL	checker/c15_calls.rs	checker.go:9992-10011	20	c.resolveUntypedCall
+E-CALL	checker/c15_calls.rs	checker.go:10013-10016	4	c.resolveErrorCall
+E-CALL	checker/c15_calls.rs	checker.go:10023-10028	6	c.isUntypedFunctionCall
+E-CALL	checker/c15_calls.rs	checker.go:10030-10084	55	c.invocationErrorDetails codes=2349,2351,2755,2756,2757,2758,2759,2760,2761,2762,2773,6234
+E-CALL	checker/c15_calls.rs	checker.go:10086-10093	8	c.invocationError
+E-CALL	checker/c15_calls.rs	checker.go:10095-10109	15	c.invocationErrorRecovery codes=7038 links=exportTypeLinks
+E-CALL	checker/c15_calls.rs	checker.go:10111-10113	3	c.isGenericFunctionReturningFunction
+E-CALL	checker/c15_calls.rs	checker.go:10115-10122	8	c.skippedGenericFunction
+E-CALL	checker/c15_calls.rs	checker.go:10124-10131	8	c.checkTaggedTemplateExpression
+E-CORE	checker/c16_function_expressions_collisions.rs	checker.go:10133-10135	3	c.checkParenthesizedExpression
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10137-10142	6	c.checkClassExpression
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10144-10169	26	c.getFirstTransformableStaticClassElement
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10171-10197	27	c.checkClassExpressionExternalHelpers
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10199-10202	4	c.checkClassExpressionDeferred
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10204-10240	37	c.checkFunctionExpressionOrObjectLiteralMethod codes=8030
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10242-10294	53	c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod links=nodeLinks
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10296-10327	32	c.checkFunctionExpressionOrObjectLiteralMethodDeferred
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10329-10347	19	c.inferFromAnnotatedParametersAndReturn
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10354-10383	30	c.getContextualSignature
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10385-10391	7	c.createUnionSignature
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10395-10402	8	c.getContextualCallSignature closures=1
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10404-10420	17	c.getIntersectedSignatures
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10423-10437	15	c.isAritySmaller
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10439-10483	45	c.assignContextualParameterTypes
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10485-10492	8	c.assignNonContextualParameterTypes
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10494-10516	23	c.assignParameterType links=valueSymbolLinks
+E-FUNC	checker/c16_function_expressions_collisions.rs	checker.go:10520-10532	13	c.assignBindingElementTypes links=valueSymbolLinks
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10707-10710	4	c.checkTypeOfExpression
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10712-10719	8	c.checkNonNullAssertion
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10721-10725	5	c.checkNonNullChain
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10727-10748	22	c.checkExpressionWithTypeArguments codes=2848
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10750-10829	80	c.getInstantiationExpressionType codes=2635 closures=5
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10831-10841	11	c.checkSatisfiesExpression codes=1360
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10843-10856	14	c.checkMetaProperty PANIC@10855 ASSERT@10850
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10858-10870	13	c.checkNewTargetMetaProperty codes=17013
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10872-10887	16	c.checkImportMetaProperty codes=1343,1470 ASSERT@10882 PROGRAM=GetSourceFileMetaData
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:10889-10892	4	c.checkMetaPropertyKeyword
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10894-10913	20	c.checkDeleteExpression codes=2703,2704,18011
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10915-10928	14	c.checkDeleteExpressionMustBeOptional codes=2790
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10930-10933	4	c.checkVoidExpression
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10935-10943	9	c.checkAwaitExpression codes=1320,80007
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10945-10997	53	c.checkPrefixUnaryExpression codes=2356,2357,2469,2736,2777
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:10999-11011	13	c.checkPostfixUnaryExpression codes=2356,2357,2777
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:11013-11022	10	c.getUnaryResultType
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:11024-11031	8	c.checkConditionalExpression
+E-OPER	checker/c17_unary_meta_yield.rs	checker.go:11033-11035	3	c.checkTruthinessExpression
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:11037-11040	4	c.checkSpreadExpression
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:11042-11106	65	c.checkYieldExpression codes=7057 closures=1
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:11108-11122	15	c.getYieldedTypeOfYieldExpression codes=1321,1322
+E-CORE	checker/c17_unary_meta_yield.rs	checker.go:11124-11130	7	c.checkSyntheticExpression CAST@11125
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11132-11290	159	c.checkIdentifier codes=2454,2539,2540,2588,2628,2629,2630,2631,2632,2815,7005,7034 closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11292-11298	7	c.isSameScopedBindingElement
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11301-11307	7	c.removeOptionalityFromDeclaredType
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11309-11326	18	c.parameterInitializerContainsUndefined links=nodeLinks
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11328-11332	5	c.isInAmbientOrTypeNode closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11334-11340	7	c.checkPropertyAccessExpression
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11342-11346	5	c.checkPropertyAccessChain
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11348-11480	133	c.checkPropertyAccessExpressionOrQualifiedName codes=1111,2339,2540,2542,2803,2806,4111,7017,18016 closures=1 links=symbolNodeLinks
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11482-11526	45	c.getFlowTypeOfAccessExpression codes=2565
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11528-11532	5	c.getControlFlowContainer closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11534-11542	9	c.getFlowTypeOfProperty
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11545-11554	10	c.getTypeOfPropertyInBaseClass
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11556-11561	6	c.isMethodAccessForCall
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11564-11578	15	c.lookupSymbolForPrivateIdentifierDeclaration
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11580-11582	3	c.getPrivateIdentifierPropertyOfType
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11584-11618	35	c.checkPrivateIdentifierPropertyAccess codes=18013,18014,18017,18018 closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11620-11681	62	c.reportNonexistentProperty codes=2339,2550,2551,2568,2576,2728,2773,2812 links=nodeLinks
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11683-11696	14	c.getSuggestedLibForNonExistentProperty
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11698-11707	10	c.getSuggestedSymbolForNonexistentProperty closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11717-11720	4	c.isValidPropertyAccessForCompletions
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11730-11742	13	c.isPropertyAccessible
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11744-11746	3	c.containerSeemsToBeEmptyDomElement
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11748-11754	7	hasCommonDomTypeName
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11756-11763	8	c.checkAndReportErrorForExtendingInterface codes=2689
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11768-11782	15	c.getEntityNameForExtendingInterface
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11784-11798	15	c.isUncalledFunctionReference closures=2
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11800-11820	21	c.checkPropertyNotUsedBeforeDeclaration codes=2449,2728,2729
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11822-11824	3	c.isOptionalPropertyDeclaration
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11826-11834	9	c.isPropertyDeclaredInAncestorClass
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11844-11846	3	c.checkPropertyAccessibility
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11848-11865	18	c.checkPropertyAccessibilityEx
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11877-11989	113	c.checkPropertyAccessibilityAtLocation codes=2341,2445,2446,2513,2715,2855
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11991-11993	3	c.symbolHasNonMethodDeclaration closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:11997-12008	12	c.forEachProperty links=valueSymbolLinks
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12011-12016	6	c.getDeclaringClass
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12019-12026	8	c.isValidOverrideOf closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12030-12038	9	c.isPropertyInClassDerivedFrom closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12040-12049	10	c.isNodeUsedDuringClassInitialization closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12051-12053	3	c.isNodeWithinClass closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12055-12065	11	c.forEachEnclosingClass
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12069-12076	8	c.isClassDerivedFromDeclaringClasses closures=1
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12078-12102	25	c.getEnclosingClassFromThisParameter
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12104-12110	7	getThisParameterFromNodeContext
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12112-12166	55	c.getContextualThisParameterType
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12168-12223	56	c.checkThisExpression codes=2331,2332,2465,2683,2738,7041,17009
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12225-12227	3	c.tryGetThisTypeAt
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12229-12235	7	c.TryGetThisTypeAtEx
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12237-12277	41	c.tryGetThisTypeAtEx
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12279-12324	46	c.getThisContainer PANIC@12284
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12326-12343	18	c.isInParameterInitializerBeforeContainingFunction
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12345-12352	8	c.checkThisInStaticClassFieldInitializerInDecoratedClass codes=2816
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12354-12364	11	c.checkThisBeforeSuper
+E-ACCESS	checker/c18_identifiers_property_access_this.rs	checker.go:12371-12376	6	c.classDeclarationExtendsNull
+E-CORE	checker/c19_assertions_binary_operators.rs	checker.go:12378-12404	27	c.checkAssertion codes=1294,1355,7059 links=assertionLinks
+E-CORE	checker/c19_assertions_binary_operators.rs	checker.go:12406-12420	15	c.checkAssertionDeferred codes=2352 links=assertionLinks
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12422-12425	4	c.checkBinaryExpression
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12427-12641	215	c.checkBinaryLikeExpression codes=2362,2363,2447,2657,2695,2791,2839,6807 PANIC@12640 CAST@12498 closures=4
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12643-12674	32	c.checkDestructuringAssignment
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12676-12685	10	c.checkObjectLiteralAssignment
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12688-12732	45	c.checkObjectLiteralDestructuringPropertyAssignment codes=1013,1136,2462
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12734-12752	19	c.checkArrayLiteralAssignment
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12754-12793	40	c.checkArrayLiteralDestructuringElementAssignment codes=1013,1186,2462 closures=1
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12795-12807	13	c.checkReferenceAssignment codes=2364,2701,2778,2779
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12809-12828	20	c.reportOperatorError codes=2365,2367
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12830-12834	5	c.reportOperatorErrorUnless
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12836-12846	11	c.getBaseTypesIfUnrelated
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12848-12872	25	c.checkAssignmentOperator codes=2364,2412,2779 links=symbolNodeLinks
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12874-12876	3	c.bothAreBigIntLike
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12878-12888	11	c.getSuggestedBooleanOperator
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12890-12900	11	c.checkArithmeticOperandType
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12903-12916	14	c.checkForDisallowedESSymbolOperand codes=2469
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12918-12942	25	c.checkNaNEquality codes=1369,2845
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12944-12950	7	c.isGlobalNaN
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12952-12954	3	c.isTypeEqualityComparableTo
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12956-12966	11	c.checkTruthinessOfType codes=1345,2872,2873
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:12977-13004	28	c.getSyntacticTruthySemantics
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13006-13025	20	c.checkNullishCoalesceOperands codes=5076
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13027-13037	11	c.checkNullishCoalesceOperandLeft codes=2869,2871
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13039-13092	54	c.getSyntacticNullishnessSemantics
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13102-13127	26	c.isSideEffectFree
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13130-13136	7	c.isIndirectCall
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13138-13166	29	c.checkInstanceOfExpression codes=2358,2861
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13168-13200	33	c.checkInExpression codes=2638 links=symbolNodeLinks
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13202-13206	5	c.hasEmptyObjectIntersection closures=1
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13208-13215	8	c.getExactOptionalUnassignableProperties closures=1
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13217-13219	3	c.isExactOptionalPropertyMismatch
+E-OPER	checker/c19_assertions_binary_operators.rs	checker.go:13221-13233	13	c.checkReferenceExpression
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13235-13445	211	c.checkObjectLiteral codes=2353,2698 ASSERT@13403 SYMWRITE@13343,13349,13354,13355,13356,13361,13420 closures=2 links=valueSymbolLinks
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13447-13457	11	c.checkContextualDeprecations
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13459-13470	12	c.checkDeprecatedProperty
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13472-13481	10	c.checkSpreadPropOverrides codes=2783,2785
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13488-13596	109	c.getSpreadType SYMWRITE@13552,13582,13584,13587 closures=3 links=spreadLinks,valueSymbolLinks
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13598-13603	6	c.getIndexInfoWithReadonly
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13605-13609	5	c.isValidSpreadType
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13627-13629	3	c.isNonGenericObjectType
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13631-13678	48	c.tryMergeUnionOfObjectTypeAndEmptyObject SYMWRITE@13669,13672 closures=2 links=mappedSymbolLinks,valueSymbolLinks
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13681-13684	4	c.isSpreadableProperty closures=1
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13686-13703	18	c.getSpreadSymbol SYMWRITE@13699 links=mappedSymbolLinks,valueSymbolLinks
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13705-13707	3	c.isEmptyObjectTypeOrSpreadsIntoEmptyObject
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13709-13714	6	c.hasDefaultValue
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13716-13722	7	c.isConstContext
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13724-13744	21	c.isValidConstAssertionArgument
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13746-13772	27	c.isConstTypeVariable closures=2
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13774-13788	15	c.checkPropertyAssignment
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13790-13805	16	c.checkShorthandPropertyAssignment
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13807-13822	16	c.isInPropertyInitializerOrClassStaticBlock closures=1
+E-ACCESS	checker/c20_object_literals_spread.rs	checker.go:13824-13928	105	c.getNarrowedTypeOfSymbol links=nodeLinks
+E-ACCESS	checker/c20_object_literals_spread.rs	checker.go:13930-13948	19	c.isReadonlyAssignmentDeclaration
+E-ACCESS	checker/c20_object_literals_spread.rs	checker.go:13950-13964	15	c.isReadonlySymbol
+E-LITERAL	checker/c20_object_literals_spread.rs	checker.go:13966-13977	12	c.checkObjectLiteralMethod
+E-CORE	checker/c20_object_literals_spread.rs	checker.go:13979-13989	11	c.checkExpressionForMutableLocation
+T-RETINFER	checker/c34_return_types.rs	checker.go:20240-20370	131	c.getReturnTypeFromBody codes=1058 closures=1
+T-RETINFER	checker/c34_return_types.rs	checker.go:20373-20419	47	c.checkAndAggregateReturnExpressionTypes codes=1058 closures=1
+T-RETINFER	checker/c34_return_types.rs	checker.go:20421-20424	4	c.functionHasImplicitReturn
+T-RETINFER	checker/c34_return_types.rs	checker.go:20426-20434	9	mayReturnNever
+T-RETINFER	checker/c34_return_types.rs	checker.go:20436-20460	25	c.checkAndAggregateYieldOperandTypes closures=1
+T-RETINFER	checker/c34_return_types.rs	checker.go:20462-20472	11	c.createPromiseType
+T-RETINFER	checker/c34_return_types.rs	checker.go:20474-20484	11	c.createPromiseLikeType
+T-RETINFER	checker/c34_return_types.rs	checker.go:20486-20500	15	c.createPromiseReturnType codes=2697,2705,2711,2712
+T-RETINFER	checker/c34_return_types.rs	checker.go:20502-20519	18	c.unwrapReturnType
+T-RETINFER	checker/c34_return_types.rs	checker.go:20521-20535	15	c.getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded
+T-RETINFER	checker/c34_return_types.rs	checker.go:20537-20546	10	c.getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded
+T-RETINFER	checker/c34_return_types.rs	checker.go:20548-20564	17	c.createGeneratorType
+T-RETINFER	checker/c34_return_types.rs	checker.go:20649-20677	29	c.getTypePredicateFromBody closures=1
+T-RETINFER	checker/c34_return_types.rs	checker.go:20679-20697	19	c.checkIfExpressionRefinesAnyParameter
+T-RETINFER	checker/c34_return_types.rs	checker.go:20699-20720	22	c.checkIfExpressionRefinesParameter
+E-ACCESS	checker/c45_base_constraints_normalization.rs	checker.go:27829-27853	25	c.markPropertyAsReferenced links=symbolReferenceLinks,valueSymbolLinks
+E-ACCESS	checker/c47_promised_mapped_template.rs	checker.go:29187-29196	10	c.getOptionalExpressionType
+E-FACTS	checker/c47_promised_mapped_template.rs	checker.go:29229-29231	3	c.removeDefinitelyFalsyTypes closures=1
+E-FACTS	checker/c47_promised_mapped_template.rs	checker.go:29233-29235	3	c.extractDefinitelyFalsyTypes
+E-FACTS	checker/c47_promised_mapped_template.rs	checker.go:29237-29253	17	c.getDefinitelyFalsyPartOfType
+E-CTX	checker/c48_contextual_types.rs	checker.go:29466-29533	68	c.getContextualType
+E-CTX	checker/c48_contextual_types.rs	checker.go:29546-29559	14	c.getContextualTypeForInitializerExpression
+E-CTX	checker/c48_contextual_types.rs	checker.go:29561-29578	18	c.getContextualTypeForVariableLikeDeclaration
+E-CTX	checker/c48_contextual_types.rs	checker.go:29581-29617	37	c.getContextuallyTypedParameterType links=signatureLinks
+E-CTX	checker/c48_contextual_types.rs	checker.go:29619-29621	3	c.isContextSensitiveFunctionOrObjectLiteralMethod
+E-CTX	checker/c48_contextual_types.rs	checker.go:29623-29692	70	c.getSpreadArgumentType CAST@29632,29654
+E-CTX	checker/c48_contextual_types.rs	checker.go:29694-29704	11	c.getMutableArrayOrTupleType
+E-CTX	checker/c48_contextual_types.rs	checker.go:29706-29733	28	c.getContextualTypeForBindingElement
+E-CTX	checker/c48_contextual_types.rs	checker.go:29735-29742	8	c.getContextualTypeForStaticPropertyDeclaration
+E-CTX	checker/c48_contextual_types.rs	checker.go:29744-29777	34	c.getContextualTypeForReturnExpression closures=1
+E-CTX	checker/c48_contextual_types.rs	checker.go:29779-29786	8	c.getContextualIterationType
+E-CTX	checker/c48_contextual_types.rs	checker.go:29788-29818	31	c.getContextualReturnType closures=2
+E-CTX	checker/c48_contextual_types.rs	checker.go:29820-29832	13	c.checkGeneratorInstantiationAssignabilityToReturnType
+E-CTX	checker/c48_contextual_types.rs	checker.go:29834-29840	7	c.getContextualSignatureForFunctionLikeDeclaration
+E-CTX	checker/c48_contextual_types.rs	checker.go:29842-29871	30	c.getContextualTypeForYieldOperand closures=1
+E-CTX	checker/c48_contextual_types.rs	checker.go:29873-29882	10	c.getContextualTypeForAwaitOperand
+E-CTX	checker/c48_contextual_types.rs	checker.go:29885-29893	9	c.getContextualTypeForArgument
+E-CTX	checker/c48_contextual_types.rs	checker.go:29895-29922	28	c.getContextualTypeForArgumentAtIndex links=signatureLinks
+E-CTX	checker/c48_contextual_types.rs	checker.go:29924-29930	7	c.getContextualTypeForDecorator
+E-CTX	checker/c48_contextual_types.rs	checker.go:29932-29964	33	c.getContextualTypeForBinaryOperand
+E-CTX	checker/c48_contextual_types.rs	checker.go:29966-30041	76	c.getContextualTypeForAssignmentExpression
+E-CTX	checker/c48_contextual_types.rs	checker.go:30043-30082	40	c.getContextualTypeForObjectLiteralElement closures=1 links=valueSymbolLinks
+E-CTX	checker/c48_contextual_types.rs	checker.go:30087-30093	7	c.getContextualTypeForObjectLiteralMethod
+E-CTX	checker/c48_contextual_types.rs	checker.go:30095-30142	48	c.getContextualTypeForElementExpression closures=1
+E-CTX	checker/c48_contextual_types.rs	checker.go:30145-30151	7	c.getContextualTypeForConditionalOperand
+E-CTX	checker/c48_contextual_types.rs	checker.go:30153-30158	6	c.getContextualTypeForSubstitutionExpression
+E-CTX	checker/c48_contextual_types.rs	checker.go:30160-30162	3	c.getContextualImportAttributeType
+E-CALL	checker/c49_call_arguments_decorator_signatures.rs	checker.go:30165-30229	65	c.getEffectiveCallArguments
+E-CALL	checker/c49_call_arguments_decorator_signatures.rs	checker.go:30231-30233	3	c.getSpreadArgumentIndex
+E-CALL	checker/c49_call_arguments_decorator_signatures.rs	checker.go:30235-30237	3	isSpreadArgument
+E-CALL	checker/c49_call_arguments_decorator_signatures.rs	checker.go:30239-30244	6	c.createSyntheticExpression
+E-CALL	checker/c49_call_arguments_decorator_signatures.rs	checker.go:30246-30262	17	c.getSpreadIndices links=arrayLiteralLinks
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30674-30676	3	c.getTypeOfPropertyOfContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30678-30728	51	c.getTypeOfPropertyOfContextualTypeEx closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30730-30745	16	c.getIndexedMappedTypeSubstitutedTypeOfContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30747-30759	13	c.isExcludedMappedPropertyName closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30761-30767	7	c.getTypeOfConcretePropertyOfContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30769-30784	16	c.getTypeFromIndexInfosOfContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30786-30792	7	c.isCircularMappedProperty links=valueSymbolLinks
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30794-30805	12	c.appendContextualPropertyTypeConstituent
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30809-30834	26	c.getApparentTypeOfContextualType closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30842-30844	3	ObjectLiteralDiscriminator.len
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30846-30851	6	ObjectLiteralDiscriminator.name
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30853-30876	24	ObjectLiteralDiscriminator.matches
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30878-30906	29	c.discriminateContextualTypeByObjectMembers closures=2
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30908-30920	13	c.getMatchingUnionConstituentForObjectLiteral closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30925-30936	12	c.isPossiblyDiscriminantValue
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30940-30973	34	c.instantiateContextualType closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30978-30993	16	c.instantiateInstantiableTypes closures=2
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30995-30997	3	c.pushCachedContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:30999-31001	3	c.pushContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31003-31007	5	c.popContextualType
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31009-31016	8	c.findContextualNode
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31020-31052	33	c.isContextSensitive
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31054-31056	3	c.isContextSensitiveFunctionLikeDeclaration
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31058-31072	15	c.hasContextSensitiveReturnExpression closures=1
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31074-31076	3	c.hasContextSensitiveYieldExpression
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31078-31080	3	c.pushInferenceContext
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31082-31086	5	c.popInferenceContext
+E-CTX	checker/c50_contextual_properties_inference_context.rs	checker.go:31088-31095	8	c.getInferenceContext
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31097-31099	3	c.getTypeFacts
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31101-31103	3	c.hasTypeFacts
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31105-31239	135	c.getTypeFactsWorker
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31241-31257	17	c.getIntersectionTypeFacts
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31259-31261	3	isZeroBigInt
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31263-31271	9	c.isFunctionObjectType
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31273-31277	5	c.getTypeWithFacts closures=1
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31282-31300	19	c.getAdjustedTypeWithFacts closures=1
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31302-31322	21	c.removeNullableByIntersection closures=1
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31324-31329	6	c.recombineUnknownType
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31331-31337	7	c.getGlobalNonNullableTypeInstantiation
+E-FACTS	checker/c51_type_facts_awaited.rs	checker.go:31339-31347	9	c.convertAutoToAny
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31594-31596	3	c.isSomeSymbolAssigned
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31598-31605	8	c.isSomeSymbolAssignedWorker closures=1
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31614-31630	17	c.getNarrowableTypeForReference
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31632-31640	9	c.isConstraintPosition
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31642-31647	6	c.isGenericTypeWithUnionConstraint
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31649-31654	6	c.isGenericTypeWithoutNullableConstraint
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31656-31669	14	c.hasContextualTypeWithNoGenericTypes
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31671-31682	12	c.getNonUndefinedType closures=1
+F-NARROW	checker/c51_type_facts_awaited.rs	checker.go:31684-31692	9	c.isGenericTypeWithUndefinedConstraint
+F-NARROW	checker/flow.rs	flow.go:24-26	3	FlowType.isNil
+F-NARROW	checker/flow.rs	flow.go:28-33	6	c.newFlowType
+F-NARROW	checker/flow.rs	flow.go:52-59	8	c.getFlowState
+F-NARROW	checker/flow.rs	flow.go:61-67	7	c.putFlowState
+F-NARROW	checker/flow.rs	flow.go:69-75	7	getFlowNodeOfNode
+F-NARROW	checker/flow.rs	flow.go:77-79	3	c.getFlowTypeOfReference
+F-NARROW	checker/flow.rs	flow.go:81-115	35	c.getFlowTypeOfReferenceEx
+F-NARROW	checker/flow.rs	flow.go:117-206	90	c.getTypeAtFlowNode
+F-NARROW	checker/flow.rs	flow.go:208-218	11	getBranchLabelAntecedents
+F-NARROW	checker/flow.rs	flow.go:220-274	55	c.getTypeAtFlowAssignment
+F-NARROW	checker/flow.rs	flow.go:276-281	6	c.getInitialOrAssignedType
+F-NARROW	checker/flow.rs	flow.go:283-286	4	c.isEmptyArrayAssignment
+F-NARROW	checker/flow.rs	flow.go:288-314	27	c.getTypeAtFlowCall
+F-NARROW	checker/flow.rs	flow.go:316-336	21	c.narrowTypeByTypePredicate closures=1
+F-NARROW	checker/flow.rs	flow.go:338-352	15	c.narrowTypeByAssertion
+F-NARROW	checker/flow.rs	flow.go:354-373	20	c.getTypeAtFlowCondition
+F-NARROW	checker/flow.rs	flow.go:377-413	37	c.narrowType
+F-NARROW	checker/flow.rs	flow.go:415-426	12	c.narrowTypeByOptionality closures=1
+F-NARROW	checker/flow.rs	flow.go:428-442	15	c.narrowTypeByTruthiness closures=1
+F-NARROW	checker/flow.rs	flow.go:444-467	24	c.narrowTypeByCallExpression
+F-NARROW	checker/flow.rs	flow.go:469-554	86	c.narrowTypeByBinaryExpression
+F-NARROW	checker/flow.rs	flow.go:556-612	57	c.narrowTypeByEquality closures=2
+F-NARROW	checker/flow.rs	flow.go:614-633	20	c.narrowTypeByTypeof closures=1
+F-NARROW	checker/flow.rs	flow.go:646-655	10	c.narrowTypeByLiteralExpression
+F-NARROW	checker/flow.rs	flow.go:657-683	27	c.narrowTypeByTypeName
+F-NARROW	checker/flow.rs	flow.go:685-700	16	c.narrowTypeByTypeFacts closures=1
+F-NARROW	checker/flow.rs	flow.go:702-723	22	c.narrowTypeByDiscriminantProperty closures=1
+F-NARROW	checker/flow.rs	flow.go:725-748	24	c.narrowTypeByDiscriminant closures=1
+F-NARROW	checker/flow.rs	flow.go:750-758	9	c.isMatchingConstructorReference
+F-NARROW	checker/flow.rs	flow.go:760-792	33	c.narrowTypeByConstructor closures=1
+F-NARROW	checker/flow.rs	flow.go:794-804	11	c.isConstructedBy
+F-NARROW	checker/flow.rs	flow.go:806-809	4	c.narrowTypeByBooleanComparison
+F-NARROW	checker/flow.rs	flow.go:811-844	34	c.narrowTypeByInstanceof
+F-NARROW	checker/flow.rs	flow.go:846-857	12	c.getNarrowedType
+F-NARROW	checker/flow.rs	flow.go:859-964	106	c.getNarrowedTypeWorker closures=6
+F-NARROW	checker/flow.rs	flow.go:966-980	15	c.getInstanceType closures=1
+F-NARROW	checker/flow.rs	flow.go:982-999	18	c.narrowTypeByPrivateIdentifierInInExpression
+F-NARROW	checker/flow.rs	flow.go:1001-1022	22	c.narrowTypeByInKeyword closures=2
+F-NARROW	checker/flow.rs	flow.go:1024-1030	7	c.isTypePresencePossible
+F-NARROW	checker/flow.rs	flow.go:1032-1057	26	c.narrowTypeByOptionalChainContainment closures=2
+F-NARROW	checker/flow.rs	flow.go:1059-1089	31	c.getTypeAtSwitchClause closures=2
+F-NARROW	checker/flow.rs	flow.go:1091-1155	65	c.narrowTypeBySwitchOnDiscriminant closures=3
+F-NARROW	checker/flow.rs	flow.go:1157-1185	29	c.narrowTypeBySwitchOnTypeOf closures=3
+F-NARROW	checker/flow.rs	flow.go:1187-1221	35	c.narrowTypeBySwitchOnTrue closures=2
+F-NARROW	checker/flow.rs	flow.go:1223-1229	7	c.narrowTypeBySwitchOptionalChainContainment
+F-NARROW	checker/flow.rs	flow.go:1231-1251	21	c.narrowTypeBySwitchOnDiscriminantProperty closures=2
+F-NARROW	checker/flow.rs	flow.go:1253-1309	57	c.getTypeAtFlowBranchLabel
+F-NARROW	checker/flow.rs	flow.go:1314-1323	10	c.getUnionOrEvolvingArrayType
+F-NARROW	checker/flow.rs	flow.go:1325-1402	78	c.getTypeAtFlowLoopLabel
+F-NARROW	checker/flow.rs	flow.go:1404-1434	31	c.getTypeAtFlowArrayMutation
+F-NARROW	checker/flow.rs	flow.go:1436-1455	20	c.getDiscriminantPropertyAccess
+F-NARROW	checker/flow.rs	flow.go:1457-1494	38	c.getCandidateDiscriminantPropertyAccess
+F-NARROW	checker/flow.rs	flow.go:1496-1503	8	getCandidateVariableDeclarationInitializer
+F-NARROW	checker/flow.rs	flow.go:1509-1518	10	c.getEvolvingArrayType
+F-NARROW	checker/flow.rs	flow.go:1520-1525	6	c.getElementTypeOfEvolvingArrayType
+F-NARROW	checker/flow.rs	flow.go:1527-1538	12	isEvolvingArrayTypeList
+F-NARROW	checker/flow.rs	flow.go:1542-1552	11	c.isEvolvingArrayOperationTarget
+F-NARROW	checker/flow.rs	flow.go:1557-1564	8	c.addEvolvingArrayElementType
+F-NARROW	checker/flow.rs	flow.go:1566-1571	6	c.finalizeEvolvingArrayType
+F-NARROW	checker/flow.rs	flow.go:1573-1578	6	c.getFinalArrayType
+F-NARROW	checker/flow.rs	flow.go:1580-1588	9	c.createFinalArrayType
+F-NARROW	checker/flow.rs	flow.go:1590-1595	6	c.reportFlowControlError codes=2563
+F-NARROW	checker/flow.rs	flow.go:1597-1649	53	c.isMatchingReference
+F-NARROW	checker/flow.rs	flow.go:1657-1663	7	c.getFlowReferenceKey
+F-NARROW	checker/flow.rs	flow.go:1665-1725	61	c.writeFlowCacheKey
+F-NARROW	checker/flow.rs	flow.go:1727-1741	15	c.getAccessedPropertyName
+F-NARROW	checker/flow.rs	flow.go:1743-1751	9	c.tryGetElementAccessExpressionName
+F-NARROW	checker/flow.rs	flow.go:1753-1780	28	c.tryGetNameFromEntityNameExpression
+F-NARROW	checker/flow.rs	flow.go:1782-1790	9	tryGetNameFromType
+F-NARROW	checker/flow.rs	flow.go:1792-1804	13	c.getDestructuringPropertyName
+F-NARROW	checker/flow.rs	flow.go:1806-1812	7	c.getLiteralPropertyNameText
+F-NARROW	checker/flow.rs	flow.go:1814-1839	26	c.isConstantReference
+F-NARROW	checker/flow.rs	flow.go:1841-1849	9	c.containsMatchingReference
+F-NARROW	checker/flow.rs	flow.go:1851-1859	9	c.optionalChainContainsReference
+F-NARROW	checker/flow.rs	flow.go:1861-1874	14	c.getReferenceCandidate
+F-NARROW	checker/flow.rs	flow.go:1876-1884	9	c.getReferenceRoot
+F-NARROW	checker/flow.rs	flow.go:1886-1896	11	c.hasMatchingArgument
+F-NARROW	checker/flow.rs	flow.go:1898-1900	3	c.isOrContainsMatchingReference
+F-NARROW	checker/flow.rs	flow.go:1907-1926	20	c.replacePrimitivesWithLiterals closures=1
+F-NARROW	checker/flow.rs	flow.go:1928-1931	4	isCoercibleUnderDoubleEquals
+F-NARROW	checker/flow.rs	flow.go:1933-1947	15	c.isExhaustiveSwitchStatement links=switchStatementLinks
+F-NARROW	checker/flow.rs	flow.go:1949-1976	28	c.computeExhaustiveSwitchStatement closures=1
+F-NARROW	checker/flow.rs	flow.go:1978-1985	8	c.eachTypeContainedIn closures=1
+F-NARROW	checker/flow.rs	flow.go:1989-2009	21	c.getSwitchClauseTypeOfWitnesses links=switchStatementLinks
+F-NARROW	checker/flow.rs	flow.go:2012-2024	13	c.getNotEqualFactsFromTypeofSwitch
+F-NARROW	checker/flow.rs	flow.go:2026-2038	13	c.getSwitchClauseTypes links=switchStatementLinks
+F-NARROW	checker/flow.rs	flow.go:2040-2045	6	c.getTypeOfSwitchClause
+F-NARROW	checker/flow.rs	flow.go:2047-2088	42	c.getEffectsSignature links=signatureLinks
+F-NARROW	checker/flow.rs	flow.go:2093-2105	13	c.getSymbolHasInstanceMethodOfObjectType
+F-NARROW	checker/flow.rs	flow.go:2107-2116	10	c.getPropertyNameForKnownSymbolName
+F-NARROW	checker/flow.rs	flow.go:2122-2153	32	c.getTypeOfDottedName
+F-NARROW	checker/flow.rs	flow.go:2155-2195	41	c.getExplicitTypeOfSymbol codes=2782 DEFER@2160 links=mappedSymbolLinks
+F-NARROW	checker/flow.rs	flow.go:2197-2200	4	c.isDeclarationWithExplicitTypeAnnotation
+F-NARROW	checker/flow.rs	flow.go:2202-2209	8	c.isExpandoPropertyFunctionWithReturnTypeAnnotation
+F-NARROW	checker/flow.rs	flow.go:2211-2213	3	c.hasTypePredicateOrNeverReturnType
+F-NARROW	checker/flow.rs	flow.go:2215-2232	18	c.getExplicitThisType
+F-NARROW	checker/flow.rs	flow.go:2234-2242	9	c.getInitialType PANIC@2241
+F-NARROW	checker/flow.rs	flow.go:2244-2258	15	c.getInitialTypeOfVariableDeclaration
+F-NARROW	checker/flow.rs	flow.go:2260-2271	12	c.getTypeOfInitializer links=typeNodeLinks
+F-NARROW	checker/flow.rs	flow.go:2273-2286	14	c.getInitialTypeOfBindingElement
+F-NARROW	checker/flow.rs	flow.go:2288-2312	25	c.getAssignedType
+F-NARROW	checker/flow.rs	flow.go:2314-2321	8	c.getAssignedTypeOfBinaryExpression
+F-NARROW	checker/flow.rs	flow.go:2323-2325	3	c.getAssignedTypeOfArrayLiteralElement
+F-NARROW	checker/flow.rs	flow.go:2327-2337	11	c.getTypeOfDestructuredArrayElement
+F-NARROW	checker/flow.rs	flow.go:2339-2347	9	c.includeUndefinedInIndexSignature
+F-NARROW	checker/flow.rs	flow.go:2349-2351	3	c.getAssignedTypeOfSpreadExpression
+F-NARROW	checker/flow.rs	flow.go:2353-2359	7	c.getTypeOfDestructuredSpreadExpression
+F-NARROW	checker/flow.rs	flow.go:2361-2363	3	c.getAssignedTypeOfPropertyAssignment
+F-NARROW	checker/flow.rs	flow.go:2365-2378	14	c.getTypeOfDestructuredProperty
+F-NARROW	checker/flow.rs	flow.go:2380-2382	3	c.getAssignedTypeOfShorthandPropertyAssignment
+F-NARROW	checker/flow.rs	flow.go:2384-2387	4	c.isDestructuringAssignmentTarget
+F-NARROW	checker/flow.rs	flow.go:2389-2394	6	c.getTypeWithDefault
+F-NARROW	checker/flow.rs	flow.go:2399-2413	15	c.getAssignmentReducedType
+F-NARROW	checker/flow.rs	flow.go:2415-2432	18	c.getAssignmentReducedTypeWorker closures=1
+F-NARROW	checker/flow.rs	flow.go:2434-2449	16	c.typeMaybeAssignableTo
+F-NARROW	checker/flow.rs	flow.go:2451-2464	14	c.getTypePredicateArgument
+F-NARROW	checker/flow.rs	flow.go:2466-2486	21	c.getFlowTypeInConstructor codes=7008
+F-NARROW	checker/flow.rs	flow.go:2488-2511	24	c.getFlowTypeInStaticBlocks codes=7008
+F-REACH	checker/flow.rs	flow.go:2513-2520	8	c.isReachableFlowNode
+F-REACH	checker/flow.rs	flow.go:2522-2587	66	c.isReachableFlowNodeWorker
+F-REACH	checker/flow.rs	flow.go:2589-2600	12	c.isFalseExpression
+F-REACH	checker/flow.rs	flow.go:2604-2609	6	c.isPostSuperFlowNode
+F-REACH	checker/flow.rs	flow.go:2611-2652	42	c.isPostSuperFlowNodeWorker
+F-NARROW	checker/flow.rs	flow.go:2655-2658	4	c.isSymbolAssignedDefinitely links=markedAssignmentSymbolLinks
+F-NARROW	checker/flow.rs	flow.go:2661-2664	4	c.isSymbolAssigned links=markedAssignmentSymbolLinks
+F-NARROW	checker/flow.rs	flow.go:2668-2672	5	c.isPastLastAssignment links=markedAssignmentSymbolLinks
+F-NARROW	checker/flow.rs	flow.go:2674-2689	16	c.ensureAssignmentsMarked links=markedAssignmentSymbolLinks,nodeLinks
+F-NARROW	checker/flow.rs	flow.go:2691-2695	5	c.hasParentWithAssignmentsMarked closures=1 links=nodeLinks
+F-NARROW	checker/flow.rs	flow.go:2703-2747	45	c.markNodeAssignmentsWorker links=markedAssignmentSymbolLinks
+F-NARROW	checker/flow.rs	flow.go:2752-2764	13	c.extendAssignmentPosition

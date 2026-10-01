@@ -1,0 +1,108 @@
+lib.d.ts:es5 dom webworker.importscripts scripthost 
+lib.decorators.d.ts:
+lib.decorators.legacy.d.ts:
+lib.dom.asynciterable.d.ts:
+lib.dom.d.ts:es2015 es2018.asynciterable 
+lib.dom.iterable.d.ts:
+lib.es2015.collection.d.ts:
+lib.es2015.core.d.ts:
+lib.es2015.d.ts:es5 es2015.core es2015.collection es2015.iterable es2015.generator es2015.promise es2015.proxy es2015.reflect es2015.symbol es2015.symbol.wellknown 
+lib.es2015.generator.d.ts:es2015.iterable 
+lib.es2015.iterable.d.ts:es2015.symbol 
+lib.es2015.promise.d.ts:
+lib.es2015.proxy.d.ts:
+lib.es2015.reflect.d.ts:
+lib.es2015.symbol.d.ts:
+lib.es2015.symbol.wellknown.d.ts:es2015.symbol 
+lib.es2016.array.include.d.ts:
+lib.es2016.d.ts:es2015 es2016.array.include es2016.intl 
+lib.es2016.full.d.ts:es2016 dom webworker.importscripts scripthost dom.iterable 
+lib.es2016.intl.d.ts:
+lib.es2017.arraybuffer.d.ts:
+lib.es2017.d.ts:es2016 es2017.arraybuffer es2017.date es2017.intl es2017.object es2017.sharedmemory es2017.string es2017.typedarrays 
+lib.es2017.date.d.ts:
+lib.es2017.full.d.ts:es2017 dom webworker.importscripts scripthost dom.iterable 
+lib.es2017.intl.d.ts:
+lib.es2017.object.d.ts:
+lib.es2017.sharedmemory.d.ts:es2015.symbol es2015.symbol.wellknown 
+lib.es2017.string.d.ts:
+lib.es2017.typedarrays.d.ts:
+lib.es2018.asyncgenerator.d.ts:es2018.asynciterable 
+lib.es2018.asynciterable.d.ts:es2015.symbol es2015.iterable 
+lib.es2018.d.ts:es2017 es2018.asynciterable es2018.asyncgenerator es2018.promise es2018.regexp es2018.intl 
+lib.es2018.full.d.ts:es2018 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2018.intl.d.ts:
+lib.es2018.promise.d.ts:
+lib.es2018.regexp.d.ts:
+lib.es2019.array.d.ts:
+lib.es2019.d.ts:es2018 es2019.array es2019.object es2019.string es2019.symbol es2019.intl 
+lib.es2019.full.d.ts:es2019 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2019.intl.d.ts:
+lib.es2019.object.d.ts:es2015.iterable 
+lib.es2019.string.d.ts:
+lib.es2019.symbol.d.ts:
+lib.es2020.bigint.d.ts:es2020.intl 
+lib.es2020.d.ts:es2019 es2020.bigint es2020.date es2020.number es2020.promise es2020.sharedmemory es2020.string es2020.symbol.wellknown es2020.intl 
+lib.es2020.date.d.ts:es2020.intl 
+lib.es2020.full.d.ts:es2020 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2020.intl.d.ts:es2018.intl 
+lib.es2020.number.d.ts:es2020.intl 
+lib.es2020.promise.d.ts:
+lib.es2020.sharedmemory.d.ts:es2020.bigint 
+lib.es2020.string.d.ts:es2015.iterable es2020.intl es2020.symbol.wellknown 
+lib.es2020.symbol.wellknown.d.ts:es2015.iterable es2015.symbol 
+lib.es2021.d.ts:es2020 es2021.promise es2021.string es2021.weakref es2021.intl 
+lib.es2021.full.d.ts:es2021 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2021.intl.d.ts:
+lib.es2021.promise.d.ts:
+lib.es2021.string.d.ts:
+lib.es2021.weakref.d.ts:es2015.symbol.wellknown 
+lib.es2022.array.d.ts:
+lib.es2022.d.ts:es2021 es2022.array es2022.error es2022.intl es2022.object es2022.regexp es2022.string 
+lib.es2022.error.d.ts:es2021.promise 
+lib.es2022.full.d.ts:es2022 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2022.intl.d.ts:
+lib.es2022.object.d.ts:
+lib.es2022.regexp.d.ts:
+lib.es2022.string.d.ts:
+lib.es2023.array.d.ts:
+lib.es2023.collection.d.ts:
+lib.es2023.d.ts:es2022 es2023.array es2023.collection es2023.intl 
+lib.es2023.full.d.ts:es2023 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2023.intl.d.ts:
+lib.es2024.arraybuffer.d.ts:
+lib.es2024.collection.d.ts:
+lib.es2024.d.ts:es2023 es2024.arraybuffer es2024.collection es2024.object es2024.promise es2024.regexp es2024.sharedmemory es2024.string 
+lib.es2024.full.d.ts:es2024 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2024.object.d.ts:
+lib.es2024.promise.d.ts:
+lib.es2024.regexp.d.ts:
+lib.es2024.sharedmemory.d.ts:es2020.bigint 
+lib.es2024.string.d.ts:
+lib.es2025.collection.d.ts:es2024.collection 
+lib.es2025.d.ts:es2024 es2025.collection es2025.float16 es2025.intl es2025.iterator es2025.promise es2025.regexp 
+lib.es2025.float16.d.ts:es2015.symbol es2015.iterable 
+lib.es2025.full.d.ts:es2025 dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.es2025.intl.d.ts:es2018.intl 
+lib.es2025.iterator.d.ts:es2015.iterable 
+lib.es2025.promise.d.ts:
+lib.es2025.regexp.d.ts:
+lib.es5.d.ts:decorators decorators.legacy 
+lib.es6.d.ts:es2015 dom dom.iterable webworker.importscripts scripthost 
+lib.esnext.array.d.ts:
+lib.esnext.collection.d.ts:es2025.collection 
+lib.esnext.d.ts:es2025 esnext.intl esnext.collection esnext.decorators esnext.disposable esnext.array esnext.error esnext.sharedmemory esnext.typedarrays esnext.temporal esnext.date 
+lib.esnext.date.d.ts:esnext.temporal 
+lib.esnext.decorators.d.ts:es2015.symbol decorators 
+lib.esnext.disposable.d.ts:es2015.symbol es2015.iterable es2018.asynciterable 
+lib.esnext.error.d.ts:
+lib.esnext.full.d.ts:esnext dom webworker.importscripts scripthost dom.iterable dom.asynciterable 
+lib.esnext.intl.d.ts:esnext.temporal 
+lib.esnext.sharedmemory.d.ts:
+lib.esnext.temporal.d.ts:es2015.symbol.wellknown es2020.intl es2025.intl 
+lib.esnext.typedarrays.d.ts:
+lib.scripthost.d.ts:
+lib.webworker.asynciterable.d.ts:
+lib.webworker.d.ts:es2015 es2018.asynciterable 
+lib.webworker.importscripts.d.ts:
+lib.webworker.iterable.d.ts:

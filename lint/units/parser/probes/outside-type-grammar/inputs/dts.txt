@@ -1,0 +1,91 @@
+function f(): void;
+function f(a: number): void; function f(a: string): void;
+function f(...a: any[], ): void;
+function f(a = 1): void;
+function f() {}
+async function f(): Promise<void>;
+function* f(): void;
+const x: number;
+const x = 1;
+const x = "a";
+const x = 1 + 1;
+const x: number = 1;
+let x: number;
+let x = 1;
+var x: number;
+var x;
+using x: number;
+class C { m(): void; x: number; }
+class C { m() {} }
+class C { x = 1; }
+class C { constructor(public a: number); }
+class C { get x(): number; set x(v: number); }
+class C { static { } }
+class C { m(...a: any[], ): void }
+abstract class C { abstract m(): void; }
+enum E { A, B = 2, C = A }
+const enum E { A }
+enum E { A = f() }
+namespace N { const x: number; function f(): void; }
+namespace N { export const x: number; }
+module N {}
+module "m" {}
+module "m" { export const x: number; }
+module "m";
+global {}
+global { var x: number; }
+export {}; global { var x: number; }
+export {}; declare global { var x: number; }
+interface I {}
+type T = 1;
+import a from "b";
+import a = require("b");
+import type a from "b";
+export const x: number;
+export let x: number;
+export function f(): void;
+export default function f(): void;
+export default function (): void;
+export default class C { m(): void }
+export default class { m(): void }
+export default interface I {}
+export default 1;
+export default x;
+export default abstract class C {}
+export = x;
+export as namespace X;
+export * from "a";
+export { a };
+export { a } from "b";
+export declare const x: number;
+declare const x: number;
+declare function f(): void;
+declare class C {}
+declare namespace N {}
+declare module "m" {}
+declare global {}
+x;
+x = 1;
+if (a) {}
+for (;;) {}
+{ }
+;
+label: x;
+return;
+debugger;
+throw x;
+try {} catch {}
+"use strict";
+f();
+new C;
+import("x");
+export default f();
+// @ts-ignore\nexport const x: T;
+/// <reference path="a.d.ts" />\ndeclare const x: number;
+/// <reference types="node" />
+/// <reference lib="es2015" />
+/// <reference no-default-lib="true"/>
+/// <amd-module name="x" />
+/// <amd-dependency path="x" />
+// @ts-nocheck\nconst x: number = "a";
+// @ts-check

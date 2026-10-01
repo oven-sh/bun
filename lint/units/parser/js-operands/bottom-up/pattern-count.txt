@@ -1,0 +1,37 @@
+{
+ "files": 39630,
+ "counts": {
+  "paren-colon-ident-arrow  `? (x) : y =>`": {
+   "files": 1,
+   "eg": [
+    "test/bundler/transpiler/transpiler.test.js: \"? (b) : c =>\""
+   ]
+  },
+  "case-paren-colon-arrow   `case (x): y =>`": {
+   "files": 0,
+   "eg": []
+  },
+  "lt-ident-gt-paren        `a < b > (`": {
+   "files": 47,
+   "eg": [
+    "test/bundler/transpiler/transpiler.test.js: \"n <T>(\"",
+    "test/bundler/transpiler/react-compiler-fixtures/hir_id_numbering.js: \"s<T>(\"",
+    "test/bundler/transpiler/react-compiler-fixtures/error.bug-hir_loc_diff_2.js: \"t<string>(\"",
+    "test/bundler/transpiler/react-compiler-fixtures/gating/gating-with-hoisted-type-reference.flow.js: \"o<Props>(\""
+   ]
+  },
+  "class-modifier-newline   `public\\n x`": {
+   "files": 0,
+   "eg": []
+  },
+  "jsx-extends-attr         `<A extends b`": {
+   "files": 17,
+   "eg": [
+    "test/bundler/transpiler/transpiler.test.js: \"<T extends o\"",
+    "test/bundler/transpiler/react-compiler-fixtures/error.todo-pattern3_type_to_poly.js: \"<TValue extends s\"",
+    "test/node_modules/.bun/yup@0.32.11/node_modules/yup/lib/schema.js: \"<TContext extends A\"",
+    "test/node_modules/.bun/yup@0.32.11/node_modules/yup/es/schema.js: \"<TContext extends A\""
+   ]
+  }
+ }
+}

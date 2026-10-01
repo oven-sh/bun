@@ -1,0 +1,15 @@
+PARSE jsdecl.js parse=[] js=[] bind=[]
+jsdecl.js(1,19)+4: error TS2683: 'this' implicitly has type 'any' because it does not have a type annotation.
+jsdecl.js(1,31)+4: error TS2683: 'this' implicitly has type 'any' because it does not have a type annotation.
+jsdecl.js(5,17)+14: error TS7008: Member 'expando' implicitly has an 'any[]' type.
+jsdecl.js(5,33)+15: error TS7008: Member 'n' implicitly has an 'any' type.
+jsdecl.js(6,1)+25: error TS2309: An export assignment cannot be used in a module with other exported elements.
+jsdecl.js(6,43)+1: error TS2339: Property 'b' does not exist on type '{ a: number; }'.
+jsdecl.js(6,58)+1: error TS2339: Property 'c' does not exist on type '{ a: number; }'.
+jsdecl.js(6,81)+1: error TS2339: Property 'c' does not exist on type '{ a: number; }'.
+jsdecl.js(8,32)+1: error TS2322: Type 'string' is not assignable to type 'number'.
+  related jsdecl.js(7,17)+1: message TS6500: The expected type comes from property 'x' which is declared here on type 'TD'
+jsdecl.js(9,65)+1: error TS2339: Property 'y' does not exist on type 'number'.
+RESOLUTIONDEPTH 3 [symbol:module symbol:exports symbol:exports]
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=10 IsSourceFileDefaultLibrary=1 Options=1 SourceFiles=1
+COUNTS TypeCount=139 SymbolCount=38 SignatureCount=17 TotalInstantiationCount=3

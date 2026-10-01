@@ -1,0 +1,173 @@
+diff -ru a/context.rs b/context.rs
+--- a/context.rs	2026-09-30 02:45:11.102420895 +0000
++++ b/context.rs	2026-09-30 02:49:20.124320439 +0000
+@@ -2,7 +2,7 @@
+ 
+ use std::borrow::Cow;
+ 
+-use bun_ast::{E, Expr, Loc, Log, Ref, Source};
++use bun_ast::{Case, E, Expr, Loc, Log, Ref, Source};
+ use bun_core::StackCheck;
+ use bun_js_parser::parse::parse_entry::ParsedOnly;
+ 
+@@ -50,6 +50,9 @@
+     cut: bool,
+ }
+ 
++/// A left operand longer than this is not read again to find where its comparison starts.
++const MAX_LEFT_OPERAND: i32 = 4096;
++
+ /// C2 owns this word: the code of a diagnostic that is about the linter and not about the program.
+ const INTERNAL_ERROR: &str = "internal-error";
+ 
+@@ -173,7 +176,11 @@
+         if tokens::before_opens(self.text(), at, 1).1 == 1 {
+             return own;
+         }
+-        self.start_of(own, node.right.loc, &[&node.left, &node.right])
++        // Every link of a chain of comparisons starts at the same token: each would read the chain before it again.
++        if node.right.loc.start.saturating_sub(own.start) > MAX_LEFT_OPERAND {
++            return own;
++        }
++        self.start_of(own, node.right.loc, &[&node.left])
+             .map_or(own, |(start, _)| start)
+     }
+ 
+@@ -199,8 +206,11 @@
+         tokens::case_key(&mut tokens, self.text())
+     }
+ 
+-    /// Where the clause with the test `value` starts: the `case` that the text before the test shows, else the test.
+-    pub(crate) fn case_start(&self, value: &Expr) -> Loc {
++    /// Where a clause starts: the keyword the parser recorded, else the `case` the text before the test shows, else the test.
++    pub(crate) fn case_start(&self, case: &Case, value: &Expr) -> Loc {
++        if case.loc.start >= 0 {
++            return case.loc;
++        }
+         u32::try_from(value.loc.start)
+             .ok()
+             .and_then(|own| tokens::case_before(self.text(), own))
+@@ -231,7 +241,7 @@
+         let mut log = Log::init();
+         let mut tokens = Tokens::new(&mut log, self.source, self.arena, &[], at);
+         match tokens.next() {
+-            Some(token) if token.start == at => token.end - token.start,
++            Some(token) if token.start == at => token.end.saturating_sub(token.start),
+             _ => 0,
+         }
+     }
+diff -ru a/rules/no_duplicate_case.rs b/rules/no_duplicate_case.rs
+--- a/rules/no_duplicate_case.rs	2026-09-30 02:45:11.101964425 +0000
++++ b/rules/no_duplicate_case.rs	2026-09-30 02:49:20.124539728 +0000
+@@ -28,8 +28,8 @@
+     let mut previous: Option<&[u8]> = None;
+     for (key, index) in &tests {
+         if previous == Some(key.as_slice()) {
+-            if let Some(value) = cases.get(*index).and_then(|case| case.value.as_ref()) {
+-                let start = context.case_start(value);
++            if let Some((case, Some(value))) = cases.get(*index).map(|case| (case, &case.value)) {
++                let start = context.case_start(case, value);
+                 context.report(&RULE, start, b"Duplicate case label.");
+             }
+         }
+diff -ru a/rules/use_isnan.rs b/rules/use_isnan.rs
+--- a/rules/use_isnan.rs	2026-09-30 02:45:11.102150718 +0000
++++ b/rules/use_isnan.rs	2026-09-30 02:49:20.124465817 +0000
+@@ -76,7 +76,7 @@
+         if names.is_none() {
+             continue;
+         }
+-        let start = context.case_start(value);
++        let start = context.case_start(case, value);
+         context.report_if_global(
+             &RULE,
+             start,
+diff -ru a/tokens.rs b/tokens.rs
+--- a/tokens.rs	2026-09-30 02:45:11.102310363 +0000
++++ b/tokens.rs	2026-09-30 02:49:20.117320236 +0000
+@@ -1,5 +1,7 @@
+ //! The one re-scan of source text: Bun's lexer seated at an offset, told by the tree where a regular expression or JSX is.
+ 
++use core::marker::PhantomData;
++
+ use bun_ast::lexer_tables::T;
+ use bun_ast::walk::{self, Visitor};
+ use bun_ast::{E, Expr, Loc, Log, Source};
+@@ -68,6 +70,14 @@
+         walk::walk_stmt(self, stmt);
+     }
+ 
++    fn visit_binding(&mut self, binding: &'ast bun_ast::Binding) {
++        if !self.stack_check.is_safe_to_recurse() {
++            self.cut = true;
++            return;
++        }
++        walk::walk_binding(self, binding);
++    }
++
+     fn visit_e_reg_exp(&mut self, node: &'ast E::RegExp, loc: Loc) {
+         let Ok(start) = u32::try_from(loc.start) else {
+             self.cut = true;
+@@ -125,28 +135,31 @@
+     }
+ }
+ 
+-pub(crate) struct Tokens<'c, 's> {
++pub(crate) struct Tokens<'l, 'c, 's> {
+     lexer: Lexer<'s>,
+     source: &'s [u8],
+     spans: &'c [Span],
+     /// One entry per template substitution that is open: the `{` inside it that wait for their `}`.
+     templates: Vec<u32>,
++    /// The lexer writes to the log through a pointer: this borrow keeps the log alive and unused meanwhile.
++    log: PhantomData<&'l mut Log>,
+ }
+ 
+-impl<'c, 's> Tokens<'c, 's> {
++impl<'l, 'c, 's> Tokens<'l, 'c, 's> {
+     /// `log` takes what the lexer says about text it cannot read: nobody prints it.
+     pub(crate) fn new(
+-        log: &mut Log,
++        log: &'l mut Log,
+         source: &'s Source,
+         arena: &'s bun_alloc::Arena,
+         spans: &'c [Span],
+         from: u32,
+-    ) -> Tokens<'c, 's> {
++    ) -> Tokens<'l, 'c, 's> {
+         let mut tokens = Tokens {
+             lexer: Lexer::init_without_reading(log, source, arena),
+             source: &source.contents,
+             spans,
+             templates: Vec::new(),
++            log: PhantomData,
+         };
+         tokens.seat(from);
+         tokens
+@@ -238,7 +251,7 @@
+ }
+ 
+ /// What ESLint compares of a `case` test, its tokens, as bytes: read from its first own token to the `:` of its clause.
+-pub(crate) fn case_key(tokens: &mut Tokens<'_, '_>, source: &[u8]) -> Option<Vec<u8>> {
++pub(crate) fn case_key(tokens: &mut Tokens<'_, '_, '_>, source: &[u8]) -> Option<Vec<u8>> {
+     let mut out: Vec<Token> = Vec::new();
+     // One entry per open bracket: the token that closes it, and the `?` of the level around it that wait.
+     let mut stack: Vec<(T, u32)> = Vec::new();
+@@ -371,7 +384,7 @@
+ }
+ 
+ /// How many `)` between `from` and `to` close a `(` that stands before `from`. `to` is where a token starts.
+-pub(crate) fn closes_between(tokens: &mut Tokens<'_, '_>, to: u32) -> Option<u32> {
++pub(crate) fn closes_between(tokens: &mut Tokens<'_, '_, '_>, to: u32) -> Option<u32> {
+     let mut depth = 0i32;
+     let mut lowest = 0i32;
+     loop {
+@@ -394,7 +407,7 @@
+ }
+ 
+ /// The `]` that closes a `[` standing before the first token read.
+-pub(crate) fn close_bracket(tokens: &mut Tokens<'_, '_>) -> Option<u32> {
++pub(crate) fn close_bracket(tokens: &mut Tokens<'_, '_, '_>) -> Option<u32> {
+     let mut depth = 0u32;
+     loop {
+         let token = tokens.next()?;

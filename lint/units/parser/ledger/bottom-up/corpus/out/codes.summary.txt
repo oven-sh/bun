@@ -1,0 +1,274 @@
+First parse diagnostic of tsc for the inputs it rejects as input.ts.
+both reject: 168568 rows; the first error of the bun side is at tsc's start (same line and column): 116682; same line, other column: 51227
+
+code	rows where both reject	rows where only tsc rejects (set B)
+TS1005	102339	7526
+TS1110	25278	5856
+TS1109	11050	1501
+TS1131	6157	3718
+TS1138	4677	0
+TS1003	4464	152
+TS1144	3722	132
+TS1359	3582	155
+TS1442	1737	185
+TS1139	934	0
+TS1136	647	163
+TS1128	759	28
+TS1385	19	402
+TS1146	343	70
+TS1434	333	6
+TS1011	153	145
+TS1137	232	64
+TS1068	242	2
+TS1478	154	56
+TS1390	193	0
+TS1387	0	192
+TS1477	16	152
+TS1441	145	22
+TS1433	133	0
+TS1386	0	130
+TS1135	116	0
+TS2819	110	0
+TS2754	109	0
+TS1436	98	0
+TS1389	75	0
+TS1034	71	2
+TS1160	69	0
+TS1260	25	37
+TS2427	60	0
+TS2457	59	0
+TS1388	0	59
+TS1228	57	0
+TS1125	25	31
+TS1134	52	0
+TS1357	40	8
+TS1180	42	5
+TS1351	40	0
+TS1181	31	8
+TS1002	38	0
+TS1161	28	0
+TS1132	21	0
+TS1121	2	17
+TS17006	15	0
+TS1084	0	14
+TS1127	8	0
+TS6188	7	0
+TS1010	6	0
+TS17007	0	6
+TS1142	5	0
+TS1437	5	0
+TS6189	5	0
+TS1435	4	0
+TS1487	4	0
+TS1489	3	1
+TS1209	1	2
+TS1440	3	0
+TS1443	3	0
+TS18009	3	0
+TS18030	1	2
+TS1453	0	3
+TS1124	2	0
+TS1177	2	0
+TS1438	2	0
+TS1472	2	0
+TS18026	2	0
+TS1129	1	0
+TS1130	1	0
+TS1185	1	0
+TS1198	1	0
+TS1199	1	0
+TS1352	1	0
+TS1353	1	0
+TS2809	1	0
+
+The first message of the bun side against the first code of tsc, rows where both reject (view ts):
+  71722  Unexpected <token>
+           TS1005x28045 TS1110x22719 TS1109x7915 TS1131x4705 TS1138x3649 TS1359x1890 TS1128x633 TS1003x521 TS1144x413 TS1136x281 (+26 more codes)
+  22783  Expected ";" but found <token>
+           TS1005x15688 TS1144x3264 TS1442x1482 TS1110x375 TS1434x320 TS1138x272 TS1003x261 TS1359x216 TS1068x153 TS1441x113 (+19 more codes)
+  22327  Expected ")" but found <token>
+           TS1005x20528 TS1110x585 TS1109x534 TS1359x180 TS1138x170 TS1131x125 TS1433x73 TS1003x67 TS1144x21 TS1136x20 (+7 more codes)
+  12535  Expected "]" but found <token>
+           TS1005x11786 TS1110x260 TS1109x241 TS1131x108 TS1003x33 TS1136x32 TS1138x31 TS1011x22 TS1137x14 TS1359x8
+   9470  Expected identifier but found <token>
+           TS1003x3353 TS1359x960 TS1005x952 TS1139x864 TS1131x784 TS1109x570 TS1138x464 TS1136x312 TS1110x279 TS1146x164 (+21 more codes)
+   6586  Expected ">" but found <token>
+           TS1005x6272 TS1109x155 TS1110x84 TS1146x33 TS1003x20 TS1359x7 TS1139x5 TS1131x4 TS1385x3 TS1136x2 (+1 more codes)
+   4602  Expected "(" but found <token>
+           TS1005x4006 TS1109x463 TS1110x68 TS1359x29 TS1003x12 TS1144x9 TS1137x6 TS1135x3 TS1442x3 TS1011x2 (+1 more codes)
+   4487  Expected "{" but found <token>
+           TS1005x4201 TS1109x205 TS1011x24 TS1135x24 TS1138x11 TS1359x8 TS1131x6 TS1003x5 TS1128x2 TS1161x1
+   2820  Expected "?" but found <token>
+           TS1005x2763 TS1109x44 TS1131x5 TS1011x4 TS1128x2 TS1146x1 TS1442x1
+   2254  Expected ":" but found <token>
+           TS1005x2201 TS1109x28 TS1131x14 TS1011x4 TS1138x4 TS1003x2 TS1442x1
+   2115  Unexpected end of file
+           TS1005x1894 TS1131x161 TS1109x33 TS1110x25 TS1128x2
+   1655  Expected "}" but found <token>
+           TS1005x1573 TS1357x35 TS1131x21 TS1138x12 TS1003x10 TS1109x2 TS1161x2
+    790  Expected "{" but found end of file
+           TS1005x459 TS1109x325 TS1011x6
+    617  Expected string but found <token>
+           TS1110x497 TS1005x53 TS1135x30 TS1109x16 TS1003x15 TS1011x4 TS1131x2
+    520  Expected "}" but found end of file
+           TS1005x478 TS1131x42
+    518  The modifier "in" is not valid here
+           TS1005x258 TS1359x140 TS1109x63 TS1138x30 TS1110x22 TS1131x4 TS1161x1
+    401  The modifier "out" is not valid here
+           TS1005x198 TS1359x115 TS1109x30 TS1138x30 TS1110x22 TS1131x4 TS1003x1 TS1161x1
+    360  Expected "class" but found <token>
+           TS1109x279 TS1146x77 TS1005x2 TS1003x1 TS1433x1
+    331  Expected number but found <token>
+           TS1110x271 TS1005x29 TS1109x28 TS1138x3
+    306  Expected "=>" but found <token>
+           TS1005x247 TS1110x31 TS1109x17 TS1003x6 TS1131x3 TS1138x1 TS1433x1
+    252  Invalid binding pattern
+           TS1005x219 TS1359x20 TS1109x8 TS1003x5
+    142  Expected "]" but found end of file
+           TS1005x80 TS1131x48 TS1109x12 TS1011x2
+    122  Syntax Error
+           TS1351x39 TS1125x25 TS1161x23 TS6188x7 TS6189x5 TS1127x4 TS1005x3 TS1489x3 TS1121x2 TS1124x2 (+7 more codes)
+    107  Unterminated string literal
+           TS1160x67 TS1002x38 TS1131x1 TS1487x1
+     71  Expected "from" but found <token>
+           TS1005x67 TS1109x4
+     62  Expected "as" but found <token>
+           TS1003x57 TS1005x5
+     49  Invalid field name
+           TS1005x48 TS1068x1
+     41  Invalid assignment target
+           TS1005x41
+     38  Expected identifier but found ""T""
+           TS1139x38
+     32  Expected "=" but found <token>
+           TS1005x32
+     31  Expected "(" but found ""x""
+           TS1005x29 TS1109x2
+     31  Unsupported syntax: Legacy HTML comments not implemented yet!
+           TS1110x16 TS1139x12 TS1109x2 TS1005x1
+     25  Expected identifier but found ""a""
+           TS1003x25
+     24  Expected identifier but found end of file
+           TS1003x13 TS1005x8 TS1109x2 TS1128x1
+     23  Expected number but found ""s""
+           TS1110x22 TS1005x1
+     23  Expected identifier but found ""s""
+           TS1003x23
+     23  Expected identifier but found ""b""
+           TS1003x23
+     22  Cannot use "yield" outside a generator function
+           TS1005x21 TS1109x1
+     16  Expected ">" but found end of file
+           TS1005x14 TS1131x2
+     15  Expected "namespace" but found <token>
+           TS1005x15
+     14  Expected "?" but found end of file
+           TS1005x5 TS1131x5 TS1109x4
+     14  Expected ";" but found ""s""
+           TS1005x7 TS1442x4 TS1144x3
+     13  Expected "{" but found ""y""
+           TS1005x13
+     13  Expected "(" but found end of file
+           TS1005x12 TS1109x1
+     12  Expected "=>" but found end of file
+           TS1005x7 TS1109x5
+     12  Expected "{" but found ""n""
+           TS1005x12
+     12  Expected ")" but found end of file
+           TS1005x11 TS1131x1
+     11  Cannot use "await" here
+           TS1005x11
+     10  Expected ":" but found end of file
+           TS1005x7 TS1131x3
+      9  The modifier "const" is not valid here
+           TS1359x9
+      7  Expected "class" but found end of file
+           TS1146x5 TS1005x1 TS1109x1
+      6  Expected ";" but found ""x""
+           TS1434x4 TS1005x1 TS1128x1
+      6  Expected "*/" to terminate multi-line comment
+           TS1010x6
+      5  Expected ")" but found ""s""
+           TS1005x5
+      5  The keyword "await" cannot be used here
+           TS1109x5
+      4  Expected "=" but found end of file
+           TS1005x4
+      4  Expected "from" but found ""x""
+           TS1005x4
+      4  Expected "function" but found <token>
+           TS1128x4
+      3  The constant "a" must be initialized
+           TS1005x2 TS1128x1
+      3  The constant "x" must be initialized
+           TS1128x2 TS1005x1
+      3  Expected "from" but found ""m""
+           TS1005x3
+      3  Expected ";" but found ""m""
+           TS1005x2 TS1003x1
+      3  Treating "-->" as the start of a legacy HTML single-line comment
+           TS1109x3
+      2  Expected ";" but found ""X""
+           TS2457x2
+      2  Cannot use "yield" or "await" here.
+           TS1005x2
+      2  Expected ";" but found ""n""
+           TS1005x2
+      2  Expected ";" but found ""N""
+           TS1003x2
+      2  Expected identifier but found ""E""
+           TS1003x2
+      2  Expected identifier but found ""A""
+           TS1003x1 TS2427x1
+      2  Expected "of" but found <token>
+           TS1005x2
+      2  Expected "finally" but found end of file
+           TS1472x2
+      2  Cannot use an "import" expression here without parentheses
+           TS1109x2
+      2  Invalid legacy octal literal
+           TS1487x2
+      2  Expected string but found end of file
+           TS1109x2
+      2  Expected "meta" but found <token>
+           TS1005x2
+      1  Expected ">" but found ""s""
+           TS1005x1
+      1  Expected "]" but found ""s""
+           TS1005x1
+      1  Expected identifier but found ""I""
+           TS2427x1
+      1  <word> is a reserved word and cannot be used in strict mode
+           TS1128x1
+      1  Expected identifier but found ""C""
+           TS1005x1
+      1  Expected "=" but found ""x""
+           TS1005x1
+      1  Expected identifier but found ""x""
+           TS1003x1
+      1  Expected identifier but found ""X""
+           TS1003x1
+      1  Expected identifier but found ""e""
+           TS1181x1
+      1  Expected identifier but found ""m""
+           TS1003x1
+      1  Expected "}" but found ""a""
+           TS1003x1
+      1  Expected ";" but found ""A""
+           TS2457x1
+      1  Expected ";" but found ""foo""
+           TS1003x1
+      1  Expected number but found ""a""
+           TS1110x1
+      1  Expected "case" but found <token>
+           TS1130x1
+      1  Expected "while" but found <token>
+           TS1005x1
+      1  Cannot use "yield" here
+           TS1005x1
+      1  Invalid identifier: "a b"
+           TS1127x1
+      1  Unicode escape sequence is out of range
+           TS1198x1
+      1  Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator
+           TS1209x1

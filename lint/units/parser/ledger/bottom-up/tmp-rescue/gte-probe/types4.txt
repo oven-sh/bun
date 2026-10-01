@@ -1,0 +1,72 @@
+import("x")["a"]
+import("x")[]
+import("x")
+import("x").A
+import("x").A.B
+import("x").A[]
+typeof import("x")
+typeof import("x")[]
+unique symbol[]
+(unique symbol)[]
+unique symbol
+asserts[]
+abstract[]
+asserts.a
+abstract.a.b
+string.a
+any.a
+number.a.b
+object.a
+undefined.a
+never.a
+string.a | string.a
+this
+this[]
+this["a"]
+this | string
+this | this
+null[]
+void[]
+never[]
+A!
+A![]
+string!
+never! | string
+(never)! | string
+A[]!
+-1
+-1n
+- 1
+-1 | 1
+`a` | "b"
+keyof A[]
+keyof A | keyof A
+readonly string[][]
+readonly string[]["length"]
+readonly string[] | readonly number[]
+(readonly string[])[]
+A<B>[]
+A<B>["x"]
+A.B[]
+A.B["x"]
+A.B<C>
+A.B.C<D>[]
+typeof a[]
+typeof a["x"]
+typeof a.b[]
+typeof a<B>
+{}[]
+{}["a"]
+[][]
+[]["length"]
+[][number]
+(() => void)[]
+(() => void)["name"]
+(A | B)[]
+(string | number)["x"]
+(string)
+(string)[]
+((string)[])
+(A)
+(A.B)
+(A<B>)

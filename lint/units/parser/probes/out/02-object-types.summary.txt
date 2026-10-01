@@ -1,0 +1,872 @@
+group 02-object-types  dialect ts  config plain  inputs 2851
+counts A1=44 A1c=19 A1s=25 A2=115 AA=1702 AAg=276 B=176 RR=538
+
+calls of Bun that differ from transformSync without tsconfig: 7 inputs
+  "type X = { a(1): A };"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "type X = { (: A): B };"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "interface I { a(1): A }"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "interface I { (: A): B }"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "let x: { a(1): A } | undefined;"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "let x: { (: A): B } | undefined;"  base="Backtrack"  ts.plain.scanImports="Backtrack Failed to scan imports" ts.deco.scanImports="Backtrack Failed to scan imports" tsx.plain.scanImports="Backtrack Failed to scan imports" tsx.deco.scanImports="Backtrack Failed to scan imports"
+  "export interface in {}"  base="\"interface\" is a reserved word and cannot be used in strict mode"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family member  (1413 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:812-929 skip_type_script_object_type (one loop, 826-832 swallows every run of names)
+  ref: parser.go:3222 parseTypeMember, 3620 parsePropertyOrMethodSignature, 3249 parseSignatureMember, 3476 parseAccessorDeclaration, 3611 parseIndexSignatureDeclaration, 3466 parseTypeMemberSemicolon
+  counts A1=12 A2=89 AA=868 AAg=151 B=102 RR=191
+  -- A1: 4 distinct
+    "a(b = 1): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected ")" but found "=" @form+4
+    "a(public b: B): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected ")" but found "b" @form+9
+    "get #a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected #a @form+4
+    "(a = 1): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected ")" but found "=" @form+3
+  -- A2: 27 distinct
+    "1n: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected 1n @form+0
+        tsc x3: TS1539 @form+0 len 2 "A 'bigint' literal cannot be used as a property name."
+    "[a + b]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "+" @form+3
+        tsc x2: TS1170 @form+0 len 7 "A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type."
+        tsc x1: TS1169 @form+0 len 7 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "#a: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected #a @form+0
+        tsc x3: TS18016 @form+0 len 2 "Private identifiers are not allowed outside class bodies."
+    "#a?: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected #a @form+0
+        tsc x3: TS18016 @form+0 len 2 "Private identifiers are not allowed outside class bodies."
+    "readonly #a: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected #a @form+9
+        tsc x3: TS18016 @form+9 len 2 "Private identifiers are not allowed outside class bodies."
+    "a: A = 1"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected = @form+5
+        tsc x2: TS1247 @form+7 len 1 "A type literal property cannot have an initializer."
+        tsc x1: TS1246 @form+7 len 1 "An interface property cannot have an initializer."
+    "a?: A = 1"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected = @form+6
+        tsc x2: TS1247 @form+8 len 1 "A type literal property cannot have an initializer."
+        tsc x1: TS1246 @form+8 len 1 "An interface property cannot have an initializer."
+    "readonly a: A = 1"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected = @form+14
+        tsc x2: TS1247 @form+16 len 1 "A type literal property cannot have an initializer."
+        tsc x1: TS1246 @form+16 len 1 "An interface property cannot have an initializer."
+    "#a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected #a @form+0
+        tsc x3: TS18016 @form+0 len 7 "Private identifiers are not allowed outside class bodies."
+    "get a(): A {}"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected { @form+11
+        tsc x3: TS1183 @form+11 len 2 "An implementation cannot be declared in ambient contexts."
+    "set a(v: A) {}"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected { @form+12
+        tsc x3: TS1183 @form+12 len 2 "An implementation cannot be declared in ambient contexts."
+    "set a(v = 1)"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected ")" but found "=" @form+8
+        tsc x3: TS1052 @form+4 len 1 "A 'set' accessor parameter cannot have an initializer."
+    "<>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected identifier but found ">" @form+1
+        tsc x3: TS1098 @form+0 len 2 "Type parameter list cannot be empty."
+    "<in T>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: The modifier "in" is not valid here @form+1
+        tsc x3: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+    "<out T>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: The modifier "out" is not valid here @form+1
+        tsc x3: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+    "<in out T>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: The modifier "in" is not valid here @form+1
+        tsc x3: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+    "[k?: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "?" @form+2
+        tsc x3: TS1019 @form+2 len 1 "An index signature parameter cannot have a question mark."
+    "[k: string, l: number]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "," @form+10
+        tsc x3: TS1096 @form+1 len 1 "An index signature must have exactly one parameter."
+    "[...k: string[]]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected ... @form+1
+        tsc x3: TS1017 @form+1 len 3 "An index signature cannot have a rest parameter."
+    "[k,]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "," @form+2
+        tsc x3: TS1022 @form+1 len 1 "An index signature parameter must have a type annotation."
+        tsc x3: TS1025 @form+2 len 1 "An index signature cannot have a trailing comma."
+    "[k: string,]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "," @form+10
+        tsc x3: TS1025 @form+10 len 1 "An index signature cannot have a trailing comma."
+    "[]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Unexpected ] @form+1
+        tsc x3: TS1096 @form+0 len 5 "An index signature must have exactly one parameter."
+    "[k = 1]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "=" @form+3
+        tsc x2: TS1170 @form+0 len 7 "A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type."
+        tsc x1: TS1169 @form+0 len 7 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[k: string = 1]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "=" @form+11
+        tsc x3: TS1020 @form+1 len 1 "An index signature parameter cannot have an initializer."
+    "[public k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "k" @form+8
+        tsc x3: TS1018 @form+8 len 1 "An index signature parameter cannot have an accessibility modifier."
+    "[private k]: A"
+        contexts (3 of 3): typeLit iface varLit
+        bun x3: Expected "]" but found "k" @form+9
+        tsc x3: TS1018 @form+9 len 1 "An index signature parameter cannot have an accessibility modifier."
+    "{ a: A = 1 }"
+        contexts (11 of 12): var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x9: Unexpected = @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x11: TS1247 @form+9 len 1 "A type literal property cannot have an initializer."
+  -- B: 34 distinct
+    "-1: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "a!: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "a!"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "a A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "a<T>: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+4 len 1 "'(' expected."
+    "default a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+8 len 1 "';' expected."
+    "const a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+6 len 1 "';' expected."
+    "readonly get a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 8 "Property or signature expected."
+    "static get a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 6 "Property or signature expected."
+    "public set a(v: A)"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 6 "Property or signature expected."
+    "a!(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "new new (): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 3 "Property or signature expected."
+    "new a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 3 "Property or signature expected."
+    "get a?(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "set a?(v: A)"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "get a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "get a"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+6 len 1 "'(' expected."
+    "get a?"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "get a?: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "set a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "'(' expected."
+    "async get a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1131 @form+0 len 5 "Property or signature expected."
+    "get async a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+10 len 1 "'(' expected."
+    "[k: string]?: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "[k: string](): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "[k: string]<T>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "[k: string]!: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "[{ k }: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+6 len 1 "']' expected."
+    "[[k]: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+4 len 1 "']' expected."
+    "[this: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+5 len 1 "']' expected."
+    "-readonly [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x2: TS1005 @form+12 len 1 "'in' expected."
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "+readonly [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x2: TS1005 @form+12 len 1 "'in' expected."
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "[k: string]-?: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "[k: string]+?: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1005 @form+11 len 1 "';' expected."
+    "{ a: }"
+        contexts (3 of 12): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+5 len 1 "Type expected."
+  -- AAg: 48 distinct
+    "public a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "private a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 7 "'private' modifier cannot appear on a type member."
+    "protected a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 9 "'protected' modifier cannot appear on a type member."
+    "static a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'static' modifier cannot appear on a type member."
+    "abstract a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 8 "'abstract' modifier cannot appear on a type member."
+    "declare a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 7 "'declare' modifier cannot appear on a type member."
+    "override a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 8 "'override' modifier cannot appear on a type member."
+    "accessor a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 8 "'accessor' modifier cannot appear on a type member."
+    "async a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 5 "'async' modifier cannot appear on a type member."
+    "export a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'export' modifier cannot appear on a type member."
+    "in a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 2 "'in' modifier cannot appear on a type member."
+    "out a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 3 "'out' modifier cannot appear on a type member."
+    "readonly readonly a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1030 @form+9 len 8 "'readonly' modifier already seen."
+    "public readonly a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "readonly public a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+9 len 6 "'public' modifier cannot appear on a type member."
+    "static readonly a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'static' modifier cannot appear on a type member."
+    "readonly static a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+9 len 6 "'static' modifier cannot appear on a type member."
+    "public private a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "public static override readonly a: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "static\na: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'static' modifier cannot appear on a type member."
+    "public a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "static a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'static' modifier cannot appear on a type member."
+    "readonly a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1024 @form+0 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+    "async a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 5 "'async' modifier cannot appear on a type member."
+    "abstract a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 8 "'abstract' modifier cannot appear on a type member."
+    "declare a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 7 "'declare' modifier cannot appear on a type member."
+    "public [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 6 "'public' modifier cannot appear on an index signature."
+    "static [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 6 "'static' modifier cannot appear on an index signature."
+    "readonly new (): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1024 @form+0 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+    "public new (): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "get a(b): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1054 @form+4 len 1 "A 'get' accessor cannot have parameters."
+    "set a(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1049 @form+4 len 1 "A 'set' accessor must have exactly one parameter."
+    "set a(v: A): void"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1095 @form+4 len 1 "A 'set' accessor cannot have a return type annotation."
+    "set a(v: A, w: B)"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1049 @form+4 len 1 "A 'set' accessor must have exactly one parameter."
+    "set a(...v: A[])"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1053 @form+6 len 3 "A 'set' accessor cannot have rest parameter."
+    "set a(v?: A)"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1051 @form+7 len 1 "A 'set' accessor cannot have an optional parameter."
+    "get a<T>(): A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1094 @form+4 len 1 "An accessor cannot have type parameters."
+    "set a<T>(v: A)"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1094 @form+4 len 1 "An accessor cannot have type parameters."
+    "[k: A | B]: C"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1268 @form+1 len 1 "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type."
+    "[k: string]"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1021 @form+0 len 11 "An index signature must have a type annotation."
+    "[readonly k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1018 @form+10 len 1 "An index signature parameter cannot have an accessibility modifier."
+    "static readonly [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 6 "'static' modifier cannot appear on an index signature."
+    "readonly static [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+9 len 6 "'static' modifier cannot appear on an index signature."
+    "declare [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 7 "'declare' modifier cannot appear on an index signature."
+    "export [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 6 "'export' modifier cannot appear on an index signature."
+    "async [k: string]: A"
+        contexts (3 of 3): typeLit iface varLit
+        tsc x3: TS1071 @form+0 len 5 "'async' modifier cannot appear on an index signature."
+    "{ public a: A }"
+        contexts (12 of 12): var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1070 @form+2 len 6 "'public' modifier cannot appear on a type member."
+    "{ a: A = 1 }"
+        contexts (1 of 12): callArg
+        tsc x1: TS1247 @form+9 len 1 "A type literal property cannot have an initializer."
+
+==== family memberSep  (106 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:914-925
+  ref: parser.go:3466 parseTypeMemberSemicolon, 3653 parseObjectTypeMembers
+  counts AA=58 B=2 RR=46
+  -- B: 1 distinct
+    "get\nset"
+        contexts (2 of 2): typeLit iface
+        tsc x2: TS1005 @form+8 len 1 "'(' expected."
+
+==== family mapped  (363 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:818-822, 834-874
+  ref: parser.go:3172 nextIsStartOfMappedType, 3183 parseMappedType, 3214 parseMappedTypeParameter
+  counts A1=9 A2=5 AA=193 AAg=37 B=49 RR=70
+  -- A1: 5 distinct
+    "[K as B in A]: C"
+        contexts (3 of 3): typeLit iface param
+        bun x3: Expected "]" but found "as" @form+3
+    "[#K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        bun x3: Unexpected #K @form+1
+    "[K in A in B]: C"
+        contexts (1 of 3): iface
+        bun x1: Expected "]" but found "in" @form+8
+    "[K in A]: B = 1"
+        contexts (1 of 3): iface
+        bun x1: Unexpected = @form+12
+    "[K in A] = 1"
+        contexts (1 of 3): iface
+        bun x1: Unexpected = @form+9
+  -- A2: 3 distinct
+    "[in A]: B"
+        contexts (3 of 3): typeLit iface param
+        bun x3: Unexpected in @form+1
+        tsc x3: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+        tsc x3: TS1018 @form+4 len 1 "An index signature parameter cannot have an accessibility modifier."
+    "[K in A as B as C]: D"
+        contexts (1 of 3): iface
+        bun x1: Expected "]" but found "as" @form+13
+        tsc x1: TS1169 @form+0 len 18 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A, L in B]: C"
+        contexts (1 of 3): iface
+        bun x1: Expected "]" but found "," @form+7
+        tsc x1: TS1169 @form+0 len 16 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+  -- B: 29 distinct
+    "[K in A]: B,"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1005 @form+11 len 1 "';' expected."
+    "[K in A]+: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x2: TS1005 @form+9 len 1 "'?' expected."
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]-: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x2: TS1005 @form+9 len 1 "'?' expected."
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]!: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1005 @form+8 len 1 "';' expected."
+    "+[K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "-[K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1131 @form+0 len 1 "Property or signature expected."
+    "+readonly readonly [K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x2: TS1005 @form+10 len 8 "'[' expected."
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "[void in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1109 @form+6 len 2 "Expression expected."
+    "[const in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1109 @form+1 len 5 "Expression expected."
+    "[K in A](): B"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]<T>(): B"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]?(): B"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1005 @form+9 len 1 "';' expected."
+    "[K in A]+?: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]-?: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]+?"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "[K in A]-?"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+8 len 1 "';' expected."
+    "+readonly [K in A]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "-readonly [K in A]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "-readonly [K in A]-?: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "+readonly [K in A]+?: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "[K in keyof A]: A[K]"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+12 len 1 "']' expected."
+    "[K in keyof A as K extends B ? C : never]: A[K]"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+12 len 1 "']' expected."
+    "+\nreadonly [K in A]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1131 @form+0 len 1 "Property or signature expected."
+    "[K in A extends B ? C : D]: E"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+8 len 7 "']' expected."
+    "[K in () => void]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "[K in A[]]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1011 @form+8 len 0 "An element access expression should take an argument."
+    "[K in infer U]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1005 @form+12 len 1 "']' expected."
+    "[yield in A]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1109 @form+7 len 2 "Expression expected."
+    "[await in A]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1109 @form+7 len 2 "Expression expected."
+  -- AAg: 21 distinct
+    "readonly readonly [K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1030 @form+9 len 8 "'readonly' modifier already seen."
+    "[K in infer U]: B"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1338 @form+6 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "[K in A as infer U]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1338 @form+11 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+        tsc x1: TS1169 @form+0 len 19 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[yield in A]: B"
+        contexts (2 of 3): typeLit param
+        tsc x2: TS1212 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "[let in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1212 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "[static in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1212 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "public [K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1070 @form+0 len 6 "'public' modifier cannot appear on a type member."
+    "static [K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1070 @form+0 len 6 "'static' modifier cannot appear on a type member."
+    "readonly public [K in A]: B"
+        contexts (3 of 3): typeLit iface param
+        tsc x3: TS1070 @form+9 len 6 "'public' modifier cannot appear on a type member."
+    "[K in A as B]: C"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 13 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A as `x${K}`]: C"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 19 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A | B]: C"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 12 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A & B]: C"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 12 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in \"a\" | \"b\"]: C"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 16 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A as () => void]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 22 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A as B | C]: D"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 17 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A as B extends C ? D : E]: F"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 31 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[as in A as as]: B"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 15 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A](): B"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 8 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A]<T>(): B"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 8 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+    "[K in A]?(): B"
+        contexts (1 of 3): iface
+        tsc x1: TS1169 @form+0 len 8 "A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type."
+
+==== family ifaceHead  (120 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:1140-1181 skip_type_script_interface_stmt, src/js_parser/parse/parse_stmt.rs:1808-1829, src/js_parser/parse/parse_stmt.rs:1728 (the keyword is first parsed as an expression)
+  ref: parser.go:2130 parseInterfaceDeclaration, 1824 parseHeritageClauses, 1852 parseTypeHeritageClauseElement -> 1884 parseExpressionWithTypeArguments
+  counts A1=7 A2=8 AA=59 AAg=8 B=16 RR=22
+  -- A1: 7 distinct
+    "interface I extends a() {}"
+        bun x1: Expected "{" but found "(" @21
+    "interface I extends a.b() {}"
+        bun x1: Expected "{" but found "(" @23
+    "interface I extends a?.b {}"
+        bun x1: Expected "{" but found "?." @21
+    "interface I extends new A {}"
+        bun x1: Expected "(" but found "A" @24
+    "interface I extends class {} {}"
+        bun x1: Unexpected class @20
+    "interface I extends function() {} {}"
+        bun x1: Unexpected function @20
+    "interface I extends A.#b {}"
+        bun x1: Expected identifier but found "#b" @22
+  -- A2: 8 distinct
+    "interface I<const T> {}"
+        bun x1: The modifier "const" is not valid here @12
+        tsc x1: TS1277 @12 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "interface I extends A, {}"
+        bun x1: Expected "{" but found end of file @25
+        tsc x1: TS1009 @21 len 1 "Trailing comma not allowed."
+    "interface I extends {}"
+        bun x1: Expected "{" but found end of file @22
+        tsc x1: TS1097 @19 len 0 "'extends' list cannot be empty."
+    "interface I extends A extends B {}"
+        bun x1: Expected "?" but found "{" @32
+        tsc x1: TS1172 @22 len 7 "'extends' clause already seen."
+    "interface I implements A extends B {}"
+        bun x1: Expected "?" but found "{" @35
+        tsc x1: TS1176 @12 len 10 "Interface declaration cannot have 'implements' clause."
+    "abstract interface I {}"
+        bun x1: Expected ";" but found "interface" @9
+        tsc x1: TS1242 @0 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "async interface I {}"
+        bun x1: Expected ";" but found "interface" @6
+        tsc x1: TS1042 @0 len 5 "'async' modifier cannot be used here."
+    "public interface I {}"
+        bun x1: Expected ";" but found "interface" @7
+        tsc x1: TS1044 @0 len 6 "'public' modifier cannot appear on a module or namespace element."
+  -- B: 16 distinct
+    "interface I extends A[] {}"
+        tsc x1: TS1011 @22 len 0 "An element access expression should take an argument."
+    "interface I extends () => void {}"
+        tsc x1: TS1109 @21 len 1 "Expression expected."
+    "interface I extends A | B {}"
+        tsc x1: TS1005 @22 len 1 "',' expected."
+    "interface I extends A & B {}"
+        tsc x1: TS1005 @22 len 1 "',' expected."
+    "interface I extends typeof a {}"
+        tsc x1: TS1109 @20 len 6 "Expression expected."
+    "interface I extends keyof A {}"
+        tsc x1: TS1005 @26 len 1 "',' expected."
+    "interface I extends void {}"
+        tsc x1: TS1109 @20 len 4 "Expression expected."
+    "interface I extends A extends B ? C : D {}"
+        tsc x1: TS1005 @32 len 1 "',' expected."
+    "interface I extends A<B>[] {}"
+        tsc x1: TS1005 @24 len 1 "',' expected."
+    "interface I extends A<B>.C {}"
+        tsc x1: TS1477 @21 len 3 "An instantiation expression cannot be followed by a property access."
+    "interface I extends unique symbol {}"
+        tsc x1: TS1005 @27 len 6 "',' expected."
+    "interface I extends readonly A[] {}"
+        tsc x1: TS1005 @29 len 1 "',' expected."
+    "interface I extends infer U {}"
+        tsc x1: TS1005 @26 len 1 "',' expected."
+    "interface I extends a is B {}"
+        tsc x1: TS1005 @22 len 2 "',' expected."
+    "interface I extends abstract new () => A {}"
+        tsc x1: TS1005 @29 len 3 "',' expected."
+    "interface I extends -1 {}"
+        tsc x1: TS1109 @20 len 1 "Expression expected."
+  -- AAg: 8 distinct
+    "interface I implements A {}"
+        tsc x1: TS1176 @12 len 10 "Interface declaration cannot have 'implements' clause."
+    "interface I extends A implements B {}"
+        tsc x1: TS1176 @22 len 10 "Interface declaration cannot have 'implements' clause."
+    "interface I implements A, B {}"
+        tsc x1: TS1176 @12 len 10 "Interface declaration cannot have 'implements' clause."
+    "declare export interface I {}"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "if (a) interface I {}"
+        tsc x1: TS1156 @17 len 1 "'interface' declarations can only be declared inside a block."
+    "label: interface I {}"
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+    "for (;;) interface I {}"
+        tsc x1: TS1156 @19 len 1 "'interface' declarations can only be declared inside a block."
+    "while (a) interface\nI\n{}"
+        tsc x1: TS1212 @10 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+
+==== family ifaceName  (371 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1728 parse_expr_or_let_stmt reads "interface as" as a cast before src/js_parser/parse/parse_stmt.rs:1745 tests the keyword; src/js_parser/parse/parse_skip_typescript.rs:1144-1145
+  ref: parser.go:2130 parseInterfaceDeclaration, 6119 isStartOfDeclaration / 6123 scanStartOfDeclaration
+  counts A1=10 A2=1 AA=228 AAg=39 RR=93
+  -- A1: 2 distinct
+    "as"
+        contexts (5 of 5): iface exportIface declareIface exportDefaultIface ifaceGeneric
+        bun x4: Expected identifier but found end of file @form+5
+        bun x1: Expected "(" but found "extends" @form+6
+    "satisfies"
+        contexts (5 of 5): iface exportIface declareIface exportDefaultIface ifaceGeneric
+        bun x4: Expected identifier but found end of file @form+12
+        bun x1: Expected "(" but found "extends" @form+13
+  -- A2: 1 distinct
+    "in"
+        contexts (1 of 5): declareIface
+        bun x1: Unexpected "interface" @form+0
+        tsc x1: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+  -- AAg: 11 distinct
+    "yield"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "let"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "static"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "in"
+        contexts (1 of 5): iface
+        tsc x1: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+    "package"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "implements"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "interface"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+10 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+10 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "private"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "public"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "protected"
+        contexts (4 of 5): iface exportIface exportDefaultIface ifaceGeneric
+        tsc x2: TS1212 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+        tsc x2: TS1214 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "await"
+        contexts (2 of 5): exportIface exportDefaultIface
+        tsc x2: TS1262 @form+0 len 5 "Identifier expected. 'await' is a reserved word at the top-level of a module."
+
+==== family aliasHead  (104 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:1085-1138 skip_type_script_type_stmt, src/js_parser/parse/parse_stmt.rs:1783-1792
+  ref: parser.go:2142 parseTypeAliasDeclaration
+  counts A2=12 AA=64 AAg=4 B=3 RR=21
+  -- A2: 12 distinct
+    "type X<const T> = T"
+        bun x1: The modifier "const" is not valid here @7
+        tsc x1: TS1277 @7 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "type X<in in T> = T"
+        bun x1: The modifier "in" is not valid here @10
+        tsc x1: TS1030 @10 len 2 "'in' modifier already seen."
+    "type X<out out T> = T"
+        bun x1: The modifier "out" is not valid here @11
+        tsc x1: TS1030 @11 len 3 "'out' modifier already seen."
+    "type X<out in T> = T"
+        bun x1: The modifier "in" is not valid here @11
+        tsc x1: TS1029 @11 len 2 "'in' modifier must precede 'out' modifier."
+    "type X<in const T> = T"
+        bun x1: The modifier "const" is not valid here @10
+        tsc x1: TS1277 @10 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "type X<const in T> = T"
+        bun x1: The modifier "const" is not valid here @7
+        tsc x1: TS1277 @7 len 5 "'const' modifier can only appear on a type parameter of a function, method or class"
+    "type X<public T> = T"
+        bun x1: Expected ">" but found "T" @14
+        tsc x1: TS1273 @7 len 6 "'public' modifier cannot appear on a type parameter"
+    "type X<readonly T> = T"
+        bun x1: Expected ">" but found "T" @16
+        tsc x1: TS1273 @7 len 8 "'readonly' modifier cannot appear on a type parameter"
+    "type X<static T> = T"
+        bun x1: Expected ">" but found "T" @14
+        tsc x1: TS1273 @7 len 6 "'static' modifier cannot appear on a type parameter"
+    "abstract type X = A"
+        bun x1: Expected ";" but found "type" @9
+        tsc x1: TS1242 @0 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "async type X = A"
+        bun x1: Expected ";" but found "type" @6
+        tsc x1: TS1042 @0 len 5 "'async' modifier cannot be used here."
+    "public type X = A"
+        bun x1: Expected ";" but found "type" @7
+        tsc x1: TS1044 @0 len 6 "'public' modifier cannot appear on a module or namespace element."
+  -- B: 3 distinct
+    "type X = intrinsic<T>"
+        tsc x1: TS1005 @18 len 1 "';' expected."
+    "type X = intrinsic | A"
+        tsc x1: TS1005 @19 len 1 "';' expected."
+    "type as any"
+        tsc x1: TS1005 @8 len 3 "'=' expected."
+  -- AAg: 4 distinct
+    "declare export type X = A"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "if (a) type X = A"
+        tsc x1: TS1156 @12 len 1 "'type' declarations can only be declared inside a block."
+    "label: type X = A"
+        tsc x1: TS1344 @0 len 5 "'A label is not allowed here."
+    "for (;;) type X = A"
+        tsc x1: TS1156 @14 len 1 "'type' declarations can only be declared inside a block."
+
+==== family aliasName  (374 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1728 parse_expr_or_let_stmt reads "type as" as a cast before src/js_parser/parse/parse_stmt.rs:1745 tests the keyword; src/js_parser/parse/parse_stmt.rs:1784 requires an identifier token
+  ref: parser.go:2142 parseTypeAliasDeclaration, 6123 scanStartOfDeclaration
+  counts A1=6 AA=232 AAg=37 B=4 RR=95
+  -- A1: 2 distinct
+    "as"
+        contexts (3 of 5): alias declareAlias aliasGeneric
+        bun x2: Unexpected = @form+3
+        bun x1: Expected "(" but found "=" @form+6
+    "satisfies"
+        contexts (3 of 5): alias declareAlias aliasGeneric
+        bun x2: Unexpected = @form+10
+        bun x1: Expected "(" but found "=" @form+13
+  -- B: 2 distinct
+    "as"
+        contexts (2 of 5): exportAlias nsAlias
+        tsc x2: TS1005 @form+0 len 2 "'{' expected."
+    "\\u{61}s"
+        contexts (2 of 5): exportAlias nsAlias
+        tsc x2: TS1005 @form+0 len 7 "'{' expected."
+  -- AAg: 10 distinct
+    "yield"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "let"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "static"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "package"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "implements"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "interface"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "private"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "public"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "protected"
+        contexts (4 of 5): alias exportAlias aliasGeneric nsAlias
+        tsc x3: TS1212 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+        tsc x1: TS1214 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode. Modules are automatically in strict mode."
+    "await"
+        contexts (1 of 5): exportAlias
+        tsc x1: TS1262 @form+0 len 5 "Identifier expected. 'await' is a reserved word at the top-level of a module."

@@ -1,0 +1,17 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=6 SignatureCount=4
+postsuper.ts(10,39): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class. [len=4]
+postsuper.ts(12,75): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class. [len=4]
+SUGGESTION postsuper.ts(6,5): suggestion TS7027: Unreachable code detected. [len=31]
+AFTER check
+STATE flowInvocationCount=12 flowAnalysisDisabled=false
+STATE flowLoopCache=3 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=1
+STATE flowNodeReachable=8 flowNodePostSuper=2 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=122 SymbolCount=7 SignatureCount=9

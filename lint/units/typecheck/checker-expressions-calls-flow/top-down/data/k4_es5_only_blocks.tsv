@@ -1,0 +1,13 @@
+layer	function	where	entries	executed blocks as first-last line x count
+E-CORE	c.checkExpressionCached	checker.go:7603-7605	1	7603-7605x1
+E-CORE	c.checkExpressionCachedEx	checker.go:7607-7625	1	7607-7608x1 7611-7612x1 7612-7623x1 7624-7624x1
+E-CORE	c.checkExpressionEx	checker.go:7647-7661	1	7647-7648x1 7651-7656x1 7659-7660x1
+E-CORE	c.instantiateTypeWithSingleGenericCallSignature	checker.go:7689-7759	1	7689-7690x1 7690-7692x1
+E-CORE	c.checkExpressionWorker	checker.go:7821-7925	1	7821-7822x1 7833-7834x1 7837-7837x1
+E-FACTS	c.convertAutoToAny	checker.go:31339-31347	1	31339-31340x1 31346-31346x1
+F-NARROW	c.getFlowState	flow.go:52-59	1	52-54x1 54-56x1 57-58x1
+F-NARROW	c.putFlowState	flow.go:61-67	1	61-67x1
+F-REACH	c.isReachableFlowNode	flow.go:2513-2520	1	2513-2520x1
+F-REACH	c.isReachableFlowNodeWorker	flow.go:2522-2587	1	2522-2523x1 2523-2524x1 2527-2528x1 2539-2539x1 2583-2584x1
+F-UNREACH	c.checkSourceElementUnreachable	checker.go:2398-2457	3	2398-2399x3 2399-2401x2 2403-2403x1 2407-2407x1 2407-2409x1
+F-UNREACH	c.isSourceElementUnreachable	checker.go:2459-2477	1	2459-2461x1 2472-2472x1 2472-2475x1

@@ -1,0 +1,882 @@
+suite	name	status	kind	platform	check	reasons
+compiler	booleanLiteralsContextuallyTypedFromUnion.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	booleanLiteralsContextuallyTypedFromUnion.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	booleanLiteralsContextuallyTypedFromUnion.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	booleanLiteralsContextuallyTypedFromUnion.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	callsOnComplexSignatures.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	callsOnComplexSignatures.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	callsOnComplexSignatures.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	callsOnComplexSignatures.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts	run	C	linux	reads absolute names of the texts from the disk	case-insensitive-requested
+compiler	checkJsxNotSetError.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	checkJsxNotSetError.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	checkJsxNotSetError.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	checkJsxNotSetError.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	commonSourceDir1.ts	run	C	linux	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir1.ts	run	C	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir1.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir1.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir2.ts	run	E	linux	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir2.ts	run	E	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir2.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir2.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir3.ts	run	C	linux	reads absolute names of the texts from the disk	case-insensitive-requested,dos-root
+compiler	commonSourceDir3.ts	run	C	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir3.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir3.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir4.ts	run	E	linux	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir4.ts	run	E	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir4.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir4.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	commonSourceDir5.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	commonSourceDir5.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	commonSourceDir5.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	commonSourceDir5.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	conditionalTypeVarianceBigArrayConstraintsPerformance.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	conditionalTypeVarianceBigArrayConstraintsPerformance.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	conditionalTypeVarianceBigArrayConstraintsPerformance.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	conditionalTypeVarianceBigArrayConstraintsPerformance.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxAttribute2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxAttribute2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxAttribute2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxAttribute2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	contextuallyTypedJsxChildren2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	declarationEmitRelativeModuleError.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	declarationEmitRelativeModuleError.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	declarationEmitRelativeModuleError.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	declarationEmitRelativeModuleError.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	decoratorMetadataRestParameterWithImportedType(target=es5).ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	windows-name
+compiler	decoratorMetadataRestParameterWithImportedType(target=es5).ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	windows-name
+compiler	decoratorMetadataRestParameterWithImportedType(target=es2015).ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	windows-name
+compiler	decoratorMetadataRestParameterWithImportedType(target=es2015).ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	windows-name
+compiler	errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	genericInferenceDefaultTypeParameterJsxReact.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	genericInferenceDefaultTypeParameterJsxReact.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	genericInferenceDefaultTypeParameterJsxReact.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	genericInferenceDefaultTypeParameterJsxReact.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	ignoredJsxAttributes.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	ignoredJsxAttributes.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	ignoredJsxAttributes.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	ignoredJsxAttributes.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxCallElaborationCheckNoCrash1.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxCallElaborationCheckNoCrash1.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxCallElaborationCheckNoCrash1.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxCallElaborationCheckNoCrash1.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildWrongType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildWrongType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildWrongType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildWrongType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es5).tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es5).tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es5).tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es5).tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es2015).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es2015).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es2015).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenArrayWrongType(target=es2015).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenIndividualErrorElaborations.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenIndividualErrorElaborations.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenIndividualErrorElaborations.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenIndividualErrorElaborations.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenWrongType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenWrongType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenWrongType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxChildrenWrongType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxComplexSignatureHasApplicabilityError.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxComplexSignatureHasApplicabilityError.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxComplexSignatureHasApplicabilityError.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxComplexSignatureHasApplicabilityError.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxDeclarationsWithEsModuleInteropNoCrash.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxDeclarationsWithEsModuleInteropNoCrash.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxDeclarationsWithEsModuleInteropNoCrash.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxDeclarationsWithEsModuleInteropNoCrash.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteral.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteral.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteral.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteral.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteralWithGeneric.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteralWithGeneric.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteralWithGeneric.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxElementTypeLiteralWithGeneric.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxExcessPropsAndAssignability.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxExcessPropsAndAssignability.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxExcessPropsAndAssignability.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxExcessPropsAndAssignability.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=react-native).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=react-native).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=react-native).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=react-native).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=preserve).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=preserve).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=preserve).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragReactReferenceErrors(jsx=preserve).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentFactoryNoUnusedLocals.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentFactoryNoUnusedLocals.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentFactoryNoUnusedLocals.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentFactoryNoUnusedLocals.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentWrongType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentWrongType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentWrongType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFragmentWrongType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFunctionTypeChildren.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFunctionTypeChildren.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFunctionTypeChildren.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxFunctionTypeChildren.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxHasLiteralType.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxHasLiteralType.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxHasLiteralType.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxHasLiteralType.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxImportForSideEffectsNonExtantNoError.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxImportForSideEffectsNonExtantNoError.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxImportForSideEffectsNonExtantNoError.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxImportForSideEffectsNonExtantNoError.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxInferenceProducesLiteralAsExpected.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxInferenceProducesLiteralAsExpected.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxInferenceProducesLiteralAsExpected.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxInferenceProducesLiteralAsExpected.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsCompatability.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsCompatability.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsCompatability.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsCompatability.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsTypeArgumentErrors.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsTypeArgumentErrors.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsTypeArgumentErrors.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicElementsTypeArgumentErrors.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicUnions.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicUnions.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicUnions.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIntrinsicUnions.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxPartialSpread.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxPartialSpread.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxPartialSpread.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxPartialSpread.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsx).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsx).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsx).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsx).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsxdev).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsxdev).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsxdev).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=react-jsxdev).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=preserve).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=preserve).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=preserve).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxRuntimePragma(jsx=preserve).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxSpreadFirstUnionNoErrors.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxSpreadFirstUnionNoErrors.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxSpreadFirstUnionNoErrors.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	jsxSpreadFirstUnionNoErrors.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	keepImportsInDts1.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts1.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts1.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts1.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts3.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts3.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts3.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	keepImportsInDts3.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	maxNodeModuleJsDepthDefaultsToZero.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	maxNodeModuleJsDepthDefaultsToZero.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	maxNodeModuleJsDepthDefaultsToZero.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	maxNodeModuleJsDepthDefaultsToZero.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	missingMemberErrorHasShortPath.ts	run	E	linux	reads absolute names of the texts from the disk	case-insensitive-requested,dos-root
+compiler	missingMemberErrorHasShortPath.ts	run	E	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	missingMemberErrorHasShortPath.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	missingMemberErrorHasShortPath.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	moduleResolutionWithSymlinks.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	link-not-permitted
+compiler	moduleResolutionWithSymlinks_notInNodeModules.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	link-not-permitted
+compiler	moduleResolutionWithSymlinks_preserveSymlinks.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	link-not-permitted
+compiler	moduleResolutionWithSymlinks_referenceTypes.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	link-not-permitted
+compiler	moduleResolutionWithSymlinks_withOutDir.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	link-not-permitted
+compiler	pathMappingBasedModuleResolution1_amd.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_amd.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_amd.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_amd.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_node.ts	run	E	linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_node.ts	run	E	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_node.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution1_node.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_node.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_node.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_node.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution3_node.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_node.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_node.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_node.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution4_node.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_node.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_node.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_node.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution5_node.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_node.ts	run	C	linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_node.ts	run	C	darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_node.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution6_node.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_node.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_node.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_node.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution7_node.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_classic.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_classic.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_classic.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_classic.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_node.ts	skipped		linux	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_node.ts	skipped		darwin	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_node.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution8_node.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	dos-root
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactDefaultPropsInferenceSuccess.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactDefaultPropsInferenceSuccess.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactDefaultPropsInferenceSuccess.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactDefaultPropsInferenceSuccess.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactHOCSpreadprops.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactHOCSpreadprops.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactHOCSpreadprops.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactHOCSpreadprops.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactReadonlyHOCAssignabilityReal.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactReadonlyHOCAssignabilityReal.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactReadonlyHOCAssignabilityReal.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactReadonlyHOCAssignabilityReal.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactSFCAndFunctionResolvable.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactSFCAndFunctionResolvable.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactSFCAndFunctionResolvable.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactSFCAndFunctionResolvable.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	reactTagNameComponentWithPropsNoOOM2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	returnTypePredicateIsInstantiateInContextOfTarget.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	returnTypePredicateIsInstantiateInContextOfTarget.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	returnTypePredicateIsInstantiateInContextOfTarget.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	returnTypePredicateIsInstantiateInContextOfTarget.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	sourceMapWithNonCaseSensitiveFileNames.ts	skipped		linux	reads absolute names of the texts from the disk	case-insensitive-requested
+compiler	sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts	run	C	linux	reads absolute names of the texts from the disk	case-insensitive-requested
+compiler	spellingSuggestionJSXAttribute.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	spellingSuggestionJSXAttribute.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	spellingSuggestionJSXAttribute.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	spellingSuggestionJSXAttribute.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	styledComponentsInstantiaionLimitNotReached.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	styledComponentsInstantiaionLimitNotReached.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	styledComponentsInstantiaionLimitNotReached.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	styledComponentsInstantiaionLimitNotReached.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	symbolLinkDeclarationEmitModuleNamesImportRef.ts	run	C	linux	reads absolute names of the texts from the disk	case-insensitive-requested
+compiler	tripleSlashReferenceAbsoluteWindowsPath.ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	tripleSlashReferenceAbsoluteWindowsPath.ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	tripleSlashReferenceAbsoluteWindowsPath.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	tripleSlashReferenceAbsoluteWindowsPath.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text,dos-root
+compiler	tsxDeepAttributeAssignabilityError.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxDeepAttributeAssignabilityError.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxDeepAttributeAssignabilityError.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxDeepAttributeAssignabilityError.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxFragmentChildrenCheck.ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxFragmentChildrenCheck.ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxFragmentChildrenCheck.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxFragmentChildrenCheck.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxInvokeComponentType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxInvokeComponentType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxInvokeComponentType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxInvokeComponentType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxNotUsingApparentTypeOfSFC.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxNotUsingApparentTypeOfSFC.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxNotUsingApparentTypeOfSFC.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxNotUsingApparentTypeOfSFC.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxReactPropsInferenceSucceedsOnIntersections.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxReactPropsInferenceSucceedsOnIntersections.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxReactPropsInferenceSucceedsOnIntersections.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxReactPropsInferenceSucceedsOnIntersections.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxResolveExternalModuleExportsTypes.ts	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxResolveExternalModuleExportsTypes.ts	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxResolveExternalModuleExportsTypes.ts	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxResolveExternalModuleExportsTypes.ts	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxSpreadDoesNotReportExcessProps.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxSpreadDoesNotReportExcessProps.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxSpreadDoesNotReportExcessProps.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxSpreadDoesNotReportExcessProps.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxStatelessComponentDefaultProps.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxStatelessComponentDefaultProps.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxStatelessComponentDefaultProps.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxStatelessComponentDefaultProps.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxUnionMemberChecksFilterDataProps.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxUnionMemberChecksFilterDataProps.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxUnionMemberChecksFilterDataProps.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	tsxUnionMemberChecksFilterDataProps.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	typeInferenceWithExcessPropertiesJsx.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	typeInferenceWithExcessPropertiesJsx.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	typeInferenceWithExcessPropertiesJsx.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+compiler	typeInferenceWithExcessPropertiesJsx.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	controlFlowOptionalChain3.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	controlFlowOptionalChain3.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	controlFlowOptionalChain3.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	controlFlowOptionalChain3.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	multiline.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	multiline.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	multiline.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	multiline.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsNonIdentifierInferredNames.ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsNonIdentifierInferredNames.ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsNonIdentifierInferredNames.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsNonIdentifierInferredNames.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es5).ts	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es5).ts	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es5).ts	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es5).ts	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es2015).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es2015).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es2015).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsReactComponents(target=es2015).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsTypeReassignmentFromDeclaration.ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsTypeReassignmentFromDeclaration.ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsTypeReassignmentFromDeclaration.ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsDeclarationsTypeReassignmentFromDeclaration.ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenCanBeTupleType.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenCanBeTupleType.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenCanBeTupleType.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenCanBeTupleType.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty12.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty12.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty12.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty12.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty13.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty13.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty13.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty13.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty14.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty14.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty14.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty14.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty15.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty15.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty15.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty15.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty16.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty16.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty16.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty16.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty3.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty3.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty3.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty3.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty5.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty5.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty5.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty5.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty6.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty6.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty6.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty6.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty7.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty7.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty7.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty7.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty8.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty8.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty8.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty8.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty9.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty9.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty9.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxChildrenProperty9.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxGenericTagHasCorrectInferences.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxGenericTagHasCorrectInferences.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxGenericTagHasCorrectInferences.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxGenericTagHasCorrectInferences.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxSubtleSkipContextSensitiveBug.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxSubtleSkipContextSensitiveBug.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxSubtleSkipContextSensitiveBug.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxSubtleSkipContextSensitiveBug.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	commentEmittingInPreserveJsx1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	commentEmittingInPreserveJsx1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	commentEmittingInPreserveJsx1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	commentEmittingInPreserveJsx1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences1.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences1.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences1.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences1.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences3.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences3.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences3.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences3.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	correctlyMarkAliasAsReferences4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxCheckJsxNoTypeArgumentsAllowed.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxCheckJsxNoTypeArgumentsAllowed.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxCheckJsxNoTypeArgumentsAllowed.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxCheckJsxNoTypeArgumentsAllowed.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxSpreadOverwritesAttributeStrict.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxSpreadOverwritesAttributeStrict.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxSpreadOverwritesAttributeStrict.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxSpreadOverwritesAttributeStrict.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution15.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution15.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution15.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution15.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution16.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution16.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution16.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxAttributeResolution16.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution3.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution3.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution3.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxDefaultAttributesResolution3.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType1.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType1.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType1.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType1.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType3.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType3.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType3.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType3.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType4.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType4.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType4.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType4.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType5.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType5.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType5.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType5.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType6.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType6.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType6.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType6.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType7.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType7.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType7.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType7.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType8.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType8.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType8.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType8.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType9.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType9.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType9.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxGenericAttributesType9.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter2.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter2.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter2.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter2.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter3.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter3.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter3.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactComponentWithDefaultTypeParameter3.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsx).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsx).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsx).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsx).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsxdev).tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsxdev).tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsxdev).tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmit8(jsx=react-jsxdev).tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2015).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2015).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2015).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2015).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2018).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2018).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2018).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=es2018).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=esnext).ts	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=esnext).ts	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=esnext).ts	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxReactEmitSpreadAttribute(target=esnext).ts	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNull.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNull.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNull.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNull.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNullStrictNullChecks.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNullStrictNullChecks.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNullStrictNullChecks.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnNullStrictNullChecks.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnUndefinedStrictNullChecks.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnUndefinedStrictNullChecks.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnUndefinedStrictNullChecks.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSfcReturnUndefinedStrictNullChecks.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution10.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution10.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution10.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution10.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution11.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution11.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution11.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution11.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution12.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution12.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution12.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution12.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution13.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution13.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution13.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution13.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution14.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution14.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution14.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution14.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution15.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution15.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution15.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution15.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution16.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution16.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution16.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution16.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution3.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution3.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution3.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution3.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution5.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution5.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution5.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution5.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution6.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution6.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution6.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution6.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution7.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution7.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution7.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution7.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution8.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution8.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution8.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution8.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution9.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution9.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution9.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxSpreadAttributesResolution9.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload1.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload1.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload1.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload1.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload2.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload2.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload2.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload2.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload3.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload3.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload3.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload3.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload5.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload5.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload5.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload5.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload6.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload6.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload6.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentOverload6.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents1.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents1.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents1.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents1.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents3.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents3.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents3.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponents3.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments1.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments1.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments1.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments1.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments2.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments2.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments2.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments2.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments3.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments3.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments3.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments3.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments5.tsx	skipped		linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments5.tsx	skipped		darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments5.tsx	skipped		win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxStatelessFunctionComponentsWithTypeArguments5.tsx	skipped		win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentResolution.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentResolution.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentResolution.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentResolution.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentsJsxPreserveOutput.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentsJsxPreserveOutput.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentsJsxPreserveOutput.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxTypeArgumentsJsxPreserveOutput.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType1.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType1.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType1.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType1.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType3.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType3.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType3.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType3.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType4.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType4.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType4.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType4.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType5.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType5.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType5.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType5.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType6.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType6.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType6.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionElementType6.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent1.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent1.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent1.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent1.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent2.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent2.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent2.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	tsxUnionTypeComponent2.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	unicodeEscapesInJsxtags.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	unicodeEscapesInJsxtags.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	unicodeEscapesInJsxtags.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	unicodeEscapesInJsxtags.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	contextuallyTypedStringLiteralsInJsxAttributes02.tsx	run	E	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	contextuallyTypedStringLiteralsInJsxAttributes02.tsx	run	E	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	contextuallyTypedStringLiteralsInJsxAttributes02.tsx	run	E	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	contextuallyTypedStringLiteralsInJsxAttributes02.tsx	run	E	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	intraExpressionInferencesJsx.tsx	run	C	linux	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	intraExpressionInferencesJsx.tsx	run	C	darwin	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	intraExpressionInferencesJsx.tsx	run	C	win32 with the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text
+conformance	intraExpressionInferencesJsx.tsx	run	C	win32 without the right to make links	reads absolute names of the texts from the disk	absolute-path-in-text

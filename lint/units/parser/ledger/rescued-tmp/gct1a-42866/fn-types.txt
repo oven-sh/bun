@@ -1,0 +1,167 @@
+# function type parameters
+let g: (a = 1) => void
+let g: (a: number = 1) => void
+let g: ({a} = {}) => void
+let g: ([a] = []) => void
+let g: (public a: number) => void
+let g: (readonly a: number) => void
+let g: (private a) => void
+let g: (protected a, b) => void
+let g: (override a) => void
+let g: (static a) => void
+let g: (async a) => void
+let g: (declare a) => void
+let g: (export a) => void
+let g: (abstract a) => void
+let g: (accessor a) => void
+let g: (in a) => void
+let g: (out a) => void
+let g: (const a) => void
+let g: (default a) => void
+let g: (@dec a) => void
+let g: (@dec() a: number) => void
+let g: ([, a]) => void
+let g: ([a, , b]) => void
+let g: ([a, ...b]) => void
+let g: ([...[a, b]]) => void
+let g: ({[k]: a}) => void
+let g: ({[k + 1]: a}) => void
+let g: ({a = 1}) => void
+let g: ({a: b = 1}) => void
+let g: ({a: {b}}) => void
+let g: ({a: [b]}) => void
+let g: ({...a}) => void
+let g: ({'x': y}) => void
+let g: ({1: y}) => void
+let g: ({1n: y}) => void
+let g: ({if: x}) => void
+let g: ({if}) => void
+let g: ([a = 1]) => void
+let g: ([a = b => c]) => void
+let g: ([a] : number[]) => void
+let g: (a?) => void
+let g: (a?: number) => void
+let g: (...a) => void
+let g: (...a: number[]) => void
+let g: (...[a, b]) => void
+let g: (...{a}) => void
+let g: (this) => void
+let g: (this: Foo) => void
+let g: (this: Foo, a: number) => void
+let g: (this?) => void
+let g: (a, b) => void
+let g: (a, b,) => void
+let g: (a,) => void
+let g: (,) => void
+let g: (a,,b) => void
+let g: () => void
+let g: (a) => void
+let g: (a: ) => void
+let g: (a: number, ) => void
+let g: (yield) => void
+let g: (await) => void
+let g: (let) => void
+let g: (type) => void
+let g: (of) => void
+let g: (number) => void
+let g: (string: string) => void
+let g: (any) => void
+let g: (if) => void
+let g: (function) => void
+let g: (new) => void
+let g: (void) => void
+let g: (null) => void
+let g: (typeof) => void
+let g: (1) => void
+let g: ("a") => void
+let g: (a b) => void
+let g: (a = 1, b = a) => void
+let g: (a = () => { return 1 }) => void
+let g: (a = function () {}) => void
+let g: (a = class {}) => void
+let g: (a = <T>(x: T) => x) => void
+let g: (a = (b)) => void
+let g: (a = b ? c : d) => void
+let g: (a = import("x")) => void
+let g: (a = 1 as number) => void
+let g: (a?: number = 1) => void
+let g: (a? = 1) => void
+let g: (...a = []) => void
+let g: (a: number): void
+let g: (a: number) =>
+let g: (a: number) -> void
+let g: new () => Foo
+let g: new (a = 1) => Foo
+let g: abstract new () => Foo
+let g: abstract new (a = 1) => Foo
+let g: abstract\nnew () => Foo
+let g: new <T>() => Foo<T>
+let g: new <T>(a: T = x) => Foo<T>
+let g: <T>(a: T) => void
+let g: <T>(a = 1) => void
+let g: <const T>(a: T) => void
+let g: <in T>(a: T) => void
+let g: <out T>(a: T) => void
+let g: <T,>(a: T) => void
+let g: <>(a) => void
+let g: abstract
+let g: abstract | new () => X
+let g: new
+let g: (new () => X)
+let g: (a) | b
+let g: (a)[]
+let g: (a | b)
+let g: (a, b)
+let g: ((a))
+let g: ((a) => void)
+let g: ((a = 1) => void)
+let g: (a = 1)
+let g: ({a}) 
+let g: ([a])
+let g: ({a})[]
+let g: ([a])[]
+let g: ({a}) => void
+let g: ({a: number})
+let g: ({a: number}) => void
+let g: ({a: number} | string)
+let g: ([a, b] | string)
+let g: ([a: number, b: string])
+let g: ([a: number, b: string]) => void
+let g: ({a, b}: {a: number, b: string}) => void
+let g: ({a?: number})
+let g: ({a?: number}) => void
+let g: ({readonly a: number})
+let g: ({readonly a: number}) => void
+let g: ([a?])
+let g: ([a?]) => void
+let g: ([...a])
+let g: ([...a]) => void
+let g: ([...a[]])
+let g: ([...a[]]) => void
+let g: (a.b) => void
+let g: (a.b)
+let g: (a<b>) => void
+let g: (a<b>)
+let g: (a[]) => void
+let g: (typeof a)
+let g: (typeof a) => void
+let g: (keyof a)
+let g: (keyof a) => void
+let g: (readonly a[])
+let g: (readonly a[]) => void
+let g: (readonly a) 
+let g: (unique symbol)
+let g: (infer a)
+let g: (asserts a)
+let g: (a is b)
+let g: (a?)
+let g: (a!)
+let g: (a?) => void
+let g: (...a)
+let g: (a extends b ? c : d)
+let g: (a extends b ? c : d) => void
+let g: (this)
+let g: (this is b)
+let g: (this | b)
+let g: (this.a)
+let g: (this[])

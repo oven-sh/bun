@@ -1,0 +1,8 @@
+E-CORE	checker.go:7922	c.checkExpressionWorker	panic("Should never directly check a JsxOpeningElement")
+E-CALL	checker.go:8558	c.resolveSignature	panic("Unhandled case in resolveSignature")
+E-CALL	checker.go:8887	c.getDiagnosticHeadMessageForDecoratorResolution	panic("Unhandled case in getDiagnosticHeadMessageForDecoratorResolution")
+E-CALL	checker.go:9301	c.getLegacyDecoratorArgumentCount	panic("Unhandled case in getLegacyDecoratorArgumentCount")
+E-CORE	checker.go:10855	c.checkMetaProperty	panic("Unhandled case in checkMetaProperty")
+E-ACCESS	checker.go:12284	c.getThisContainer	panic("No parent in getThisContainer")
+E-OPER	checker.go:12640	c.checkBinaryLikeExpression	panic("Unhandled case in checkBinaryLikeExpression")
+F-NARROW	flow.go:2241	c.getInitialType	panic("Unhandled case in getInitialType")

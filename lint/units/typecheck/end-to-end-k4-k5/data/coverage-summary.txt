@@ -1,0 +1,302 @@
+# variant B: entered 1630 of 11185 functions
+  459 /  2223  ast
+  350 /  2864  checker
+  274 /   514  parser
+   91 /   336  compiler
+   73 /   195  binder
+   65 /   157  scanner
+   59 /   183  core
+   43 /   768  printer
+   36 /    88  tspath
+   35 /   196  tsoptions
+   21 /    84  collections
+   11 /    17  diagnostics
+   11 /    48  stringutil
+   10 /    49  execute/tsc
+   10 /    39  jsnum
+    9 /    12  cmd/k4real
+    9 /    28  bundled
+    9 /    37  diagnosticwriter
+    8 /    32  execute
+    8 /    12  vfs
+    7 /   104  module
+    6 /    23  vfs/osvfs
+    5 /    16  vfs/cachedvfs
+    4 /    38  packagejson
+    3 /   145  fswatch
+    3 /    72  pseudochecker
+    3 /    25  semver
+    2 /     4  osutil
+    1 /     5  debug
+    1 /     5  evaluator
+    1 /     4  locale
+    1 /    22  outputpaths
+    1 /    31  spanmap
+    1 /    59  transformers
+# checker by layer (sibling layer names, rank order)
+   18  PRE:datamodel
+   20  PRE:init
+   12  PRE:keys
+   18  PRE:objects
+    3  PRE:resolution
+   32  PRE:symbols
+   24  PRE:util
+    8  K-LIT
+   10  K-PRED
+    4  K-GENERIC
+    6  K-UNION
+    5  T-TUPLE
+   11  T-DECLARED
+   13  T-TYPENODE
+    2  T-BASE
+    9  T-MEMBERS
+    8  T-LOOKUP
+    3  T-APPARENT
+    8  T-SIGDECL
+    3  T-SIGSHAPE
+    9  T-SYMTYPE
+    4  T-WIDEN
+   27  MID:expr
+   12  MID:flow
+    1  MID:inference
+   20  MID:printer
+   22  MID:relations
+    3  MID:typefacts
+    3  K-KEYOF
+    6  K-INDEXED
+    1  K-TEMPLATE
+   15  POST:decls
+    8  POST:grammar
+    2  POST:marklinked
+
+# variant A: entered 2606 of 11185 functions
+ 1072 /  2864  checker
+  595 /  2223  ast
+  301 /   514  parser
+  105 /   768  printer
+   90 /   336  compiler
+   75 /   157  scanner
+   74 /   195  binder
+   67 /   183  core
+   36 /    88  tspath
+   35 /   196  tsoptions
+   29 /    84  collections
+   12 /    39  jsnum
+   11 /    17  diagnostics
+   11 /    48  stringutil
+   10 /    49  execute/tsc
+    9 /    12  cmd/k4real
+    9 /    28  bundled
+    9 /    37  diagnosticwriter
+    8 /    32  execute
+    8 /    12  vfs
+    7 /   104  module
+    6 /    23  vfs/osvfs
+    5 /    16  vfs/cachedvfs
+    4 /    38  packagejson
+    3 /   145  fswatch
+    3 /    72  pseudochecker
+    3 /    25  semver
+    2 /     5  evaluator
+    2 /     4  osutil
+    1 /     5  debug
+    1 /     4  locale
+    1 /    22  outputpaths
+    1 /    31  spanmap
+    1 /    59  transformers
+# checker by layer (sibling layer names, rank order)
+   71  PRE:datamodel
+   24  PRE:init
+   27  PRE:keys
+   24  PRE:objects
+    4  PRE:resolution
+   40  PRE:symbols
+   46  PRE:util
+   10  K-LIT
+   26  K-PRED
+    7  K-GENERIC
+   14  K-UNION
+   14  K-INTERSECT
+   32  T-TUPLE
+   21  T-DECLARED
+   40  T-TYPENODE
+   23  T-CONSTRAINT
+   10  T-BASE
+   15  T-MEMBERS
+    6  T-UIMEMBERS
+   30  T-LOOKUP
+    9  T-APPARENT
+   10  T-SIGDECL
+   25  T-SIGSHAPE
+   13  T-SIGINST
+   24  T-INSTANTIATE
+   27  T-SYMTYPE
+    7  T-WIDEN
+    1  MID:contextual
+   39  MID:expr
+   14  MID:flow
+   29  MID:inference
+   65  MID:printer
+  102  MID:relations
+    1  MID:returns
+    9  MID:typefacts
+   12  K-KEYOF
+   24  K-INDEXED
+    2  K-SUBST
+   14  K-COND
+    4  T-MAPPED
+    2  K-TEMPLATE
+  100  POST:decls
+    2  POST:emit
+   46  POST:grammar
+    2  POST:jsdoc
+    2  POST:marklinked
+    3  POST:services
+
+# variant A minus B: entered 977 of 11185 functions
+  722 /  2864  checker
+  136 /  2223  ast
+   62 /   768  printer
+   27 /   514  parser
+   10 /   157  scanner
+    8 /    84  collections
+    8 /   183  core
+    2 /    39  jsnum
+    1 /   195  binder
+    1 /     5  evaluator
+# checker by layer (sibling layer names, rank order)
+   53  PRE:datamodel
+    4  PRE:init
+   15  PRE:keys
+    6  PRE:objects
+    1  PRE:resolution
+    8  PRE:symbols
+   22  PRE:util
+    2  K-LIT
+   16  K-PRED
+    3  K-GENERIC
+    8  K-UNION
+   14  K-INTERSECT
+   27  T-TUPLE
+   10  T-DECLARED
+   27  T-TYPENODE
+   23  T-CONSTRAINT
+    8  T-BASE
+    6  T-MEMBERS
+    6  T-UIMEMBERS
+   22  T-LOOKUP
+    6  T-APPARENT
+    2  T-SIGDECL
+   22  T-SIGSHAPE
+   13  T-SIGINST
+   24  T-INSTANTIATE
+   18  T-SYMTYPE
+    3  T-WIDEN
+    1  MID:contextual
+   12  MID:expr
+    2  MID:flow
+   28  MID:inference
+   45  MID:printer
+   80  MID:relations
+    1  MID:returns
+    6  MID:typefacts
+    9  K-KEYOF
+   18  K-INDEXED
+    2  K-SUBST
+   14  K-COND
+    4  T-MAPPED
+    1  K-TEMPLATE
+   85  POST:decls
+    2  POST:emit
+   38  POST:grammar
+    2  POST:jsdoc
+    3  POST:services
+
+# variant C minus B: entered 277 of 11185 functions
+  109 /   768  printer
+   69 /  2223  ast
+   28 /   336  compiler
+   14 /   407  transformers/estransforms
+   12 /   141  transformers/tstransforms
+    9 /    22  outputpaths
+    7 /   183  core
+    6 /    59  transformers
+    6 /   124  transformers/moduletransforms
+    5 /   157  scanner
+    3 /  2864  checker
+    3 /    23  vfs/osvfs
+    2 /    84  collections
+    2 /     3  transformers/inliners
+    1 /    28  bundled
+    1 /    16  vfs/cachedvfs
+# checker by layer (sibling layer names, rank order)
+    2  POST:emit
+    1  POST:services
+
+# variant D: entered 1385 of 11185 functions
+  358 /  2223  ast
+  263 /  2864  checker
+  237 /   514  parser
+   90 /   336  compiler
+   61 /   157  scanner
+   58 /   183  core
+   57 /   195  binder
+   43 /   768  printer
+   41 /   196  tsoptions
+   34 /    88  tspath
+   21 /    84  collections
+   11 /    17  diagnostics
+   10 /    49  execute/tsc
+   10 /    48  stringutil
+    9 /    12  cmd/k4real
+    9 /    28  bundled
+    9 /    37  diagnosticwriter
+    9 /    39  jsnum
+    8 /    32  execute
+    8 /    12  vfs
+    7 /   104  module
+    6 /    23  vfs/osvfs
+    5 /    16  vfs/cachedvfs
+    4 /    38  packagejson
+    3 /   145  fswatch
+    3 /    72  pseudochecker
+    3 /    25  semver
+    2 /     4  osutil
+    1 /     5  debug
+    1 /     5  evaluator
+    1 /     4  locale
+    1 /    22  outputpaths
+    1 /    31  spanmap
+    1 /    59  transformers
+# checker by layer (sibling layer names, rank order)
+   15  PRE:datamodel
+   19  PRE:init
+   12  PRE:keys
+   17  PRE:objects
+    3  PRE:resolution
+   14  PRE:symbols
+   14  PRE:util
+    8  K-LIT
+    7  K-PRED
+    4  K-GENERIC
+    6  K-UNION
+    5  T-TUPLE
+   10  T-DECLARED
+    4  T-TYPENODE
+    2  T-BASE
+    9  T-MEMBERS
+    7  T-LOOKUP
+    3  T-APPARENT
+    6  T-SIGDECL
+    8  T-SYMTYPE
+    4  T-WIDEN
+   12  MID:expr
+    4  MID:flow
+    1  MID:inference
+   20  MID:printer
+   22  MID:relations
+    1  MID:typefacts
+    2  K-INDEXED
+    1  K-TEMPLATE
+   15  POST:decls
+    8  POST:grammar

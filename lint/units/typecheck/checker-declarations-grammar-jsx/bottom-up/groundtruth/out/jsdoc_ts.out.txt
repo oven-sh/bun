@@ -1,0 +1,11 @@
+PARSE jsdoc_ts.ts parse=[] js=[] bind=[]
+jsdoc_ts.ts(1,8)+7: error TS17020: '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'number | null | undefined'?
+jsdoc_ts.ts(2,8)+7: error TS17019: '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'number'?
+jsdoc_ts.ts(3,8)+1: error TS8020: JSDoc types can only be used inside documentation comments.
+jsdoc_ts.ts(4,34)+1: error TS7006: Parameter 'x' implicitly has an 'any' type.
+SUGGEST jsdoc_ts.ts(4,34)+1: suggestion TS6133: 'x' is declared but its value is never read. [unnecessary]
+SUGGEST jsdoc_ts.ts(5,21)+2: suggestion TS8024: JSDoc '@param' tag has name 'zz', but there is no parameter with that name.
+SUGGEST jsdoc_ts.ts(6,12)+1: suggestion TS6133: 'y' is declared but its value is never read. [unnecessary]
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=10 Options=1 SourceFiles=1
+COUNTS TypeCount=87 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

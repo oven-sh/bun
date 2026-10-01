@@ -1,0 +1,61 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /classes.ts
+SINCE type=85 signature=4
+DRIVE declared
+DECLARED ClassDeclaration@/classes.ts:0:133 T86
+DECLARED InterfaceDeclaration@/classes.ts:133:169 T88
+DECLARED TypeParameter@/classes.ts:151:152 T89
+DECLARED ClassDeclaration@/classes.ts:169:390 T91
+DECLARED TypeParameter@/classes.ts:188:189 T92
+DECLARED TypeParameter@/classes.ts:190:206 T93
+DECLARED TypeParameter@/classes.ts:334:335 T95
+DECLARED ClassDeclaration@/classes.ts:390:481 T96
+STATE
+COUNTS TypeCount=97 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=122
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=97 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=97
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x5 data=Interface symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 target=T86 inst=[T86] targs=[] tparams=[T87] outer=0 this=T87
+TYPE 87 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 constraint=T86 isThisType
+TYPE 88 flags=0x100000 objectFlags=0x6 data=Interface symbol="Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 target=T88 inst=[T88] targs=[T89] tparams=[T89 T90] outer=0 this=T90
+TYPE 89 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/classes.ts:151:152/0x40000 constraint=nil
+TYPE 90 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 constraint=T88 isThisType
+TYPE 91 flags=0x100000 objectFlags=0x5 data=Interface symbol="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 target=T91 inst=[T91] targs=[T92 T93] tparams=[T92 T93 T94] outer=0 this=T94
+TYPE 92 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/classes.ts:188:189/0x40000 constraint=nil
+TYPE 93 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="U"@TypeParameter@/classes.ts:190:206/0x40000 constraint=nil
+TYPE 94 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 constraint=T91 isThisType
+TYPE 95 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="V"@TypeParameter@/classes.ts:334:335/0x40000 constraint=nil
+TYPE 96 flags=0x100000 objectFlags=0x5 data=Interface symbol="Shape"@ClassDeclaration@/classes.ts:390:481/0x20 target=T96 inst=[T96] targs=[] tparams=[T97] outer=0 this=T97
+TYPE 97 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Shape"@ClassDeclaration@/classes.ts:390:481/0x20 constraint=T96 isThisType
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "Animal"@ClassDeclaration@/classes.ts:0:133/0x20 declaredType=T86
+LINKS "Dog"@ClassDeclaration@/classes.ts:169:390/0x20 declaredType=T91
+LINKS "T"@TypeParameter@/classes.ts:188:189/0x40000 declaredType=T92
+LINKS "U"@TypeParameter@/classes.ts:190:206/0x40000 declaredType=T93
+LINKS "Shape"@ClassDeclaration@/classes.ts:390:481/0x20 declaredType=T96
+LINKS "Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 declaredType=T88
+LINKS "T"@TypeParameter@/classes.ts:151:152/0x40000 declaredType=T89
+LINKS "V"@TypeParameter@/classes.ts:334:335/0x40000 declaredType=T95
+GLOBALS count=122 transient=2
+SYMBOLS named=0 unnamed=6

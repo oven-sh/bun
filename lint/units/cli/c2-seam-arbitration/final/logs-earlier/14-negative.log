@@ -1,0 +1,4 @@
+    Checking bun_ast v0.0.0 (/tmp/c2probe/ast)
+ast/lib.rs:1135:15: error[E0080]: evaluation panicked: assertion failed: core::mem::size_of::<Msg>() == 160: evaluation of `_` failed here
+error: could not compile `bun_ast` (lib) due to 1 previous error
+check-exit=101

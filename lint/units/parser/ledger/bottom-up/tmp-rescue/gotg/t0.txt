@@ -1,0 +1,9 @@
+# smoke
+type as = 1
+interface as {}
+declare type as = 1
+global {}
+{ namespace N {} }
+let a!;
+(public a: A) => x
+(this: A) => x

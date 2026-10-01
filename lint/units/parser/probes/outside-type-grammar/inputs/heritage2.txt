@@ -1,0 +1,26 @@
+interface I extends A\n<T> {}
+interface I extends A.B\n<T> {}
+interface I extends A\n<T>, B\n<U> {}
+interface I extends A<T>\n<U> {}
+interface I extends A\n.B {}
+interface I extends A.\nB {}
+interface I extends\nA {}
+interface I\nextends A {}
+interface I extends A\n{}
+interface I extends A,\nB {}
+interface I extends A\n, B {}
+class C implements I\n<T> {}
+class C implements I.J\n<T> {}
+class C implements I\n<T>, J\n<U> {}
+class C implements I\n.J {}
+class C extends A\n<T> {}
+class C extends A\n<T> implements I\n<U> {}
+class C extends A\n.B {}
+class C extends A\n() {}
+class C extends A<T>\n() {}
+var x = class implements I\n<T> {};
+interface I extends A /* c */ <T> {}
+interface I extends A // c\n<T> {}
+interface I extends A\n\n\n<T> {}
+type T = A\n<B>;
+let x: A\n<B>y;

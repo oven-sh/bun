@@ -1,0 +1,380 @@
+{"id":"A1","out":"","scan":"","scan2":""}
+{"id":"A2","out":"const k = \"a\";","scan":"","scan2":""}
+{"id":"A3","out":"","scan":"","scan2":""}
+{"id":"A4","out":"","scan":"","scan2":""}
+{"id":"A5","out":"","scan":"","scan2":""}
+{"id":"A6","err":"Expected \"]\" but found \"+\"","scanErr":"Expected \"]\" but found \"+\"","scan2Err":"Expected \"]\" but found \"+\""}
+{"id":"A7","err":"Expected \"]\" but found \"(\"","scanErr":"Expected \"]\" but found \"(\"","scan2Err":"Expected \"]\" but found \"(\""}
+{"id":"A8","err":"Expected \"]\" but found \"?\"","scanErr":"Expected \"]\" but found \"?\"","scan2Err":"Expected \"]\" but found \"?\""}
+{"id":"A9","err":"Expected \"]\" but found \",\"","scanErr":"Expected \"]\" but found \",\"","scan2Err":"Expected \"]\" but found \",\""}
+{"id":"A10","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"A11","out":"","scan":"","scan2":""}
+{"id":"A12","err":"Expected \"]\" but found \"as\"","scanErr":"Expected \"]\" but found \"as\"","scan2Err":"Expected \"]\" but found \"as\""}
+{"id":"A13","out":"","scan":"","scan2":""}
+{"id":"A14","out":"","scan":"","scan2":""}
+{"id":"A15","out":"","scan":"","scan2":""}
+{"id":"A16","out":"","scan":"","scan2":""}
+{"id":"A17","out":"","scan":"","scan2":""}
+{"id":"A18","out":"","scan":"","scan2":""}
+{"id":"A19","out":"","scan":"","scan2":""}
+{"id":"A20","out":"","scan":"","scan2":""}
+{"id":"A21","out":"","scan":"","scan2":""}
+{"id":"A22","err":"Unexpected class","scanErr":"Unexpected class","scan2Err":"Unexpected class"}
+{"id":"A23","err":"Unexpected function","scanErr":"Unexpected function","scan2Err":"Unexpected function"}
+{"id":"A24","out":"","scan":"","scan2":""}
+{"id":"A25","err":"Expected \"]\" but found \"x\"","scanErr":"Expected \"]\" but found \"x\"","scan2Err":"Expected \"]\" but found \"x\""}
+{"id":"A26","out":"function* g() {}","scan":"","scan2":""}
+{"id":"A28","out":"","scan":"","scan2":""}
+{"id":"A29","out":"","scan":"","scan2":""}
+{"id":"A30","out":"","scan":"","scan2":""}
+{"id":"A31","out":"","scan":"","scan2":""}
+{"id":"A32","err":"Expected \"]\" but found \"?.\"","scanErr":"Expected \"]\" but found \"?.\"","scan2Err":"Expected \"]\" but found \"?.\""}
+{"id":"A33","err":"Expected \"(\" but found \"x\"","scanErr":"Expected \"(\" but found \"x\"","scan2Err":"Expected \"(\" but found \"x\""}
+{"id":"A34","out":"","scan":"","scan2":""}
+{"id":"A35","out":"","scan":"","scan2":""}
+{"id":"A36","err":"Expected \"(\" but found \"Foo\"","scanErr":"Expected \"(\" but found \"Foo\"","scan2Err":"Expected \"(\" but found \"Foo\""}
+{"id":"A37","err":"Expected \"]\" but found \"=\"","scanErr":"Expected \"]\" but found \"=\"","scan2Err":"Expected \"]\" but found \"=\""}
+{"id":"A38","err":"Unexpected /","scanErr":"Unexpected /","scan2Err":"Unexpected /"}
+{"id":"A39","err":"Expected \">\" but found \"/\"","scanErr":"Expected \">\" but found \"/\"","scan2Err":"Expected \">\" but found \"/\""}
+{"id":"A41","err":"Expected \"]\" but found \"satisfies\"","scanErr":"Expected \"]\" but found \"satisfies\"","scan2Err":"Expected \"]\" but found \"satisfies\""}
+{"id":"A43","err":"Expected \"]\" but found \"(\"","scanErr":"Expected \"]\" but found \"(\"","scan2Err":"Expected \"]\" but found \"(\""}
+{"id":"A44","out":"","scan":"","scan2":""}
+{"id":"A45","out":"","scan":"","scan2":""}
+{"id":"A46","out":"","scan":"","scan2":""}
+{"id":"A47","out":"","scan":"","scan2":""}
+{"id":"A48","out":"/*! legal */\nlet z = 1;","scan":"","scan2":""}
+{"id":"A49","out":"import { foo } from \"./x\";\nexport let t;","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"A50","out":"import { foo } from \"./x\";\nexport let t;","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"A51","out":"import { foo } from \"./x\";\nexport let t;","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"A52","out":"","scan":"","scan2":""}
+{"id":"A53","out":"","scan":"","scan2":""}
+{"id":"A54","out":"","scan":"","scan2":""}
+{"id":"A55","out":"","scan":"","scan2":""}
+{"id":"A56","err":"Expected \"]\" but found \"0\"","scanErr":"Expected \"]\" but found \"0\"","scan2Err":"Expected \"]\" but found \"0\""}
+{"id":"A57","out":"","scan":"","scan2":""}
+{"id":"A58","out":"","scan":"","scan2":""}
+{"id":"A59","out":"","scan":"","scan2":""}
+{"id":"A60","out":"","scan":"","scan2":""}
+{"id":"A61","out":"","scan":"","scan2":""}
+{"id":"A62","out":"","scan":"","scan2":""}
+{"id":"A63","out":"","scan":"","scan2":""}
+{"id":"A64","out":"","scan":"","scan2":""}
+{"id":"A65","out":"","scan":"","scan2":""}
+{"id":"A66","out":"","scan":"","scan2":""}
+{"id":"A67","out":"","scan":"","scan2":""}
+{"id":"A68","out":"","scan":"","scan2":""}
+{"id":"B1","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B2","err":"Expected \")\" but found \":\"","scanErr":"Expected \")\" but found \":\"","scan2Err":"Expected \")\" but found \":\""}
+{"id":"B3","err":"Expected \")\" but found \"?\"","scanErr":"Expected \")\" but found \"?\"","scan2Err":"Expected \")\" but found \"?\""}
+{"id":"B4","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B5","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B6","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B7","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B8","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B9","err":"Expected \"]\" but found \"=\"","scanErr":"Expected \"]\" but found \"=\"","scan2Err":"Expected \"]\" but found \"=\""}
+{"id":"B10","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B11","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B12","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B13","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B14","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B15","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B16","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B17","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B18","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B19","err":"Unexpected ...","scanErr":"Unexpected ...","scan2Err":"Unexpected ..."}
+{"id":"B20","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B21","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B22","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B23","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B24","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B25","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B26","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B27","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B28","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B29","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B30","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B31","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B32","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B33","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B34","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B35","err":"Expected \";\" but found \"=>\"","scanErr":"Expected \";\" but found \"=>\"","scan2Err":"Expected \";\" but found \"=>\""}
+{"id":"B36","err":"Expected \";\" but found \":\"","scanErr":"Expected \";\" but found \":\"","scan2Err":"Expected \";\" but found \":\""}
+{"id":"B37","err":"Unexpected =>","scanErr":"Unexpected =>","scan2Err":"Unexpected =>"}
+{"id":"B38","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B39","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B40","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B41","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B42","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B43","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B44","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B45","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B46","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B47","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B48","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B49","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B50","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B51","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B52","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B53","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B54","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B55","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"B56","err":"Expected \")\" but found \":\"","scanErr":"Expected \")\" but found \":\"","scan2Err":"Expected \")\" but found \":\""}
+{"id":"B57","out":"class K {\n}","scan":"","scan2":""}
+{"id":"B58","out":"function f() {}","scan":"","scan2":""}
+{"id":"B59","out":"","scan":"","scan2":""}
+{"id":"B60","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"C1","out":"let g;","scan":"","scan2":""}
+{"id":"C2","out":"let g;","scan":"","scan2":""}
+{"id":"C3","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C4","err":"Expected \"]\" but found \"=\"","scanErr":"Expected \"]\" but found \"=\"","scan2Err":"Expected \"]\" but found \"=\""}
+{"id":"C5","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C6","err":"Expected \")\" but found \":\"","scanErr":"Expected \")\" but found \":\"","scan2Err":"Expected \")\" but found \":\""}
+{"id":"C7","out":"let g;","scan":"","scan2":""}
+{"id":"C8","out":"let g;","scan":"","scan2":""}
+{"id":"C9","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C10","out":"let g;","scan":"","scan2":""}
+{"id":"C11","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"C12","out":"let g;","scan":"","scan2":""}
+{"id":"C13","out":"let g;","scan":"","scan2":""}
+{"id":"C14","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C15","out":"let g;","scan":"","scan2":""}
+{"id":"C16","err":"Expected \")\" but found \":\"","scanErr":"Expected \")\" but found \":\"","scan2Err":"Expected \")\" but found \":\""}
+{"id":"C17","out":"let g;","scan":"","scan2":""}
+{"id":"C18","out":"let g;","scan":"","scan2":""}
+{"id":"C19","out":"let g;","scan":"","scan2":""}
+{"id":"C20","out":"let g;","scan":"","scan2":""}
+{"id":"C21","out":"let g;","scan":"","scan2":""}
+{"id":"C22","out":"let g;","scan":"","scan2":""}
+{"id":"C23","out":"let g;","scan":"","scan2":""}
+{"id":"C24","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C25","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C26","err":"Expected \"]\" but found \"+\"","scanErr":"Expected \"]\" but found \"+\"","scan2Err":"Expected \"]\" but found \"+\""}
+{"id":"C27","out":"let g;","scan":"","scan2":""}
+{"id":"C28","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C29","err":"Expected \"}\" but found \"=\"","scanErr":"Expected \"}\" but found \"=\"","scan2Err":"Expected \"}\" but found \"=\""}
+{"id":"C30","out":"let g;","scan":"","scan2":""}
+{"id":"C31","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"C32","err":"Unexpected ...","scanErr":"Unexpected ...","scan2Err":"Unexpected ..."}
+{"id":"C33","err":"Unexpected #a","scanErr":"Unexpected #a","scan2Err":"Unexpected #a"}
+{"id":"C34","err":"Expected \"]\" but found \"=\"","scanErr":"Expected \"]\" but found \"=\"","scan2Err":"Expected \"]\" but found \"=\""}
+{"id":"D1","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D2","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D3","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D4","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D5","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D6","err":"Expected \")\" but found \":\"","scanErr":"Expected \")\" but found \":\"","scan2Err":"Expected \")\" but found \":\""}
+{"id":"D7","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D8","err":"Expected \"]\" but found \"a\"","scanErr":"Expected \"]\" but found \"a\"","scan2Err":"Expected \"]\" but found \"a\""}
+{"id":"D9","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D10","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D11","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D12","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D13","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D14","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D15","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D16","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D17","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D18","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"D19","out":"class K {\n  m(a) {}\n}","scan":"","scan2":""}
+{"id":"D20","out":"","scan":"","scan2":""}
+{"id":"D21","out":"let g;","scan":"","scan2":""}
+{"id":"D22","out":"let g;","scan":"","scan2":""}
+{"id":"D23","err":"Expected \")\" but found \"readonly\"","scanErr":"Expected \")\" but found \"readonly\"","scan2Err":"Expected \")\" but found \"readonly\""}
+{"id":"D24","err":"Unexpected export","scanErr":"Unexpected export","scan2Err":"Unexpected export"}
+{"id":"D25","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D26","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D27","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D28","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D29","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D30","err":"Unexpected in","scanErr":"Unexpected in","scan2Err":"Unexpected in"}
+{"id":"D31","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"D32","err":"Expected \")\" but found \"a\"","scanErr":"Expected \")\" but found \"a\"","scan2Err":"Expected \")\" but found \"a\""}
+{"id":"E1","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E2","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E3","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E4","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E5","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E6","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E7","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E8","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E9","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E10","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E11","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E12","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E13","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E14","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E15","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E16","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E17","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E18","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"E19","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"F1","out":"","scan":"","scan2":""}
+{"id":"F2","out":"","scan":"","scan2":""}
+{"id":"F3","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F4","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F5","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F6","out":"","scan":"","scan2":""}
+{"id":"F7","out":"","scan":"","scan2":""}
+{"id":"F8","out":"","scan":"","scan2":""}
+{"id":"F9","out":"","scan":"","scan2":""}
+{"id":"F10","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F11","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F12","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F13","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F14","out":"","scan":"","scan2":""}
+{"id":"F15","out":"","scan":"","scan2":""}
+{"id":"F16","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F17","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F18","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F19","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F20","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F21","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F22","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F23","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F24","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F25","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F26","out":"","scan":"","scan2":""}
+{"id":"F27","out":"","scan":"","scan2":""}
+{"id":"F28","err":"Expected \")\" but found \"=\"","scanErr":"Expected \")\" but found \"=\"","scan2Err":"Expected \")\" but found \"=\""}
+{"id":"F29","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F30","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F31","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F32","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F33","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F34","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F35","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F36","err":"Unexpected #p","scanErr":"Unexpected #p","scan2Err":"Unexpected #p"}
+{"id":"F37","err":"Unexpected =>","scanErr":"Unexpected =>","scan2Err":"Unexpected =>"}
+{"id":"F38","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F39","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"F40","err":"Unexpected {","scanErr":"Unexpected {","scan2Err":"Unexpected {"}
+{"id":"G1","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G2","out":"","scan":"","scan2":""}
+{"id":"G3","err":"Expected \")\" but found \"+\"","scanErr":"Expected \")\" but found \"+\"","scan2Err":"Expected \")\" but found \"+\""}
+{"id":"G4","err":"Unexpected !","scanErr":"Unexpected !","scan2Err":"Unexpected !"}
+{"id":"G5","err":"Unexpected ++","scanErr":"Unexpected ++","scan2Err":"Unexpected ++"}
+{"id":"G6","err":"Unexpected /","scanErr":"Unexpected /","scan2Err":"Unexpected /"}
+{"id":"G7","err":"Unexpected class","scanErr":"Unexpected class","scan2Err":"Unexpected class"}
+{"id":"G8","err":"Unexpected function","scanErr":"Unexpected function","scan2Err":"Unexpected function"}
+{"id":"G9","err":"Expected \">\" but found \"x\"","scanErr":"Expected \">\" but found \"x\"","scan2Err":"Expected \">\" but found \"x\""}
+{"id":"G10","err":"Unexpected delete","scanErr":"Unexpected delete","scan2Err":"Unexpected delete"}
+{"id":"G11","err":"Unexpected ~","scanErr":"Unexpected ~","scan2Err":"Unexpected ~"}
+{"id":"G12","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G13","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G14","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G15","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G16","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G17","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G18","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G19","err":"Expected \">\" but found \"++\"","scanErr":"Expected \">\" but found \"++\"","scan2Err":"Expected \">\" but found \"++\""}
+{"id":"G20","err":"Expected \">\" but found \"+\"","scanErr":"Expected \">\" but found \"+\"","scan2Err":"Expected \">\" but found \"+\""}
+{"id":"G21","err":"Expected \">\" but found \"0\"","scanErr":"Expected \">\" but found \"0\"","scan2Err":"Expected \">\" but found \"0\""}
+{"id":"G22","err":"Expected \"(\" but found \"Foo\"","scanErr":"Expected \"(\" but found \"Foo\"","scan2Err":"Expected \"(\" but found \"Foo\""}
+{"id":"G23","err":"Unexpected @","scanErr":"Unexpected @","scan2Err":"Unexpected @"}
+{"id":"G24","err":"Unexpected --","scanErr":"Unexpected --","scan2Err":"Unexpected --"}
+{"id":"G25","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G26","err":"Unexpected ~","scanErr":"Unexpected ~","scan2Err":"Unexpected ~"}
+{"id":"G27","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G28","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G29","err":"Unexpected #p","scanErr":"Unexpected #p","scan2Err":"Unexpected #p"}
+{"id":"G30","err":"Expected \"(\" but found \"x\"","scanErr":"Expected \"(\" but found \"x\"","scan2Err":"Expected \"(\" but found \"x\""}
+{"id":"G31","err":"Expected \">\" but found \"function\"","scanErr":"Expected \">\" but found \"function\"","scan2Err":"Expected \">\" but found \"function\""}
+{"id":"G32","err":"Unexpected super","scanErr":"Unexpected super","scan2Err":"Unexpected super"}
+{"id":"G33","err":"Expected \"?\" but found \"+\"","scanErr":"Expected \"?\" but found \"+\"","scan2Err":"Expected \"?\" but found \"+\""}
+{"id":"G34","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G35","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G36","err":"Unexpected ...","scanErr":"Unexpected ...","scan2Err":"Unexpected ..."}
+{"id":"G37","out":"function f() {}","scan":"","scan2":""}
+{"id":"G38","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"G39","err":"Expected \";\" but found \"extends\"","scanErr":"Expected \";\" but found \"extends\"","scan2Err":"Expected \";\" but found \"extends\""}
+{"id":"G40","out":"function f() {}","scan":"","scan2":""}
+{"id":"G41","err":"Unexpected =","scanErr":"Unexpected =","scan2Err":"Unexpected ="}
+{"id":"G42","err":"Unexpected function","scanErr":"Unexpected function","scan2Err":"Unexpected function"}
+{"id":"G43","err":"Expected \"(\" but found \".\"","scanErr":"Expected \"(\" but found \".\"","scan2Err":"Expected \"(\" but found \".\""}
+{"id":"G44","err":"Expected number but found \"x\"","scanErr":"Expected number but found \"x\"","scan2Err":"Expected number but found \"x\""}
+{"id":"G45","err":"Expected identifier but found \"+\"","scanErr":"Expected identifier but found \"+\"","scan2Err":"Expected identifier but found \"+\""}
+{"id":"G46","err":"The modifier \"in\" is not valid here","scanErr":"The modifier \"in\" is not valid here","scan2Err":"The modifier \"in\" is not valid here"}
+{"id":"H1","out":"","scan":"","scan2":""}
+{"id":"H2","out":"","scan":"","scan2":""}
+{"id":"H3","err":"Unexpected (","scanErr":"Unexpected (","scan2Err":"Unexpected ("}
+{"id":"H4","err":"Unexpected +","scanErr":"Unexpected +","scan2Err":"Unexpected +"}
+{"id":"H5","out":"","scan":"","scan2":""}
+{"id":"H6","out":"","scan":"","scan2":""}
+{"id":"H7","out":"","scan":"","scan2":""}
+{"id":"H8","out":"","scan":"","scan2":""}
+{"id":"H9","out":"","scan":"","scan2":""}
+{"id":"H10","out":"","scan":"","scan2":""}
+{"id":"H11","out":"","scan":"","scan2":""}
+{"id":"H12","err":"Expected string but found \"foo\"","scanErr":"Expected string but found \"foo\"","scan2Err":"Expected string but found \"foo\""}
+{"id":"H13","out":"","scan":"","scan2":""}
+{"id":"H14","out":"","scan":"","scan2":""}
+{"id":"H15","out":"","scan":"","scan2":""}
+{"id":"H16","out":"","scan":"","scan2":""}
+{"id":"H17","out":"","scan":"","scan2":""}
+{"id":"H18","out":"","scan":"","scan2":""}
+{"id":"H19","out":"","scan":"","scan2":""}
+{"id":"H20","out":"","scan":"","scan2":""}
+{"id":"H21","err":"Unexpected function","scanErr":"Unexpected function","scan2Err":"Unexpected function"}
+{"id":"H22","out":"","scan":"","scan2":""}
+{"id":"H23","out":"","scan":"","scan2":""}
+{"id":"H24","err":"Expected \"{\" but found \")\"","scanErr":"Expected \"{\" but found \")\"","scan2Err":"Expected \"{\" but found \")\""}
+{"id":"H25","err":"Unexpected as","scanErr":"Unexpected as","scan2Err":"Unexpected as"}
+{"id":"H26","err":"Expected \")\" but found \"as\"","scanErr":"Expected \")\" but found \"as\"","scan2Err":"Expected \")\" but found \"as\""}
+{"id":"H27","err":"Expected string but found \"`./x`\"","scanErr":"Expected string but found \"`./x`\"","scan2Err":"Expected string but found \"`./x`\""}
+{"id":"H28","err":"Expected \")\" but found \"|\"","scanErr":"Expected \")\" but found \"|\"","scan2Err":"Expected \")\" but found \"|\""}
+{"id":"I1","out":"","scan":"","scan2":""}
+{"id":"I2","err":"Expected \"{\" but found \"(\"","scanErr":"Expected \"{\" but found \"(\"","scan2Err":"Expected \"{\" but found \"(\""}
+{"id":"I3","out":"","scan":"","scan2":""}
+{"id":"I4","out":"","scan":"","scan2":""}
+{"id":"I5","err":"Expected \"{\" but found \"?.\"","scanErr":"Expected \"{\" but found \"?.\"","scan2Err":"Expected \"{\" but found \"?.\""}
+{"id":"I6","out":"","scan":"","scan2":""}
+{"id":"I7","out":"","scan":"","scan2":""}
+{"id":"I8","err":"Unexpected class","scanErr":"Unexpected class","scan2Err":"Unexpected class"}
+{"id":"I9","err":"Expected \"(\" but found \"Foo\"","scanErr":"Expected \"(\" but found \"Foo\"","scan2Err":"Expected \"(\" but found \"Foo\""}
+{"id":"I10","out":"","scan":"","scan2":""}
+{"id":"I11","out":"","scan":"","scan2":""}
+{"id":"I12","out":"","scan":"","scan2":""}
+{"id":"I13","out":"","scan":"","scan2":""}
+{"id":"I14","out":"","scan":"","scan2":""}
+{"id":"I15","out":"class C {\n}","scan":"","scan2":""}
+{"id":"I16","err":"Expected \"{\" but found \"(\"","scanErr":"Expected \"{\" but found \"(\"","scan2Err":"Expected \"{\" but found \"(\""}
+{"id":"I17","out":"class C {\n}","scan":"","scan2":""}
+{"id":"I18","err":"Expected \"{\" but found \"(\"","scanErr":"Expected \"{\" but found \"(\"","scan2Err":"Expected \"{\" but found \"(\""}
+{"id":"I19","out":"","scan":"","scan2":""}
+{"id":"I20","err":"Expected \"{\" but found \"`x`\"","scanErr":"Expected \"{\" but found \"`x`\"","scan2Err":"Expected \"{\" but found \"`x`\""}
+{"id":"I21","out":"","scan":"","scan2":""}
+{"id":"I22","out":"","scan":"","scan2":""}
+{"id":"I23","out":"","scan":"","scan2":""}
+{"id":"I24","err":"Expected \"{\" but found \">\"","scanErr":"Expected \"{\" but found \">\"","scan2Err":"Expected \"{\" but found \">\""}
+{"id":"I25","err":"Unexpected function","scanErr":"Unexpected function","scan2Err":"Unexpected function"}
+{"id":"I26","err":"Expected identifier but found \"#b\"","scanErr":"Expected identifier but found \"#b\"","scan2Err":"Expected identifier but found \"#b\""}
+{"id":"I27","err":"Unexpected super","scanErr":"Unexpected super","scan2Err":"Unexpected super"}
+{"id":"I28","err":"Expected \"(\" but found \".\"","scanErr":"Expected \"(\" but found \".\"","scan2Err":"Expected \"(\" but found \".\""}
+{"id":"I29","out":"","scan":"","scan2":""}
+{"id":"I30","out":"","scan":"","scan2":""}
+{"id":"I31","out":"","scan":"","scan2":""}
+{"id":"I32","out":"class C extends K {\n}","scan":"","scan2":""}
+{"id":"I33","out":"","scan":"","scan2":""}
+{"id":"I34","out":"","scan":"","scan2":""}
+{"id":"I35","out":"","scan":"","scan2":""}
+{"id":"I36","out":"","scan":"","scan2":""}
+{"id":"I37","out":"class C {\n}","scan":"","scan2":""}
+{"id":"I38","out":"class C {\n}","scan":"","scan2":""}
+{"id":"I39","out":"class C {\n}","scan":"","scan2":""}
+{"id":"I40","out":"","scan":"","scan2":""}
+{"id":"K1","out":"","scan":"dynamic-import:./nope1","scan2":""}
+{"id":"K2","out":"","scan":"require-call:./nope2","scan2":""}
+{"id":"K3","out":"class C {\n}","scan":"dynamic-import:./nope3","scan2":""}
+{"id":"K4","out":"function f() {}","scan":"dynamic-import:./nope4","scan2":""}
+{"id":"K5","out":"","scan":"dynamic-import:./nope5","scan2":""}
+{"id":"K6","out":"","scan":"require-call:./nope6","scan2":""}
+{"id":"K7","out":"","scan":"dynamic-import:./nope7","scan2":""}
+{"id":"K8","out":"class C {\n}","scan":"dynamic-import:./nope8","scan2":""}
+{"id":"K9","err":"\"await\" can only be used inside an \"async\" function","scanErr":"\"await\" can only be used inside an \"async\" function","scan2Err":"\"await\" can only be used inside an \"async\" function"}
+{"id":"K10","out":"","scan":"require-call:react/jsx-dev-runtime,require-call:react","scan2":""}
+{"id":"K11","out":"","scan":"","scan2":""}
+{"id":"K12","out":"import { foo } from \"./x\";","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"K13","out":"import { foo } from \"./x\";\nfunction f() {}","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"K14","out":"import { foo } from \"./x\";\n\nclass C {\n}","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"K15","out":"import { foo } from \"./x\";\n\nclass C {\n}","scan":"import-statement:./x","scan2":"import-statement:./x"}
+{"id":"K16","out":"import { foo } from \"./x\";","scan":"import-statement:./x","scan2":"import-statement:./x"}

@@ -1,0 +1,15 @@
+file /min.ts scriptKind=3 variant=0 dts=false textLen=23
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=8 identifiers=1 text=2 reparsedClones=0
+root KindSourceFile [0,23) f=0x0
+  .Statements: list [0,22) n=1
+    - KindVariableStatement [0,22) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,21) f=0x2
+        .Declarations: list [5,21) n=1
+          - KindVariableDeclaration [5,21) f=0x0
+            .Initializer: KindStringLiteral [17,21) f=0x0 Text="s" TokenFlags=0x0
+            .Type: KindNumberKeyword [8,15) f=0x0
+            .name: KindIdentifier [5,7) f=0x0 Text="x"
+  .EndOfFileToken: KindEndOfFile [22,23) f=0x0

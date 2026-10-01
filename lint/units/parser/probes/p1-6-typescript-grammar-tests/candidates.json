@@ -1,0 +1,4387 @@
+[
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: if;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: class;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected class; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: function;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected function; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: delete;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected delete; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: in;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected in; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: var;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected var; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: with;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected with; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: enum;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected enum; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: default;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected default; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: super;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected super; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: instanceof;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected instanceof; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: extends;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected extends; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: export;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected export; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: return;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected return; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: switch;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected switch; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: while;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected while; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: do;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected do; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: for;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected for; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: try;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected try; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: catch;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected catch; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: throw;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected throw; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: else;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected else; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: case;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected case; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: break;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected break; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: continue;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected continue; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: debugger;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected debugger; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: finally;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected finally; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: if.x;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: class<T>;",
+  "expected": "let x;\n",
+  "note": "ref; bun now: Unexpected class; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...const: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected \"const\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...in: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected in; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...class: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected class; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...if: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...var: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected var; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...default: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected default; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...delete: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected delete; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...enum: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected enum; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...export: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected export; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...extends: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected extends; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...super: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected super; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...switch: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected switch; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...instanceof: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected instanceof; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...with: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected with; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "type X = [...return: A[]];",
+  "expected": "",
+  "note": "label; bun now: Unexpected return; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: | if;",
+  "expected": "let x;\n",
+  "note": "union; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: A | if;",
+  "expected": "let x;\n",
+  "note": "union; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: A & class;",
+  "expected": "let x;\n",
+  "note": "union; bun now: Unexpected class; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: keyof if;",
+  "expected": "let x;\n",
+  "note": "op; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: (if);",
+  "expected": "let x;\n",
+  "note": "paren; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: (class);",
+  "expected": "let x;\n",
+  "note": "paren; bun now: Unexpected class; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "let x: `${if}`;",
+  "expected": "let x;\n",
+  "note": "tmpl; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts reserved word",
+  "src": "const v = x satisfies if;",
+  "expected": "const v = x;\n",
+  "note": "core; bun now: Unexpected if; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "let x: typeof import(\"x\")<C>;",
+  "expected": "let x;\n",
+  "note": "query; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = typeof import(\"x\")<C>;",
+  "expected": "",
+  "note": "query; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "let x: import(\"x\")<T>;",
+  "expected": "let x;\n",
+  "note": "import; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = import(\"x\")<T>;",
+  "expected": "",
+  "note": "import; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "let x: import(\"x\", { with: { a: \"b\" } })<T>;",
+  "expected": "let x;\n",
+  "note": "import; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = import(\"x\", { with: { a: \"b\" } })<T>;",
+  "expected": "",
+  "note": "import; bun now: Expected \";\" but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "let x: import(\"x\", { with: { a: \"b\" + \"c\" } });",
+  "expected": "let x;\n",
+  "note": "import; bun now: Unexpected +; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = import(\"x\", { with: { a: \"b\" + \"c\" } });",
+  "expected": "",
+  "note": "import; bun now: Unexpected +; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "let x: import(\"x\").A.<T>;",
+  "expected": "let x;\n",
+  "note": "import; bun now: Expected identifier but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = import(\"x\").A.<T>;",
+  "expected": "",
+  "note": "import; bun now: Expected identifier but found \"<\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = ([a, , b]) => void;",
+  "expected": "",
+  "note": "fn; bun now: Unexpected ,; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "const f = (a): ([a, , b]) => void => 0;",
+  "expected": "const f = (a) => 0;\n",
+  "note": "fn; bun now: Unexpected =>; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "type X = (a) => asserts a\nis B;",
+  "expected": "",
+  "note": "fn; bun now: Expected \";\" but found \"B\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "const f = (a): (a) => asserts a\nis B => 0;",
+  "expected": "const f = (a) => 0;\n",
+  "note": "fn; bun now: Expected \";\" but found \":\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "const f = (a): asserts a\nis B => 0;",
+  "expected": "const f = (a) => 0;\n",
+  "note": "pred; bun now: Expected \";\" but found \":\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "const f = (a): asserts this\nis B => 0;",
+  "expected": "const f = (a) => 0;\n",
+  "note": "pred; bun now: Expected \";\" but found \":\"; expected: neutral"
+ },
+ {
+  "group": "type forms",
+  "which": "ts",
+  "src": "function f(): asserts this\nis B { throw 0 }",
+  "expected": "function f() {\n  throw 0;\n}\n",
+  "note": "pred; bun now: Expected \";\" but found \"B\"; expected: neutral"
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "interface as {}",
+  "expected": "",
+  "note": "ifaceName; bun now: Expected identifier but found end of file; expected: equivalent \"interface A {}\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "export interface as {}",
+  "expected": "",
+  "note": "ifaceName; bun now: Expected identifier but found end of file; expected: equivalent \"export interface A {}\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "interface satisfies {}",
+  "expected": "",
+  "note": "ifaceName; bun now: Expected identifier but found end of file; expected: equivalent \"interface A {}\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "export interface satisfies {}",
+  "expected": "",
+  "note": "ifaceName; bun now: Expected identifier but found end of file; expected: equivalent \"export interface A {}\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "type as = 1",
+  "expected": "",
+  "note": "aliasName; bun now: Unexpected =; expected: equivalent \"type A = 1\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "declare type as = 1",
+  "expected": "",
+  "note": "aliasName; bun now: Unexpected =; expected: equivalent \"declare type A = 1\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "type satisfies = 1",
+  "expected": "",
+  "note": "aliasName; bun now: Unexpected =; expected: equivalent \"type A = 1\""
+ },
+ {
+  "group": "object types, interfaces, aliases, mapped types",
+  "which": "ts",
+  "src": "declare type satisfies = 1",
+  "expected": "",
+  "note": "aliasName; bun now: Unexpected =; expected: equivalent \"declare type A = 1\""
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "let x: ([a, , b]) => void;",
+  "expected": "let x;\n",
+  "note": "typeSig; bun now: Unexpected ,; expected: tsc"
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "let x: new ([a, , b]) => A;",
+  "expected": "let x;\n",
+  "note": "typeSig; bun now: Unexpected ,; expected: tsc"
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "type X = { ([a, , b]): void };",
+  "expected": "",
+  "note": "memberSig; bun now: Backtrack; expected: tsc"
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "type X = { new ([a, , b]): A };",
+  "expected": "",
+  "note": "memberSig; bun now: Backtrack; expected: tsc"
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "declare class C { m(...a,): void; }",
+  "expected": "",
+  "note": "declSig; bun now: Expected \")\" but found \",\"; expected: equivalent \"declare class C { m(...a): void; }\""
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "declare class C { constructor(...a,); }",
+  "expected": "",
+  "note": "declSig; bun now: Expected \")\" but found \",\"; expected: equivalent \"declare class C { constructor(...a); }\""
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "declare class C { m(...a: A[],): void; }",
+  "expected": "",
+  "note": "declSig; bun now: Expected \")\" but found \",\"; expected: equivalent \"declare class C { m(...a: A[]): void; }\""
+ },
+ {
+  "group": "function and constructor types with signature parameters",
+  "which": "ts",
+  "src": "declare class C { constructor(...a: A[],); }",
+  "expected": "",
+  "note": "declSig; bun now: Expected \")\" but found \",\"; expected: equivalent \"declare class C { constructor(...a: A[]); }\""
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "function f<out>() {}",
+  "expected": "function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = function <out>() {};",
+  "expected": "const f = function() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "function f<out = A>() {}",
+  "expected": "function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = function <out = A>() {};",
+  "expected": "const f = function() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "function f<const out>() {}",
+  "expected": "function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = function <const out>() {};",
+  "expected": "const f = function() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = <out>(a): T => a;",
+  "expected": "const f = (a) => a;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = <out>(a: T) => a;",
+  "expected": "const f = (a) => a;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = <out = A>(a): T => a;",
+  "expected": "const f = (a) => a;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts",
+  "src": "const f = <out = A>(a: T) => a;",
+  "expected": "const f = (a) => a;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts reserved word",
+  "src": "const f = <const out>(a): T => a;",
+  "expected": "const f = (a) => a;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts reserved word",
+  "src": "const v = <in>x;",
+  "expected": "const v = x;\n",
+  "note": "tparamsArrow; bun now: The modifier \"in\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts reserved word",
+  "src": "const v = <if>x;",
+  "expected": "const v = x;\n",
+  "note": "tparamsArrow; bun now: Unexpected if; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts reserved word",
+  "src": "const v = <class>x;",
+  "expected": "const v = x;\n",
+  "note": "tparamsArrow; bun now: Unexpected class; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "ts reserved word",
+  "src": "const v = <enum>x;",
+  "expected": "const v = x;\n",
+  "note": "tparamsArrow; bun now: Unexpected enum; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "const f = function g<out>() {};",
+  "expected": "const f = function g() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "async function f<out>() {}",
+  "expected": "async function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "const f = function g<out = A>() {};",
+  "expected": "const f = function g() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "async function f<out = A>() {}",
+  "expected": "async function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "const f = function g<const out>() {};",
+  "expected": "const f = function g() {};\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "async function f<const out>() {}",
+  "expected": "async function f() {}\n",
+  "note": "tparams; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "const f = <out = A>() => 0;",
+  "expected": "const f = () => 0;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "type parameters and type arguments",
+  "which": "tsx",
+  "src": "const f = async <out = A>() => 0;",
+  "expected": "const f = async () => 0;\n",
+  "note": "tparamsArrow; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = x as if;",
+  "expected": "const v = x;\n",
+  "note": "as; bun now: Unexpected if; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = x as var;",
+  "expected": "const v = x;\n",
+  "note": "as; bun now: Unexpected var; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = <in>x;",
+  "expected": "const v = x;\n",
+  "note": "cast; bun now: The modifier \"in\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = <in>(x);",
+  "expected": "const v = x;\n",
+  "note": "cast; bun now: The modifier \"in\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = <if>x;",
+  "expected": "const v = x;\n",
+  "note": "cast; bun now: Unexpected if; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts reserved word",
+  "src": "const v = (): if => x;",
+  "expected": "const v = () => x;\n",
+  "note": "arrow; bun now: Expected \"=>\" but found \":\"; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = x as T <= y;",
+  "expected": "const v = x <= y;\n",
+  "note": "as; bun now: Unexpected =; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "x as T <= y;",
+  "expected": "x <= y;\n",
+  "note": "as; bun now: Unexpected =; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = <out>x;",
+  "expected": "const v = x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "<out>x;",
+  "expected": "x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = <out>(x);",
+  "expected": "const v = x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "<out>(x);",
+  "expected": "x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = <out>(x) => x;",
+  "expected": "const v = (x) => x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "<out>(x) => x;",
+  "expected": "",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = <out, T>(x) => x;",
+  "expected": "const v = (x) => x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "<out, T>(x) => x;",
+  "expected": "",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = <out = A>(x) => x;",
+  "expected": "const v = (x) => x;\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "<out = A>(x) => x;",
+  "expected": "",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "ts",
+  "src": "const v = y ? a ? ((b)) : c => d : z;",
+  "expected": "const v = y ? a ? b : (c) => d : z;\n",
+  "note": "arrow; bun now: Expected \":\" but found \";\"; expected: tsc, printed by the js loader"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx reserved word",
+  "src": "x as if;",
+  "expected": "x;\n",
+  "note": "as; bun now: Unexpected if; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx reserved word",
+  "src": "x as var;",
+  "expected": "x;\n",
+  "note": "as; bun now: Unexpected var; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx reserved word",
+  "src": "(): if => x;",
+  "expected": "",
+  "note": "arrow; bun now: Expected \"=>\" but found \":\"; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx",
+  "src": "f(x as T <= y);",
+  "expected": "f(x <= y);\n",
+  "note": "as; bun now: Unexpected =; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx",
+  "src": "const v = [x as T <= y];",
+  "expected": "const v = [x <= y];\n",
+  "note": "as; bun now: Unexpected =; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx",
+  "src": "f(<out, T>(x) => x);",
+  "expected": "f((x) => x);\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "assertions, instantiation expressions, generic arrows",
+  "which": "tsx",
+  "src": "f(<out = A>(x) => x);",
+  "expected": "f((x) => x);\n",
+  "note": "cast; bun now: The modifier \"out\" is not valid here; expected: tsc"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "ts",
+  "src": "class C { [k: string]: T,  }",
+  "expected": "class C {\n}\n",
+  "note": "member; bun now: Expected \";\" but found \",\"; expected: equivalent \"class C { [k: string]: T;  }\""
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "ts",
+  "src": "abstract class C extends B { [k: string]: T,  }",
+  "expected": "class C extends B {\n}\n",
+  "note": "member; bun now: Expected \";\" but found \",\"; expected: equivalent \"abstract class C extends B { [k: string]: T;  }\""
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "ts",
+  "src": "abstract declare class C {}",
+  "expected": "",
+  "note": "classHead; bun now: Expected \";\" but found \"declare\"; expected: equivalent \"declare abstract class C {}\""
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor x = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor x = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor x; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor x; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor x!: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor x!: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor \"x\": T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor \"x\": T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor 1: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, undefined);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get 1() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set 1(v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"1\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor 1: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, undefined);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get 1() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set 1(v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"1\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor [x]: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, undefined);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = x]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor [x]: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, undefined);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = x]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor #x: T; }",
+  "expected": "class C {\n  #x;\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"#x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor #x: T; }",
+  "expected": "class C {\n  #x;\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"#x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor accessor; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor$1, undefined);\n  }\n  static {\n    _accessor$1 = new WeakMap;\n  }\n  get accessor() {\n    return __privateGet_t4v9rzz2(this, _accessor$1);\n  }\n  set accessor(v) {\n    __privateSet_3ajc9ey2(this, _accessor$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"accessor\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { accessor accessor; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor$1, undefined);\n  }\n  static {\n    _accessor$1 = new WeakMap;\n  }\n  get accessor() {\n    return __privateGet_t4v9rzz2(this, _accessor$1);\n  }\n  set accessor(v) {\n    __privateSet_3ajc9ey2(this, _accessor$1, v);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"accessor\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { static accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C { static accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n}\n",
+  "note": "modifier; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { public accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { public accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { override accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { override accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { static accessor x = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { static accessor x = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor #x = 1; }",
+  "expected": "class C {\n  #x = 1;\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"#x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor #x = 1; }",
+  "expected": "class C extends B {\n  #x = 1;\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"#x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor [x] = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = x]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor [x] = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = x]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor \"x\" = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor \"x\" = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor 1 = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get 1() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set 1(v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"1\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor 1 = 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get 1() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set 1(v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"1\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor static; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _static$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _static$1, undefined);\n  }\n  static {\n    _static$1 = new WeakMap;\n  }\n  get static() {\n    return __privateGet_t4v9rzz2(this, _static$1);\n  }\n  set static(v) {\n    __privateSet_3ajc9ey2(this, _static$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"static\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor static; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _static$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _static$1, undefined);\n  }\n  static {\n    _static$1 = new WeakMap;\n  }\n  get static() {\n    return __privateGet_t4v9rzz2(this, _static$1);\n  }\n  set static(v) {\n    __privateSet_3ajc9ey2(this, _static$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"static\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "class C { accessor x\n= 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor x\n= 1; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "declare class C { [k: string]: T,  }",
+  "expected": "",
+  "note": "member; bun now: Expected \";\" but found \",\"; expected: equivalent \"declare class C { [k: string]: T;  }\""
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "const c = class { [k: string]: T,  };",
+  "expected": "const c = class {\n};\n",
+  "note": "member; bun now: Expected \";\" but found \",\"; expected: equivalent \"const c = class { [k: string]: T;  };\""
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { static accessor x: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { abstract accessor x: T; }",
+  "expected": "class C extends B {\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "class members, modifiers, overloads, parameter properties",
+  "which": "deco",
+  "src": "abstract class C extends B { accessor x!: T; }",
+  "expected": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C extends B {\n  constructor() {\n    super(...arguments);\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n",
+  "note": "member; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "module syntax",
+  "which": "ts",
+  "src": "namespace N { import(\"x\"); }",
+  "expected": "var N;\n((N) => {\n  import(\"x\");\n})(N ||= {});\n",
+  "note": "importEquals; bun now: Expected identifier but found \"(\"; expected: equivalent \"namespace N { (import(\\\"x\\\")); }\""
+ },
+ {
+  "group": "module syntax",
+  "which": "ts",
+  "src": "namespace N { import.meta; }",
+  "expected": "var N;\n((N) => {})(N ||= {});\n",
+  "note": "importEquals; bun now: Expected identifier but found \".\"; expected: equivalent \"namespace N { (import.meta); }\""
+ },
+ {
+  "group": "module syntax",
+  "which": "ts",
+  "src": "export abstract declare class C {}",
+  "expected": "",
+  "note": "exportDecl; bun now: Expected \";\" but found \"declare\"; expected: equivalent \"export declare abstract class C {}\""
+ },
+ {
+  "group": "module syntax",
+  "which": "ts",
+  "src": "import A from \"x\"\nwith { type: \"json\" };",
+  "expected": "import A from \"x\";\n",
+  "note": "attributes; bun now: Expected \"(\" but found \"{\"; expected: equivalent \"import A from \\\"x\\\" with { type: \\\"json\\\" };\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "abstract declare class C {}",
+  "expected": "",
+  "note": "declare; bun now: Expected \";\" but found \"declare\"; expected: equivalent \"declare abstract class C {}\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "enum E { [\"x\"] }",
+  "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 0] = \"x\";\n})(E ||= {});\n",
+  "note": "enum; bun now: Expected identifier but found \"[\"; expected: equivalent \"enum E { \\\"x\\\" }\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "enum E { [\"x\"] = 1 }",
+  "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n})(E ||= {});\n",
+  "note": "enum; bun now: Expected identifier but found \"[\"; expected: equivalent \"enum E { \\\"x\\\" = 1 }\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "enum E { ['x'] = 1, B = E.x }",
+  "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n  E[E[\"B\"] = 1] = \"B\";\n})(E ||= {});\n",
+  "note": "enum; bun now: Expected identifier but found \"[\"; expected: equivalent \"enum E { \\\"x\\\" = 1, B = E.x }\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "enum E { [`x`] = 1 }",
+  "expected": "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n})(E ||= {});\n",
+  "note": "enum; bun now: Expected identifier but found \"[\"; expected: equivalent \"enum E { \\\"x\\\" = 1 }\""
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "namespace as.as {}",
+  "expected": "var as;\n((as) => {})(as ||= {});\n",
+  "note": "declName; bun now: Unexpected .; expected: equivalent \"namespace QQ.QQ {}\" renamed"
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "namespace as { export const x = 1; }",
+  "expected": "var as;\n((as) => {\n  as.x = 1;\n})(as ||= {});\n",
+  "note": "declName; bun now: Unexpected =; expected: equivalent \"namespace QQ { export const x = 1; }\" renamed"
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "namespace satisfies.satisfies {}",
+  "expected": "var satisfies;\n((satisfies) => {})(satisfies ||= {});\n",
+  "note": "declName; bun now: Unexpected .; expected: equivalent \"namespace QQ.QQ {}\" renamed"
+ },
+ {
+  "group": "declare, namespace, enum, ambient modules",
+  "which": "ts",
+  "src": "namespace satisfies { export const x = 1; }",
+  "expected": "var satisfies;\n((satisfies) => {\n  satisfies.x = 1;\n})(satisfies ||= {});\n",
+  "note": "declName; bun now: Unexpected =; expected: equivalent \"namespace QQ { export const x = 1; }\" renamed"
+ },
+ {
+  "group": "decorators",
+  "which": "ts",
+  "src": "class C { @d()! x; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"x\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d()\n  ], \"x\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n",
+  "note": "expr; bun now: Expected identifier but found \"!\"; expected: equivalent \"class C { @d() x; }\""
+ },
+ {
+  "group": "decorators",
+  "which": "ts",
+  "src": "@d()! class C {}",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n",
+  "note": "expr; bun now: Expected \"class\" but found \"!\"; expected: equivalent \"@d() class C {}\""
+ },
+ {
+  "group": "decorators",
+  "which": "ts",
+  "src": "export default @d abstract class C {}",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\nexport default class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n",
+  "note": "classPos; bun now: Expected \"class\" but found \"abstract\"; expected: equivalent \"@d export default abstract class C {}\""
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "class C { @d accessor x: T; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "abstract class C { @d accessor x: T; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "class C { @d static accessor x = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 12, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n    __runInitializers_cst8seht(_init$1, 3, this);\n  }\n  static get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "abstract class C { @d static accessor x = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 12, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n    __runInitializers_cst8seht(_init$1, 3, this);\n  }\n  static get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "class C { @d accessor x = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "abstract class C { @d accessor x = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"x\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "class C { @d accessor [x] = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _accessor_storage$3, _computedKey$4;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _accessor_storage$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _accessor_storage$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, _computedKey$4, _dec$2, this, _accessor_storage$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], _computedKey$4 = x)]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "abstract class C { @d accessor [x] = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _accessor_storage$3, _computedKey$4;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _accessor_storage$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _accessor_storage$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, _computedKey$4, _dec$2, this, _accessor_storage$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], _computedKey$4 = x)]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"[\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "class C { @d accessor \"x\" = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "decorators",
+  "which": "deco",
+  "src": "abstract class C { @d accessor \"x\" = 1; }",
+  "expected": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n",
+  "note": "memberPos; bun now: Expected \";\" but found \"\"x\"\"; expected: bun without tsconfig (inference)"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: number;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: 1;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x, y: number;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const { a }: T;",
+  "note": "bun now: This constant must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const [a]: T;",
+  "note": "bun now: This constant must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: unique symbol;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export namespace N { const x: T; function f(): void; class C {} }",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export namespace N { export const x: T; }",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export function f(): void\nexport const x: T\nexport class C {}",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: T, y: U, z: V;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: T\nexport const y: U",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: { a: A; b(): B; [k: string]: C };",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: () => void;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: new () => A;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: typeof y;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: import(\"y\").Z;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: typeof import(\"y\");",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: A<B<C>>;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: A extends B ? C : D;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: keyof typeof y;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: readonly A[];",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: [a: A, b?: B, ...c: C[]];",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: `a${string}`;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: -1;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "declaration files",
+  "which": "d.ts",
+  "src": "export const x: 1n;",
+  "note": "bun now: The constant \"x\" must be initialized"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: any.b; }",
+  "expected": {
+   "type": "typeof any === \"undefined\" || typeof any.b === \"undefined\" ? Object : any.b"
+  },
+  "note": "old: type=Object; tsc: type=Ref(any.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: any.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof any === \"undefined\" || typeof any.b === \"undefined\" ? Object : any.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(any.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): any.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof any === \"undefined\" || typeof any.b === \"undefined\" ? Object : any.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(any.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: string.b; }",
+  "expected": {
+   "type": "typeof string === \"undefined\" || typeof string.b === \"undefined\" ? Object : string.b"
+  },
+  "note": "old: type=String; tsc: type=Ref(string.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: string.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof string === \"undefined\" || typeof string.b === \"undefined\" ? Object : string.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[String]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(string.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): string.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof string === \"undefined\" || typeof string.b === \"undefined\" ? Object : string.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=String; tsc: type=Function  paramtypes=[]  returntype=Ref(string.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: number.b.c; }",
+  "expected": {
+   "type": "typeof number === \"undefined\" || typeof number.b === \"undefined\" || typeof number.b.c === \"undefined\" ? Object : number.b.c"
+  },
+  "note": "old: type=Number; tsc: type=Ref(number.b.c)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: number.b.c) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof number === \"undefined\" || typeof number.b === \"undefined\" || typeof number.b.c === \"undefined\" ? Object : number.b.c]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Number]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(number.b.c)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): number.b.c { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof number === \"undefined\" || typeof number.b === \"undefined\" || typeof number.b.c === \"undefined\" ? Object : number.b.c"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Number; tsc: type=Function  paramtypes=[]  returntype=Ref(number.b.c)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: undefined.b; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: undefined.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): undefined.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: object.b; }",
+  "expected": {
+   "type": "typeof object === \"undefined\" || typeof object.b === \"undefined\" ? Object : object.b"
+  },
+  "note": "old: type=Object; tsc: type=Ref(object.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: object.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof object === \"undefined\" || typeof object.b === \"undefined\" ? Object : object.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(object.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): object.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof object === \"undefined\" || typeof object.b === \"undefined\" ? Object : object.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(object.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: never.b; }",
+  "expected": {
+   "type": "typeof never === \"undefined\" || typeof never.b === \"undefined\" ? Object : never.b"
+  },
+  "note": "old: type=undefined; tsc: type=Ref(never.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: never.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof never === \"undefined\" || typeof never.b === \"undefined\" ? Object : never.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(never.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): never.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof never === \"undefined\" || typeof never.b === \"undefined\" ? Object : never.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Ref(never.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unknown.b; }",
+  "expected": {
+   "type": "typeof unknown === \"undefined\" || typeof unknown.b === \"undefined\" ? Object : unknown.b"
+  },
+  "note": "old: type=Object; tsc: type=Ref(unknown.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unknown.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof unknown === \"undefined\" || typeof unknown.b === \"undefined\" ? Object : unknown.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(unknown.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unknown.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof unknown === \"undefined\" || typeof unknown.b === \"undefined\" ? Object : unknown.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(unknown.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: symbol.b; }",
+  "expected": {
+   "type": "typeof symbol === \"undefined\" || typeof symbol.b === \"undefined\" ? Object : symbol.b"
+  },
+  "note": "old: type=Symbol; tsc: type=Ref(symbol.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: symbol.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof symbol === \"undefined\" || typeof symbol.b === \"undefined\" ? Object : symbol.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Symbol]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(symbol.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): symbol.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof symbol === \"undefined\" || typeof symbol.b === \"undefined\" ? Object : symbol.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Symbol; tsc: type=Function  paramtypes=[]  returntype=Ref(symbol.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: bigint.b<T>; }",
+  "expected": {
+   "type": "typeof bigint === \"undefined\" || typeof bigint.b === \"undefined\" ? Object : bigint.b"
+  },
+  "note": "old: type=BigInt; tsc: type=Ref(bigint.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: bigint.b<T>) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof bigint === \"undefined\" || typeof bigint.b === \"undefined\" ? Object : bigint.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[BigInt]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(bigint.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): bigint.b<T> { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof bigint === \"undefined\" || typeof bigint.b === \"undefined\" ? Object : bigint.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=BigInt; tsc: type=Function  paramtypes=[]  returntype=Ref(bigint.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: boolean.b; }",
+  "expected": {
+   "type": "typeof boolean === \"undefined\" || typeof boolean.b === \"undefined\" ? Object : boolean.b"
+  },
+  "note": "old: type=Boolean; tsc: type=Ref(boolean.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: boolean.b) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof boolean === \"undefined\" || typeof boolean.b === \"undefined\" ? Object : boolean.b]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Boolean]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(boolean.b)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): boolean.b { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof boolean === \"undefined\" || typeof boolean.b === \"undefined\" ? Object : boolean.b"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Boolean; tsc: type=Function  paramtypes=[]  returntype=Ref(boolean.b)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: asserts; }",
+  "expected": {
+   "type": "typeof asserts === \"undefined\" ? Object : asserts"
+  },
+  "note": "old: type=Object; tsc: type=Ref(asserts)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: asserts) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof asserts === \"undefined\" ? Object : asserts]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(asserts)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof asserts === \"undefined\" ? Object : asserts"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(asserts)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: abstract; }",
+  "expected": {
+   "type": "typeof abstract === \"undefined\" ? Object : abstract"
+  },
+  "note": "old: type=Object; tsc: type=Ref(abstract)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: abstract) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof abstract === \"undefined\" ? Object : abstract]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(abstract)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): abstract { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof abstract === \"undefined\" ? Object : abstract"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(abstract)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: asserts<T>; }",
+  "expected": {
+   "type": "typeof asserts === \"undefined\" ? Object : asserts"
+  },
+  "note": "old: type=Object; tsc: type=Ref(asserts)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: asserts<T>) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof asserts === \"undefined\" ? Object : asserts]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(asserts)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts<T> { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof asserts === \"undefined\" ? Object : asserts"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(asserts)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: asserts.x; }",
+  "expected": {
+   "type": "typeof asserts === \"undefined\" || typeof asserts.x === \"undefined\" ? Object : asserts.x"
+  },
+  "note": "old: type=Object; tsc: type=Ref(asserts.x)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: asserts.x) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof asserts === \"undefined\" || typeof asserts.x === \"undefined\" ? Object : asserts.x]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(asserts.x)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts.x { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof asserts === \"undefined\" || typeof asserts.x === \"undefined\" ? Object : asserts.x"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(asserts.x)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: abstract.x; }",
+  "expected": {
+   "type": "typeof abstract === \"undefined\" || typeof abstract.x === \"undefined\" ? Object : abstract.x"
+  },
+  "note": "old: type=Object; tsc: type=Ref(abstract.x)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: abstract.x) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof abstract === \"undefined\" || typeof abstract.x === \"undefined\" ? Object : abstract.x]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(abstract.x)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): abstract.x { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof abstract === \"undefined\" || typeof abstract.x === \"undefined\" ? Object : abstract.x"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(abstract.x)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: abstract<T>; }",
+  "expected": {
+   "type": "typeof abstract === \"undefined\" ? Object : abstract"
+  },
+  "note": "old: type=Object; tsc: type=Ref(abstract)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: abstract<T>) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof abstract === \"undefined\" ? Object : abstract]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(abstract)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): abstract<T> { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof abstract === \"undefined\" ? Object : abstract"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Ref(abstract)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A | unique symbol; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(A); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A | unique symbol) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(A)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A | unique symbol { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A | import(\"x\"); }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(A); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A | import(\"x\")) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(A)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A | import(\"x\") { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol | A; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(A); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol | A) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(A)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol | A { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol & A; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(A); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol & A) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(A)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol & A { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: import(\"x\")[\"y\"]; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: import(\"x\")[\"y\"]) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): import(\"x\")[\"y\"] { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: import(\"x\") | A; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(A); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: import(\"x\") | A) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(A)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): import(\"x\") | A { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A | asserts a { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(A); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A; }",
+  "expected": {
+   "type": "typeof A === \"undefined\" ? Object : A"
+  },
+  "note": "old: type=Array; tsc: type=Ref(A)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof A === \"undefined\" ? Object : A]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(A)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof A === \"undefined\" ? Object : A"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Ref(A)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly keyof A; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly keyof A) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly keyof A { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly Array<A>; }",
+  "expected": {
+   "type": "typeof Array === \"undefined\" ? Object : Array"
+  },
+  "note": "old: type=Array; tsc: type=Ref(Array)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly Array<A>) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[typeof Array === \"undefined\" ? Object : Array]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Ref(Array)]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly Array<A> { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "typeof Array === \"undefined\" ? Object : Array"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Ref(Array)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly typeof a; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly typeof a) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly typeof a { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly unique symbol; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly unique symbol) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly unique symbol { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly { a: A }; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly { a: A }) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly { a: A } { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[B]; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[B]) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[B] { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? C : D; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? C : D) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? C : D { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: keyof A extends B ? string : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: keyof A extends B ? string : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): keyof A extends B ? string : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? string : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Array; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? string : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? string : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? string : number; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? string : number) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? string : number { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: keyof A extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: keyof A extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): keyof A extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Array; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: keyof A extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: keyof A extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): keyof A extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Array; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: readonly A[] extends B ? K : K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: readonly A[] extends B ? K : K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): readonly A[] extends B ? K : K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol extends B ? K : K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(K); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol extends B ? K : K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol extends B ? K : K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique symbol[]; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique symbol[]) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique symbol[] { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: unique [A]; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Array; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: unique [A]) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Array]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): unique [A] { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Array; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends infer U ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends infer U ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends infer U ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends (infer U)[] ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends (infer U)[] ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends (infer U)[] ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends infer U extends B ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends infer U extends B ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends infer U extends B ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends [infer U extends B] ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends [infer U extends B] ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends [infer U extends B] ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends [infer U extends B ? C : D] ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends [infer U extends B ? C : D] ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends [infer U extends B ? C : D] ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends { a: infer U } ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends { a: infer U } ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends { a: infer U } ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends (a: infer U) => infer V ? [U, V] : never; }",
+  "expected": {
+   "type": "Array"
+  },
+  "note": "old: type=undefined; tsc: type=Array"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends (a: infer U) => infer V ? [U, V] : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Array]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Array]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends (a: infer U) => infer V ? [U, V] : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Array"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Array"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends (infer U extends B) ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends (infer U extends B) ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends (infer U extends B) ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends Array<infer U> ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends Array<infer U> ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends Array<infer U> ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends Array<infer U extends B> ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends Array<infer U extends B> ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends Array<infer U extends B> ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends Array<infer U extends B ? C : D> ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends Array<infer U extends B ? C : D> ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends Array<infer U extends B ? C : D> ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends `${infer U}x` ? U : never; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends `${infer U}x` ? U : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends `${infer U}x` ? U : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: this is B; }",
+  "expected": {
+   "type": "Boolean"
+  },
+  "note": "old: type=Object; tsc: type=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: this is B) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Boolean]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Boolean]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): this is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is B | C { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is B extends C ? D : E { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is B[] { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is (B) { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): is is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(is); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: this is this; }",
+  "expected": {
+   "type": "Boolean"
+  },
+  "note": "old: type=Object; tsc: type=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: this is this) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Boolean]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Boolean]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): this is this { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is this { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): a is\nB { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(a); tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): undefined is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): any is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Boolean"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: this is K; }",
+  "expected": {
+   "type": "Boolean"
+  },
+  "note": "old: type=Object; tsc: type=Boolean"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: this is K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Boolean]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[Boolean]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts this { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts this is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a | B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(B); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: asserts\na; }",
+  "expected": {
+   "type": "typeof asserts === \"undefined\" ? Object : asserts"
+  },
+  "note": "old: type=Object; tsc: type=Ref(asserts)"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts asserts { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts asserts is B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a & B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(B); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts this | B { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(B); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a is this { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts a is\nB { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): asserts undefined { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: number | A extends B ? string : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: number | A extends B ? string : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): number | A extends B ? string : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K | A extends B ? string : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K | A extends B ? string : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K | A extends B ? string : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K & A extends B ? string : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Object; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K & A extends B ? string : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Object]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K & A extends B ? string : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Object; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: number | A extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Number; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: number | A extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Number]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): number | A extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Number; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K | A extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Ref(K); tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K | A extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K | A extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: string & A extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: string & A extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): string & A extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K & A extends B ? string : never; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K & A extends B ? string : never) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K & A extends B ? string : never { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: number | A extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Number; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: number | A extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Number]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): number | A extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Number; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K | A extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=Ref(K); tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K | A extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K | A extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: string & A extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: string & A extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): string & A extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K & A extends B ? never : string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K & A extends B ? never : string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K & A extends B ? never : string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: K | A extends B ? K : K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(K); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: K | A extends B ? K : K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): K | A extends B ? K : K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? string : never | number; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Number; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? string : never | number) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Number]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? string : never | number { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Number; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? string : never | K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(K); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? string : never | K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? string : never | K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? string : never & string; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? string : never & string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? string : never & string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? string : never & K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? string : never & K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? string : never & K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? string : never | null; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? string : never | null) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? string : never | null { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? never : string | string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? never : string | string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? never : string | string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? never : string | number; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? never : string | number) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? never : string | number { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? never : string | K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? never : string | K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? never : string | K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? never : string & string; }",
+  "expected": {
+   "type": "String"
+  },
+  "note": "old: type=undefined; tsc: type=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? never : string & string) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[String]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[String]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? never : string & string { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "String"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=String"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? never : string & K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=undefined; tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? never : string & K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[undefined]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? never : string & K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=undefined; tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? K : K | K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(K); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? K : K | K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? K : K | K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d p: A extends B ? K : K & K; }",
+  "expected": {
+   "type": "Object"
+  },
+  "note": "old: type=Ref(K); tsc: type=Object"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(a: A extends B ? K : K & K) {} }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[Object]",
+   "returntype": "undefined"
+  },
+  "note": "old: type=Function  paramtypes=[Ref(K)]  returntype=undefined; tsc: type=Function  paramtypes=[Object]  returntype=undefined"
+ },
+ {
+  "group": "emitDecoratorMetadata",
+  "which": "meta",
+  "src": "class C { @d m(): A extends B ? K : K & K { throw 0 } }",
+  "expected": {
+   "type": "Function",
+   "paramtypes": "[]",
+   "returntype": "Object"
+  },
+  "note": "old: type=Function  paramtypes=[]  returntype=Ref(K); tsc: type=Function  paramtypes=[]  returntype=Object"
+ }
+]

@@ -1,0 +1,175 @@
+>>> --strictPropertyInitialization --strictNullChecks false a.ts
+error TS5052: Option 'strictPropertyInitialization' cannot be specified without specifying option 'strictNullChecks'.
+exit=2
+>>> --exactOptionalPropertyTypes --strictNullChecks false a.ts
+error TS5052: Option 'exactOptionalPropertyTypes' cannot be specified without specifying option 'strictNullChecks'.
+exit=2
+>>> --isolatedDeclarations a.ts
+error TS5069: Option 'isolatedDeclarations' cannot be specified without specifying option 'declaration' or option 'composite'.
+exit=2
+>>> --isolatedDeclarations --allowJs --declaration a.ts
+error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
+exit=2
+>>> --inlineSourceMap --sourceMap a.ts
+error TS5053: Option 'sourceMap' cannot be specified with option 'inlineSourceMap'.
+exit=2
+>>> --inlineSourceMap --mapRoot m a.ts
+error TS5053: Option 'mapRoot' cannot be specified with option 'inlineSourceMap'.
+error TS5069: Option 'mapRoot' cannot be specified without specifying option 'sourceMap' or option 'declarationMap'.
+exit=2
+>>> --composite --declaration false a.ts
+error TS6230: Option 'composite' can only be specified in 'tsconfig.json' file or set to 'false' or 'null' on command line.
+exit=1
+>>> --composite --incremental false a.ts
+error TS6230: Option 'composite' can only be specified in 'tsconfig.json' file or set to 'false' or 'null' on command line.
+exit=1
+>>> --incremental a.ts
+error TS5074: Option '--incremental' is only valid with a known configuration file (like 'tsconfig.json') or when '--tsBuildInfoFile' is explicitly provided.
+exit=2
+>>> --inlineSources a.ts
+error TS5051: Option 'inlineSources can only be used when either option '--inlineSourceMap' or option '--sourceMap' is provided.
+exit=2
+>>> --sourceRoot r a.ts
+error TS5051: Option 'sourceRoot can only be used when either option '--inlineSourceMap' or option '--sourceMap' is provided.
+exit=2
+>>> --mapRoot m a.ts
+error TS5069: Option 'mapRoot' cannot be specified without specifying option 'sourceMap' or option 'declarationMap'.
+exit=2
+>>> --declarationDir d a.ts
+error TS5069: Option 'declarationDir' cannot be specified without specifying option 'declaration' or option 'composite'.
+exit=2
+>>> --declarationMap a.ts
+error TS5069: Option 'declarationMap' cannot be specified without specifying option 'declaration' or option 'composite'.
+exit=2
+>>> --lib es5 --noLib a.ts
+error TS5053: Option 'lib' cannot be specified with option 'noLib'.
+error TS2318: Cannot find global type 'Array'.
+error TS2318: Cannot find global type 'Boolean'.
+error TS2318: Cannot find global type 'CallableFunction'.
+error TS2318: Cannot find global type 'Function'.
+error TS2318: Cannot find global type 'IArguments'.
+error TS2318: Cannot find global type 'NewableFunction'.
+error TS2318: Cannot find global type 'Number'.
+error TS2318: Cannot find global type 'Object'.
+error TS2318: Cannot find global type 'RegExp'.
+error TS2318: Cannot find global type 'String'.
+exit=2
+>>> --isolatedModules --preserveConstEnums false a.ts
+error TS5091: Option 'preserveConstEnums' cannot be disabled when 'isolatedModules' is enabled.
+exit=2
+>>> --verbatimModuleSyntax --preserveConstEnums false a.ts
+error TS5091: Option 'preserveConstEnums' cannot be disabled when 'verbatimModuleSyntax' is enabled.
+exit=2
+>>> --checkJs --allowJs false a.ts
+error TS5052: Option 'checkJs' cannot be specified without specifying option 'allowJs'.
+exit=2
+>>> --emitDeclarationOnly a.ts
+error TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option 'declaration' or option 'composite'.
+exit=2
+>>> --emitDecoratorMetadata a.ts
+error TS5052: Option 'emitDecoratorMetadata' cannot be specified without specifying option 'experimentalDecorators'.
+exit=2
+>>> --jsxFactory a.b --reactNamespace R a.ts
+error TS5053: Option 'reactNamespace' cannot be specified with option 'jsxFactory'.
+exit=2
+>>> --jsxFactory h --jsx react-jsx a.ts
+error TS5089: Option 'jsxFactory' cannot be specified when option 'jsx' is 'react-jsx'.
+exit=2
+>>> --jsxFactory 1a a.ts
+error TS5067: Invalid value for 'jsxFactory'. '1a' is not a valid identifier or qualified-name.
+exit=2
+>>> --reactNamespace 1a a.ts
+error TS5059: Invalid value for '--reactNamespace'. '1a' is not a valid identifier.
+exit=2
+>>> --jsxFragmentFactory F a.ts
+error TS5052: Option 'jsxFragmentFactory' cannot be specified without specifying option 'jsxFactory'.
+exit=2
+>>> --jsxFragmentFactory F --jsxFactory h --jsx react-jsxdev a.ts
+error TS5089: Option 'jsxFactory' cannot be specified when option 'jsx' is 'react-jsxdev'.
+error TS5089: Option 'jsxFragmentFactory' cannot be specified when option 'jsx' is 'react-jsxdev'.
+exit=2
+>>> --reactNamespace R --jsx react-jsx a.ts
+error TS5089: Option 'reactNamespace' cannot be specified when option 'jsx' is 'react-jsx'.
+exit=2
+>>> --jsxImportSource x --jsx react a.ts
+error TS5089: Option 'jsxImportSource' cannot be specified when option 'jsx' is 'react'.
+exit=2
+>>> --allowImportingTsExtensions a.ts
+error TS5096: Option 'allowImportingTsExtensions' can only be used when one of 'noEmit', 'emitDeclarationOnly', or 'rewriteRelativeImportExtensions' is set.
+exit=2
+>>> --moduleResolution bundler --module node16 a.ts
+error TS5095: Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.
+error TS5109: Option 'moduleResolution' must be set to 'Node16' (or left unspecified) when option 'module' is set to 'Node16'.
+exit=2
+>>> --moduleResolution node16 --module esnext a.ts
+error TS5110: Option 'module' must be set to 'Node16' when option 'moduleResolution' is set to 'Node16'.
+exit=2
+>>> --moduleResolution nodenext --module commonjs a.ts
+error TS5110: Option 'module' must be set to 'NodeNext' when option 'moduleResolution' is set to 'NodeNext'.
+exit=2
+>>> --module node18 --moduleResolution bundler a.ts
+error TS5095: Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.
+error TS5109: Option 'moduleResolution' must be set to 'Node16' (or left unspecified) when option 'module' is set to 'Node18'.
+exit=2
+>>> --baseUrl . a.ts
+error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+exit=2
+>>> --outFile x.js a.ts
+error TS5102: Option 'outFile' has been removed. Please remove it from your configuration.
+exit=2
+>>> --target es5 a.ts
+error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration.
+exit=2
+>>> --module amd a.ts
+error TS5095: Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.
+error TS5108: Option 'module=AMD' has been removed. Please remove it from your configuration.
+exit=2
+>>> --module system a.ts
+error TS5095: Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.
+error TS5108: Option 'module=System' has been removed. Please remove it from your configuration.
+exit=2
+>>> --module umd a.ts
+error TS5095: Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.
+error TS5108: Option 'module=UMD' has been removed. Please remove it from your configuration.
+exit=2
+>>> --moduleResolution classic a.ts
+error TS5108: Option 'moduleResolution=Classic' has been removed. Please remove it from your configuration.
+exit=2
+>>> --moduleResolution node10 a.ts
+error TS5108: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration.
+exit=2
+>>> --alwaysStrict false a.ts
+error TS5108: Option 'alwaysStrict=false' has been removed. Please remove it from your configuration.
+exit=2
+>>> --esModuleInterop false a.ts
+error TS5108: Option 'esModuleInterop=false' has been removed. Please remove it from your configuration.
+exit=2
+>>> --allowSyntheticDefaultImports false a.ts
+error TS5108: Option 'allowSyntheticDefaultImports=false' has been removed. Please remove it from your configuration.
+exit=2
+>>> --downlevelIteration a.ts
+error TS5102: Option 'downlevelIteration' has been removed. Please remove it from your configuration.
+exit=2
+>>> --downlevelIteration false a.ts
+error TS5102: Option 'downlevelIteration' has been removed. Please remove it from your configuration.
+exit=2
+>>> --allowJs b.js
+error TS5055: Cannot write file '/tmp/e2e/run3/b.js' because it would overwrite input file.
+  Adding a tsconfig.json file will help organize projects that contain both TypeScript and JavaScript files. Learn more at https://aka.ms/tsconfig.
+exit=1
+>>> --allowJs --outDir out b.js
+exit=0
+>>> --checkJs b.js
+error TS5055: Cannot write file '/tmp/e2e/run3/b.js' because it would overwrite input file.
+  Adding a tsconfig.json file will help organize projects that contain both TypeScript and JavaScript files. Learn more at https://aka.ms/tsconfig.
+exit=1
+>>> b.js
+error TS6504: File 'b.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?
+  The file is in the program because:
+    Root file specified for compilation
+exit=2
+>>> --jsx preserve --outDir o a.ts c.tsx
+c.tsx(1,18): error TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+exit=2
+>>> --strict false a.ts
+exit=0

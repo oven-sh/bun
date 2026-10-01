@@ -1,0 +1,2 @@
+repo test/, src/js, packages, typescript/lib: 3426 files, base and variant p1abc2 identical: yes
+TypeScript tests/cases and node_modules: 19197 files, differing lines: 3

@@ -1,0 +1,524 @@
+AA  "@d class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\nclass C {\n}\n"
+AA  "@d() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d()\nclass C {\n}\n"
+A1  "@d()! class C {}"
+     bun: Expected "class" but found "!" @4
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d()\nclass C {\n}\n"
+AA  "@d! class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\nclass C {\n}\n"
+AA  "@d!() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d()\nclass C {\n}\n"
+AA  "@d!.e class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d.e\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d.e\nclass C {\n}\n"
+AA  "@d.e! class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d.e\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d.e\nclass C {\n}\n"
+AA  "@d.e!() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d.e()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d.e()\nclass C {\n}\n"
+A2  "@d()() class C {}"
+     bun: Expected "class" but found "(" @4 | Expected "=>" but found "class" @7
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@d()()\nclass C {\n}\n"
+A2  "@d().e class C {}"
+     bun: A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator @4
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@d().e\nclass C {\n}\n"
+RR  "@d()[0] class C {}"
+     bun: Expected "class" but found "[" @4 | Expected ";" but found "class" @8 | Expected ";" but found "{" @16 | Unexpected } @17
+     tsc parse: TS1146@4+0 Declaration expected. ; TS1005@8+5 ';' expected.
+RR  "@d[0] class C {}"
+     bun: Expected "class" but found "[" @2 | Expected ";" but found "class" @6 | Expected ";" but found "{" @14 | Unexpected } @15
+     tsc parse: TS1146@2+0 Declaration expected. ; TS1005@6+5 ';' expected.
+A2  "@d`x` class C {}"
+     bun: Expected "class" but found "`x`" @2 | Expected ";" but found "class" @6 | Expected ";" but found "{" @14 | Unexpected } @15
+     tsc check: TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@d `x`\nclass C {\n}\n"
+B  "@d<T> class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc parse: TS1146@2+0 Declaration expected.
+AA  "@d<T>() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d()\nclass C {\n}\n"
+RR  "@d<T>(1)<U> class C {}"
+     bun: Expected "class" but found "<" @8
+     tsc parse: TS1146@8+0 Declaration expected.
+RR  "@d()<T> class C {}"
+     bun: Expected "class" but found "<" @4
+     tsc parse: TS1146@4+0 Declaration expected.
+AA  "@d.e<T>() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d.e()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d.e()\nclass C {\n}\n"
+B  "@d<T>.e class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d.e\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc parse: TS1477@2+3 An instantiation expression cannot be followed by a property access.
+B  "@d<T>!() class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d()\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc parse: TS1146@2+0 Declaration expected. ; TS1109@7+1 Expression expected. ; TS1005@9+5 ';' expected.
+AA  "@(d) class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@(d)\nclass C {\n}\n"
+AA  "@(d as any) class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\nclass C {\n}\n"
+AA  "@(d!) class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@(d)\nclass C {\n}\n"
+A2  "@(d)() class C {}"
+     bun: Expected "class" but found "(" @4 | Expected "=>" but found "class" @7
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@(d)()\nclass C {\n}\n"
+A2  "@(d).e class C {}"
+     bun: Expected "class" but found "." @4
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@(d).e\nclass C {\n}\n"
+A2  "@(d)! class C {}"
+     bun: Expected "class" but found "!" @4
+     tsc check: TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@(d)\nclass C {\n}\n"
+RR  "@d as any class C {}"
+     bun: Expected "class" but found "as" @3 | Expected ";" but found "any" @6
+     tsc parse: TS1146@2+0 Declaration expected. ; TS1434@3+2 Unexpected keyword or identifier. ; TS1434@6+3 Unexpected keyword or identifier.
+A2  "@d?.e class C {}"
+     bun: Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator @2
+     tsc check: TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@d?.e\nclass C {\n}\n"
+A2  "@d?.() class C {}"
+     bun: Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator @2 | Expected identifier but found "(" @4
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@d?.()\nclass C {\n}\n"
+A2  "@new D class C {}"
+     bun: Expected identifier but found "new" @1
+     tsc check: TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@new D\nclass C {\n}\n"
+A2  "@new D() class C {}"
+     bun: Expected identifier but found "new" @1
+     tsc check: TS1497@1+7 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@new D()\nclass C {\n}\n"
+A2  "@this.d class C {}"
+     bun: Expected identifier but found "this" @1
+     tsc check: TS1497@1+6 Expression must be enclosed in parentheses to be used as a decorator.
+     tsc emit: "\"use strict\";\n@this.d\nclass C {\n}\n"
+A2  "@super.d class C {}"
+     bun: Expected identifier but found "super" @1
+     tsc check: TS2660@1+5 'super' can only be referenced in members of derived classes or object literal expressions. ; TS1497@1+7 Expression must be enclosed in parentheses to be used as a decorator.
+     tsc emit: "\"use strict\";\n@super.d\nclass C {\n}\n"
+A2  "@import.meta.d class C {}"
+     bun: Expected identifier but found "import" @1
+     tsc check: TS1497@1+13 Expression must be enclosed in parentheses to be used as a decorator. ; TS2339@13+1 Property 'd' does not exist on type '{}'. ; (noise 2318)
+     tsc emit: "@import.meta.d\nclass C {\n}\nexport {};\n"
+A2  "@function () {} class C {}"
+     bun: Expected identifier but found "function" @1
+     tsc check: TS1329@0+15 'function () {}' accepts too few arguments to be used as a decorator here. Did you mean to call it first and write '@function () {}()'? ; TS1497@1+8 Expression must be enclosed in parentheses to be used as a decorator. ; (noise 2318)
+     tsc emit: "\"use strict\";\n@function () { }\nclass C {\n}\n"
+A2  "@class {} class C {}"
+     bun: Expected identifier but found "class" @1
+     tsc check: TS1238@1+5 Unable to resolve signature of class decorator when called as an expression.   This expression is not callable.     Type 'typeof (Anonymous class)' has no call signatures. ; TS1497@1+5 Expression must be enclosed in parentheses to be used as a decorator.
+     tsc emit: "\"use strict\";\n@class {\n}\nclass C {\n}\n"
+A2  "@1 class C {}"
+     bun: Expected identifier but found "1" @1
+     tsc check: TS1497@1+1 Expression must be enclosed in parentheses to be used as a decorator.
+     tsc emit: "\"use strict\";\n@1\nclass C {\n}\n"
+A2  "@\"s\" class C {}"
+     bun: Expected identifier but found ""s"" @1
+     tsc check: TS1497@1+3 Expression must be enclosed in parentheses to be used as a decorator.
+     tsc emit: "\"use strict\";\n@\"s\"\nclass C {\n}\n"
+RR  "@[d][0] class C {}"
+     bun: Expected identifier but found "[" @1
+     tsc parse: TS1146@4+0 Declaration expected. ; TS1005@8+5 ';' expected.
+A2  "@{}.d class C {}"
+     bun: Expected identifier but found "{" @1
+     tsc check: TS1497@1+4 Expression must be enclosed in parentheses to be used as a decorator. ; TS2339@4+1 Property 'd' does not exist on type '{}'.
+     tsc emit: "\"use strict\";\n@{}.d\nclass C {\n}\n"
+AA  "@d\nclass C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\nclass C {\n}\n"
+AA  "@d @e class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d,\n  e\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\n@e\nclass C {\n}\n"
+AA  "@d export class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nexport class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "@d\nexport class C {\n}\n"
+AA  "export @d class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nexport class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "export \n@d\nclass C {\n}\n"
+AA  "@d export default class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\nexport default class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "@d\nexport default class C {\n}\n"
+AA  "export default @d class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\nexport default (_dec$2 = [\n  d\n], class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _C$3), _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "export default \n@d\nclass C {\n}\n"
+A2  "@d export @e class C {}"
+     bun: Expected "class" but found "@" @10
+     tsc check: TS8038@10+2 Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. ; (noise 2304)
+     tsc emit: "@d\nexport \n@e\nclass C {\n}\n"
+A2  "export @d export class C {}"
+     bun: Expected "class" but found "export" @10
+     tsc check: TS1030@10+6 'export' modifier already seen. ; (noise 2304)
+     tsc emit: "export \n@d\nexport class C {\n}\n"
+AA  "@d abstract class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n@d\nclass C {\n}\n"
+AA  "@d declare class C {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "@d export abstract class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nexport class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "@d\nexport class C {\n}\n"
+AA  "@d export declare class C {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+A1  "export default @d abstract class C {}"
+     bun: Expected "class" but found "abstract" @18
+     tsc check: (noise 2304)
+     tsc emit: "export default \n@d\nclass C {\n}\n"
+AA  "export @d abstract class C {}"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\n_dec$2 = [\n  d\n];\n\nexport class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}\nC = _C$3;\n__runInitializers_cst8seht(_init$1, 1, _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "export \n@d\nclass C {\n}\n"
+AA  "export @d declare class C {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "export {};\n"
+RR  "abstract @d class C {}"
+     bun: Expected ";" but found "@" @9 | Expected ";" but found "class" @12 | Expected ";" but found "{" @20 | Unexpected } @21
+     tsc parse: TS1434@0+8 Unexpected keyword or identifier.
+AA  "declare @d class C {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\n@d\nclass C {\n}\n"
+RR  "export abstract @d class C {}"
+     bun: Expected ";" but found "@" @16 | Expected ";" but found "class" @19 | Expected ";" but found "{" @27 | Unexpected } @28
+     tsc parse: TS1128@0+6 Declaration or statement expected. ; TS1434@7+8 Unexpected keyword or identifier.
+AA  "var x = @d class {};"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\nvar x = (_dec$2 = [\n  d\n], class {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _x$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"x\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _x$3), _x$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = \n@d\nclass {\n};\n"
+AA  "var x = @d class C {};"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _C$3;\nvar x = (_dec$2 = [\n  d\n], class C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _C$3), _C$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = \n@d\nclass C {\n};\n"
+A2  "var x = @d abstract class {};"
+     bun: Expected "class" but found "abstract" @11
+     tsc check: TS1184@11+8 Modifiers cannot appear here. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = \n@d\nclass {\n};\n"
+AA  "var x = @d() @e class {};"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\nvar x = (_dec$2 = [\n  d(),\n  e\n], class {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _x$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"x\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _x$3), _x$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = \n@d()\n@e\nclass {\n};\n"
+AA  "f(@d class {});"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _class$3;\nf((_dec$2 = [\n  d\n], class {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _class$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _class$3), _class$3));\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf(\n@d\nclass {\n});\n"
+AA  "(@d class {});"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _class$3;\n_dec$2 = [\n  d\n], class {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _class$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _class$3);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(\n@d\nclass {\n});\n"
+AA  "class C { @d m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    m() { }\n}\n"
+AA  "class C { @d() m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d()\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d()\n    m() { }\n}\n"
+A1  "class C { @d()! m() {} }"
+     bun: Expected identifier but found "!" @14
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d()\n    m() { }\n}\n"
+AA  "class C { @d! m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    m() { }\n}\n"
+AA  "class C { @d<T>() m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d()\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d()\n    m() { }\n}\n"
+RR  "class C { @d()<T> m() {} }"
+     bun: Expected identifier but found "<" @14 | Expected ";" but found ">" @16
+     tsc parse: TS1146@14+0 Declaration expected. ; TS1005@22+1 ';' expected. ; TS1128@25+1 Declaration or statement expected.
+AA  "class C { @d p; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    p;\n}\n"
+AA  "class C { @d p = 1; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this, 1);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    p = 1;\n}\n"
+AA  "class C { @d static p; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 13, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  static [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n  static {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    static p;\n}\n"
+RR  "class C { static @d p; }"
+     bun: Expected ";" but found "@" @17 | Expected ";" but found "p" @20
+     tsc parse: TS1436@17+1 Decorators must precede the name and all keywords of property declarations.
+AA  "class C { @d public p; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    p;\n}\n"
+RR  "class C { public @d p; }"
+     bun: Expected ";" but found "@" @17 | Expected ";" but found "p" @20
+     tsc parse: TS1436@17+1 Decorators must precede the name and all keywords of property declarations.
+AA  "class C { @d readonly p; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    p;\n}\n"
+RR  "class C { readonly @d p; }"
+     bun: Expected ";" but found "@" @19 | Expected ";" but found "p" @22
+     tsc parse: TS1436@19+1 Decorators must precede the name and all keywords of property declarations.
+AAg "class C { @d declare p: number; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+RR  "class C { declare @d p: number; }"
+     bun: Expected ";" but found "@" @18 | Expected ";" but found "p" @21 | Expected identifier but found ":" @22
+     tsc parse: TS1068@10+7 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1146@20+0 Declaration expected. ; TS1128@32+1 Declaration or statement expected.
+AAg "class C { @d abstract p: number; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this);\n}\n"
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { @d override p = 1; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"p\")] = __runInitializers_cst8seht(_init$1, 8, this, 1);\n}\n"
+     tsc check: TS4112@22+1 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    p = 1;\n}\n"
+AA  "class C { @d accessor p = 1; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _p$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _p$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _p$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"p\", _dec$2, this, _p$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"p\")]() {\n    return __privateGet_t4v9rzz2(this, _p$3);\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    accessor p = 1;\n}\n"
+RR  "class C { accessor @d p = 1; }"
+     bun: Expected ";" but found "@" @19 | Expected ";" but found "p" @22 | Expected identifier but found "=" @24
+     tsc parse: TS1436@19+1 Decorators must precede the name and all keywords of property declarations.
+AA  "class C { @d get p() { return 1 } }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 2, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"p\")]() {\n    return 1;\n  }\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    get p() { return 1; }\n}\n"
+AA  "class C { @d set p(v) {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 3, \"p\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  set [(_dec$2 = [\n    d\n  ], \"p\")](v) {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    set p(v) { }\n}\n"
+RR  "class C { get @d p() { return 1 } }"
+     bun: Expected ";" but found "@" @14 | Expected ";" but found "p" @17 | Expected identifier but found "(" @18 | Expected ";" but found "{" @21 | Expected ";" but found "1" @30 | Unexpected } @34
+     tsc parse: TS1436@14+1 Decorators must precede the name and all keywords of property declarations.
+AA  "class C { @d async m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  async[(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    async m() { }\n}\n"
+RR  "class C { async @d m() {} }"
+     bun: Expected ";" but found "@" @16 | Expected ";" but found "m" @19 | Expected identifier but found "(" @20 | Expected ";" but found "{" @23 | Unexpected } @26
+     tsc parse: TS1068@10+5 Unexpected token. A constructor, method, accessor, or property was expected. ; TS1146@18+0 Declaration expected. ; TS1005@23+1 ';' expected. ; TS1128@26+1 Declaration or statement expected.
+AA  "class C { @d *m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  *[(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2318,2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    *m() { }\n}\n"
+A2  "class C { @d constructor() {} }"
+     bun: TypeScript does not allow decorators on class constructors @10
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor() { }\n}\n"
+AAg "class C { @d static {} }"
+     bun: ok "class C {\n  static {}\n}\n"
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    static { }\n}\n"
+AAg "class C { @d [k: string]: number }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1206@10+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C { @d [\"x\"]() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"x\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"x\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    [\"x\"]() { }\n}\n"
+AA  "class C { @d\n[\"x\"]() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"x\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"x\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    [\"x\"]() { }\n}\n"
+AA  "class C { @d() [\"x\"]() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"x\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d()\n  ], \"x\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d()\n    [\"x\"]() { }\n}\n"
+AA  "class C { @d #p = 1; }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _p$3;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _p$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    delete this[\"__decorators\"];\n    _p$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 21, \"#p\", _dec$2, _p$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  static [(_dec$2 = [\n    d\n  ], \"__decorators\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    #p = 1;\n}\n"
+AAg "class C { @d m(): void; }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1249@10+1 A decorator can only decorate a method implementation, not an overload. ; TS2391@13+1 Function implementation is missing or not immediately following the declaration.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { @d m(): void; m() {} }"
+     bun: ok "class C {\n  m() {}\n}\n"
+     tsc check: TS1249@10+1 A decorator can only decorate a method implementation, not an overload.
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+AA  "class C { m(): void; @d m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    m() { }\n}\n"
+AAg "class C { @d abstract m(): void; }"
+     bun: ok "class C {\n}\n"
+     tsc check: TS1249@10+1 A decorator can only decorate a method implementation, not an overload.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C { m(@d a) {} }"
+     bun: ok "class C {\n  m(a) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    a) { }\n}\n"
+AAg "class C { m(@d() a) {} }"
+     bun: ok "class C {\n  m(a) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d()\n    a) { }\n}\n"
+AAg "class C { m(@d a, @e b) {} }"
+     bun: ok "class C {\n  m(a, b) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here. ; TS1206@18+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    a, \n    @e\n    b) { }\n}\n"
+AAg "class C { m(@d @e a) {} }"
+     bun: ok "class C {\n  m(a) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    @e\n    a) { }\n}\n"
+AAg "class C { m(@d ...a) {} }"
+     bun: ok "class C {\n  m(...a) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    ...a) { }\n}\n"
+AAg "class C { m(@d { a }) {} }"
+     bun: ok "class C {\n  m({ a }) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    { a }) { }\n}\n"
+AAg "class C { m(@d a?) {} }"
+     bun: ok "class C {\n  m(a) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    a) { }\n}\n"
+AAg "class C { m(@d a = 1) {} }"
+     bun: ok "class C {\n  m(a = 1) {}\n}\n"
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    m(\n    @d\n    a = 1) { }\n}\n"
+RR  "class C { m(@d this) {} }"
+     bun: Expected identifier but found "this" @15
+     tsc parse: TS1433@12+2 Neither decorators nor modifiers may be applied to 'this' parameters.
+RR  "class C { m(@d this: C) {} }"
+     bun: Expected identifier but found "this" @15
+     tsc parse: TS1433@12+2 Neither decorators nor modifiers may be applied to 'this' parameters.
+AAg "class C { constructor(@d a) {} }"
+     bun: ok "class C {\n  constructor(a) {}\n}\n"
+     tsc check: TS1206@22+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(\n    @d\n    a) { }\n}\n"
+AAg "class C { constructor(@d public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1206@22+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(\n    @d\n    a) {\n        this.a = a;\n    }\n}\n"
+RR  "class C { constructor(public @d a) {} }"
+     bun: Expected ")" but found "@" @29 | Expected ";" but found "d" @30 | Expected ";" but found ")" @33 | Expected identifier but found "{" @35
+     tsc parse: TS1005@29+1 ',' expected.
+AAg "class C { static m(@d a) {} }"
+     bun: ok "class C {\n  static m(a) {}\n}\n"
+     tsc check: TS1206@19+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    static m(\n    @d\n    a) { }\n}\n"
+AAg "class C { set p(@d v) {} }"
+     bun: ok "class C {\n  set p(v) {}\n}\n"
+     tsc check: TS1206@16+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    set p(\n    @d\n    v) { }\n}\n"
+A2  "class C { get p(@d v) { return 1 } }"
+     bun: Getter p must have zero arguments @19
+     tsc check: TS1054@14+1 A 'get' accessor cannot have parameters. ; TS1206@16+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    get p(\n    @d\n    v) { return 1; }\n}\n"
+RR  "class C { m(a, @d) {} }"
+     bun: Expected identifier but found ")" @17 | Expected ")" but found "{" @19 | Unexpected } @22
+     tsc parse: TS1003@17+1 Identifier expected.
+RR  "class C { @d }"
+     bun: Expected identifier but found "}" @13 | Expected "}" but found end of file @14
+     tsc parse: TS1146@12+0 Declaration expected.
+RR  "class C { @d; }"
+     bun: Expected identifier but found ";" @12 | Expected "}" but found end of file @15
+     tsc parse: TS1146@12+0 Declaration expected.
+RR  "class C { @d; m() {} }"
+     bun: Expected identifier but found ";" @12
+     tsc parse: TS1146@12+0 Declaration expected.
+AA  "class C { @ d m() {} }"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    d\n  ], \"m\")]() {}\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n    @d\n    m() { }\n}\n"
+A2  "function f(@d a) {}"
+     bun: Expected identifier but found "@" @11 | Expected ")" but found "d" @12 | Expected ";" but found "a" @14 | Unexpected ) @15
+     tsc check: TS1206@11+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nfunction f(\n@d\na) { }\n"
+A2  "var f = function (@d a) {};"
+     bun: Expected identifier but found "@" @18 | Expected ")" but found "d" @19 | Expected "{" but found "a" @21 | Unexpected ) @22
+     tsc check: TS1206@18+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nvar f = function (\n@d\na) { };\n"
+RR  "var f = (@d a) => 1;"
+     bun: Expected "class" but found "a" @12
+     tsc parse: TS1109@11+0 Expression expected. ; TS1005@12+1 ')' expected. ; TS1005@13+1 ',' expected. ; TS1005@15+2 ';' expected.
+A2  "var o = { m(@d a) {} };"
+     bun: Expected identifier but found "@" @12 | Expected ")" but found "d" @13 | Expected "{" but found "a" @15 | Unexpected ) @16
+     tsc check: TS1206@12+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nvar o = { m(\n    @d\n    a) { } };\n"
+RR  "var o = { @d m() {} };"
+     bun: Expected identifier but found "@" @10 | Expected "}" but found "m" @13 | Expected ";" but found "{" @17 | Unexpected } @18
+     tsc parse: TS1136@10+1 Property assignment expected. ; TS1146@12+0 Declaration expected. ; TS1005@17+1 ';' expected. ; TS1128@20+1 Declaration or statement expected.
+A2  "@d function f() {}"
+     bun: Expected "class" but found "function" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+A2  "@d var x;"
+     bun: Expected "class" but found "var" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nvar x;\n"
+A2  "@d enum E {}"
+     bun: Expected "class" but found "enum" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n})(E || (E = {}));\n"
+A2  "@d interface I {}"
+     bun: Expected "class" but found "interface" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\n"
+A2  "@d type T = 1;"
+     bun: Expected "class" but found "type" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\n"
+A2  "@d namespace N {}"
+     bun: Expected "class" but found "namespace" @3
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\n"
+A2  "@d import x from \"y\";"
+     bun: Expected "class" but found "import" @3
+     tsc check: TS1206@0+1 Decorators are not valid here. ; (noise 2307)
+     tsc emit: "export {};\n"
+A2  "@d export const x = 1;"
+     bun: Expected "class" but found "const" @10
+     tsc check: TS1206@0+1 Decorators are not valid here.
+     tsc emit: "export const x = 1;\n"
+RR  "@d;"
+     bun: Expected "class" but found ";" @2
+     tsc parse: TS1146@2+0 Declaration expected.
+RR  "@d"
+     bun: Expected "class" but found end of file @2
+     tsc parse: TS1146@2+0 Declaration expected.
+RR  "@d x;"
+     bun: Expected "class" but found "x" @3
+     tsc parse: TS1146@2+0 Declaration expected.
+RR  "@d 1;"
+     bun: Expected "class" but found "1" @3
+     tsc parse: TS1146@2+0 Declaration expected.

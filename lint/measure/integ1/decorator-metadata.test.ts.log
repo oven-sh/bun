@@ -1,0 +1,13 @@
+bun test v1.4.3 (367d939d9)
+
+test/bundler/transpiler/decorator-metadata.test.ts:
+(pass) decorator metadata > type serialization [239.01ms]
+(pass) decorator metadata > design: type, paramtypes, returntype [122.33ms]
+(pass) decorator metadata > class with only constructor argument decorators [4.77ms]
+(pass) decorator metadata > more types [6.99ms]
+(pass) decorator metadata > rest parameters and defaults [11.84ms]
+
+ 5 pass
+ 0 fail
+ 227 expect() calls
+Ran 5 tests across 1 file. [3.86s]

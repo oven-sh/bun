@@ -1,0 +1,31 @@
+c3-rule-support-unification: one Context API, one scanner, the eleven first rules, run natively.
+
+probe/            a binary that links the rlibs of the debug build of /workspace/wt/cli (HEAD e3566be889) and runs
+                  the proposed support layer and all eleven rules over Parser::parse_only trees.
+  build.py        /workspace/tools/lk python3 probe/build.py /tmp/c3u/probe
+                  (needs build/debug of the worktree: `bun bd --version`; takes the rustc command of the unit bun_lint
+                  from build/debug/rust-target/units, links mimalloc's object of the build, 2 to 4 seconds of work)
+  src/shims.rs    the native symbols a parse reaches, written out (precedent: src/parsers/native_test_shims.rs)
+  src/tokens.rs   THE SCANNER: Bun's lexer restarted at an offset; regular expressions and JSX elements are taken
+                  from the tree (Spans), template text is read by the scanner
+  src/context.rs  Context: report, report_if_global, declare, targets, and the scanner services
+  src/names.rs    static property names (ESLint getStaticPropertyName)
+  src/linter.rs   the one walk (impl bun_ast::walk::Visitor), the stack guard
+  src/rules/*.rs  the eleven rules
+  The probe is not the final text: it uses std HashMap, String and from_utf8_lossy, which the workspace lints refuse.
+  run: ASAN_OPTIONS=detect_leaks=0 /tmp/c3u/probe file a.js ...       prints path(line,col): rule: message
+       /tmp/c3u/probe tokens a.js                                    every token of the scanner
+  run-vectors.cjs  node probe/run-vectors.cjs [-v]    all vector families against the probe (results/vectors.txt)
+  tokens-diff.cjs  node probe/tokens-diff.cjs <list>  scanner tokens against espree tokens (results/tokens-diff.txt)
+  lint-diff.cjs    node probe/lint-diff.cjs <list>    reports against ESLint on real files (results/lint-diff.txt)
+
+cases/            case lists for the five rules that had no vector file (own lists, and the lists of the earlier
+                  units found in /tmp: rdm = rules-duplicate-members, dupe-probe = rules-equality)
+make-vectors.cjs  ESLINT_PIN=<dir> node make-vectors.cjs    writes vectors/<rule>.json from cases/ and from ESLint's
+                  own test file of the rule; ESLINT_PIN is made by
+                  ../rules-expression-equality-bottomup/prototype/setup.sh (lib of /workspace/ref/eslint + npm install)
+add-expect.cjs    node add-expect.cjs    adds `expect` (what the probe reports, with start and length) and `differs`
+vectors/          <rule>.json: {code, origin, jsx?, sourceType?, eslint: [{line, column, endLine, endColumn, message}],
+                  expect: [{line, column, start, length, message}] | null, differs?}
+                  <rule>.eslint-rejects.json: cases ESLint's parser rejects (Bun's parser takes most of them)
+results/          the numbers of the last run, and the two file lists of the corpora

@@ -1,0 +1,453 @@
+A1c	ref	"if"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected if @0	tsc: parses
+A1c	ref	"class"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected class @0	tsc: parses
+A1c	ref	"function"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected function @0	tsc: parses
+A1c	ref	"delete"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected delete @0	tsc: parses
+A1c	ref	"in"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected in @0	tsc: parses
+A1c	ref	"var"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected var @0	tsc: parses
+A1c	ref	"with"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected with @0	tsc: parses
+A1c	ref	"enum"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected enum @0	tsc: parses
+A1c	ref	"default"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected default @0	tsc: parses
+A1c	ref	"super"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected super @0	tsc: parses
+A1c	ref	"instanceof"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected instanceof @0	tsc: parses
+A1c	ref	"extends"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected extends @0	tsc: parses
+A1c	ref	"export"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected export @0	tsc: parses
+A1c	ref	"return"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected return @0	tsc: parses
+A1c	ref	"switch"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected switch @0	tsc: parses
+A1c	ref	"while"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected while @0	tsc: parses
+A1c	ref	"do"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected do @0	tsc: parses
+A1c	ref	"for"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected for @0	tsc: parses
+A1c	ref	"try"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected try @0	tsc: parses
+A1c	ref	"catch"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected catch @0	tsc: parses
+A1c	ref	"throw"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected throw @0	tsc: parses
+A1c	ref	"else"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected else @0	tsc: parses
+A1c	ref	"case"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected case @0	tsc: parses
+A1c	ref	"break"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected break @0	tsc: parses
+A1c	ref	"continue"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected continue @0	tsc: parses
+A1c	ref	"debugger"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected debugger @0	tsc: parses
+A1c	ref	"finally"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected finally @0	tsc: parses
+A1c	ref	"if.x"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected if @0	tsc: parses
+A1c	ref	"class<T>"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected class @0	tsc: parses
+A1c	label	"[...const: A[]]"	[alias,param,arrowRet,callArg]	bun: Unexpected "const" @4	tsc: parses
+A1c	label	"[...in: A[]]"	[alias,param]	bun: Unexpected in @4	tsc: parses
+A1c	label	"[...class: A[]]"	[alias,param]	bun: Unexpected class @4	tsc: parses
+A1c	label	"[...if: A[]]"	[alias,param]	bun: Unexpected if @4	tsc: parses
+A1c	label	"[...var: A[]]"	[alias,param]	bun: Unexpected var @4	tsc: parses
+A1c	label	"[...default: A[]]"	[alias,param]	bun: Unexpected default @4	tsc: parses
+A1c	label	"[...delete: A[]]"	[alias,param]	bun: Unexpected delete @4	tsc: parses
+A1c	label	"[...enum: A[]]"	[alias,param]	bun: Unexpected enum @4	tsc: parses
+A1c	label	"[...export: A[]]"	[alias,param]	bun: Unexpected export @4	tsc: parses
+A1c	label	"[...extends: A[]]"	[alias,param]	bun: Unexpected extends @4	tsc: parses
+A1c	label	"[...super: A[]]"	[alias,param]	bun: Unexpected super @4	tsc: parses
+A1c	label	"[...switch: A[]]"	[alias,param]	bun: Unexpected switch @4	tsc: parses
+A1c	label	"[...instanceof: A[]]"	[alias,param]	bun: Unexpected instanceof @4	tsc: parses
+A1c	label	"[...with: A[]]"	[alias,param]	bun: Unexpected with @4	tsc: parses
+A1c	label	"[...return: A[]]"	[alias,param]	bun: Unexpected return @4	tsc: parses
+A1c	union	"| if"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected if @2	tsc: parses
+A1c	union	"A | if"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected if @4	tsc: parses
+A1c	union	"A & class"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected class @4	tsc: parses
+A1c	op	"keyof if"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected if @6	tsc: parses
+A1c	query	"typeof #a"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected identifier but found "#a" @7	tsc: parses
+A1c	query	"typeof import(\"x\")<C>"	[alias,var,param,ret,arrowParam,arrowRet,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "<" @18	tsc: parses
+A1c	import	"import(\"x\")<T>"	[alias,var,param,ret,arrowParam,arrowRet,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "<" @11	tsc: parses
+A1c	import	"import(\"x\", { with: { a: \"b\" } })<T>"	[alias,var,param,ret,arrowParam,arrowRet,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "<" @33	tsc: parses
+A1c	import	"import(\"x\", { with: { a: \"b\" + \"c\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected + @29	tsc: parses
+A1c	import	"import(\"x\").#a"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected identifier but found "#a" @12	tsc: parses
+A1c	import	"import(\"x\").A.<T>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected identifier but found "<" @14	tsc: parses
+A1c	fn	"([a, , b]) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected , @5	tsc: parses
+A1c	fn	"(a) => asserts a\nis B"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ";" but found "B" @20	tsc: parses
+A1c	paren	"(if)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected if @1	tsc: parses
+A1c	paren	"(class)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected class @1	tsc: parses
+A1c	tmpl	"`${if}`"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected if @3	tsc: parses
+A1c	pred	"asserts a\nis B"	[arrowRet]	bun: Expected ";" but found ":" @-2	tsc: parses
+A1c	pred	"asserts this\nis B"	[ret,arrowRet]	bun: Expected ";" but found "B" @16	tsc: parses
+A1c	core	"if"	[satisfies,cast,method,fnTypeRet,tupleNamed,indexSig,mapped,unionLeft,arrayOf,condCheck,condExtends,condFalse,constraint,tpDefault,catch,thisParam,template,objMethodRet,getterRet,declareFn,ctorParamProp]	bun: Unexpected if @0	tsc: parses
+A1s	lit	"--1"	[callArg]	bun: Invalid assignment target @2	tsc: parses also TS2357
+A1s	tuple	"[a: A?]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected "]" but found "?" @5	tsc: parses also TS5086
+A1s	tuple	"[a: ...A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ... @4	tsc: parses also TS5087
+A1s	fn	"(a = 1) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	fn	"(a: A = 1) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found ":" @2	tsc: parses also TS2371
+A1s	fn	"(a = 1, b = 2) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	fn	"(a = b) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	fn	"(a = () => 1) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	fn	"(a = {}) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	fn	"({ a } = {}) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @7	tsc: parses also TS2371
+A1s	fn	"([a] = []) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @5	tsc: parses also TS2371
+A1s	fn	"({ a = 1 }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected = @5	tsc: parses also TS2371
+A1s	fn	"({ a: b = 1 }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected = @8	tsc: parses also TS2842
+A1s	fn	"([a = 1]) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected "]" but found "=" @4	tsc: parses also TS2371
+A1s	fn	"({ [k]: v }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ";" but found "=>" @13	tsc: parses also TS2842
+A1s	fn	"({ 1n: a }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected 1n @3	tsc: parses also TS2842
+A1s	fn	"(public a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	fn	"(readonly a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found ":" @11	tsc: parses also TS2369
+A1s	fn	"(private a) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	fn	"(protected a?: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @11	tsc: parses also TS2369
+A1s	fn	"(override a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	fn	"(public readonly a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "readonly" @8	tsc: parses also TS2369
+A1s	fn	"(public readonly) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "readonly" @8	tsc: parses also TS2369
+A1s	fn	"(readonly readonly) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected ) @18	tsc: parses also TS2369
+A1s	core	"if"	[forOf]	bun: Unexpected if @0	tsc: parses also TS2483
+A1s	core	"(a = 1) => void"	[var,ret,arrowParam,satisfies,cast,newArg,tagArg,inst,method,typeArg,fnTypeParam,fnTypeRet,tupleEl,tupleNamed,member,indexSig,mapped,unionLeft,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,thisParam,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	core	"({ a = 1 }) => void"	[var,ret,arrowParam,satisfies,cast,newArg,tagArg,inst,method,typeArg,fnTypeParam,fnTypeRet,tupleEl,tupleNamed,member,indexSig,mapped,unionLeft,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,thisParam,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: Unexpected = @5	tsc: parses also TS2371
+A2	lit	"!1"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+2 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write '1'?
+A2	ref	"A.<B>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected identifier but found "<" @2	tsc: TS8020 @1+1 JSDoc types can only be used inside documentation comments.
+A2	targs	"A<B,>"	[alias,var,param,ret,arrowParam,as,field,typeArg,tupleEl,member]	bun: Unexpected > @4	tsc: TS1009 @3+1 Trailing comma not allowed.
+A2	targs	"A<>"	[alias,var,param,ret,arrowParam,as,field,typeArg,tupleEl,member]	bun: Unexpected > @2	tsc: TS1099 @1+2 Type argument list cannot be empty.
+A2	targs	"A<asserts a>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ">" but found "a" @10	tsc: TS1228 @2+9 A type predicate is only allowed in return type position for functions and methods.
+A2	targs	"A<B?>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ">" but found "?" @3	tsc: TS17019 @2+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	targs	"A<?B>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @2	tsc: TS17020 @2+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arr	"A\n[]"	[field,member]	bun: Unexpected ] @3	tsc: TS1096 @2+3 An index signature must have exactly one parameter.
+A2	arr	"A[B?]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected "]" but found "?" @3	tsc: TS17019 @2+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"?A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @0	tsc: TS17020 @0+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"A?"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,member]	bun: Expected ";" but found "?" @1	tsc: TS17019 @0+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"!A"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+2 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"*"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected * @0	tsc: TS8020 @0+1 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"?"	[param,arrowParam,callArg,typeArg,fnTypeParam,member]	bun: Unexpected ? @0	tsc: TS8020 @0+1 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"?A[]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @0	tsc: TS17020 @0+4 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{} | null | undefined'?
+A2	jsdoc	"!A[]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+2 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"!A | B"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+2 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"??A"	[alias,var,param,ret,arrowParam,arrowRet,as,field,fnTypeParam,member]	bun: Unexpected ?? @0	tsc: TS17020 @0+3 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"!!A"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+3 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"?!A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @0	tsc: TS17020 @0+3 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"A!?"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,member]	bun: Expected ";" but found "?" @2	tsc: TS17019 @0+2 '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"function(A): B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected function @0	tsc: TS8020 @0+14 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"function(new: A)"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected function @0	tsc: TS8020 @0+16 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"function(this: A)"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected function @0	tsc: TS8020 @0+17 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"function()"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected function @0	tsc: TS8020 @0+10 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"Array.<string>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected identifier but found "<" @6	tsc: TS8020 @5+1 JSDoc types can only be used inside documentation comments.
+A2	jsdoc	"[A]?"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,member]	bun: Expected ";" but found "?" @3	tsc: TS17019 @0+4 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write '[A] | undefined'?
+A2	jsdoc	"(A)?"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,member]	bun: Expected ";" but found "?" @3	tsc: TS17019 @0+4 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"?(A)"	[alias,var,param,ret,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @0	tsc: TS17020 @0+4 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	jsdoc	"!(() => void)"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @0	tsc: TS17020 @0+13 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write '() => void'?
+A2	jsdoc	"?() => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @0	tsc: TS17020 @0+11 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write '(() => void) | null | undefined'?
+A2	jsdoc	"keyof !A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ! @6	tsc: TS17020 @6+2 '!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?
+A2	jsdoc	"A extends ?B ? C : D"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected ? @10	tsc: TS17020 @10+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	tuple	"[asserts a]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected "]" but found "a" @9	tsc: TS1228 @1+9 A type predicate is only allowed in return type position for functions and methods.
+A2	union	"A | asserts a"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @12	tsc: TS1228 @4+9 A type predicate is only allowed in return type position for functions and methods.
+A2	op	"keyof A\n[]"	[field,member]	bun: Unexpected ] @9	tsc: TS1096 @8+3 An index signature must have exactly one parameter.
+A2	op	"keyof asserts a"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @14	tsc: TS1228 @6+9 A type predicate is only allowed in return type position for functions and methods.
+A2	op	"readonly if"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected if @9	tsc: TS1354 @0+8 'readonly' type modifier is only permitted on array and tuple literal types.
+A2	op	"unique A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "A" @7	tsc: TS1005 @7+1 'symbol' expected.
+A2	op	"unique unique symbol"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "unique" @7	tsc: TS1005 @7+13 'symbol' expected.
+A2	op	"unique keyof A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "keyof" @7	tsc: TS1005 @7+7 'symbol' expected.
+A2	op	"unique readonly A[]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "readonly" @7	tsc: TS1005 @7+12 'symbol' expected.
+A2	op	"unique (symbol)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "(" @7	tsc: TS1005 @7+8 'symbol' expected.
+A2	op	"unique typeof a"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "typeof" @7	tsc: TS1005 @7+8 'symbol' expected.
+A2	op	"unique { a: A }"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "{" @7	tsc: TS1005 @7+8 'symbol' expected.
+A2	op	"unique string"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "string" @7	tsc: TS1005 @7+6 'symbol' expected.
+A2	op	"unique \"s\""	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found ""s"" @7	tsc: TS1005 @7+3 'symbol' expected.
+A2	cond	"A extends B ? asserts a : D"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ":" but found "a" @22	tsc: TS1228 @14+9 A type predicate is only allowed in return type position for functions and methods.
+A2	query	"typeof a<>"	[alias,var,param,ret,arrowParam,as,field,typeArg,tupleEl,member]	bun: Unexpected > @9	tsc: TS1099 @8+2 Type argument list cannot be empty.
+A2	query	"typeof a<B,>"	[alias,var,param,ret,arrowParam,as,field,typeArg,tupleEl,member]	bun: Unexpected > @11	tsc: TS1009 @10+1 Trailing comma not allowed.
+A2	query	"typeof import(x)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected string but found "x" @14	tsc: TS1141 @14+1 String literal expected.
+A2	import	"import(`x`)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected string but found "`x`" @7	tsc: TS1141 @7+3 String literal expected.
+A2	import	"import(x)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected string but found "x" @7	tsc: TS1141 @7+1 String literal expected.
+A2	import	"import(1)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected string but found "1" @7	tsc: TS1141 @7+1 String literal expected.
+A2	import	"import(A | B)"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected string but found "A" @7	tsc: TS1141 @7+5 String literal expected.
+A2	fn	"<in T>() => T"	[alias,param,arrowRet,callArg,as,field]	bun: The modifier "in" is not valid here @1	tsc: TS1274 @1+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	fn	"<out T>() => T"	[alias,param,arrowRet,callArg,as,field]	bun: The modifier "out" is not valid here @1	tsc: TS1274 @1+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	fn	"<>() => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected identifier but found ">" @1	tsc: TS1098 @0+2 Type parameter list cannot be empty.
+A2	fn	"(...a = []) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected ... @1	tsc: TS1048 @4+1 A rest parameter cannot have an initializer. also TS2371
+A2	fn	"(a?: A = 1) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "?" @2	tsc: TS1015 @1+1 Parameter cannot have question mark and initializer. also TS2371
+A2	fn	"(static a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @8	tsc: TS1090 @1+6 'static' modifier cannot appear on a parameter.
+A2	fn	"(declare a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @9	tsc: TS1090 @1+7 'declare' modifier cannot appear on a parameter.
+A2	fn	"(abstract a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @10	tsc: TS1242 @1+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	fn	"(async a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @7	tsc: TS1090 @1+5 'async' modifier cannot appear on a parameter.
+A2	fn	"(export a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected export @1	tsc: TS1090 @1+6 'export' modifier cannot appear on a parameter.
+A2	fn	"(in a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Unexpected in @1	tsc: TS1274 @1+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	fn	"(out a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @5	tsc: TS1274 @1+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	fn	"(accessor a: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "a" @10	tsc: TS1275 @1+8 'accessor' modifier can only appear on a property declaration.
+A2	fn	"(public = 1) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "=" @8	tsc: TS1212 @1+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2371
+A2	fn	"(public public) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "public" @8	tsc: TS1212 @8+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2369
+A2	fn	"(public { a }: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found "{" @8	tsc: TS1187 @1+15 A parameter property may not be declared using a binding pattern. also TS2369
+A2	fn	"(public [a]: A) => void"	[alias,param,arrowRet,callArg,as,field]	bun: Expected ")" but found ":" @11	tsc: TS1187 @1+13 A parameter property may not be declared using a binding pattern. also TS2369
+A2	paren	"(asserts a)"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ")" but found "a" @9	tsc: TS1228 @1+9 A type predicate is only allowed in return type position for functions and methods.
+A2	paren	"(a)\n[]"	[field,member]	bun: Unexpected ] @5	tsc: TS1096 @4+3 An index signature must have exactly one parameter.
+A2	paren	"(a)?"	[alias,var,param,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,member]	bun: Expected ";" but found "?" @3	tsc: TS17019 @0+4 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	tmpl	"`${A}`\n[]"	[field,member]	bun: Unexpected ] @8	tsc: TS1096 @7+3 An index signature must have exactly one parameter.
+A2	pred	"asserts a"	[alias,var,param,arrowParam,as,callArg,field,fnTypeParam,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+9 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts this"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "this" @8	tsc: TS1228 @0+12 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts this is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "this" @8	tsc: TS1228 @0+17 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a | B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+9 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a[]"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+9 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts is"	[alias,var,param,arrowParam,as,field,typeArg,tupleEl,member]	bun: Unexpected ; @10	tsc: TS1228 @0+10 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts is is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "B" @14	tsc: TS1228 @0+15 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts asserts"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "asserts" @8	tsc: TS1228 @0+15 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts asserts is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "asserts" @8	tsc: TS1228 @0+20 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"keyof is B"	[ret,arrowRet]	bun: Expected ";" but found "B" @9	tsc: TS1225 @0+5 Cannot find parameter 'keyof'.
+A2	pred	"asserts a & B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+9 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts this | B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "this" @8	tsc: TS1228 @0+12 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a is this"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+17 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a\nis B"	[alias,var,param,ret,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts this\nis B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "this" @8	tsc: TS1228 @0+17 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a is\nB"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts undefined"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "undefined" @8	tsc: TS1228 @0+17 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts any"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "any" @8	tsc: TS1228 @0+11 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts readonly"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "readonly" @8	tsc: TS1228 @0+16 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts unique"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "unique" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts abstract"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "abstract" @8	tsc: TS1228 @0+16 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts type"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "type" @8	tsc: TS1228 @0+12 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts of"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "of" @8	tsc: TS1228 @0+10 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts async"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "async" @8	tsc: TS1228 @0+13 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts await"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "await" @8	tsc: TS1228 @0+13 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts yield"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "yield" @8	tsc: TS1228 @0+13 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts let"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "let" @8	tsc: TS1228 @0+11 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts static"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "static" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts out"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "out" @8	tsc: TS1228 @0+11 A type predicate is only allowed in return type position for functions and methods.
+A2	pred	"asserts a is asserts b"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+22 A type predicate is only allowed in return type position for functions and methods.
+A2	core	"asserts a"	[satisfies,cast,newArg,tagArg,inst,method,tupleNamed,indexSig,mapped,unionLeft,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,classExtendsArg,template,declareFn,ctorParamProp,forOf]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+9 A type predicate is only allowed in return type position for functions and methods.
+A2	core	"asserts a is B"	[satisfies,cast,newArg,tagArg,inst,method,tupleNamed,indexSig,mapped,unionRight,unionLeft,keyofArg,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,classExtendsArg,template,paren,declareFn,ctorParamProp,forOf]	bun: Expected ";" but found "a" @8	tsc: TS1228 @0+14 A type predicate is only allowed in return type position for functions and methods.
+A2	core	"?A"	[satisfies,cast,newArg,tagArg,inst,method,fnTypeRet,tupleNamed,indexSig,mapped,unionRight,unionLeft,keyofArg,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: Unexpected ? @0	tsc: TS17020 @0+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	core	"A?"	[satisfies,cast,newArg,tagArg,inst,fnTypeRet,indexSig,mapped,unionRight,keyofArg,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,classExtendsArg,template,declareFn,ctorParamProp]	bun: Unexpected ; @2	tsc: TS17019 @0+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	core	"*"	[satisfies,cast,newArg,tagArg,inst,method,fnTypeRet,tupleNamed,indexSig,mapped,unionRight,unionLeft,keyofArg,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: Unexpected * @0	tsc: TS8020 @0+1 JSDoc types can only be used inside documentation comments.
+A2	core	"(a = 1) => void"	[catch]	bun: Expected ")" but found "=" @3	tsc: TS1196 @0+1 Catch clause variable type annotation must be 'any' or 'unknown' if specified. also TS2371
+A2	core	"({ a = 1 }) => void"	[catch]	bun: Unexpected = @5	tsc: TS1196 @0+1 Catch clause variable type annotation must be 'any' or 'unknown' if specified. also TS2371
+B	kw	"void.b"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ';' expected.
+B	kw	"null.b"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ';' expected.
+B	kw	"this.b"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ';' expected.
+B	kw	"string<T>"	[as]	bun: accepts	tsc: TS1109 @9+1 Expression expected.
+B	kw	"any<T>"	[as]	bun: accepts	tsc: TS1109 @6+1 Expression expected.
+B	kw	"void<T>"	[as]	bun: accepts	tsc: TS1109 @7+1 Expression expected.
+B	kw	"this<T>"	[as]	bun: accepts	tsc: TS1109 @7+1 Expression expected.
+B	kw	"object<T>"	[as]	bun: accepts	tsc: TS1109 @9+1 Expression expected.
+B	ref	"A<B>.C"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ';' expected.
+B	ref	"const"	[callArg,typeArg,tupleEl]	bun: accepts	tsc: TS1109 @0+5 Expression expected.
+B	ref	"infer"	[callArg]	bun: accepts	tsc: TS1003 @5+1 Identifier expected.
+B	ref	"keyof"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @8+5 Property or signature expected.
+B	ref	"readonly"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @11+5 Property or signature expected.
+B	ref	"unique"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	ref	"unique.x"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	ref	"keyof.x"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @5+1 Type expected.
+B	ref	"readonly.x"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @8+1 Type expected.
+B	ref	"unique<T>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	targs	"A<B,,C>"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	targs	"A<,B>"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @2+1 Type expected.
+B	targs	"A\n<B>"	[as]	bun: accepts	tsc: TS1109 @5+1 Expression expected.
+B	targs	"A<<B>>"	[callArg]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	targs	"A<B><C>"	[as]	bun: accepts	tsc: TS1109 @7+1 Expression expected.
+B	targs	"A<a is B>"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+2 '>' expected.
+B	targs	"A<const>"	[alias,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+5 '>' expected.
+B	arr	"A[a is B]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+2 ']' expected.
+B	jsdoc	"A\n?"	[tupleEl]	bun: accepts	tsc: TS1005 @2+1 ',' expected.
+B	jsdoc	"A!.B"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+1 ';' expected.
+B	jsdoc	"A!<B>"	[as]	bun: accepts	tsc: TS1109 @5+1 Expression expected.
+B	tuple	"[,]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @1+1 Type expected.
+B	tuple	"[,A]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @1+1 Type expected.
+B	tuple	"[A,,B]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	tuple	"[...]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	tuple	"[a!: A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @3+1 ',' expected.
+B	tuple	"[a:]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	tuple	"[a?:]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	tuple	"[: A]"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @1+1 Type expected.
+B	tuple	"[\"a\": A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ',' expected.
+B	tuple	"[1: A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+1 ',' expected.
+B	tuple	"[a.b: A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ',' expected.
+B	tuple	"[a<T>: A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @5+1 ',' expected.
+B	tuple	"[a[]: A]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+1 ',' expected.
+B	tuple	"[a is B]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @3+2 ',' expected.
+B	label	"[const?: A]"	[alias,param,arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+5 Type expected.
+B	label	"[in: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[in?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, in: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[class: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[class?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, class: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[if: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[if?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, if: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[var: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[var?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, var: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[default: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+7 Type expected.
+B	label	"[default?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+7 Type expected.
+B	label	"[a: A, default: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @7+7 Type expected.
+B	label	"[delete: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[delete?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, delete: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[enum: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[enum?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, enum: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[export: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+6 Type expected.
+B	label	"[export?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+6 Type expected.
+B	label	"[a: A, export: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @7+6 Type expected.
+B	label	"[extends: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+7 Type expected.
+B	label	"[extends?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @1+7 Type expected.
+B	label	"[a: A, extends: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @7+7 Type expected.
+B	label	"[super: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[super?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, super: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[switch: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[switch?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, switch: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[instanceof: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[instanceof?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, instanceof: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[with: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[with?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, with: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[return: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[return?: A]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	label	"[a: A, return: B]"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	union	"& | A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @2+1 Type expected.
+B	union	"| | A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @2+1 Type expected.
+B	union	"& & A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @2+1 Type expected.
+B	union	"| & | A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	union	"A | | B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	union	"A & & B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	union	"A & | B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	union	"A |"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @6+5 Property or signature expected.
+B	union	"A &"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @6+5 Property or signature expected.
+B	union	"|"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @4+5 Property or signature expected.
+B	union	"&"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @4+5 Property or signature expected.
+B	union	"A | () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1385 @3+11 Function type notation must be parenthesized when used in a union type.
+B	union	"A & () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1387 @3+11 Function type notation must be parenthesized when used in an intersection type.
+B	union	"A | new () => B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1386 @3+12 Constructor type notation must be parenthesized when used in a union type.
+B	union	"A & new () => B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1388 @3+12 Constructor type notation must be parenthesized when used in an intersection type.
+B	union	"| () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1385 @1+11 Function type notation must be parenthesized when used in a union type.
+B	union	"& () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1387 @1+11 Function type notation must be parenthesized when used in an intersection type.
+B	union	"| new () => A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1386 @1+12 Constructor type notation must be parenthesized when used in a union type.
+B	union	"A | <T>() => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1385 @3+14 Function type notation must be parenthesized when used in a union type.
+B	union	"A & <T>() => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1387 @3+14 Function type notation must be parenthesized when used in an intersection type.
+B	union	"A | abstract new () => B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1386 @3+21 Constructor type notation must be parenthesized when used in a union type.
+B	union	"A | (a: B) => C"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1385 @3+12 Function type notation must be parenthesized when used in a union type.
+B	union	"A | (a) => C"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1385 @3+9 Function type notation must be parenthesized when used in a union type.
+B	union	"A | a is B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @6+2 ';' expected.
+B	op	"keyof |"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	op	"keyof | A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	op	"keyof & A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	op	"keyof () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @7+1 Type expected.
+B	op	"keyof new () => A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @10+1 ';' expected.
+B	op	"keyof <T>() => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @6+1 Type expected.
+B	op	"keyof abstract new () => A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @15+3 ';' expected.
+B	op	"keyof (a: A) => B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @8+1 ')' expected.
+B	op	"keyof a is B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @8+2 ';' expected.
+B	op	"readonly () => void"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @10+1 Type expected.
+B	op	"readonly new () => A"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @13+1 ';' expected.
+B	op	"readonly <T>() => T"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1110 @9+1 Type expected.
+B	op	"unique symbol<T>"	[as]	bun: accepts	tsc: TS1109 @16+1 Expression expected.
+B	infer	"A extends infer U[] ? U : never"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @17+1 '?' expected.
+B	infer	"A extends readonly infer U[] ? U : never"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @26+1 '?' expected.
+B	infer	"infer U[]"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @7+1 ';' expected.
+B	infer	"A extends infer U extends ? 1 : 2"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @30+1 '?' expected.
+B	infer	"A extends infer U.V ? 1 : 2"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @17+1 '?' expected.
+B	cond	"A extends B ? : D"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1005 @14+1 '?' expected.
+B	cond	"A extends ? C : D"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1005 @14+1 '?' expected.
+B	cond	"A extends B ? C :"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @20+5 Property or signature expected.
+B	cond	"A extends B ? C : D : E"	[tupleEl]	bun: accepts	tsc: TS1005 @20+1 ',' expected.
+B	cond	"extends B ? C : D"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	cond	"A extends B ? a is C : D"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @16+2 ':' expected.
+B	cond	"A extends B ? C : a is D"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @20+2 ';' expected.
+B	cond	"A extends a is B ? C : D"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @12+2 '?' expected.
+B	query	"typeof a<B>.c"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	query	"typeof a<B><C>"	[as]	bun: accepts	tsc: TS1109 @14+1 Expression expected.
+B	query	"typeof a.#b"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1003 @11+0 Identifier expected.
+B	query	"typeof a.b.#c"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1003 @13+0 Identifier expected.
+B	query	"typeof a.#b.c"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1003 @11+0 Identifier expected.
+B	query	"typeof import.meta"	[callArg]	bun: accepts	tsc: TS1005 @13+1 '(' expected.
+B	query	"typeof a!.b"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @9+1 ';' expected.
+B	query	"typeof a\n<B>"	[as]	bun: accepts	tsc: TS1109 @12+1 Expression expected.
+B	query	"typeof [a]"	[callArg]	bun: accepts	tsc: TS1003 @7+1 Identifier expected.
+B	import	"import(\"x\").A<T>.B"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @16+1 ';' expected.
+B	import	"import(\"x\", {})"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @13+1 'with' expected.
+B	import	"import(\"x\", { with: { a: \"b\" } }, )"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @32+1 ')' expected.
+B	import	"import(\"x\",)"	[callArg]	bun: accepts	tsc: TS1005 @11+1 '{' expected.
+B	import	"import(\"x\", { with: { [a]: \"b\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1478 @22+1 Identifier or string literal expected.
+B	import	"import(\"x\", { with: { 1: \"b\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1478 @22+1 Identifier or string literal expected.
+B	import	"import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @32+6 '}' expected.
+B	import	"import(\"x\", { with: y })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @20+1 '{' expected.
+B	import	"import(\"x\", { with })"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @19+1 ':' expected.
+B	import	"import(\"x\", { with: { a } })"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @24+1 ':' expected.
+B	import	"import(\"x\", { with: { a: \"b\"; c: \"d\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @28+1 ',' expected.
+B	import	"import(\"x\", { a: \"b\" })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @14+1 'with' expected.
+B	import	"import(\"x\", { readonly with: { a: \"b\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @14+8 'with' expected.
+B	import	"import(\"x\", { with?: { a: \"b\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @18+1 ':' expected.
+B	import	"import(\"x\", { with(): void })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @18+1 ':' expected.
+B	import	"import(\"x\", { \"with\": { a: \"b\" } })"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @14+6 'with' expected.
+B	import	"import.meta"	[callArg]	bun: accepts	tsc: TS1005 @6+1 '(' expected.
+B	import	"import(\"x\")\n<T>"	[as]	bun: accepts	tsc: TS1109 @15+1 Expression expected.
+B	fn	"(this?: A) => B"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @5+1 ',' expected.
+B	fn	"(...this: A) => B"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1359 @4+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+B	fn	"<T>"	[callArg]	bun: accepts	tsc: TS1005 @3+1 '(' expected.
+B	fn	"new ()"	[callArg]	bun: accepts	tsc: TS1005 @6+1 '=>' expected.
+B	fn	"new () =>"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	fn	"new A"	[callArg]	bun: accepts	tsc: TS1005 @4+1 '(' expected.
+B	fn	"new (A)"	[alias,param,callArg,as,field]	bun: accepts	tsc: TS1005 @7+1 '=>' expected.
+B	fn	"() =>"	[arrowRet,callArg]	bun: accepts	tsc: TS1005 @-2+1 ',' expected.
+B	fn	"(a: ) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	fn	"(a:) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	fn	"(a?:) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	fn	"({ : a }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1131 @3+1 Property or signature expected.
+B	fn	"({ a }: ) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1110 @8+1 Type expected.
+B	fn	"([this]) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @9+2 ';' expected.
+B	fn	"({ a: this }) => void"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @14+2 ';' expected.
+B	fn	"(a) => a is"	[arrowRet,callArg]	bun: accepts	tsc: TS1110 @12+2 Type expected.
+B	fn	"(a) => asserts a.b"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @16+1 ';' expected.
+B	fn	"(a) => asserts is"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1110 @17+1 Type expected.
+B	fn	"(a) => asserts is is B"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @21+1 ';' expected.
+B	fn	"(a) => a is b is C"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @14+2 ';' expected.
+B	fn	"(a) => (a is B)"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @10+2 ')' expected.
+B	fn	"(a) => asserts this.x"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @19+1 ';' expected.
+B	fn	"(a) => asserts a<T>"	[alias,param,arrowRet,callArg,as,field]	bun: accepts	tsc: TS1005 @16+1 ';' expected.
+B	paren	"()"	[callArg,fnTypeParam]	bun: accepts	tsc: TS1005 @2+1 '=>' expected.
+B	paren	"(A, B)"	[callArg]	bun: accepts	tsc: TS1005 @6+1 '=>' expected.
+B	paren	"(a is B)"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @3+2 ')' expected.
+B	paren	"(a)<T>"	[as]	bun: accepts	tsc: TS1109 @6+1 Expression expected.
+B	paren	"(a).b"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @3+1 ';' expected.
+B	paren	"(a, b)"	[callArg]	bun: accepts	tsc: TS1005 @6+1 '=>' expected.
+B	paren	"(a = 1)"	[callArg]	bun: accepts	tsc: TS1005 @7+1 '=>' expected.
+B	paren	"(a: A) =>"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @12+5 Property or signature expected.
+B	tmpl	"`${}`"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	tmpl	"`${A}\\u`"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1125 @7+0 Hexadecimal digit expected.
+B	tmpl	"`${a is B}`"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @5+2 '}' expected.
+B	tmpl	"`${A}${}`"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @7+1 Type expected.
+B	tmpl	"`${A}`.length"	[alias,var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @6+1 ';' expected.
+B	tmpl	"`${A}`<T>"	[as]	bun: accepts	tsc: TS1109 @9+1 Expression expected.
+B	pred	"a is B"	[alias,var,param,arrowParam,as,callArg,field,fnTypeParam,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a is"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @7+5 Property or signature expected.
+B	pred	"a is B | C"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a is B extends C ? D : E"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a is b is C"	[alias,var,param,ret,arrowParam,arrowRet,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"asserts a is b is C"	[ret,arrowRet]	bun: accepts	tsc: TS1144 @15+2 '{' or ';' expected.
+B	pred	"asserts a.b"	[ret,arrowRet]	bun: accepts	tsc: TS1144 @9+1 '{' or ';' expected.
+B	pred	"a is B[]"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a is (B)"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a\nis B"	[member]	bun: accepts	tsc: TS1131 @2+2 Property or signature expected.
+B	pred	"this\nis B"	[member]	bun: accepts	tsc: TS1131 @5+2 Property or signature expected.
+B	pred	"asserts a is"	[ret,arrowRet]	bun: accepts	tsc: TS1131 @15+5 Property or signature expected.
+B	pred	"asserts this.x"	[ret,arrowRet]	bun: accepts	tsc: TS1144 @12+1 '{' or ';' expected.
+B	pred	"asserts is"	[ret,arrowRet]	bun: accepts	tsc: TS1131 @13+5 Property or signature expected.
+B	pred	"asserts is is B"	[ret,arrowRet]	bun: accepts	tsc: TS1144 @14+1 '{' or ';' expected.
+B	pred	"is is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @3+2 ';' expected.
+B	pred	"this is"	[ret,arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1131 @10+5 Property or signature expected.
+B	pred	"a is this"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"a is\nB"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @2+2 ';' expected.
+B	pred	"undefined is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @10+2 ';' expected.
+B	pred	"any is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @4+2 ';' expected.
+B	pred	"string is B"	[alias,var,param,arrowParam,as,callArg,field,typeArg,fnTypeParam,tupleEl,member]	bun: accepts	tsc: TS1005 @7+2 ';' expected.
+B	pred	"asserts a is b is c"	[ret,arrowRet]	bun: accepts	tsc: TS1144 @15+2 '{' or ';' expected.
+B	core	"A[]"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1011 @2+0 An element access expression should take an argument.
+B	core	"A | B"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @2+1 ',' expected.
+B	core	"A & B"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @2+1 ',' expected.
+B	core	"keyof A"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @6+1 ',' expected.
+B	core	"readonly A[]"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @9+1 ',' expected.
+B	core	"unique symbol"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @7+6 ',' expected.
+B	core	"typeof a"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1109 @0+6 Expression expected.
+B	core	"() => void"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1109 @1+1 Expression expected.
+B	core	"(a: A) => B"	[unionRight,ifaceExtends,classImplements]	bun: accepts	tsc: TS1385 @-1+12 Function type notation must be parenthesized when used in a union type.
+B	core	"new () => A"	[unionRight,ifaceExtends,classImplements]	bun: accepts	tsc: TS1386 @-1+12 Constructor type notation must be parenthesized when used in a union type.
+B	core	"<T>(a: T) => T"	[unionRight,keyofArg,ifaceExtends,classImplements,classExtendsArg]	bun: accepts	tsc: TS1385 @-1+15 Function type notation must be parenthesized when used in a union type.
+B	core	"[a: A, b?: B]"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @2+1 ',' expected.
+B	core	"A extends B ? C : D"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @12+1 ',' expected.
+B	core	"A extends infer U ? U : never"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @16+1 ',' expected.
+B	core	"a is B"	[satisfies,cast,newArg,tagArg,inst,method,tupleNamed,indexSig,mapped,unionLeft,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,ifaceExtends,classImplements,classExtendsArg,template,declareFn,ctorParamProp,forOf]	bun: accepts	tsc: TS1005 @2+2 ',' expected.
+B	core	"this is B"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @5+2 ',' expected.
+B	core	"void"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1109 @0+4 Expression expected.
+B	core	"-1"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1109 @0+1 Expression expected.
+B	core	"| A"	[unionRight,ifaceExtends,classImplements]	bun: accepts	tsc: TS1110 @0+1 Type expected.
+B	core	"& A"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1109 @0+1 Expression expected.
+B	core	"(a: ) => void"	[var,ret,arrowParam,satisfies,cast,newArg,tagArg,inst,method,typeArg,fnTypeParam,fnTypeRet,tupleEl,tupleNamed,member,indexSig,mapped,unionRight,unionLeft,keyofArg,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,ifaceExtends,classImplements,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	core	"A |"	[newArg,tagArg,inst,getterRet]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	core	"keyof () => void"	[satisfies,cast,newArg,tagArg,inst,method,fnTypeRet,tupleNamed,indexSig,mapped,unionRight,unionLeft,keyofArg,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,ifaceExtends,classImplements,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: accepts	tsc: TS1110 @7+1 Type expected.
+B	core	"A | () => void"	[satisfies,cast,newArg,tagArg,inst,method,fnTypeRet,tupleNamed,indexSig,mapped,unionRight,unionLeft,keyofArg,arrayOf,condCheck,condExtends,condTrue,condFalse,constraint,tpDefault,catch,thisParam,ifaceExtends,classImplements,classExtendsArg,template,paren,objMethodRet,getterRet,declareFn,ctorParamProp,forOf]	bun: accepts	tsc: TS1385 @3+11 Function type notation must be parenthesized when used in a union type.
+B	core	"abstract new () => A"	[unionRight,ifaceExtends,classImplements]	bun: accepts	tsc: TS1386 @-1+21 Constructor type notation must be parenthesized when used in a union type.
+B	core	"infer U"	[ifaceExtends,classImplements]	bun: accepts	tsc: TS1005 @6+1 ',' expected.

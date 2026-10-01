@@ -1,0 +1,9307 @@
+{ a: A }
+A | { a: A }
+{ a?: A }
+A | { a?: A }
+{ readonly a: A }
+A | { readonly a: A }
+{ readonly a?: A }
+A | { readonly a?: A }
+{ a }
+A | { a }
+{ a? }
+A | { a? }
+{ readonly a }
+A | { readonly a }
+{ "a": A }
+A | { "a": A }
+{ 'a'?: A }
+A | { 'a'?: A }
+{ 1: A }
+A | { 1: A }
+{ 1.5: A }
+A | { 1.5: A }
+{ 0x10: A }
+A | { 0x10: A }
+{ 1n: A }
+A | { 1n: A }
+{ -1: A }
+A | { -1: A }
+{ `a`: A }
+A | { `a`: A }
+{ [a]: A }
+A | { [a]: A }
+{ [a]?: A }
+A | { [a]?: A }
+{ ["a"]: A }
+A | { ["a"]: A }
+{ [Symbol.iterator]: A }
+A | { [Symbol.iterator]: A }
+{ [a.b.c]: A }
+A | { [a.b.c]: A }
+{ [a + b]: A }
+A | { [a + b]: A }
+{ [`a`]: A }
+A | { [`a`]: A }
+{ [1]: A }
+A | { [1]: A }
+{ readonly [a]: A }
+A | { readonly [a]: A }
+{ #a: A }
+A | { #a: A }
+{ #a?: A }
+A | { #a?: A }
+{ readonly #a: A }
+A | { readonly #a: A }
+{ if: A }
+A | { if: A }
+{ class: A }
+A | { class: A }
+{ new: A }
+A | { new: A }
+{ new?: A }
+A | { new?: A }
+{ function: A }
+A | { function: A }
+{ typeof: A }
+A | { typeof: A }
+{ in: A }
+A | { in: A }
+{ get: A }
+A | { get: A }
+{ set: A }
+A | { set: A }
+{ get?: A }
+A | { get?: A }
+{ set?: A }
+A | { set?: A }
+{ readonly: A }
+A | { readonly: A }
+{ readonly?: A }
+A | { readonly?: A }
+{ static: A }
+A | { static: A }
+{ async: A }
+A | { async: A }
+{ public: A }
+A | { public: A }
+{ private: A }
+A | { private: A }
+{ protected: A }
+A | { protected: A }
+{ abstract: A }
+A | { abstract: A }
+{ declare: A }
+A | { declare: A }
+{ override: A }
+A | { override: A }
+{ accessor: A }
+A | { accessor: A }
+{ constructor: A }
+A | { constructor: A }
+{ type: A }
+A | { type: A }
+{ is: A }
+A | { is: A }
+{ asserts: A }
+A | { asserts: A }
+{ keyof: A }
+A | { keyof: A }
+{ infer: A }
+A | { infer: A }
+{ unique: A }
+A | { unique: A }
+{ any: A }
+A | { any: A }
+{ string: A }
+A | { string: A }
+{ void: A }
+A | { void: A }
+{ null: A }
+A | { null: A }
+{ this: A }
+A | { this: A }
+{ true: A }
+A | { true: A }
+{ import: A }
+A | { import: A }
+{ export: A }
+A | { export: A }
+{ default: A }
+A | { default: A }
+{ delete: A }
+A | { delete: A }
+{ yield: A }
+A | { yield: A }
+{ await: A }
+A | { await: A }
+{ let: A }
+A | { let: A }
+{ var: A }
+A | { var: A }
+{ const: A }
+A | { const: A }
+{ enum: A }
+A | { enum: A }
+{ extends: A }
+A | { extends: A }
+{ implements: A }
+A | { implements: A }
+{ interface: A }
+A | { interface: A }
+{ package: A }
+A | { package: A }
+{ of: A }
+A | { of: A }
+{ as: A }
+A | { as: A }
+{ satisfies: A }
+A | { satisfies: A }
+{ out: A }
+A | { out: A }
+{ module: A }
+A | { module: A }
+{ namespace: A }
+A | { namespace: A }
+{ global: A }
+A | { global: A }
+{ require: A }
+A | { require: A }
+{ from: A }
+A | { from: A }
+{ a: A = 1 }
+A | { a: A = 1 }
+{ a = 1 }
+A | { a = 1 }
+{ a?: A = 1 }
+A | { a?: A = 1 }
+{ readonly a: A = 1 }
+A | { readonly a: A = 1 }
+{ a: A;; }
+A | { a: A;; }
+{ a:: A }
+A | { a:: A }
+{ a: }
+A | { a: }
+{ a?: }
+A | { a?: }
+{ a!: A }
+A | { a!: A }
+{ a! }
+A | { a! }
+{ a?!: A }
+A | { a?!: A }
+{ a!?: A }
+A | { a!?: A }
+{ a??: A }
+A | { a??: A }
+{ ?: A }
+A | { ?: A }
+{ : A }
+A | { : A }
+{ a A }
+A | { a A }
+{ a: A B }
+A | { a: A B }
+{ a.b: A }
+A | { a.b: A }
+{ a<T>: A }
+A | { a<T>: A }
+{ public a: A }
+A | { public a: A }
+{ private a: A }
+A | { private a: A }
+{ protected a: A }
+A | { protected a: A }
+{ static a: A }
+A | { static a: A }
+{ abstract a: A }
+A | { abstract a: A }
+{ declare a: A }
+A | { declare a: A }
+{ override a: A }
+A | { override a: A }
+{ accessor a: A }
+A | { accessor a: A }
+{ async a: A }
+A | { async a: A }
+{ export a: A }
+A | { export a: A }
+{ default a: A }
+A | { default a: A }
+{ const a: A }
+A | { const a: A }
+{ in a: A }
+A | { in a: A }
+{ out a: A }
+A | { out a: A }
+{ readonly readonly a: A }
+A | { readonly readonly a: A }
+{ public readonly a: A }
+A | { public readonly a: A }
+{ readonly public a: A }
+A | { readonly public a: A }
+{ static readonly a: A }
+A | { static readonly a: A }
+{ readonly static a: A }
+A | { readonly static a: A }
+{ public private a: A }
+A | { public private a: A }
+{ public static override readonly a: A }
+A | { public static override readonly a: A }
+{ readonly\na: A }
+A | { readonly\na: A }
+{ public\na: A }
+A | { public\na: A }
+{ static\na: A }
+A | { static\na: A }
+{ readonly a\n: A }
+A | { readonly a\n: A }
+{ public a(): A }
+A | { public a(): A }
+{ static a(): A }
+A | { static a(): A }
+{ readonly a(): A }
+A | { readonly a(): A }
+{ async a(): A }
+A | { async a(): A }
+{ abstract a(): A }
+A | { abstract a(): A }
+{ declare a(): A }
+A | { declare a(): A }
+{ public [k: string]: A }
+A | { public [k: string]: A }
+{ static [k: string]: A }
+A | { static [k: string]: A }
+{ public (): A }
+A | { public (): A }
+{ readonly (): A }
+A | { readonly (): A }
+{ readonly new (): A }
+A | { readonly new (): A }
+{ public new (): A }
+A | { public new (): A }
+{ readonly get a(): A }
+A | { readonly get a(): A }
+{ static get a(): A }
+A | { static get a(): A }
+{ public set a(v: A) }
+A | { public set a(v: A) }
+{ a(): A }
+A | { a(): A }
+{ a?(): A }
+A | { a?(): A }
+{ a(b: B): A }
+A | { a(b: B): A }
+{ a(b?: B, ...c: C[]): A }
+A | { a(b?: B, ...c: C[]): A }
+{ a<T>(): T }
+A | { a<T>(): T }
+{ a<T>(b: T): T }
+A | { a<T>(b: T): T }
+{ a?<T>(b: T): T }
+A | { a?<T>(b: T): T }
+{ a<T>?(): T }
+A | { a<T>?(): T }
+{ a() }
+A | { a() }
+{ a?() }
+A | { a?() }
+{ a(): A; }
+A | { a(): A; }
+{ a(): A, }
+A | { a(): A, }
+{ "a"(): A }
+A | { "a"(): A }
+{ 1(): A }
+A | { 1(): A }
+{ [a](): A }
+A | { [a](): A }
+{ [a]?(): A }
+A | { [a]?(): A }
+{ #a(): A }
+A | { #a(): A }
+{ a(this: A): B }
+A | { a(this: A): B }
+{ a(b: B): b is C }
+A | { a(b: B): b is C }
+{ a(b: B): asserts b }
+A | { a(b: B): asserts b }
+{ a(b: B): asserts b is C }
+A | { a(b: B): asserts b is C }
+{ a(): this is B }
+A | { a(): this is B }
+{ a(): asserts this }
+A | { a(): asserts this }
+{ a(): this }
+A | { a(): this }
+{ a(b = 1): A }
+A | { a(b = 1): A }
+{ a({ b }: B): A }
+A | { a({ b }: B): A }
+{ a([b]: B): A }
+A | { a([b]: B): A }
+{ a(public b: B): A }
+A | { a(public b: B): A }
+{ a(1): A }
+A | { a(1): A }
+{ a(b: ): A }
+A | { a(b: ): A }
+{ a(b): => A }
+A | { a(b): => A }
+{ a() => A }
+A | { a() => A }
+{ a(): A => B }
+A | { a(): A => B }
+{ a(): A {} }
+A | { a(): A {} }
+{ a() {} }
+A | { a() {} }
+{ a(): void { return } }
+A | { a(): void { return } }
+{ *a(): A }
+A | { *a(): A }
+{ async *a(): A }
+A | { async *a(): A }
+{ a?!(): A }
+A | { a?!(): A }
+{ a!(): A }
+A | { a!(): A }
+{ get(): A }
+A | { get(): A }
+{ set(): A }
+A | { set(): A }
+{ get<T>(): A }
+A | { get<T>(): A }
+{ set<T>(v: T): A }
+A | { set<T>(v: T): A }
+{ get?(): A }
+A | { get?(): A }
+{ set?(): A }
+A | { set?(): A }
+{ new(): A }
+A | { new(): A }
+{ new<T>(): A }
+A | { new<T>(): A }
+{ new?(): A }
+A | { new?(): A }
+{ new (a: A): B }
+A | { new (a: A): B }
+{ new <T>(a: T): T }
+A | { new <T>(a: T): T }
+{ new (): A; }
+A | { new (): A; }
+{ new () }
+A | { new () }
+{ new }
+A | { new }
+{ new: A; }
+A | { new: A; }
+{ new (a: A) }
+A | { new (a: A) }
+{ new new (): A }
+A | { new new (): A }
+{ new\n(): A }
+A | { new\n(): A }
+{ new a(): A }
+A | { new a(): A }
+{ new.target }
+A | { new.target }
+{ constructor(): A }
+A | { constructor(): A }
+{ constructor(a: A) }
+A | { constructor(a: A) }
+{ constructor<T>() }
+A | { constructor<T>() }
+{ readonly(): A }
+A | { readonly(): A }
+{ readonly?(): A }
+A | { readonly?(): A }
+{ readonly<T>(): A }
+A | { readonly<T>(): A }
+{ static(): A }
+A | { static(): A }
+{ async(): A }
+A | { async(): A }
+{ async?(): A }
+A | { async?(): A }
+{ public(): A }
+A | { public(): A }
+{ declare(): A }
+A | { declare(): A }
+{ abstract(): A }
+A | { abstract(): A }
+{ accessor(): A }
+A | { accessor(): A }
+{ override(): A }
+A | { override(): A }
+{ type(): A }
+A | { type(): A }
+{ if(): A }
+A | { if(): A }
+{ function(): A }
+A | { function(): A }
+{ class(): A }
+A | { class(): A }
+{ typeof(): A }
+A | { typeof(): A }
+{ import(): A }
+A | { import(): A }
+{ delete(): A }
+A | { delete(): A }
+{ in(): A }
+A | { in(): A }
+{ new.a(): A }
+A | { new.a(): A }
+{ get a(): A }
+A | { get a(): A }
+{ set a(v: A) }
+A | { set a(v: A) }
+{ get a() }
+A | { get a() }
+{ set a(v) }
+A | { set a(v) }
+{ get a(): A; }
+A | { get a(): A; }
+{ set a(v: A); }
+A | { set a(v: A); }
+{ get "a"(): A }
+A | { get "a"(): A }
+{ set 1(v: A) }
+A | { set 1(v: A) }
+{ get [a](): A }
+A | { get [a](): A }
+{ set [a](v: A) }
+A | { set [a](v: A) }
+{ get #a(): A }
+A | { get #a(): A }
+{ get a(): A {} }
+A | { get a(): A {} }
+{ set a(v: A) {} }
+A | { set a(v: A) {} }
+{ get a(b): A }
+A | { get a(b): A }
+{ set a(): A }
+A | { set a(): A }
+{ set a(v: A): void }
+A | { set a(v: A): void }
+{ set a(v: A, w: B) }
+A | { set a(v: A, w: B) }
+{ set a(...v: A[]) }
+A | { set a(...v: A[]) }
+{ set a(v?: A) }
+A | { set a(v?: A) }
+{ set a(v = 1) }
+A | { set a(v = 1) }
+{ get a<T>(): A }
+A | { get a<T>(): A }
+{ set a<T>(v: A) }
+A | { set a<T>(v: A) }
+{ get a?(): A }
+A | { get a?(): A }
+{ set a?(v: A) }
+A | { set a?(v: A) }
+{ get\na(): A }
+A | { get\na(): A }
+{ set\na(v: A) }
+A | { set\na(v: A) }
+{ get a\n(): A }
+A | { get a\n(): A }
+{ get get(): A }
+A | { get get(): A }
+{ set set(v: A) }
+A | { set set(v: A) }
+{ get set(): A }
+A | { get set(): A }
+{ set get(v: A) }
+A | { set get(v: A) }
+{ get new(): A }
+A | { get new(): A }
+{ get readonly(): A }
+A | { get readonly(): A }
+{ get if(): A }
+A | { get if(): A }
+{ get: A; set: B }
+A | { get: A; set: B }
+{ get a(): A; set a(v: A) }
+A | { get a(): A; set a(v: A) }
+{ get a(this: A): B }
+A | { get a(this: A): B }
+{ set a(this: A, v: B) }
+A | { set a(this: A, v: B) }
+{ get a: A }
+A | { get a: A }
+{ get a }
+A | { get a }
+{ get a? }
+A | { get a? }
+{ get a?: A }
+A | { get a?: A }
+{ set a: A }
+A | { set a: A }
+{ get a(), set a(v) }
+A | { get a(), set a(v) }
+{ async get a(): A }
+A | { async get a(): A }
+{ get async a(): A }
+A | { get async a(): A }
+{ get *a(): A }
+A | { get *a(): A }
+{ (): A }
+A | { (): A }
+{ (a: A): B }
+A | { (a: A): B }
+{ <T>(a: T): T }
+A | { <T>(a: T): T }
+{ () }
+A | { () }
+{ (a) }
+A | { (a) }
+{ <T>() }
+A | { <T>() }
+{ (): A; }
+A | { (): A; }
+{ (): A, }
+A | { (): A, }
+{ (a: A): a is B }
+A | { (a: A): a is B }
+{ (a: A): asserts a }
+A | { (a: A): asserts a }
+{ (this: A): B }
+A | { (this: A): B }
+{ (a = 1): A }
+A | { (a = 1): A }
+{ ({ a }: A): B }
+A | { ({ a }: A): B }
+{ (): => A }
+A | { (): => A }
+{ () => A }
+A | { () => A }
+{ (: A): B }
+A | { (: A): B }
+{ (a: A) B }
+A | { (a: A) B }
+{ <T>: A }
+A | { <T>: A }
+{ <>(): A }
+A | { <>(): A }
+{ <T,>(): A }
+A | { <T,>(): A }
+{ <const T>(a: T): T }
+A | { <const T>(a: T): T }
+{ <in T>(): A }
+A | { <in T>(): A }
+{ <out T>(): A }
+A | { <out T>(): A }
+{ <in out T>(): A }
+A | { <in out T>(): A }
+{ <T extends A = B>(): A }
+A | { <T extends A = B>(): A }
+{ ?(): A }
+A | { ?(): A }
+{ (): A (): B }
+A | { (): A (): B }
+{ [k: string]: A }
+A | { [k: string]: A }
+{ [k: number]: A }
+A | { [k: number]: A }
+{ [k: symbol]: A }
+A | { [k: symbol]: A }
+{ [k: `a${string}`]: A }
+A | { [k: `a${string}`]: A }
+{ [k: A | B]: C }
+A | { [k: A | B]: C }
+{ [k: string]: A; }
+A | { [k: string]: A; }
+{ [k: string] }
+A | { [k: string] }
+{ [k: string]?: A }
+A | { [k: string]?: A }
+{ [k?: string]: A }
+A | { [k?: string]: A }
+{ [k: string, l: number]: A }
+A | { [k: string, l: number]: A }
+{ [...k: string[]]: A }
+A | { [...k: string[]]: A }
+{ [k]: A }
+A | { [k]: A }
+{ [k,]: A }
+A | { [k,]: A }
+{ [k: string,]: A }
+A | { [k: string,]: A }
+{ []: A }
+A | { []: A }
+{ [k: string] A }
+A | { [k: string] A }
+{ [k: string]:  }
+A | { [k: string]:  }
+{ [k = 1]: A }
+A | { [k = 1]: A }
+{ [k: string = 1]: A }
+A | { [k: string = 1]: A }
+{ [public k: string]: A }
+A | { [public k: string]: A }
+{ [readonly k: string]: A }
+A | { [readonly k: string]: A }
+{ [private k]: A }
+A | { [private k]: A }
+{ readonly [k: string]: A }
+A | { readonly [k: string]: A }
+{ static readonly [k: string]: A }
+A | { static readonly [k: string]: A }
+{ readonly static [k: string]: A }
+A | { readonly static [k: string]: A }
+{ declare [k: string]: A }
+A | { declare [k: string]: A }
+{ export [k: string]: A }
+A | { export [k: string]: A }
+{ async [k: string]: A }
+A | { async [k: string]: A }
+{ [k: string](): A }
+A | { [k: string](): A }
+{ [k: string]<T>(): A }
+A | { [k: string]<T>(): A }
+{ [k: string]!: A }
+A | { [k: string]!: A }
+{ [{ k }: string]: A }
+A | { [{ k }: string]: A }
+{ [[k]: string]: A }
+A | { [[k]: string]: A }
+{ [this: string]: A }
+A | { [this: string]: A }
+{ [if: string]: A }
+A | { [if: string]: A }
+{ [new: string]: A }
+A | { [new: string]: A }
+{ [typeof: string]: A }
+A | { [typeof: string]: A }
+{ [keyof: string]: A }
+A | { [keyof: string]: A }
+{ [readonly: string]: A }
+A | { [readonly: string]: A }
+{ [infer: string]: A }
+A | { [infer: string]: A }
+{ [unique: string]: A }
+A | { [unique: string]: A }
+{ [abstract: string]: A }
+A | { [abstract: string]: A }
+{ [asserts: string]: A }
+A | { [asserts: string]: A }
+{ [type: string]: A }
+A | { [type: string]: A }
+{ [any: string]: A }
+A | { [any: string]: A }
+{ [string: string]: A }
+A | { [string: string]: A }
+{ [k: string]: A, [l: number]: B }
+A | { [k: string]: A, [l: number]: B }
+{ [k:string]:A;[l:number]:B }
+A | { [k:string]:A;[l:number]:B }
+{ -readonly [k: string]: A }
+A | { -readonly [k: string]: A }
+{ +readonly [k: string]: A }
+A | { +readonly [k: string]: A }
+{ [k: string]-?: A }
+A | { [k: string]-?: A }
+{ [k: string]+?: A }
+A | { [k: string]+?: A }
+{  }
+A | {  }
+{ a: A; }
+A | { a: A; }
+{ a: A, }
+A | { a: A, }
+{ a: A; b: B }
+A | { a: A; b: B }
+{ a: A, b: B }
+A | { a: A, b: B }
+{ a: A\nb: B }
+A | { a: A\nb: B }
+{ a: A b: B }
+A | { a: A b: B }
+{ a: A;; b: B }
+A | { a: A;; b: B }
+{ a: A,, b: B }
+A | { a: A,, b: B }
+{ a: A;, b: B }
+A | { a: A;, b: B }
+{ a: A,; b: B }
+A | { a: A,; b: B }
+{ ; }
+A | { ; }
+{ , }
+A | { , }
+{ ;; }
+A | { ;; }
+{ ; a: A }
+A | { ; a: A }
+{ , a: A }
+A | { , a: A }
+{ a: A\n;\nb: B }
+A | { a: A\n;\nb: B }
+{ a(): A b(): B }
+A | { a(): A b(): B }
+{ a(): A\nb(): B }
+A | { a(): A\nb(): B }
+{ a(): A; b(): B, }
+A | { a(): A; b(): B, }
+{ (): A\n(): B }
+A | { (): A\n(): B }
+{ a: A\n(): B }
+A | { a: A\n(): B }
+{ a: A\n<T>(): B }
+A | { a: A\n<T>(): B }
+{ a: A\n[k: string]: B }
+A | { a: A\n[k: string]: B }
+{ a: A\n["b"]: B }
+A | { a: A\n["b"]: B }
+{ a: typeof b\n["c"]: C }
+A | { a: typeof b\n["c"]: C }
+{ a: A.B\n<T>(): C }
+A | { a: A.B\n<T>(): C }
+{ a: A\n?: B }
+A | { a: A\n?: B }
+{ a\nb\nc }
+A | { a\nb\nc }
+{ a\n?: A }
+A | { a\n?: A }
+{ a?\nb }
+A | { a?\nb }
+{ a: A\n| B }
+A | { a: A\n| B }
+{ a: A |\nB }
+A | { a: A |\nB }
+{ a: A\n& B }
+A | { a: A\n& B }
+{ a: A\nextends: B }
+A | { a: A\nextends: B }
+{ a: A\nextends B ? C : D }
+A | { a: A\nextends B ? C : D }
+{ a: A\nis: B }
+A | { a: A\nis: B }
+{ a: this\nis: B }
+A | { a: this\nis: B }
+{ a: asserts\nb: B }
+A | { a: asserts\nb: B }
+{ a: keyof\nb: B }
+A | { a: keyof\nb: B }
+{ a: readonly\nb: B }
+A | { a: readonly\nb: B }
+{ a: unique\nsymbol: B }
+A | { a: unique\nsymbol: B }
+{ a: abstract\nnew(): B }
+A | { a: abstract\nnew(): B }
+{ a: infer\nb: B }
+A | { a: infer\nb: B }
+{ a: typeof\nb: B }
+A | { a: typeof\nb: B }
+{ a: A\n!: B }
+A | { a: A\n!: B }
+{ a: A\n.b: B }
+A | { a: A\n.b: B }
+{ a: new () => A\nb: B }
+A | { a: new () => A\nb: B }
+{ a: () => A\n(): B }
+A | { a: () => A\n(): B }
+{ get\nset }
+A | { get\nset }
+{ readonly\n[k: string]: A }
+A | { readonly\n[k: string]: A }
+{ a: A; } }
+A | { a: A; } }
+{ a: A } b: B }
+A | { a: A } b: B }
+{ [K in A]: B }
+A | { [K in A]: B }
+{ [K in A] }
+A | { [K in A] }
+{ [K in A]?: B }
+A | { [K in A]?: B }
+{ [K in A]+?: B }
+A | { [K in A]+?: B }
+{ [K in A]-?: B }
+A | { [K in A]-?: B }
+{ [K in A]? }
+A | { [K in A]? }
+{ [K in A]+? }
+A | { [K in A]+? }
+{ [K in A]-? }
+A | { [K in A]-? }
+{ readonly [K in A]: B }
+A | { readonly [K in A]: B }
+{ +readonly [K in A]: B }
+A | { +readonly [K in A]: B }
+{ -readonly [K in A]: B }
+A | { -readonly [K in A]: B }
+{ -readonly [K in A]-?: B }
+A | { -readonly [K in A]-?: B }
+{ +readonly [K in A]+?: B }
+A | { +readonly [K in A]+?: B }
+{ [K in A as B]: C }
+A | { [K in A as B]: C }
+{ [K in A as `x${K}`]: C }
+A | { [K in A as `x${K}`]: C }
+{ [K in keyof A]: A[K] }
+A | { [K in keyof A]: A[K] }
+{ [K in keyof A as K extends B ? C : never]: A[K] }
+A | { [K in keyof A as K extends B ? C : never]: A[K] }
+{ [K in A]: B; }
+A | { [K in A]: B; }
+{ [K in A]: B, }
+A | { [K in A]: B, }
+{ [K in A]: B;; }
+A | { [K in A]: B;; }
+{ [K in A]: B; a: C }
+A | { [K in A]: B; a: C }
+{ [K in A]: B\na: C }
+A | { [K in A]: B\na: C }
+{ [K in A]: B; [L in C]: D }
+A | { [K in A]: B; [L in C]: D }
+{ a: C; [K in A]: B }
+A | { a: C; [K in A]: B }
+{ [K in A]: B; (): C }
+A | { [K in A]: B; (): C }
+{ [K in A]: B; [k: string]: C }
+A | { [K in A]: B; [k: string]: C }
+{ [K in A]+: B }
+A | { [K in A]+: B }
+{ [K in A]-: B }
+A | { [K in A]-: B }
+{ [K in A]??: B }
+A | { [K in A]??: B }
+{ [K in A]!: B }
+A | { [K in A]!: B }
+{ [K in A]?!: B }
+A | { [K in A]?!: B }
+{ +[K in A]: B }
+A | { +[K in A]: B }
+{ -[K in A]: B }
+A | { -[K in A]: B }
+{ readonly readonly [K in A]: B }
+A | { readonly readonly [K in A]: B }
+{ +readonly readonly [K in A]: B }
+A | { +readonly readonly [K in A]: B }
+{ readonly +[K in A]: B }
+A | { readonly +[K in A]: B }
+{ +-readonly [K in A]: B }
+A | { +-readonly [K in A]: B }
+{ readonly\n[K in A]: B }
+A | { readonly\n[K in A]: B }
+{ +\nreadonly [K in A]: B }
+A | { +\nreadonly [K in A]: B }
+{ [K\nin A]: B }
+A | { [K\nin A]: B }
+{ [K in\nA]: B }
+A | { [K in\nA]: B }
+{ [K in A\n]: B }
+A | { [K in A\n]: B }
+{ [K in A]\n: B }
+A | { [K in A]\n: B }
+{ [K in A]\n?: B }
+A | { [K in A]\n?: B }
+{ [K in A]:\nB }
+A | { [K in A]:\nB }
+{ [K in]: B }
+A | { [K in]: B }
+{ [in A]: B }
+A | { [in A]: B }
+{ [K of A]: B }
+A | { [K of A]: B }
+{ [K in A in B]: C }
+A | { [K in A in B]: C }
+{ [K in A as]: B }
+A | { [K in A as]: B }
+{ [K in A as B as C]: D }
+A | { [K in A as B as C]: D }
+{ [K as B in A]: C }
+A | { [K as B in A]: C }
+{ [K in A, L in B]: C }
+A | { [K in A, L in B]: C }
+{ [K in A,]: B }
+A | { [K in A,]: B }
+{ [K extends A]: B }
+A | { [K extends A]: B }
+{ [K in A extends B ? C : D]: E }
+A | { [K in A extends B ? C : D]: E }
+{ [K in A | B]: C }
+A | { [K in A | B]: C }
+{ [K in A & B]: C }
+A | { [K in A & B]: C }
+{ [K in () => void]: B }
+A | { [K in () => void]: B }
+{ [K in (A)]: B }
+A | { [K in (A)]: B }
+{ [K in A[]]: B }
+A | { [K in A[]]: B }
+{ [K in A[B]]: C }
+A | { [K in A[B]]: C }
+{ [K in typeof a]: B }
+A | { [K in typeof a]: B }
+{ [K in "a" | "b"]: C }
+A | { [K in "a" | "b"]: C }
+{ [K in -1]: B }
+A | { [K in -1]: B }
+{ [K in A as () => void]: B }
+A | { [K in A as () => void]: B }
+{ [K in A as B | C]: D }
+A | { [K in A as B | C]: D }
+{ [K in A as B extends C ? D : E]: F }
+A | { [K in A as B extends C ? D : E]: F }
+{ [K in infer U]: B }
+A | { [K in infer U]: B }
+{ [K in A as infer U]: B }
+A | { [K in A as infer U]: B }
+{ [if in A]: B }
+A | { [if in A]: B }
+{ [new in A]: B }
+A | { [new in A]: B }
+{ [typeof in A]: B }
+A | { [typeof in A]: B }
+{ [keyof in A]: B }
+A | { [keyof in A]: B }
+{ [readonly in A]: B }
+A | { [readonly in A]: B }
+{ [infer in A]: B }
+A | { [infer in A]: B }
+{ [unique in A]: B }
+A | { [unique in A]: B }
+{ [abstract in A]: B }
+A | { [abstract in A]: B }
+{ [asserts in A]: B }
+A | { [asserts in A]: B }
+{ [type in A]: B }
+A | { [type in A]: B }
+{ [in in A]: B }
+A | { [in in A]: B }
+{ [as in A]: B }
+A | { [as in A]: B }
+{ [as in A as as]: B }
+A | { [as in A as as]: B }
+{ [this in A]: B }
+A | { [this in A]: B }
+{ [void in A]: B }
+A | { [void in A]: B }
+{ [null in A]: B }
+A | { [null in A]: B }
+{ [any in A]: B }
+A | { [any in A]: B }
+{ [string in A]: B }
+A | { [string in A]: B }
+{ [number in A]: B }
+A | { [number in A]: B }
+{ [import in A]: B }
+A | { [import in A]: B }
+{ [function in A]: B }
+A | { [function in A]: B }
+{ [const in A]: B }
+A | { [const in A]: B }
+{ [class in A]: B }
+A | { [class in A]: B }
+{ [yield in A]: B }
+A | { [yield in A]: B }
+{ [await in A]: B }
+A | { [await in A]: B }
+{ [let in A]: B }
+A | { [let in A]: B }
+{ [static in A]: B }
+A | { [static in A]: B }
+{ [is in A]: B }
+A | { [is in A]: B }
+{ [out in A]: B }
+A | { [out in A]: B }
+{ [undefined in A]: B }
+A | { [undefined in A]: B }
+{ [symbol in A]: B }
+A | { [symbol in A]: B }
+{ [object in A]: B }
+A | { [object in A]: B }
+{ [never in A]: B }
+A | { [never in A]: B }
+{ [unknown in A]: B }
+A | { [unknown in A]: B }
+{ [K in A](): B }
+A | { [K in A](): B }
+{ [K in A]<T>(): B }
+A | { [K in A]<T>(): B }
+{ [K in A]?(): B }
+A | { [K in A]?(): B }
+{ ["K" in A]: B }
+A | { ["K" in A]: B }
+{ [1 in A]: B }
+A | { [1 in A]: B }
+{ [K.L in A]: B }
+A | { [K.L in A]: B }
+{ [K<T> in A]: B }
+A | { [K<T> in A]: B }
+{ [#K in A]: B }
+A | { [#K in A]: B }
+{ [...K in A]: B }
+A | { [...K in A]: B }
+{ [K? in A]: B }
+A | { [K? in A]: B }
+{ [K: string in A]: B }
+A | { [K: string in A]: B }
+{ public [K in A]: B }
+A | { public [K in A]: B }
+{ static [K in A]: B }
+A | { static [K in A]: B }
+{ readonly public [K in A]: B }
+A | { readonly public [K in A]: B }
+{ get [K in A](): B }
+A | { get [K in A](): B }
+{ [K in A]: B = 1 }
+A | { [K in A]: B = 1 }
+{ [K in A] = 1 }
+A | { [K in A] = 1 }
+{ as }
+A | { as }
+{ type }
+A | { type }
+{ of }
+A | { of }
+{ async }
+A | { async }
+{ await }
+A | { await }
+{ yield }
+A | { yield }
+{ let }
+A | { let }
+{ static }
+A | { static }
+{ get }
+A | { get }
+{ set }
+A | { set }
+{ is }
+A | { is }
+{ asserts }
+A | { asserts }
+{ infer }
+A | { infer }
+{ keyof }
+A | { keyof }
+{ readonly }
+A | { readonly }
+{ unique }
+A | { unique }
+{ abstract }
+A | { abstract }
+{ declare }
+A | { declare }
+{ module }
+A | { module }
+{ namespace }
+A | { namespace }
+{ global }
+A | { global }
+{ require }
+A | { require }
+{ constructor }
+A | { constructor }
+{ from }
+A | { from }
+{ out }
+A | { out }
+{ in }
+A | { in }
+{ satisfies }
+A | { satisfies }
+{ accessor }
+A | { accessor }
+{ override }
+A | { override }
+{ intrinsic }
+A | { intrinsic }
+{ using }
+A | { using }
+{ defer }
+A | { defer }
+{ undefined }
+A | { undefined }
+{ symbol }
+A | { symbol }
+{ object }
+A | { object }
+{ package }
+A | { package }
+{ implements }
+A | { implements }
+{ interface }
+A | { interface }
+{ private }
+A | { private }
+{ public }
+A | { public }
+{ protected }
+A | { protected }
+{ any }
+A | { any }
+{ unknown }
+A | { unknown }
+{ never }
+A | { never }
+{ string }
+A | { string }
+{ number }
+A | { number }
+{ boolean }
+A | { boolean }
+{ bigint }
+A | { bigint }
+{ void }
+A | { void }
+{ null }
+A | { null }
+{ this }
+A | { this }
+{ true }
+A | { true }
+{ if }
+A | { if }
+{ class }
+A | { class }
+{ function }
+A | { function }
+{ typeof }
+A | { typeof }
+{ import }
+A | { import }
+{ export }
+A | { export }
+{ default }
+A | { default }
+{ enum }
+A | { enum }
+{ extends }
+A | { extends }
+{ var }
+A | { var }
+{ const }
+A | { const }
+{ super }
+A | { super }
+{ delete }
+A | { delete }
+{ arguments }
+A | { arguments }
+{ eval }
+A | { eval }
+{ $ }
+A | { $ }
+{ _ }
+A | { _ }
+{ \\u0061 }
+A | { \\u0061 }
+{ a\\u0062 }
+A | { a\\u0062 }
+{ \\u{61}s }
+A | { \\u{61}s }
+{ ty\\u0070e }
+A | { ty\\u0070e }
+{ I }
+A | { I }
+{ { a: A } }
+A | { { a: A } }
+{ { a(): A } }
+A | { { a(): A } }
+{ { (): A } }
+A | { { (): A } }
+{ { new (): A } }
+A | { { new (): A } }
+{ { [k: string]: A } }
+A | { { [k: string]: A } }
+{ { get a(): A } }
+A | { { get a(): A } }
+{ { readonly a: A } }
+A | { { readonly a: A } }
+{ { a?: A } }
+A | { { a?: A } }
+{ {} }
+A | { {} }
+{ { a: A, b: B } }
+A | { { a: A, b: B } }
+{ { a: A; b: B } }
+A | { { a: A; b: B } }
+{ { a: A\nb: B } }
+A | { { a: A\nb: B } }
+{ { a: A b: B } }
+A | { { a: A b: B } }
+{ { public a: A } }
+A | { { public a: A } }
+{ { a: A = 1 } }
+A | { { a: A = 1 } }
+{ { a() {} } }
+A | { { a() {} } }
+{ { [K in A]: B } }
+A | { { [K in A]: B } }
+{ { -readonly [K in A]-?: B } }
+A | { { -readonly [K in A]-?: B } }
+{ { [K in A as B]: C } }
+A | { { [K in A as B]: C } }
+{ { [K in A]: B; a: C } }
+A | { { [K in A]: B; a: C } }
+{ { a: { b: { c: C } } } }
+A | { { a: { b: { c: C } } } }
+{ { a: A }[] }
+A | { { a: A }[] }
+{ { a: A }["a"] }
+A | { { a: A }["a"] }
+{ { a: A } | { b: B } }
+A | { { a: A } | { b: B } }
+{ { a: A } & { b: B } }
+A | { { a: A } & { b: B } }
+{ { }
+A | { { }
+{ } }
+A | { } }
+{ { a: A }
+A | { { a: A }
+{ { a: } }
+A | { { a: } }
+() => void
+new () => A
+{ m(): void }
+A | () => void
+keyof () => void
+<T>() => T
+(a) => void
+new (a) => A
+{ m(a): void }
+A | (a) => void
+keyof (a) => void
+<T>(a) => T
+(a?) => void
+new (a?) => A
+{ m(a?): void }
+A | (a?) => void
+keyof (a?) => void
+<T>(a?) => T
+(a: A) => void
+new (a: A) => A
+{ m(a: A): void }
+A | (a: A) => void
+keyof (a: A) => void
+<T>(a: A) => T
+(a?: A) => void
+new (a?: A) => A
+{ m(a?: A): void }
+A | (a?: A) => void
+keyof (a?: A) => void
+<T>(a?: A) => T
+(a, b) => void
+new (a, b) => A
+{ m(a, b): void }
+A | (a, b) => void
+keyof (a, b) => void
+<T>(a, b) => T
+(a: A, b: B) => void
+new (a: A, b: B) => A
+{ m(a: A, b: B): void }
+A | (a: A, b: B) => void
+keyof (a: A, b: B) => void
+<T>(a: A, b: B) => T
+(a?: A, b?: B) => void
+new (a?: A, b?: B) => A
+{ m(a?: A, b?: B): void }
+A | (a?: A, b?: B) => void
+keyof (a?: A, b?: B) => void
+<T>(a?: A, b?: B) => T
+(a?: A, b: B) => void
+new (a?: A, b: B) => A
+{ m(a?: A, b: B): void }
+A | (a?: A, b: B) => void
+keyof (a?: A, b: B) => void
+<T>(a?: A, b: B) => T
+(...a) => void
+new (...a) => A
+{ m(...a): void }
+A | (...a) => void
+keyof (...a) => void
+<T>(...a) => T
+(...a: A[]) => void
+new (...a: A[]) => A
+{ m(...a: A[]): void }
+A | (...a: A[]) => void
+keyof (...a: A[]) => void
+<T>(...a: A[]) => T
+(a: A, ...b: B[]) => void
+new (a: A, ...b: B[]) => A
+{ m(a: A, ...b: B[]): void }
+A | (a: A, ...b: B[]) => void
+keyof (a: A, ...b: B[]) => void
+<T>(a: A, ...b: B[]) => T
+(...a: A[], b: B) => void
+new (...a: A[], b: B) => A
+{ m(...a: A[], b: B): void }
+A | (...a: A[], b: B) => void
+keyof (...a: A[], b: B) => void
+<T>(...a: A[], b: B) => T
+(...a?: A[]) => void
+new (...a?: A[]) => A
+{ m(...a?: A[]): void }
+A | (...a?: A[]) => void
+keyof (...a?: A[]) => void
+<T>(...a?: A[]) => T
+(...a = []) => void
+new (...a = []) => A
+{ m(...a = []): void }
+A | (...a = []) => void
+keyof (...a = []) => void
+<T>(...a = []) => T
+(...a: A[] = []) => void
+new (...a: A[] = []) => A
+{ m(...a: A[] = []): void }
+A | (...a: A[] = []) => void
+keyof (...a: A[] = []) => void
+<T>(...a: A[] = []) => T
+(a,) => void
+new (a,) => A
+{ m(a,): void }
+A | (a,) => void
+keyof (a,) => void
+<T>(a,) => T
+(a: A,) => void
+new (a: A,) => A
+{ m(a: A,): void }
+A | (a: A,) => void
+keyof (a: A,) => void
+<T>(a: A,) => T
+(...a,) => void
+new (...a,) => A
+{ m(...a,): void }
+A | (...a,) => void
+keyof (...a,) => void
+<T>(...a,) => T
+(...a: A[],) => void
+new (...a: A[],) => A
+{ m(...a: A[],): void }
+A | (...a: A[],) => void
+keyof (...a: A[],) => void
+<T>(...a: A[],) => T
+(,) => void
+new (,) => A
+{ m(,): void }
+A | (,) => void
+keyof (,) => void
+<T>(,) => T
+(a,,b) => void
+new (a,,b) => A
+{ m(a,,b): void }
+A | (a,,b) => void
+keyof (a,,b) => void
+<T>(a,,b) => T
+(, a) => void
+new (, a) => A
+{ m(, a): void }
+A | (, a) => void
+keyof (, a) => void
+<T>(, a) => T
+(a = 1) => void
+new (a = 1) => A
+{ m(a = 1): void }
+A | (a = 1) => void
+keyof (a = 1) => void
+<T>(a = 1) => T
+(a: A = 1) => void
+new (a: A = 1) => A
+{ m(a: A = 1): void }
+A | (a: A = 1) => void
+keyof (a: A = 1) => void
+<T>(a: A = 1) => T
+(a?: A = 1) => void
+new (a?: A = 1) => A
+{ m(a?: A = 1): void }
+A | (a?: A = 1) => void
+keyof (a?: A = 1) => void
+<T>(a?: A = 1) => T
+(a? = 1) => void
+new (a? = 1) => A
+{ m(a? = 1): void }
+A | (a? = 1) => void
+keyof (a? = 1) => void
+<T>(a? = 1) => T
+(a = 1, b = 2) => void
+new (a = 1, b = 2) => A
+{ m(a = 1, b = 2): void }
+A | (a = 1, b = 2) => void
+keyof (a = 1, b = 2) => void
+<T>(a = 1, b = 2) => T
+(a = b) => void
+new (a = b) => A
+{ m(a = b): void }
+A | (a = b) => void
+keyof (a = b) => void
+<T>(a = b) => T
+(a = () => 1) => void
+new (a = () => 1) => A
+{ m(a = () => 1): void }
+A | (a = () => 1) => void
+keyof (a = () => 1) => void
+<T>(a = () => 1) => T
+(a = {}) => void
+new (a = {}) => A
+{ m(a = {}): void }
+A | (a = {}) => void
+keyof (a = {}) => void
+<T>(a = {}) => T
+(a = (1, 2)) => void
+new (a = (1, 2)) => A
+{ m(a = (1, 2)): void }
+A | (a = (1, 2)) => void
+keyof (a = (1, 2)) => void
+<T>(a = (1, 2)) => T
+(a = b = c) => void
+new (a = b = c) => A
+{ m(a = b = c): void }
+A | (a = b = c) => void
+keyof (a = b = c) => void
+<T>(a = b = c) => T
+(a: A = b as A) => void
+new (a: A = b as A) => A
+{ m(a: A = b as A): void }
+A | (a: A = b as A) => void
+keyof (a: A = b as A) => void
+<T>(a: A = b as A) => T
+(a = <A>b) => void
+new (a = <A>b) => A
+{ m(a = <A>b): void }
+A | (a = <A>b) => void
+keyof (a = <A>b) => void
+<T>(a = <A>b) => T
+(a = b!) => void
+new (a = b!) => A
+{ m(a = b!): void }
+A | (a = b!) => void
+keyof (a = b!) => void
+<T>(a = b!) => T
+(a: (b: B) => C = d) => void
+new (a: (b: B) => C = d) => A
+{ m(a: (b: B) => C = d): void }
+A | (a: (b: B) => C = d) => void
+keyof (a: (b: B) => C = d) => void
+<T>(a: (b: B) => C = d) => T
+({ a }) => void
+new ({ a }) => A
+{ m({ a }): void }
+A | ({ a }) => void
+keyof ({ a }) => void
+<T>({ a }) => T
+({ a }: A) => void
+new ({ a }: A) => A
+{ m({ a }: A): void }
+A | ({ a }: A) => void
+keyof ({ a }: A) => void
+<T>({ a }: A) => T
+([a]) => void
+new ([a]) => A
+{ m([a]): void }
+A | ([a]) => void
+keyof ([a]) => void
+<T>([a]) => T
+([a]: A) => void
+new ([a]: A) => A
+{ m([a]: A): void }
+A | ([a]: A) => void
+keyof ([a]: A) => void
+<T>([a]: A) => T
+({ a, b }: A, [c, d]: B) => void
+new ({ a, b }: A, [c, d]: B) => A
+{ m({ a, b }: A, [c, d]: B): void }
+A | ({ a, b }: A, [c, d]: B) => void
+keyof ({ a, b }: A, [c, d]: B) => void
+<T>({ a, b }: A, [c, d]: B) => T
+({ a: b }) => void
+new ({ a: b }) => A
+{ m({ a: b }): void }
+A | ({ a: b }) => void
+keyof ({ a: b }) => void
+<T>({ a: b }) => T
+({ a = 1 }) => void
+new ({ a = 1 }) => A
+{ m({ a = 1 }): void }
+A | ({ a = 1 }) => void
+keyof ({ a = 1 }) => void
+<T>({ a = 1 }) => T
+({ a = 1 }: A) => void
+new ({ a = 1 }: A) => A
+{ m({ a = 1 }: A): void }
+A | ({ a = 1 }: A) => void
+keyof ({ a = 1 }: A) => void
+<T>({ a = 1 }: A) => T
+({ a: b = 1 }) => void
+new ({ a: b = 1 }) => A
+{ m({ a: b = 1 }): void }
+A | ({ a: b = 1 }) => void
+keyof ({ a: b = 1 }) => void
+<T>({ a: b = 1 }) => T
+({ a: { b } }) => void
+new ({ a: { b } }) => A
+{ m({ a: { b } }): void }
+A | ({ a: { b } }) => void
+keyof ({ a: { b } }) => void
+<T>({ a: { b } }) => T
+({ ...a }) => void
+new ({ ...a }) => A
+{ m({ ...a }): void }
+A | ({ ...a }) => void
+keyof ({ ...a }) => void
+<T>({ ...a }) => T
+({ a, ...b }) => void
+new ({ a, ...b }) => A
+{ m({ a, ...b }): void }
+A | ({ a, ...b }) => void
+keyof ({ a, ...b }) => void
+<T>({ a, ...b }) => T
+([, a]) => void
+new ([, a]) => A
+{ m([, a]): void }
+A | ([, a]) => void
+keyof ([, a]) => void
+<T>([, a]) => T
+([...a]) => void
+new ([...a]) => A
+{ m([...a]): void }
+A | ([...a]) => void
+keyof ([...a]) => void
+<T>([...a]) => T
+([a = 1]) => void
+new ([a = 1]) => A
+{ m([a = 1]): void }
+A | ([a = 1]) => void
+keyof ([a = 1]) => void
+<T>([a = 1]) => T
+([a = 1]: A) => void
+new ([a = 1]: A) => A
+{ m([a = 1]: A): void }
+A | ([a = 1]: A) => void
+keyof ([a = 1]: A) => void
+<T>([a = 1]: A) => T
+([{ a }]) => void
+new ([{ a }]) => A
+{ m([{ a }]): void }
+A | ([{ a }]) => void
+keyof ([{ a }]) => void
+<T>([{ a }]) => T
+({ a: [b] }) => void
+new ({ a: [b] }) => A
+{ m({ a: [b] }): void }
+A | ({ a: [b] }) => void
+keyof ({ a: [b] }) => void
+<T>({ a: [b] }) => T
+({ "a": b }) => void
+new ({ "a": b }) => A
+{ m({ "a": b }): void }
+A | ({ "a": b }) => void
+keyof ({ "a": b }) => void
+<T>({ "a": b }) => T
+({ 1: b }) => void
+new ({ 1: b }) => A
+{ m({ 1: b }): void }
+A | ({ 1: b }) => void
+keyof ({ 1: b }) => void
+<T>({ 1: b }) => T
+({ [k]: v }) => void
+new ({ [k]: v }) => A
+{ m({ [k]: v }): void }
+A | ({ [k]: v }) => void
+keyof ({ [k]: v }) => void
+<T>({ [k]: v }) => T
+({ [k]: v = 1 }) => void
+new ({ [k]: v = 1 }) => A
+{ m({ [k]: v = 1 }): void }
+A | ({ [k]: v = 1 }) => void
+keyof ({ [k]: v = 1 }) => void
+<T>({ [k]: v = 1 }) => T
+({ if: x }) => void
+new ({ if: x }) => A
+{ m({ if: x }): void }
+A | ({ if: x }) => void
+keyof ({ if: x }) => void
+<T>({ if: x }) => T
+({ if }) => void
+new ({ if }) => A
+{ m({ if }): void }
+A | ({ if }) => void
+keyof ({ if }) => void
+<T>({ if }) => T
+({ a, }) => void
+new ({ a, }) => A
+{ m({ a, }): void }
+A | ({ a, }) => void
+keyof ({ a, }) => void
+<T>({ a, }) => T
+([a, ]) => void
+new ([a, ]) => A
+{ m([a, ]): void }
+A | ([a, ]) => void
+keyof ([a, ]) => void
+<T>([a, ]) => T
+([a, , b]) => void
+new ([a, , b]) => A
+{ m([a, , b]): void }
+A | ([a, , b]) => void
+keyof ([a, , b]) => void
+<T>([a, , b]) => T
+({}) => void
+new ({}) => A
+{ m({}): void }
+A | ({}) => void
+keyof ({}) => void
+<T>({}) => T
+([]) => void
+new ([]) => A
+{ m([]): void }
+A | ([]) => void
+keyof ([]) => void
+<T>([]) => T
+({}: A) => void
+new ({}: A) => A
+{ m({}: A): void }
+A | ({}: A) => void
+keyof ({}: A) => void
+<T>({}: A) => T
+([]: A) => void
+new ([]: A) => A
+{ m([]: A): void }
+A | ([]: A) => void
+keyof ([]: A) => void
+<T>([]: A) => T
+({ a } = {}) => void
+new ({ a } = {}) => A
+{ m({ a } = {}): void }
+A | ({ a } = {}) => void
+keyof ({ a } = {}) => void
+<T>({ a } = {}) => T
+([a] = []) => void
+new ([a] = []) => A
+{ m([a] = []): void }
+A | ([a] = []) => void
+keyof ([a] = []) => void
+<T>([a] = []) => T
+({ a }: A = {}) => void
+new ({ a }: A = {}) => A
+{ m({ a }: A = {}): void }
+A | ({ a }: A = {}) => void
+keyof ({ a }: A = {}) => void
+<T>({ a }: A = {}) => T
+({ a }?) => void
+new ({ a }?) => A
+{ m({ a }?): void }
+A | ({ a }?) => void
+keyof ({ a }?) => void
+<T>({ a }?) => T
+([a]?) => void
+new ([a]?) => A
+{ m([a]?): void }
+A | ([a]?) => void
+keyof ([a]?) => void
+<T>([a]?) => T
+({ a }?: A) => void
+new ({ a }?: A) => A
+{ m({ a }?: A): void }
+A | ({ a }?: A) => void
+keyof ({ a }?: A) => void
+<T>({ a }?: A) => T
+(...{ a }) => void
+new (...{ a }) => A
+{ m(...{ a }): void }
+A | (...{ a }) => void
+keyof (...{ a }) => void
+<T>(...{ a }) => T
+(...[a]) => void
+new (...[a]) => A
+{ m(...[a]): void }
+A | (...[a]) => void
+keyof (...[a]) => void
+<T>(...[a]) => T
+(...[a, b]: A) => void
+new (...[a, b]: A) => A
+{ m(...[a, b]: A): void }
+A | (...[a, b]: A) => void
+keyof (...[a, b]: A) => void
+<T>(...[a, b]: A) => T
+({ a b }) => void
+new ({ a b }) => A
+{ m({ a b }): void }
+A | ({ a b }) => void
+keyof ({ a b }) => void
+<T>({ a b }) => T
+({ a: }) => void
+new ({ a: }) => A
+{ m({ a: }): void }
+A | ({ a: }) => void
+keyof ({ a: }) => void
+<T>({ a: }) => T
+({ : a }) => void
+new ({ : a }) => A
+{ m({ : a }): void }
+A | ({ : a }) => void
+keyof ({ : a }) => void
+<T>({ : a }) => T
+([a b]) => void
+new ([a b]) => A
+{ m([a b]): void }
+A | ([a b]) => void
+keyof ([a b]) => void
+<T>([a b]) => T
+({ a }: ) => void
+new ({ a }: ) => A
+{ m({ a }: ): void }
+A | ({ a }: ) => void
+keyof ({ a }: ) => void
+<T>({ a }: ) => T
+({ 1n: a }) => void
+new ({ 1n: a }) => A
+{ m({ 1n: a }): void }
+A | ({ 1n: a }) => void
+keyof ({ 1n: a }) => void
+<T>({ 1n: a }) => T
+({ a: b.c }) => void
+new ({ a: b.c }) => A
+{ m({ a: b.c }): void }
+A | ({ a: b.c }) => void
+keyof ({ a: b.c }) => void
+<T>({ a: b.c }) => T
+([a.b]) => void
+new ([a.b]) => A
+{ m([a.b]): void }
+A | ([a.b]) => void
+keyof ([a.b]) => void
+<T>([a.b]) => T
+({ a() {} }) => void
+new ({ a() {} }) => A
+{ m({ a() {} }): void }
+A | ({ a() {} }) => void
+keyof ({ a() {} }) => void
+<T>({ a() {} }) => T
+({ get a() {} }) => void
+new ({ get a() {} }) => A
+{ m({ get a() {} }): void }
+A | ({ get a() {} }) => void
+keyof ({ get a() {} }) => void
+<T>({ get a() {} }) => T
+({ ...{ a } }) => void
+new ({ ...{ a } }) => A
+{ m({ ...{ a } }): void }
+A | ({ ...{ a } }) => void
+keyof ({ ...{ a } }) => void
+<T>({ ...{ a } }) => T
+([...[a]]) => void
+new ([...[a]]) => A
+{ m([...[a]]): void }
+A | ([...[a]]) => void
+keyof ([...[a]]) => void
+<T>([...[a]]) => T
+([...a, b]) => void
+new ([...a, b]) => A
+{ m([...a, b]): void }
+A | ([...a, b]) => void
+keyof ([...a, b]) => void
+<T>([...a, b]) => T
+({ ...a, b }) => void
+new ({ ...a, b }) => A
+{ m({ ...a, b }): void }
+A | ({ ...a, b }) => void
+keyof ({ ...a, b }) => void
+<T>({ ...a, b }) => T
+({ this: a }) => void
+new ({ this: a }) => A
+{ m({ this: a }): void }
+A | ({ this: a }) => void
+keyof ({ this: a }) => void
+<T>({ this: a }) => T
+({ this }) => void
+new ({ this }) => A
+{ m({ this }): void }
+A | ({ this }) => void
+keyof ({ this }) => void
+<T>({ this }) => T
+([this]) => void
+new ([this]) => A
+{ m([this]): void }
+A | ([this]) => void
+keyof ([this]) => void
+<T>([this]) => T
+({ a: this }) => void
+new ({ a: this }) => A
+{ m({ a: this }): void }
+A | ({ a: this }) => void
+keyof ({ a: this }) => void
+<T>({ a: this }) => T
+({ a: A }) => void
+new ({ a: A }) => A
+{ m({ a: A }): void }
+A | ({ a: A }) => void
+keyof ({ a: A }) => void
+<T>({ a: A }) => T
+({ a?: b }) => void
+new ({ a?: b }) => A
+{ m({ a?: b }): void }
+A | ({ a?: b }) => void
+keyof ({ a?: b }) => void
+<T>({ a?: b }) => T
+({ a!: b }) => void
+new ({ a!: b }) => A
+{ m({ a!: b }): void }
+A | ({ a!: b }) => void
+keyof ({ a!: b }) => void
+<T>({ a!: b }) => T
+([a?]) => void
+new ([a?]) => A
+{ m([a?]): void }
+A | ([a?]) => void
+keyof ([a?]) => void
+<T>([a?]) => T
+([a: A]) => void
+new ([a: A]) => A
+{ m([a: A]): void }
+A | ([a: A]) => void
+keyof ([a: A]) => void
+<T>([a: A]) => T
+({ a = b as A }) => void
+new ({ a = b as A }) => A
+{ m({ a = b as A }): void }
+A | ({ a = b as A }) => void
+keyof ({ a = b as A }) => void
+<T>({ a = b as A }) => T
+({ a: b = <A>c }) => void
+new ({ a: b = <A>c }) => A
+{ m({ a: b = <A>c }): void }
+A | ({ a: b = <A>c }) => void
+keyof ({ a: b = <A>c }) => void
+<T>({ a: b = <A>c }) => T
+({ await }) => void
+new ({ await }) => A
+{ m({ await }): void }
+A | ({ await }) => void
+keyof ({ await }) => void
+<T>({ await }) => T
+({ yield }) => void
+new ({ yield }) => A
+{ m({ yield }): void }
+A | ({ yield }) => void
+keyof ({ yield }) => void
+<T>({ yield }) => T
+([await]) => void
+new ([await]) => A
+{ m([await]): void }
+A | ([await]) => void
+keyof ([await]) => void
+<T>([await]) => T
+({ a: await }) => void
+new ({ a: await }) => A
+{ m({ a: await }): void }
+A | ({ a: await }) => void
+keyof ({ a: await }) => void
+<T>({ a: await }) => T
+({ let }) => void
+new ({ let }) => A
+{ m({ let }): void }
+A | ({ let }) => void
+keyof ({ let }) => void
+<T>({ let }) => T
+({ static }) => void
+new ({ static }) => A
+{ m({ static }): void }
+A | ({ static }) => void
+keyof ({ static }) => void
+<T>({ static }) => T
+({ type }) => void
+new ({ type }) => A
+{ m({ type }): void }
+A | ({ type }) => void
+keyof ({ type }) => void
+<T>({ type }) => T
+({ as }) => void
+new ({ as }) => A
+{ m({ as }): void }
+A | ({ as }) => void
+keyof ({ as }) => void
+<T>({ as }) => T
+({ of }) => void
+new ({ of }) => A
+{ m({ of }): void }
+A | ({ of }) => void
+keyof ({ of }) => void
+<T>({ of }) => T
+({ async }) => void
+new ({ async }) => A
+{ m({ async }): void }
+A | ({ async }) => void
+keyof ({ async }) => void
+<T>({ async }) => T
+({ arguments }) => void
+new ({ arguments }) => A
+{ m({ arguments }): void }
+A | ({ arguments }) => void
+keyof ({ arguments }) => void
+<T>({ arguments }) => T
+({ eval }) => void
+new ({ eval }) => A
+{ m({ eval }): void }
+A | ({ eval }) => void
+keyof ({ eval }) => void
+<T>({ eval }) => T
+({ enum }) => void
+new ({ enum }) => A
+{ m({ enum }): void }
+A | ({ enum }) => void
+keyof ({ enum }) => void
+<T>({ enum }) => T
+({ public }) => void
+new ({ public }) => A
+{ m({ public }): void }
+A | ({ public }) => void
+keyof ({ public }) => void
+<T>({ public }) => T
+({ implements }) => void
+new ({ implements }) => A
+{ m({ implements }): void }
+A | ({ implements }) => void
+keyof ({ implements }) => void
+<T>({ implements }) => T
+(this) => void
+new (this) => A
+{ m(this): void }
+A | (this) => void
+keyof (this) => void
+<T>(this) => T
+(this: A) => void
+new (this: A) => A
+{ m(this: A): void }
+A | (this: A) => void
+keyof (this: A) => void
+<T>(this: A) => T
+(this: A, a: B) => void
+new (this: A, a: B) => A
+{ m(this: A, a: B): void }
+A | (this: A, a: B) => void
+keyof (this: A, a: B) => void
+<T>(this: A, a: B) => T
+(this, a) => void
+new (this, a) => A
+{ m(this, a): void }
+A | (this, a) => void
+keyof (this, a) => void
+<T>(this, a) => T
+(a, this: A) => void
+new (a, this: A) => A
+{ m(a, this: A): void }
+A | (a, this: A) => void
+keyof (a, this: A) => void
+<T>(a, this: A) => T
+(this?: A) => void
+new (this?: A) => A
+{ m(this?: A): void }
+A | (this?: A) => void
+keyof (this?: A) => void
+<T>(this?: A) => T
+(...this: A) => void
+new (...this: A) => A
+{ m(...this: A): void }
+A | (...this: A) => void
+keyof (...this: A) => void
+<T>(...this: A) => T
+(this = 1) => void
+new (this = 1) => A
+{ m(this = 1): void }
+A | (this = 1) => void
+keyof (this = 1) => void
+<T>(this = 1) => T
+(this: A = 1) => void
+new (this: A = 1) => A
+{ m(this: A = 1): void }
+A | (this: A = 1) => void
+keyof (this: A = 1) => void
+<T>(this: A = 1) => T
+(this.a) => void
+new (this.a) => A
+{ m(this.a): void }
+A | (this.a) => void
+keyof (this.a) => void
+<T>(this.a) => T
+(this: this) => void
+new (this: this) => A
+{ m(this: this): void }
+A | (this: this) => void
+keyof (this: this) => void
+<T>(this: this) => T
+(this: typeof this) => void
+new (this: typeof this) => A
+{ m(this: typeof this): void }
+A | (this: typeof this) => void
+keyof (this: typeof this) => void
+<T>(this: typeof this) => T
+(a!) => void
+new (a!) => A
+{ m(a!): void }
+A | (a!) => void
+keyof (a!) => void
+<T>(a!) => T
+(a!: A) => void
+new (a!: A) => A
+{ m(a!: A): void }
+A | (a!: A) => void
+keyof (a!: A) => void
+<T>(a!: A) => T
+(a?!: A) => void
+new (a?!: A) => A
+{ m(a?!: A): void }
+A | (a?!: A) => void
+keyof (a?!: A) => void
+<T>(a?!: A) => T
+(a: A!) => void
+new (a: A!) => A
+{ m(a: A!): void }
+A | (a: A!) => void
+keyof (a: A!) => void
+<T>(a: A!) => T
+(a:: A) => void
+new (a:: A) => A
+{ m(a:: A): void }
+A | (a:: A) => void
+keyof (a:: A) => void
+<T>(a:: A) => T
+(a:) => void
+new (a:) => A
+{ m(a:): void }
+A | (a:) => void
+keyof (a:) => void
+<T>(a:) => T
+(a?:) => void
+new (a?:) => A
+{ m(a?:): void }
+A | (a?:) => void
+keyof (a?:) => void
+<T>(a?:) => T
+(a A) => void
+new (a A) => A
+{ m(a A): void }
+A | (a A) => void
+keyof (a A) => void
+<T>(a A) => T
+(a: A B) => void
+new (a: A B) => A
+{ m(a: A B): void }
+A | (a: A B) => void
+keyof (a: A B) => void
+<T>(a: A B) => T
+(a; b) => void
+new (a; b) => A
+{ m(a; b): void }
+A | (a; b) => void
+keyof (a; b) => void
+<T>(a; b) => T
+(a: A; b: B) => void
+new (a: A; b: B) => A
+{ m(a: A; b: B): void }
+A | (a: A; b: B) => void
+keyof (a: A; b: B) => void
+<T>(a: A; b: B) => T
+((a)) => void
+new ((a)) => A
+{ m((a)): void }
+A | ((a)) => void
+keyof ((a)) => void
+<T>((a)) => T
+((a): A) => void
+new ((a): A) => A
+{ m((a): A): void }
+A | ((a): A) => void
+keyof ((a): A) => void
+<T>((a): A) => T
+(a.b) => void
+new (a.b) => A
+{ m(a.b): void }
+A | (a.b) => void
+keyof (a.b) => void
+<T>(a.b) => T
+(a.b: A) => void
+new (a.b: A) => A
+{ m(a.b: A): void }
+A | (a.b: A) => void
+keyof (a.b: A) => void
+<T>(a.b: A) => T
+(a[0]) => void
+new (a[0]) => A
+{ m(a[0]): void }
+A | (a[0]) => void
+keyof (a[0]) => void
+<T>(a[0]) => T
+(a()) => void
+new (a()) => A
+{ m(a()): void }
+A | (a()) => void
+keyof (a()) => void
+<T>(a()) => T
+(1) => void
+new (1) => A
+{ m(1): void }
+A | (1) => void
+keyof (1) => void
+<T>(1) => T
+("a") => void
+new ("a") => A
+{ m("a"): void }
+A | ("a") => void
+keyof ("a") => void
+<T>("a") => T
+(-a) => void
+new (-a) => A
+{ m(-a): void }
+A | (-a) => void
+keyof (-a) => void
+<T>(-a) => T
+(a + b) => void
+new (a + b) => A
+{ m(a + b): void }
+A | (a + b) => void
+keyof (a + b) => void
+<T>(a + b) => T
+(a as A) => void
+new (a as A) => A
+{ m(a as A): void }
+A | (a as A) => void
+keyof (a as A) => void
+<T>(a as A) => T
+(a satisfies A) => void
+new (a satisfies A) => A
+{ m(a satisfies A): void }
+A | (a satisfies A) => void
+keyof (a satisfies A) => void
+<T>(a satisfies A) => T
+(<A>a) => void
+new (<A>a) => A
+{ m(<A>a): void }
+A | (<A>a) => void
+keyof (<A>a) => void
+<T>(<A>a) => T
+(a<A>) => void
+new (a<A>) => A
+{ m(a<A>): void }
+A | (a<A>) => void
+keyof (a<A>) => void
+<T>(a<A>) => T
+(new a) => void
+new (new a) => A
+{ m(new a): void }
+A | (new a) => void
+keyof (new a) => void
+<T>(new a) => T
+(typeof a) => void
+new (typeof a) => A
+{ m(typeof a): void }
+A | (typeof a) => void
+keyof (typeof a) => void
+<T>(typeof a) => T
+(void a) => void
+new (void a) => A
+{ m(void a): void }
+A | (void a) => void
+keyof (void a) => void
+<T>(void a) => T
+(await a) => void
+new (await a) => A
+{ m(await a): void }
+A | (await a) => void
+keyof (await a) => void
+<T>(await a) => T
+(yield a) => void
+new (yield a) => A
+{ m(yield a): void }
+A | (yield a) => void
+keyof (yield a) => void
+<T>(yield a) => T
+(...a.b) => void
+new (...a.b) => A
+{ m(...a.b): void }
+A | (...a.b) => void
+keyof (...a.b) => void
+<T>(...a.b) => T
+(...1) => void
+new (...1) => A
+{ m(...1): void }
+A | (...1) => void
+keyof (...1) => void
+<T>(...1) => T
+(a b) => void
+new (a b) => A
+{ m(a b): void }
+A | (a b) => void
+keyof (a b) => void
+<T>(a b) => T
+(...) => void
+new (...) => A
+{ m(...): void }
+A | (...) => void
+keyof (...) => void
+<T>(...) => T
+(......a) => void
+new (......a) => A
+{ m(......a): void }
+A | (......a) => void
+keyof (......a) => void
+<T>(......a) => T
+(?) => void
+new (?) => A
+{ m(?): void }
+A | (?) => void
+keyof (?) => void
+<T>(?) => T
+(a??) => void
+new (a??) => A
+{ m(a??): void }
+A | (a??) => void
+keyof (a??) => void
+<T>(a??) => T
+(: A) => void
+new (: A) => A
+{ m(: A): void }
+A | (: A) => void
+keyof (: A) => void
+<T>(: A) => T
+(= 1) => void
+new (= 1) => A
+{ m(= 1): void }
+A | (= 1) => void
+keyof (= 1) => void
+<T>(= 1) => T
+(public a: A) => void
+new (public a: A) => A
+{ m(public a: A): void }
+A | (public a: A) => void
+keyof (public a: A) => void
+<T>(public a: A) => T
+(private a: A) => void
+new (private a: A) => A
+{ m(private a: A): void }
+A | (private a: A) => void
+keyof (private a: A) => void
+<T>(private a: A) => T
+(protected a: A) => void
+new (protected a: A) => A
+{ m(protected a: A): void }
+A | (protected a: A) => void
+keyof (protected a: A) => void
+<T>(protected a: A) => T
+(readonly a: A) => void
+new (readonly a: A) => A
+{ m(readonly a: A): void }
+A | (readonly a: A) => void
+keyof (readonly a: A) => void
+<T>(readonly a: A) => T
+(override a: A) => void
+new (override a: A) => A
+{ m(override a: A): void }
+A | (override a: A) => void
+keyof (override a: A) => void
+<T>(override a: A) => T
+(public readonly a: A) => void
+new (public readonly a: A) => A
+{ m(public readonly a: A): void }
+A | (public readonly a: A) => void
+keyof (public readonly a: A) => void
+<T>(public readonly a: A) => T
+(readonly public a: A) => void
+new (readonly public a: A) => A
+{ m(readonly public a: A): void }
+A | (readonly public a: A) => void
+keyof (readonly public a: A) => void
+<T>(readonly public a: A) => T
+(private override readonly a: A) => void
+new (private override readonly a: A) => A
+{ m(private override readonly a: A): void }
+A | (private override readonly a: A) => void
+keyof (private override readonly a: A) => void
+<T>(private override readonly a: A) => T
+(static a: A) => void
+new (static a: A) => A
+{ m(static a: A): void }
+A | (static a: A) => void
+keyof (static a: A) => void
+<T>(static a: A) => T
+(declare a: A) => void
+new (declare a: A) => A
+{ m(declare a: A): void }
+A | (declare a: A) => void
+keyof (declare a: A) => void
+<T>(declare a: A) => T
+(abstract a: A) => void
+new (abstract a: A) => A
+{ m(abstract a: A): void }
+A | (abstract a: A) => void
+keyof (abstract a: A) => void
+<T>(abstract a: A) => T
+(async a: A) => void
+new (async a: A) => A
+{ m(async a: A): void }
+A | (async a: A) => void
+keyof (async a: A) => void
+<T>(async a: A) => T
+(export a: A) => void
+new (export a: A) => A
+{ m(export a: A): void }
+A | (export a: A) => void
+keyof (export a: A) => void
+<T>(export a: A) => T
+(const a: A) => void
+new (const a: A) => A
+{ m(const a: A): void }
+A | (const a: A) => void
+keyof (const a: A) => void
+<T>(const a: A) => T
+(in a: A) => void
+new (in a: A) => A
+{ m(in a: A): void }
+A | (in a: A) => void
+keyof (in a: A) => void
+<T>(in a: A) => T
+(out a: A) => void
+new (out a: A) => A
+{ m(out a: A): void }
+A | (out a: A) => void
+keyof (out a: A) => void
+<T>(out a: A) => T
+(accessor a: A) => void
+new (accessor a: A) => A
+{ m(accessor a: A): void }
+A | (accessor a: A) => void
+keyof (accessor a: A) => void
+<T>(accessor a: A) => T
+(default a: A) => void
+new (default a: A) => A
+{ m(default a: A): void }
+A | (default a: A) => void
+keyof (default a: A) => void
+<T>(default a: A) => T
+(public a) => void
+new (public a) => A
+{ m(public a): void }
+A | (public a) => void
+keyof (public a) => void
+<T>(public a) => T
+(public a?) => void
+new (public a?) => A
+{ m(public a?): void }
+A | (public a?) => void
+keyof (public a?) => void
+<T>(public a?) => T
+(public a?: A) => void
+new (public a?: A) => A
+{ m(public a?: A): void }
+A | (public a?: A) => void
+keyof (public a?: A) => void
+<T>(public a?: A) => T
+(public a = 1) => void
+new (public a = 1) => A
+{ m(public a = 1): void }
+A | (public a = 1) => void
+keyof (public a = 1) => void
+<T>(public a = 1) => T
+(public a: A = 1) => void
+new (public a: A = 1) => A
+{ m(public a: A = 1): void }
+A | (public a: A = 1) => void
+keyof (public a: A = 1) => void
+<T>(public a: A = 1) => T
+(readonly a = 1) => void
+new (readonly a = 1) => A
+{ m(readonly a = 1): void }
+A | (readonly a = 1) => void
+keyof (readonly a = 1) => void
+<T>(readonly a = 1) => T
+(public) => void
+new (public) => A
+{ m(public): void }
+A | (public) => void
+keyof (public) => void
+<T>(public) => T
+(readonly) => void
+new (readonly) => A
+{ m(readonly): void }
+A | (readonly) => void
+keyof (readonly) => void
+<T>(readonly) => T
+(private) => void
+new (private) => A
+{ m(private): void }
+A | (private) => void
+keyof (private) => void
+<T>(private) => T
+(protected) => void
+new (protected) => A
+{ m(protected): void }
+A | (protected) => void
+keyof (protected) => void
+<T>(protected) => T
+(override) => void
+new (override) => A
+{ m(override): void }
+A | (override) => void
+keyof (override) => void
+<T>(override) => T
+(public, private) => void
+new (public, private) => A
+{ m(public, private): void }
+A | (public, private) => void
+keyof (public, private) => void
+<T>(public, private) => T
+(public: A) => void
+new (public: A) => A
+{ m(public: A): void }
+A | (public: A) => void
+keyof (public: A) => void
+<T>(public: A) => T
+(public?: A) => void
+new (public?: A) => A
+{ m(public?: A): void }
+A | (public?: A) => void
+keyof (public?: A) => void
+<T>(public?: A) => T
+(readonly?: A) => void
+new (readonly?: A) => A
+{ m(readonly?: A): void }
+A | (readonly?: A) => void
+keyof (readonly?: A) => void
+<T>(readonly?: A) => T
+(public = 1) => void
+new (public = 1) => A
+{ m(public = 1): void }
+A | (public = 1) => void
+keyof (public = 1) => void
+<T>(public = 1) => T
+(readonly = 1) => void
+new (readonly = 1) => A
+{ m(readonly = 1): void }
+A | (readonly = 1) => void
+keyof (readonly = 1) => void
+<T>(readonly = 1) => T
+(public public) => void
+new (public public) => A
+{ m(public public): void }
+A | (public public) => void
+keyof (public public) => void
+<T>(public public) => T
+(public readonly) => void
+new (public readonly) => A
+{ m(public readonly): void }
+A | (public readonly) => void
+keyof (public readonly) => void
+<T>(public readonly) => T
+(readonly readonly) => void
+new (readonly readonly) => A
+{ m(readonly readonly): void }
+A | (readonly readonly) => void
+keyof (readonly readonly) => void
+<T>(readonly readonly) => T
+(public public a) => void
+new (public public a) => A
+{ m(public public a): void }
+A | (public public a) => void
+keyof (public public a) => void
+<T>(public public a) => T
+(readonly readonly a) => void
+new (readonly readonly a) => A
+{ m(readonly readonly a): void }
+A | (readonly readonly a) => void
+keyof (readonly readonly a) => void
+<T>(readonly readonly a) => T
+(public private a) => void
+new (public private a) => A
+{ m(public private a): void }
+A | (public private a) => void
+keyof (public private a) => void
+<T>(public private a) => T
+(public this: A) => void
+new (public this: A) => A
+{ m(public this: A): void }
+A | (public this: A) => void
+keyof (public this: A) => void
+<T>(public this: A) => T
+(public ...a: A[]) => void
+new (public ...a: A[]) => A
+{ m(public ...a: A[]): void }
+A | (public ...a: A[]) => void
+keyof (public ...a: A[]) => void
+<T>(public ...a: A[]) => T
+(public { a }: A) => void
+new (public { a }: A) => A
+{ m(public { a }: A): void }
+A | (public { a }: A) => void
+keyof (public { a }: A) => void
+<T>(public { a }: A) => T
+(public [a]: A) => void
+new (public [a]: A) => A
+{ m(public [a]: A): void }
+A | (public [a]: A) => void
+keyof (public [a]: A) => void
+<T>(public [a]: A) => T
+(public { a }) => void
+new (public { a }) => A
+{ m(public { a }): void }
+A | (public { a }) => void
+keyof (public { a }) => void
+<T>(public { a }) => T
+(readonly { a }) => void
+new (readonly { a }) => A
+{ m(readonly { a }): void }
+A | (readonly { a }) => void
+keyof (readonly { a }) => void
+<T>(readonly { a }) => T
+(readonly [a]) => void
+new (readonly [a]) => A
+{ m(readonly [a]): void }
+A | (readonly [a]) => void
+keyof (readonly [a]) => void
+<T>(readonly [a]) => T
+(readonly ...a) => void
+new (readonly ...a) => A
+{ m(readonly ...a): void }
+A | (readonly ...a) => void
+keyof (readonly ...a) => void
+<T>(readonly ...a) => T
+(public\na: A) => void
+new (public\na: A) => A
+{ m(public\na: A): void }
+A | (public\na: A) => void
+keyof (public\na: A) => void
+<T>(public\na: A) => T
+(readonly\na: A) => void
+new (readonly\na: A) => A
+{ m(readonly\na: A): void }
+A | (readonly\na: A) => void
+keyof (readonly\na: A) => void
+<T>(readonly\na: A) => T
+(public a\n: A) => void
+new (public a\n: A) => A
+{ m(public a\n: A): void }
+A | (public a\n: A) => void
+keyof (public a\n: A) => void
+<T>(public a\n: A) => T
+(public static) => void
+new (public static) => A
+{ m(public static): void }
+A | (public static) => void
+keyof (public static) => void
+<T>(public static) => T
+(static) => void
+new (static) => A
+{ m(static): void }
+A | (static) => void
+keyof (static) => void
+<T>(static) => T
+(static static) => void
+new (static static) => A
+{ m(static static): void }
+A | (static static) => void
+keyof (static static) => void
+<T>(static static) => T
+(public async) => void
+new (public async) => A
+{ m(public async): void }
+A | (public async) => void
+keyof (public async) => void
+<T>(public async) => T
+(declare) => void
+new (declare) => A
+{ m(declare): void }
+A | (declare) => void
+keyof (declare) => void
+<T>(declare) => T
+(abstract) => void
+new (abstract) => A
+{ m(abstract): void }
+A | (abstract) => void
+keyof (abstract) => void
+<T>(abstract) => T
+(accessor) => void
+new (accessor) => A
+{ m(accessor): void }
+A | (accessor) => void
+keyof (accessor) => void
+<T>(accessor) => T
+(async) => void
+new (async) => A
+{ m(async): void }
+A | (async) => void
+keyof (async) => void
+<T>(async) => T
+(public a, private b, protected c, readonly d) => void
+new (public a, private b, protected c, readonly d) => A
+{ m(public a, private b, protected c, readonly d): void }
+A | (public a, private b, protected c, readonly d) => void
+keyof (public a, private b, protected c, readonly d) => void
+<T>(public a, private b, protected c, readonly d) => T
+(@d a) => void
+new (@d a) => A
+{ m(@d a): void }
+A | (@d a) => void
+keyof (@d a) => void
+<T>(@d a) => T
+(@d a: A) => void
+new (@d a: A) => A
+{ m(@d a: A): void }
+A | (@d a: A) => void
+keyof (@d a: A) => void
+<T>(@d a: A) => T
+(@d() a: A) => void
+new (@d() a: A) => A
+{ m(@d() a: A): void }
+A | (@d() a: A) => void
+keyof (@d() a: A) => void
+<T>(@d() a: A) => T
+(@d @e a: A) => void
+new (@d @e a: A) => A
+{ m(@d @e a: A): void }
+A | (@d @e a: A) => void
+keyof (@d @e a: A) => void
+<T>(@d @e a: A) => T
+(@d public a: A) => void
+new (@d public a: A) => A
+{ m(@d public a: A): void }
+A | (@d public a: A) => void
+keyof (@d public a: A) => void
+<T>(@d public a: A) => T
+(public @d a: A) => void
+new (public @d a: A) => A
+{ m(public @d a: A): void }
+A | (public @d a: A) => void
+keyof (public @d a: A) => void
+<T>(public @d a: A) => T
+(@d readonly a: A) => void
+new (@d readonly a: A) => A
+{ m(@d readonly a: A): void }
+A | (@d readonly a: A) => void
+keyof (@d readonly a: A) => void
+<T>(@d readonly a: A) => T
+(@d ...a: A[]) => void
+new (@d ...a: A[]) => A
+{ m(@d ...a: A[]): void }
+A | (@d ...a: A[]) => void
+keyof (@d ...a: A[]) => void
+<T>(@d ...a: A[]) => T
+(@d { a }: A) => void
+new (@d { a }: A) => A
+{ m(@d { a }: A): void }
+A | (@d { a }: A) => void
+keyof (@d { a }: A) => void
+<T>(@d { a }: A) => T
+(@d [a]: A) => void
+new (@d [a]: A) => A
+{ m(@d [a]: A): void }
+A | (@d [a]: A) => void
+keyof (@d [a]: A) => void
+<T>(@d [a]: A) => T
+(@d this: A) => void
+new (@d this: A) => A
+{ m(@d this: A): void }
+A | (@d this: A) => void
+keyof (@d this: A) => void
+<T>(@d this: A) => T
+(@d a = 1) => void
+new (@d a = 1) => A
+{ m(@d a = 1): void }
+A | (@d a = 1) => void
+keyof (@d a = 1) => void
+<T>(@d a = 1) => T
+(@d a?: A) => void
+new (@d a?: A) => A
+{ m(@d a?: A): void }
+A | (@d a?: A) => void
+keyof (@d a?: A) => void
+<T>(@d a?: A) => T
+(@a.b.c a) => void
+new (@a.b.c a) => A
+{ m(@a.b.c a): void }
+A | (@a.b.c a) => void
+keyof (@a.b.c a) => void
+<T>(@a.b.c a) => T
+(@a.b() a) => void
+new (@a.b() a) => A
+{ m(@a.b() a): void }
+A | (@a.b() a) => void
+keyof (@a.b() a) => void
+<T>(@a.b() a) => T
+(@(a) a) => void
+new (@(a) a) => A
+{ m(@(a) a): void }
+A | (@(a) a) => void
+keyof (@(a) a) => void
+<T>(@(a) a) => T
+(@a<T>() a) => void
+new (@a<T>() a) => A
+{ m(@a<T>() a): void }
+A | (@a<T>() a) => void
+keyof (@a<T>() a) => void
+<T>(@a<T>() a) => T
+(@d) => void
+new (@d) => A
+{ m(@d): void }
+A | (@d) => void
+keyof (@d) => void
+<T>(@d) => T
+(@ a) => void
+new (@ a) => A
+{ m(@ a): void }
+A | (@ a) => void
+keyof (@ a) => void
+<T>(@ a) => T
+(@d\na: A) => void
+new (@d\na: A) => A
+{ m(@d\na: A): void }
+A | (@d\na: A) => void
+keyof (@d\na: A) => void
+<T>(@d\na: A) => T
+(a @d) => void
+new (a @d) => A
+{ m(a @d): void }
+A | (a @d) => void
+keyof (a @d) => void
+<T>(a @d) => T
+(a: @d A) => void
+new (a: @d A) => A
+{ m(a: @d A): void }
+A | (a: @d A) => void
+keyof (a: @d A) => void
+<T>(a: @d A) => T
+(yield) => void
+new (yield) => A
+{ m(yield): void }
+A | (yield) => void
+keyof (yield) => void
+<T>(yield) => T
+(await) => void
+new (await) => A
+{ m(await): void }
+A | (await) => void
+keyof (await) => void
+<T>(await) => T
+(arguments) => void
+new (arguments) => A
+{ m(arguments): void }
+A | (arguments) => void
+keyof (arguments) => void
+<T>(arguments) => T
+(eval) => void
+new (eval) => A
+{ m(eval): void }
+A | (eval) => void
+keyof (eval) => void
+<T>(eval) => T
+(let) => void
+new (let) => A
+{ m(let): void }
+A | (let) => void
+keyof (let) => void
+<T>(let) => T
+(type) => void
+new (type) => A
+{ m(type): void }
+A | (type) => void
+keyof (type) => void
+<T>(type) => T
+(of) => void
+new (of) => A
+{ m(of): void }
+A | (of) => void
+keyof (of) => void
+<T>(of) => T
+(as) => void
+new (as) => A
+{ m(as): void }
+A | (as) => void
+keyof (as) => void
+<T>(as) => T
+(satisfies) => void
+new (satisfies) => A
+{ m(satisfies): void }
+A | (satisfies) => void
+keyof (satisfies) => void
+<T>(satisfies) => T
+(is) => void
+new (is) => A
+{ m(is): void }
+A | (is) => void
+keyof (is) => void
+<T>(is) => T
+(asserts) => void
+new (asserts) => A
+{ m(asserts): void }
+A | (asserts) => void
+keyof (asserts) => void
+<T>(asserts) => T
+(infer) => void
+new (infer) => A
+{ m(infer): void }
+A | (infer) => void
+keyof (infer) => void
+<T>(infer) => T
+(keyof) => void
+new (keyof) => A
+{ m(keyof): void }
+A | (keyof) => void
+keyof (keyof) => void
+<T>(keyof) => T
+(unique) => void
+new (unique) => A
+{ m(unique): void }
+A | (unique) => void
+keyof (unique) => void
+<T>(unique) => T
+(out) => void
+new (out) => A
+{ m(out): void }
+A | (out) => void
+keyof (out) => void
+<T>(out) => T
+(implements) => void
+new (implements) => A
+{ m(implements): void }
+A | (implements) => void
+keyof (implements) => void
+<T>(implements) => T
+(interface) => void
+new (interface) => A
+{ m(interface): void }
+A | (interface) => void
+keyof (interface) => void
+<T>(interface) => T
+(package) => void
+new (package) => A
+{ m(package): void }
+A | (package) => void
+keyof (package) => void
+<T>(package) => T
+(enum) => void
+new (enum) => A
+{ m(enum): void }
+A | (enum) => void
+keyof (enum) => void
+<T>(enum) => T
+(if) => void
+new (if) => A
+{ m(if): void }
+A | (if) => void
+keyof (if) => void
+<T>(if) => T
+(new) => void
+new (new) => A
+{ m(new): void }
+A | (new) => void
+keyof (new) => void
+<T>(new) => T
+(class) => void
+new (class) => A
+{ m(class): void }
+A | (class) => void
+keyof (class) => void
+<T>(class) => T
+(function) => void
+new (function) => A
+{ m(function): void }
+A | (function) => void
+keyof (function) => void
+<T>(function) => T
+(in) => void
+new (in) => A
+{ m(in): void }
+A | (in) => void
+keyof (in) => void
+<T>(in) => T
+(var) => void
+new (var) => A
+{ m(var): void }
+A | (var) => void
+keyof (var) => void
+<T>(var) => T
+(const) => void
+new (const) => A
+{ m(const): void }
+A | (const) => void
+keyof (const) => void
+<T>(const) => T
+(super) => void
+new (super) => A
+{ m(super): void }
+A | (super) => void
+keyof (super) => void
+<T>(super) => T
+(import) => void
+new (import) => A
+{ m(import): void }
+A | (import) => void
+keyof (import) => void
+<T>(import) => T
+(typeof) => void
+new (typeof) => A
+{ m(typeof): void }
+A | (typeof) => void
+keyof (typeof) => void
+<T>(typeof) => T
+(delete) => void
+new (delete) => A
+{ m(delete): void }
+A | (delete) => void
+keyof (delete) => void
+<T>(delete) => T
+(default) => void
+new (default) => A
+{ m(default): void }
+A | (default) => void
+keyof (default) => void
+<T>(default) => T
+(void) => void
+new (void) => A
+{ m(void): void }
+A | (void) => void
+keyof (void) => void
+<T>(void) => T
+(null) => void
+new (null) => A
+{ m(null): void }
+A | (null) => void
+keyof (null) => void
+<T>(null) => T
+(true) => void
+new (true) => A
+{ m(true): void }
+A | (true) => void
+keyof (true) => void
+<T>(true) => T
+(any) => void
+new (any) => A
+{ m(any): void }
+A | (any) => void
+keyof (any) => void
+<T>(any) => T
+(string) => void
+new (string) => A
+{ m(string): void }
+A | (string) => void
+keyof (string) => void
+<T>(string) => T
+(undefined) => void
+new (undefined) => A
+{ m(undefined): void }
+A | (undefined) => void
+keyof (undefined) => void
+<T>(undefined) => T
+(symbol) => void
+new (symbol) => A
+{ m(symbol): void }
+A | (symbol) => void
+keyof (symbol) => void
+<T>(symbol) => T
+(object) => void
+new (object) => A
+{ m(object): void }
+A | (object) => void
+keyof (object) => void
+<T>(object) => T
+(never) => void
+new (never) => A
+{ m(never): void }
+A | (never) => void
+keyof (never) => void
+<T>(never) => T
+(unknown) => void
+new (unknown) => A
+{ m(unknown): void }
+A | (unknown) => void
+keyof (unknown) => void
+<T>(unknown) => T
+(number) => void
+new (number) => A
+{ m(number): void }
+A | (number) => void
+keyof (number) => void
+<T>(number) => T
+(boolean) => void
+new (boolean) => A
+{ m(boolean): void }
+A | (boolean) => void
+keyof (boolean) => void
+<T>(boolean) => T
+(bigint) => void
+new (bigint) => A
+{ m(bigint): void }
+A | (bigint) => void
+keyof (bigint) => void
+<T>(bigint) => T
+(module) => void
+new (module) => A
+{ m(module): void }
+A | (module) => void
+keyof (module) => void
+<T>(module) => T
+(namespace) => void
+new (namespace) => A
+{ m(namespace): void }
+A | (namespace) => void
+keyof (namespace) => void
+<T>(namespace) => T
+(global) => void
+new (global) => A
+{ m(global): void }
+A | (global) => void
+keyof (global) => void
+<T>(global) => T
+(require) => void
+new (require) => A
+{ m(require): void }
+A | (require) => void
+keyof (require) => void
+<T>(require) => T
+(get) => void
+new (get) => A
+{ m(get): void }
+A | (get) => void
+keyof (get) => void
+<T>(get) => T
+(set) => void
+new (set) => A
+{ m(set): void }
+A | (set) => void
+keyof (set) => void
+<T>(set) => T
+(constructor) => void
+new (constructor) => A
+{ m(constructor): void }
+A | (constructor) => void
+keyof (constructor) => void
+<T>(constructor) => T
+(from) => void
+new (from) => A
+{ m(from): void }
+A | (from) => void
+keyof (from) => void
+<T>(from) => T
+(using) => void
+new (using) => A
+{ m(using): void }
+A | (using) => void
+keyof (using) => void
+<T>(using) => T
+(intrinsic) => void
+new (intrinsic) => A
+{ m(intrinsic): void }
+A | (intrinsic) => void
+keyof (intrinsic) => void
+<T>(intrinsic) => T
+(defer) => void
+new (defer) => A
+{ m(defer): void }
+A | (defer) => void
+keyof (defer) => void
+<T>(defer) => T
+(yield: A) => void
+new (yield: A) => A
+{ m(yield: A): void }
+A | (yield: A) => void
+keyof (yield: A) => void
+<T>(yield: A) => T
+(await: A) => void
+new (await: A) => A
+{ m(await: A): void }
+A | (await: A) => void
+keyof (await: A) => void
+<T>(await: A) => T
+(type: A) => void
+new (type: A) => A
+{ m(type: A): void }
+A | (type: A) => void
+keyof (type: A) => void
+<T>(type: A) => T
+(of: A) => void
+new (of: A) => A
+{ m(of: A): void }
+A | (of: A) => void
+keyof (of: A) => void
+<T>(of: A) => T
+(async: A) => void
+new (async: A) => A
+{ m(async: A): void }
+A | (async: A) => void
+keyof (async: A) => void
+<T>(async: A) => T
+(as: A) => void
+new (as: A) => A
+{ m(as: A): void }
+A | (as: A) => void
+keyof (as: A) => void
+<T>(as: A) => T
+(is: A) => void
+new (is: A) => A
+{ m(is: A): void }
+A | (is: A) => void
+keyof (is: A) => void
+<T>(is: A) => T
+(asserts: A) => void
+new (asserts: A) => A
+{ m(asserts: A): void }
+A | (asserts: A) => void
+keyof (asserts: A) => void
+<T>(asserts: A) => T
+(infer: A) => void
+new (infer: A) => A
+{ m(infer: A): void }
+A | (infer: A) => void
+keyof (infer: A) => void
+<T>(infer: A) => T
+(keyof: A) => void
+new (keyof: A) => A
+{ m(keyof: A): void }
+A | (keyof: A) => void
+keyof (keyof: A) => void
+<T>(keyof: A) => T
+(unique: A) => void
+new (unique: A) => A
+{ m(unique: A): void }
+A | (unique: A) => void
+keyof (unique: A) => void
+<T>(unique: A) => T
+(abstract: A) => void
+new (abstract: A) => A
+{ m(abstract: A): void }
+A | (abstract: A) => void
+keyof (abstract: A) => void
+<T>(abstract: A) => T
+(out: A) => void
+new (out: A) => A
+{ m(out: A): void }
+A | (out: A) => void
+keyof (out: A) => void
+<T>(out: A) => T
+(any: A) => void
+new (any: A) => A
+{ m(any: A): void }
+A | (any: A) => void
+keyof (any: A) => void
+<T>(any: A) => T
+(string: A) => void
+new (string: A) => A
+{ m(string: A): void }
+A | (string: A) => void
+keyof (string: A) => void
+<T>(string: A) => T
+(undefined: A) => void
+new (undefined: A) => A
+{ m(undefined: A): void }
+A | (undefined: A) => void
+keyof (undefined: A) => void
+<T>(undefined: A) => T
+(let: A) => void
+new (let: A) => A
+{ m(let: A): void }
+A | (let: A) => void
+keyof (let: A) => void
+<T>(let: A) => T
+(static: A) => void
+new (static: A) => A
+{ m(static: A): void }
+A | (static: A) => void
+keyof (static: A) => void
+<T>(static: A) => T
+(module: A) => void
+new (module: A) => A
+{ m(module: A): void }
+A | (module: A) => void
+keyof (module: A) => void
+<T>(module: A) => T
+(namespace: A) => void
+new (namespace: A) => A
+{ m(namespace: A): void }
+A | (namespace: A) => void
+keyof (namespace: A) => void
+<T>(namespace: A) => T
+(declare: A) => void
+new (declare: A) => A
+{ m(declare: A): void }
+A | (declare: A) => void
+keyof (declare: A) => void
+<T>(declare: A) => T
+(get: A) => void
+new (get: A) => A
+{ m(get: A): void }
+A | (get: A) => void
+keyof (get: A) => void
+<T>(get: A) => T
+(set: A) => void
+new (set: A) => A
+{ m(set: A): void }
+A | (set: A) => void
+keyof (set: A) => void
+<T>(set: A) => T
+(if: A) => void
+new (if: A) => A
+{ m(if: A): void }
+A | (if: A) => void
+keyof (if: A) => void
+<T>(if: A) => T
+(new: A) => void
+new (new: A) => A
+{ m(new: A): void }
+A | (new: A) => void
+keyof (new: A) => void
+<T>(new: A) => T
+(in: A) => void
+new (in: A) => A
+{ m(in: A): void }
+A | (in: A) => void
+keyof (in: A) => void
+<T>(in: A) => T
+(typeof: A) => void
+new (typeof: A) => A
+{ m(typeof: A): void }
+A | (typeof: A) => void
+keyof (typeof: A) => void
+<T>(typeof: A) => T
+(void: A) => void
+new (void: A) => A
+{ m(void: A): void }
+A | (void: A) => void
+keyof (void: A) => void
+<T>(void: A) => T
+(null: A) => void
+new (null: A) => A
+{ m(null: A): void }
+A | (null: A) => void
+keyof (null: A) => void
+<T>(null: A) => T
+(a: A | B) => void
+new (a: A | B) => A
+{ m(a: A | B): void }
+A | (a: A | B) => void
+keyof (a: A | B) => void
+<T>(a: A | B) => T
+(a: () => void) => void
+new (a: () => void) => A
+{ m(a: () => void): void }
+A | (a: () => void) => void
+keyof (a: () => void) => void
+<T>(a: () => void) => T
+(a: (b: B) => C) => void
+new (a: (b: B) => C) => A
+{ m(a: (b: B) => C): void }
+A | (a: (b: B) => C) => void
+keyof (a: (b: B) => C) => void
+<T>(a: (b: B) => C) => T
+(a: new () => A) => void
+new (a: new () => A) => A
+{ m(a: new () => A): void }
+A | (a: new () => A) => void
+keyof (a: new () => A) => void
+<T>(a: new () => A) => T
+(a: { b: B }) => void
+new (a: { b: B }) => A
+{ m(a: { b: B }): void }
+A | (a: { b: B }) => void
+keyof (a: { b: B }) => void
+<T>(a: { b: B }) => T
+(a: [B, C]) => void
+new (a: [B, C]) => A
+{ m(a: [B, C]): void }
+A | (a: [B, C]) => void
+keyof (a: [B, C]) => void
+<T>(a: [B, C]) => T
+(a: typeof b) => void
+new (a: typeof b) => A
+{ m(a: typeof b): void }
+A | (a: typeof b) => void
+keyof (a: typeof b) => void
+<T>(a: typeof b) => T
+(a: keyof A) => void
+new (a: keyof A) => A
+{ m(a: keyof A): void }
+A | (a: keyof A) => void
+keyof (a: keyof A) => void
+<T>(a: keyof A) => T
+(a: A extends B ? C : D) => void
+new (a: A extends B ? C : D) => A
+{ m(a: A extends B ? C : D): void }
+A | (a: A extends B ? C : D) => void
+keyof (a: A extends B ? C : D) => void
+<T>(a: A extends B ? C : D) => T
+(a: A[]) => void
+new (a: A[]) => A
+{ m(a: A[]): void }
+A | (a: A[]) => void
+keyof (a: A[]) => void
+<T>(a: A[]) => T
+(a: A<B>) => void
+new (a: A<B>) => A
+{ m(a: A<B>): void }
+A | (a: A<B>) => void
+keyof (a: A<B>) => void
+<T>(a: A<B>) => T
+(a: A<B<C>>) => void
+new (a: A<B<C>>) => A
+{ m(a: A<B<C>>): void }
+A | (a: A<B<C>>) => void
+keyof (a: A<B<C>>) => void
+<T>(a: A<B<C>>) => T
+(a: a is B) => void
+new (a: a is B) => A
+{ m(a: a is B): void }
+A | (a: a is B) => void
+keyof (a: a is B) => void
+<T>(a: a is B) => T
+(a: asserts a) => void
+new (a: asserts a) => A
+{ m(a: asserts a): void }
+A | (a: asserts a) => void
+keyof (a: asserts a) => void
+<T>(a: asserts a) => T
+(a: this) => void
+new (a: this) => A
+{ m(a: this): void }
+A | (a: this) => void
+keyof (a: this) => void
+<T>(a: this) => T
+(a: `x${A}`) => void
+new (a: `x${A}`) => A
+{ m(a: `x${A}`): void }
+A | (a: `x${A}`) => void
+keyof (a: `x${A}`) => void
+<T>(a: `x${A}`) => T
+(a: import("x")) => void
+new (a: import("x")) => A
+{ m(a: import("x")): void }
+A | (a: import("x")) => void
+keyof (a: import("x")) => void
+<T>(a: import("x")) => T
+(a: -1) => void
+new (a: -1) => A
+{ m(a: -1): void }
+A | (a: -1) => void
+keyof (a: -1) => void
+<T>(a: -1) => T
+(a: unique symbol) => void
+new (a: unique symbol) => A
+{ m(a: unique symbol): void }
+A | (a: unique symbol) => void
+keyof (a: unique symbol) => void
+<T>(a: unique symbol) => T
+(a: infer U) => void
+new (a: infer U) => A
+{ m(a: infer U): void }
+A | (a: infer U) => void
+keyof (a: infer U) => void
+<T>(a: infer U) => T
+(a: ) => void
+new (a: ) => A
+{ m(a: ): void }
+A | (a: ) => void
+keyof (a: ) => void
+<T>(a: ) => T
+(a: |) => void
+new (a: |) => A
+{ m(a: |): void }
+A | (a: |) => void
+keyof (a: |) => void
+<T>(a: |) => T
+(a: ?A) => void
+new (a: ?A) => A
+{ m(a: ?A): void }
+A | (a: ?A) => void
+keyof (a: ?A) => void
+<T>(a: ?A) => T
+(a: A?) => void
+new (a: A?) => A
+{ m(a: A?): void }
+A | (a: A?) => void
+keyof (a: A?) => void
+<T>(a: A?) => T
+(a: *) => void
+new (a: *) => A
+{ m(a: *): void }
+A | (a: *) => void
+keyof (a: *) => void
+<T>(a: *) => T
+<T>() => void
+new <T>() => A
+{ m<T>(): void }
+<T, U>() => void
+new <T, U>() => A
+{ m<T, U>(): void }
+<T, U, V>() => void
+new <T, U, V>() => A
+{ m<T, U, V>(): void }
+<T extends A>() => void
+new <T extends A>() => A
+{ m<T extends A>(): void }
+<T = A>() => void
+new <T = A>() => A
+{ m<T = A>(): void }
+<T extends A = B>() => void
+new <T extends A = B>() => A
+{ m<T extends A = B>(): void }
+<T extends A, U extends B = C>() => void
+new <T extends A, U extends B = C>() => A
+{ m<T extends A, U extends B = C>(): void }
+<T,>() => void
+new <T,>() => A
+{ m<T,>(): void }
+<T, U,>() => void
+new <T, U,>() => A
+{ m<T, U,>(): void }
+<>() => void
+new <>() => A
+{ m<>(): void }
+<,>() => void
+new <,>() => A
+{ m<,>(): void }
+<T,,U>() => void
+new <T,,U>() => A
+{ m<T,,U>(): void }
+<,T>() => void
+new <,T>() => A
+{ m<,T>(): void }
+<T U>() => void
+new <T U>() => A
+{ m<T U>(): void }
+<T;U>() => void
+new <T;U>() => A
+{ m<T;U>(): void }
+<in T>() => void
+new <in T>() => A
+{ m<in T>(): void }
+<out T>() => void
+new <out T>() => A
+{ m<out T>(): void }
+<in out T>() => void
+new <in out T>() => A
+{ m<in out T>(): void }
+<const T>() => void
+new <const T>() => A
+{ m<const T>(): void }
+<const in T>() => void
+new <const in T>() => A
+{ m<const in T>(): void }
+<in const T>() => void
+new <in const T>() => A
+{ m<in const T>(): void }
+<const out T>() => void
+new <const out T>() => A
+{ m<const out T>(): void }
+<out const T>() => void
+new <out const T>() => A
+{ m<out const T>(): void }
+<const in out T>() => void
+new <const in out T>() => A
+{ m<const in out T>(): void }
+<in out const T>() => void
+new <in out const T>() => A
+{ m<in out const T>(): void }
+<out in T>() => void
+new <out in T>() => A
+{ m<out in T>(): void }
+<in in T>() => void
+new <in in T>() => A
+{ m<in in T>(): void }
+<out out T>() => void
+new <out out T>() => A
+{ m<out out T>(): void }
+<const const T>() => void
+new <const const T>() => A
+{ m<const const T>(): void }
+<in T, out U>() => void
+new <in T, out U>() => A
+{ m<in T, out U>(): void }
+<in out T, const U>() => void
+new <in out T, const U>() => A
+{ m<in out T, const U>(): void }
+<out>() => void
+new <out>() => A
+{ m<out>(): void }
+<in>() => void
+new <in>() => A
+{ m<in>(): void }
+<const>() => void
+new <const>() => A
+{ m<const>(): void }
+<in out>() => void
+new <in out>() => A
+{ m<in out>(): void }
+<out out>() => void
+new <out out>() => A
+{ m<out out>(): void }
+<out in>() => void
+new <out in>() => A
+{ m<out in>(): void }
+<in in>() => void
+new <in in>() => A
+{ m<in in>(): void }
+<out, in>() => void
+new <out, in>() => A
+{ m<out, in>(): void }
+<out = A>() => void
+new <out = A>() => A
+{ m<out = A>(): void }
+<out extends A>() => void
+new <out extends A>() => A
+{ m<out extends A>(): void }
+<out out = A>() => void
+new <out out = A>() => A
+{ m<out out = A>(): void }
+<out out extends A>() => void
+new <out out extends A>() => A
+{ m<out out extends A>(): void }
+<out out, T>() => void
+new <out out, T>() => A
+{ m<out out, T>(): void }
+<in out out>() => void
+new <in out out>() => A
+{ m<in out out>(): void }
+<const out>() => void
+new <const out>() => A
+{ m<const out>(): void }
+<const in>() => void
+new <const in>() => A
+{ m<const in>(): void }
+<T extends>() => void
+new <T extends>() => A
+{ m<T extends>(): void }
+<T =>() => void
+new <T =>() => A
+{ m<T =>(): void }
+<T extends = A>() => void
+new <T extends = A>() => A
+{ m<T extends = A>(): void }
+<T = A extends B>() => void
+new <T = A extends B>() => A
+{ m<T = A extends B>(): void }
+<T extends A extends B>() => void
+new <T extends A extends B>() => A
+{ m<T extends A extends B>(): void }
+<T = A = B>() => void
+new <T = A = B>() => A
+{ m<T = A = B>(): void }
+<T extends A = B = C>() => void
+new <T extends A = B = C>() => A
+{ m<T extends A = B = C>(): void }
+<T extends A ? B : C>() => void
+new <T extends A ? B : C>() => A
+{ m<T extends A ? B : C>(): void }
+<T extends A extends B ? C : D>() => void
+new <T extends A extends B ? C : D>() => A
+{ m<T extends A extends B ? C : D>(): void }
+<T = A extends B ? C : D>() => void
+new <T = A extends B ? C : D>() => A
+{ m<T = A extends B ? C : D>(): void }
+<T extends keyof U>() => void
+new <T extends keyof U>() => A
+{ m<T extends keyof U>(): void }
+<T extends typeof a>() => void
+new <T extends typeof a>() => A
+{ m<T extends typeof a>(): void }
+<T extends () => void>() => void
+new <T extends () => void>() => A
+{ m<T extends () => void>(): void }
+<T extends new () => A>() => void
+new <T extends new () => A>() => A
+{ m<T extends new () => A>(): void }
+<T extends { a: A }>() => void
+new <T extends { a: A }>() => A
+{ m<T extends { a: A }>(): void }
+<T extends [A, B]>() => void
+new <T extends [A, B]>() => A
+{ m<T extends [A, B]>(): void }
+<T extends A[]>() => void
+new <T extends A[]>() => A
+{ m<T extends A[]>(): void }
+<T extends A | B>() => void
+new <T extends A | B>() => A
+{ m<T extends A | B>(): void }
+<T extends A & B = A>() => void
+new <T extends A & B = A>() => A
+{ m<T extends A & B = A>(): void }
+<T extends "a" | "b">() => void
+new <T extends "a" | "b">() => A
+{ m<T extends "a" | "b">(): void }
+<T extends 1>() => void
+new <T extends 1>() => A
+{ m<T extends 1>(): void }
+<T extends -1>() => void
+new <T extends -1>() => A
+{ m<T extends -1>(): void }
+<T extends `a${string}`>() => void
+new <T extends `a${string}`>() => A
+{ m<T extends `a${string}`>(): void }
+<T extends infer U>() => void
+new <T extends infer U>() => A
+{ m<T extends infer U>(): void }
+<T extends a is B>() => void
+new <T extends a is B>() => A
+{ m<T extends a is B>(): void }
+<T = () => void>() => void
+new <T = () => void>() => A
+{ m<T = () => void>(): void }
+<T = A<B>>() => void
+new <T = A<B>>() => A
+{ m<T = A<B>>(): void }
+<T = A<B<C>>>() => void
+new <T = A<B<C>>>() => A
+{ m<T = A<B<C>>>(): void }
+<T extends A<B>>() => void
+new <T extends A<B>>() => A
+{ m<T extends A<B>>(): void }
+<T extends A<B<C>>>() => void
+new <T extends A<B<C>>>() => A
+{ m<T extends A<B<C>>>(): void }
+<T extends A<B> = C<D>>() => void
+new <T extends A<B> = C<D>>() => A
+{ m<T extends A<B> = C<D>>(): void }
+<T extends A<B>, U = C<D>>() => void
+new <T extends A<B>, U = C<D>>() => A
+{ m<T extends A<B>, U = C<D>>(): void }
+<public T>() => void
+new <public T>() => A
+{ m<public T>(): void }
+<private T>() => void
+new <private T>() => A
+{ m<private T>(): void }
+<protected T>() => void
+new <protected T>() => A
+{ m<protected T>(): void }
+<readonly T>() => void
+new <readonly T>() => A
+{ m<readonly T>(): void }
+<static T>() => void
+new <static T>() => A
+{ m<static T>(): void }
+<abstract T>() => void
+new <abstract T>() => A
+{ m<abstract T>(): void }
+<declare T>() => void
+new <declare T>() => A
+{ m<declare T>(): void }
+<override T>() => void
+new <override T>() => A
+{ m<override T>(): void }
+<accessor T>() => void
+new <accessor T>() => A
+{ m<accessor T>(): void }
+<async T>() => void
+new <async T>() => A
+{ m<async T>(): void }
+<export T>() => void
+new <export T>() => A
+{ m<export T>(): void }
+<default T>() => void
+new <default T>() => A
+{ m<default T>(): void }
+<public in T>() => void
+new <public in T>() => A
+{ m<public in T>(): void }
+<in public T>() => void
+new <in public T>() => A
+{ m<in public T>(): void }
+<@d T>() => void
+new <@d T>() => A
+{ m<@d T>(): void }
+<T?>() => void
+new <T?>() => A
+{ m<T?>(): void }
+<T!>() => void
+new <T!>() => A
+{ m<T!>(): void }
+<T: A>() => void
+new <T: A>() => A
+{ m<T: A>(): void }
+<T extends A?>() => void
+new <T extends A?>() => A
+{ m<T extends A?>(): void }
+<...T>() => void
+new <...T>() => A
+{ m<...T>(): void }
+<T[]>() => void
+new <T[]>() => A
+{ m<T[]>(): void }
+<T.U>() => void
+new <T.U>() => A
+{ m<T.U>(): void }
+<T<U>>() => void
+new <T<U>>() => A
+{ m<T<U>>(): void }
+<"T">() => void
+new <"T">() => A
+{ m<"T">(): void }
+<1>() => void
+new <1>() => A
+{ m<1>(): void }
+<T extends 1 + 1>() => void
+new <T extends 1 + 1>() => A
+{ m<T extends 1 + 1>(): void }
+<T extends a.b>() => void
+new <T extends a.b>() => A
+{ m<T extends a.b>(): void }
+<T extends a.b.c<D>>() => void
+new <T extends a.b.c<D>>() => A
+{ m<T extends a.b.c<D>>(): void }
+<T extends (A)>() => void
+new <T extends (A)>() => A
+{ m<T extends (A)>(): void }
+<T extends !A>() => void
+new <T extends !A>() => A
+{ m<T extends !A>(): void }
+<T extends a()>() => void
+new <T extends a()>() => A
+{ m<T extends a()>(): void }
+<T extends new A>() => void
+new <T extends new A>() => A
+{ m<T extends new A>(): void }
+<T extends this>() => void
+new <T extends this>() => A
+{ m<T extends this>(): void }
+<T extends void>() => void
+new <T extends void>() => A
+{ m<T extends void>(): void }
+<T extends null>() => void
+new <T extends null>() => A
+{ m<T extends null>(): void }
+<T extends undefined>() => void
+new <T extends undefined>() => A
+{ m<T extends undefined>(): void }
+<T extends never = never>() => void
+new <T extends never = never>() => A
+{ m<T extends never = never>(): void }
+<as>() => void
+new <as>() => A
+{ m<as>(): void }
+<type>() => void
+new <type>() => A
+{ m<type>(): void }
+<of>() => void
+new <of>() => A
+{ m<of>(): void }
+<async>() => void
+new <async>() => A
+{ m<async>(): void }
+<await>() => void
+new <await>() => A
+{ m<await>(): void }
+<yield>() => void
+new <yield>() => A
+{ m<yield>(): void }
+<infer>() => void
+new <infer>() => A
+{ m<infer>(): void }
+<keyof>() => void
+new <keyof>() => A
+{ m<keyof>(): void }
+<readonly>() => void
+new <readonly>() => A
+{ m<readonly>(): void }
+<unique>() => void
+new <unique>() => A
+{ m<unique>(): void }
+<abstract>() => void
+new <abstract>() => A
+{ m<abstract>(): void }
+<asserts>() => void
+new <asserts>() => A
+{ m<asserts>(): void }
+<is>() => void
+new <is>() => A
+{ m<is>(): void }
+<let>() => void
+new <let>() => A
+{ m<let>(): void }
+<static>() => void
+new <static>() => A
+{ m<static>(): void }
+<any>() => void
+new <any>() => A
+{ m<any>(): void }
+<string>() => void
+new <string>() => A
+{ m<string>(): void }
+<number>() => void
+new <number>() => A
+{ m<number>(): void }
+<void>() => void
+new <void>() => A
+{ m<void>(): void }
+<null>() => void
+new <null>() => A
+{ m<null>(): void }
+<this>() => void
+new <this>() => A
+{ m<this>(): void }
+<if>() => void
+new <if>() => A
+{ m<if>(): void }
+<class>() => void
+new <class>() => A
+{ m<class>(): void }
+<new>() => void
+new <new>() => A
+{ m<new>(): void }
+<typeof>() => void
+new <typeof>() => A
+{ m<typeof>(): void }
+<undefined>() => void
+new <undefined>() => A
+{ m<undefined>(): void }
+<symbol>() => void
+new <symbol>() => A
+{ m<symbol>(): void }
+<object>() => void
+new <object>() => A
+{ m<object>(): void }
+<never>() => void
+new <never>() => A
+{ m<never>(): void }
+<unknown>() => void
+new <unknown>() => A
+{ m<unknown>(): void }
+<declare>() => void
+new <declare>() => A
+{ m<declare>(): void }
+<module>() => void
+new <module>() => A
+{ m<module>(): void }
+<namespace>() => void
+new <namespace>() => A
+{ m<namespace>(): void }
+<global>() => void
+new <global>() => A
+{ m<global>(): void }
+<get>() => void
+new <get>() => A
+{ m<get>(): void }
+<set>() => void
+new <set>() => A
+{ m<set>(): void }
+<satisfies>() => void
+new <satisfies>() => A
+{ m<satisfies>(): void }
+<accessor>() => void
+new <accessor>() => A
+{ m<accessor>(): void }
+<override>() => void
+new <override>() => A
+{ m<override>(): void }
+<public>() => void
+new <public>() => A
+{ m<public>(): void }
+<implements>() => void
+new <implements>() => A
+{ m<implements>(): void }
+<interface>() => void
+new <interface>() => A
+{ m<interface>(): void }
+<package>() => void
+new <package>() => A
+{ m<package>(): void }
+<enum>() => void
+new <enum>() => A
+{ m<enum>(): void }
+<arguments>() => void
+new <arguments>() => A
+{ m<arguments>(): void }
+<eval>() => void
+new <eval>() => A
+{ m<eval>(): void }
+<intrinsic>() => void
+new <intrinsic>() => A
+{ m<intrinsic>(): void }
+<\nT\n>() => void
+new <\nT\n>() => A
+{ m<\nT\n>(): void }
+<T\n,\nU>() => void
+new <T\n,\nU>() => A
+{ m<T\n,\nU>(): void }
+<T\nextends A>() => void
+new <T\nextends A>() => A
+{ m<T\nextends A>(): void }
+<T extends\nA>() => void
+new <T extends\nA>() => A
+{ m<T extends\nA>(): void }
+<T =\nA>() => void
+new <T =\nA>() => A
+{ m<T =\nA>(): void }
+<in\nT>() => void
+new <in\nT>() => A
+{ m<in\nT>(): void }
+<out\nT>() => void
+new <out\nT>() => A
+{ m<out\nT>(): void }
+<const\nT>() => void
+new <const\nT>() => A
+{ m<const\nT>(): void }
+<T() => void
+new <T() => A
+{ m<T(): void }
+T>() => void
+new T>() => A
+{ mT>(): void }
+<T>>() => void
+new <T>>() => A
+{ m<T>>(): void }
+<<T>>() => void
+new <<T>>() => A
+{ m<<T>>(): void }
+< T >() => void
+new < T >() => A
+{ m< T >(): void }
+<T extends A, >() => void
+new <T extends A, >() => A
+{ m<T extends A, >(): void }
+<T extends A,\n>() => void
+new <T extends A,\n>() => A
+{ m<T extends A,\n>(): void }
+A<T>
+typeof a<T>
+import("x").A<T>
+A<T, U>
+typeof a<T, U>
+import("x").A<T, U>
+A<T, U, V>
+typeof a<T, U, V>
+import("x").A<T, U, V>
+A<T extends A>
+typeof a<T extends A>
+import("x").A<T extends A>
+A<T = A>
+typeof a<T = A>
+import("x").A<T = A>
+A<T extends A = B>
+typeof a<T extends A = B>
+import("x").A<T extends A = B>
+A<T extends A, U extends B = C>
+typeof a<T extends A, U extends B = C>
+import("x").A<T extends A, U extends B = C>
+A<T,>
+typeof a<T,>
+import("x").A<T,>
+A<T, U,>
+typeof a<T, U,>
+import("x").A<T, U,>
+A<>
+typeof a<>
+import("x").A<>
+A<,>
+typeof a<,>
+import("x").A<,>
+A<T,,U>
+typeof a<T,,U>
+import("x").A<T,,U>
+A<,T>
+typeof a<,T>
+import("x").A<,T>
+A<T U>
+typeof a<T U>
+import("x").A<T U>
+A<T;U>
+typeof a<T;U>
+import("x").A<T;U>
+A<in T>
+typeof a<in T>
+import("x").A<in T>
+A<out T>
+typeof a<out T>
+import("x").A<out T>
+A<in out T>
+typeof a<in out T>
+import("x").A<in out T>
+A<const T>
+typeof a<const T>
+import("x").A<const T>
+A<const in T>
+typeof a<const in T>
+import("x").A<const in T>
+A<in const T>
+typeof a<in const T>
+import("x").A<in const T>
+A<const out T>
+typeof a<const out T>
+import("x").A<const out T>
+A<out const T>
+typeof a<out const T>
+import("x").A<out const T>
+A<const in out T>
+typeof a<const in out T>
+import("x").A<const in out T>
+A<in out const T>
+typeof a<in out const T>
+import("x").A<in out const T>
+A<out in T>
+typeof a<out in T>
+import("x").A<out in T>
+A<in in T>
+typeof a<in in T>
+import("x").A<in in T>
+A<out out T>
+typeof a<out out T>
+import("x").A<out out T>
+A<const const T>
+typeof a<const const T>
+import("x").A<const const T>
+A<in T, out U>
+typeof a<in T, out U>
+import("x").A<in T, out U>
+A<in out T, const U>
+typeof a<in out T, const U>
+import("x").A<in out T, const U>
+A<out>
+typeof a<out>
+import("x").A<out>
+A<in>
+typeof a<in>
+import("x").A<in>
+A<const>
+typeof a<const>
+import("x").A<const>
+A<in out>
+typeof a<in out>
+import("x").A<in out>
+A<out out>
+typeof a<out out>
+import("x").A<out out>
+A<out in>
+typeof a<out in>
+import("x").A<out in>
+A<in in>
+typeof a<in in>
+import("x").A<in in>
+A<out, in>
+typeof a<out, in>
+import("x").A<out, in>
+A<out = A>
+typeof a<out = A>
+import("x").A<out = A>
+A<out extends A>
+typeof a<out extends A>
+import("x").A<out extends A>
+A<out out = A>
+typeof a<out out = A>
+import("x").A<out out = A>
+A<out out extends A>
+typeof a<out out extends A>
+import("x").A<out out extends A>
+A<out out, T>
+typeof a<out out, T>
+import("x").A<out out, T>
+A<in out out>
+typeof a<in out out>
+import("x").A<in out out>
+A<const out>
+typeof a<const out>
+import("x").A<const out>
+A<const in>
+typeof a<const in>
+import("x").A<const in>
+A<T extends>
+typeof a<T extends>
+import("x").A<T extends>
+A<T =>
+typeof a<T =>
+import("x").A<T =>
+A<T extends = A>
+typeof a<T extends = A>
+import("x").A<T extends = A>
+A<T = A extends B>
+typeof a<T = A extends B>
+import("x").A<T = A extends B>
+A<T extends A extends B>
+typeof a<T extends A extends B>
+import("x").A<T extends A extends B>
+A<T = A = B>
+typeof a<T = A = B>
+import("x").A<T = A = B>
+A<T extends A = B = C>
+typeof a<T extends A = B = C>
+import("x").A<T extends A = B = C>
+A<T extends A ? B : C>
+typeof a<T extends A ? B : C>
+import("x").A<T extends A ? B : C>
+A<T extends A extends B ? C : D>
+typeof a<T extends A extends B ? C : D>
+import("x").A<T extends A extends B ? C : D>
+A<T = A extends B ? C : D>
+typeof a<T = A extends B ? C : D>
+import("x").A<T = A extends B ? C : D>
+A<T extends keyof U>
+typeof a<T extends keyof U>
+import("x").A<T extends keyof U>
+A<T extends typeof a>
+typeof a<T extends typeof a>
+import("x").A<T extends typeof a>
+A<T extends () => void>
+typeof a<T extends () => void>
+import("x").A<T extends () => void>
+A<T extends new () => A>
+typeof a<T extends new () => A>
+import("x").A<T extends new () => A>
+A<T extends { a: A }>
+typeof a<T extends { a: A }>
+import("x").A<T extends { a: A }>
+A<T extends [A, B]>
+typeof a<T extends [A, B]>
+import("x").A<T extends [A, B]>
+A<T extends A[]>
+typeof a<T extends A[]>
+import("x").A<T extends A[]>
+A<T extends A | B>
+typeof a<T extends A | B>
+import("x").A<T extends A | B>
+A<T extends A & B = A>
+typeof a<T extends A & B = A>
+import("x").A<T extends A & B = A>
+A<T extends "a" | "b">
+typeof a<T extends "a" | "b">
+import("x").A<T extends "a" | "b">
+A<T extends 1>
+typeof a<T extends 1>
+import("x").A<T extends 1>
+A<T extends -1>
+typeof a<T extends -1>
+import("x").A<T extends -1>
+A<T extends `a${string}`>
+typeof a<T extends `a${string}`>
+import("x").A<T extends `a${string}`>
+A<T extends infer U>
+typeof a<T extends infer U>
+import("x").A<T extends infer U>
+A<T extends a is B>
+typeof a<T extends a is B>
+import("x").A<T extends a is B>
+A<T = () => void>
+typeof a<T = () => void>
+import("x").A<T = () => void>
+A<T = A<B>>
+typeof a<T = A<B>>
+import("x").A<T = A<B>>
+A<T = A<B<C>>>
+typeof a<T = A<B<C>>>
+import("x").A<T = A<B<C>>>
+A<T extends A<B>>
+typeof a<T extends A<B>>
+import("x").A<T extends A<B>>
+A<T extends A<B<C>>>
+typeof a<T extends A<B<C>>>
+import("x").A<T extends A<B<C>>>
+A<T extends A<B> = C<D>>
+typeof a<T extends A<B> = C<D>>
+import("x").A<T extends A<B> = C<D>>
+A<T extends A<B>, U = C<D>>
+typeof a<T extends A<B>, U = C<D>>
+import("x").A<T extends A<B>, U = C<D>>
+A<public T>
+typeof a<public T>
+import("x").A<public T>
+A<private T>
+typeof a<private T>
+import("x").A<private T>
+A<protected T>
+typeof a<protected T>
+import("x").A<protected T>
+A<readonly T>
+typeof a<readonly T>
+import("x").A<readonly T>
+A<static T>
+typeof a<static T>
+import("x").A<static T>
+A<abstract T>
+typeof a<abstract T>
+import("x").A<abstract T>
+A<declare T>
+typeof a<declare T>
+import("x").A<declare T>
+A<override T>
+typeof a<override T>
+import("x").A<override T>
+A<accessor T>
+typeof a<accessor T>
+import("x").A<accessor T>
+A<async T>
+typeof a<async T>
+import("x").A<async T>
+A<export T>
+typeof a<export T>
+import("x").A<export T>
+A<default T>
+typeof a<default T>
+import("x").A<default T>
+A<public in T>
+typeof a<public in T>
+import("x").A<public in T>
+A<in public T>
+typeof a<in public T>
+import("x").A<in public T>
+A<@d T>
+typeof a<@d T>
+import("x").A<@d T>
+A<T?>
+typeof a<T?>
+import("x").A<T?>
+A<T!>
+typeof a<T!>
+import("x").A<T!>
+A<T: A>
+typeof a<T: A>
+import("x").A<T: A>
+A<T extends A?>
+typeof a<T extends A?>
+import("x").A<T extends A?>
+A<...T>
+typeof a<...T>
+import("x").A<...T>
+A<T[]>
+typeof a<T[]>
+import("x").A<T[]>
+A<T.U>
+typeof a<T.U>
+import("x").A<T.U>
+A<T<U>>
+typeof a<T<U>>
+import("x").A<T<U>>
+A<"T">
+typeof a<"T">
+import("x").A<"T">
+A<1>
+typeof a<1>
+import("x").A<1>
+A<T extends 1 + 1>
+typeof a<T extends 1 + 1>
+import("x").A<T extends 1 + 1>
+A<T extends a.b>
+typeof a<T extends a.b>
+import("x").A<T extends a.b>
+A<T extends a.b.c<D>>
+typeof a<T extends a.b.c<D>>
+import("x").A<T extends a.b.c<D>>
+A<T extends (A)>
+typeof a<T extends (A)>
+import("x").A<T extends (A)>
+A<T extends !A>
+typeof a<T extends !A>
+import("x").A<T extends !A>
+A<T extends a()>
+typeof a<T extends a()>
+import("x").A<T extends a()>
+A<T extends new A>
+typeof a<T extends new A>
+import("x").A<T extends new A>
+A<T extends this>
+typeof a<T extends this>
+import("x").A<T extends this>
+A<T extends void>
+typeof a<T extends void>
+import("x").A<T extends void>
+A<T extends null>
+typeof a<T extends null>
+import("x").A<T extends null>
+A<T extends undefined>
+typeof a<T extends undefined>
+import("x").A<T extends undefined>
+A<T extends never = never>
+typeof a<T extends never = never>
+import("x").A<T extends never = never>
+A<as>
+typeof a<as>
+import("x").A<as>
+A<type>
+typeof a<type>
+import("x").A<type>
+A<of>
+typeof a<of>
+import("x").A<of>
+A<async>
+typeof a<async>
+import("x").A<async>
+A<await>
+typeof a<await>
+import("x").A<await>
+A<yield>
+typeof a<yield>
+import("x").A<yield>
+A<infer>
+typeof a<infer>
+import("x").A<infer>
+A<keyof>
+typeof a<keyof>
+import("x").A<keyof>
+A<readonly>
+typeof a<readonly>
+import("x").A<readonly>
+A<unique>
+typeof a<unique>
+import("x").A<unique>
+A<abstract>
+typeof a<abstract>
+import("x").A<abstract>
+A<asserts>
+typeof a<asserts>
+import("x").A<asserts>
+A<is>
+typeof a<is>
+import("x").A<is>
+A<let>
+typeof a<let>
+import("x").A<let>
+A<static>
+typeof a<static>
+import("x").A<static>
+A<any>
+typeof a<any>
+import("x").A<any>
+A<string>
+typeof a<string>
+import("x").A<string>
+A<number>
+typeof a<number>
+import("x").A<number>
+A<void>
+typeof a<void>
+import("x").A<void>
+A<null>
+typeof a<null>
+import("x").A<null>
+A<this>
+typeof a<this>
+import("x").A<this>
+A<if>
+typeof a<if>
+import("x").A<if>
+A<class>
+typeof a<class>
+import("x").A<class>
+A<new>
+typeof a<new>
+import("x").A<new>
+A<typeof>
+typeof a<typeof>
+import("x").A<typeof>
+A<undefined>
+typeof a<undefined>
+import("x").A<undefined>
+A<symbol>
+typeof a<symbol>
+import("x").A<symbol>
+A<object>
+typeof a<object>
+import("x").A<object>
+A<never>
+typeof a<never>
+import("x").A<never>
+A<unknown>
+typeof a<unknown>
+import("x").A<unknown>
+A<declare>
+typeof a<declare>
+import("x").A<declare>
+A<module>
+typeof a<module>
+import("x").A<module>
+A<namespace>
+typeof a<namespace>
+import("x").A<namespace>
+A<global>
+typeof a<global>
+import("x").A<global>
+A<get>
+typeof a<get>
+import("x").A<get>
+A<set>
+typeof a<set>
+import("x").A<set>
+A<satisfies>
+typeof a<satisfies>
+import("x").A<satisfies>
+A<accessor>
+typeof a<accessor>
+import("x").A<accessor>
+A<override>
+typeof a<override>
+import("x").A<override>
+A<public>
+typeof a<public>
+import("x").A<public>
+A<implements>
+typeof a<implements>
+import("x").A<implements>
+A<interface>
+typeof a<interface>
+import("x").A<interface>
+A<package>
+typeof a<package>
+import("x").A<package>
+A<enum>
+typeof a<enum>
+import("x").A<enum>
+A<arguments>
+typeof a<arguments>
+import("x").A<arguments>
+A<eval>
+typeof a<eval>
+import("x").A<eval>
+A<intrinsic>
+typeof a<intrinsic>
+import("x").A<intrinsic>
+A<\nT\n>
+typeof a<\nT\n>
+import("x").A<\nT\n>
+A<T\n,\nU>
+typeof a<T\n,\nU>
+import("x").A<T\n,\nU>
+A<T\nextends A>
+typeof a<T\nextends A>
+import("x").A<T\nextends A>
+A<T extends\nA>
+typeof a<T extends\nA>
+import("x").A<T extends\nA>
+A<T =\nA>
+typeof a<T =\nA>
+import("x").A<T =\nA>
+A<in\nT>
+typeof a<in\nT>
+import("x").A<in\nT>
+A<out\nT>
+typeof a<out\nT>
+import("x").A<out\nT>
+A<const\nT>
+typeof a<const\nT>
+import("x").A<const\nT>
+A<T
+typeof a<T
+import("x").A<T
+AT>
+typeof aT>
+import("x").AT>
+A<T>>
+typeof a<T>>
+import("x").A<T>>
+A<<T>>
+typeof a<<T>>
+import("x").A<<T>>
+A< T >
+typeof a< T >
+import("x").A< T >
+A<T extends A, >
+typeof a<T extends A, >
+import("x").A<T extends A, >
+A<T extends A,\n>
+typeof a<T extends A,\n>
+import("x").A<T extends A,\n>
+A<A>
+typeof a<A>
+import("x").A<A>
+A<A, B>
+typeof a<A, B>
+import("x").A<A, B>
+A<A, B, C>
+typeof a<A, B, C>
+import("x").A<A, B, C>
+A<A,>
+typeof a<A,>
+import("x").A<A,>
+A<A,,B>
+typeof a<A,,B>
+import("x").A<A,,B>
+A<,A>
+typeof a<,A>
+import("x").A<,A>
+A<A B>
+typeof a<A B>
+import("x").A<A B>
+A<A | B>
+typeof a<A | B>
+import("x").A<A | B>
+A<A | >
+typeof a<A | >
+import("x").A<A | >
+A<| A>
+typeof a<| A>
+import("x").A<| A>
+A<A & >
+typeof a<A & >
+import("x").A<A & >
+A<A extends B ? C : D>
+typeof a<A extends B ? C : D>
+import("x").A<A extends B ? C : D>
+A<() => void>
+typeof a<() => void>
+import("x").A<() => void>
+A<(a: A) => B>
+typeof a<(a: A) => B>
+import("x").A<(a: A) => B>
+A<new () => A>
+typeof a<new () => A>
+import("x").A<new () => A>
+A<{ a: A }>
+typeof a<{ a: A }>
+import("x").A<{ a: A }>
+A<[A, B]>
+typeof a<[A, B]>
+import("x").A<[A, B]>
+A<A[]>
+typeof a<A[]>
+import("x").A<A[]>
+A<A<B>>
+typeof a<A<B>>
+import("x").A<A<B>>
+A<A<B<C>>>
+typeof a<A<B<C>>>
+import("x").A<A<B<C>>>
+A<A<B<C<D>>>>
+typeof a<A<B<C<D>>>>
+import("x").A<A<B<C<D>>>>
+A<typeof a>
+typeof a<typeof a>
+import("x").A<typeof a>
+A<keyof A>
+typeof a<keyof A>
+import("x").A<keyof A>
+A<"a">
+typeof a<"a">
+import("x").A<"a">
+A<-1>
+typeof a<-1>
+import("x").A<-1>
+A<`a${B}`>
+typeof a<`a${B}`>
+import("x").A<`a${B}`>
+A<unique symbol>
+typeof a<unique symbol>
+import("x").A<unique symbol>
+A<readonly A[]>
+typeof a<readonly A[]>
+import("x").A<readonly A[]>
+A<infer U>
+typeof a<infer U>
+import("x").A<infer U>
+A<a is B>
+typeof a<a is B>
+import("x").A<a is B>
+A<asserts a>
+typeof a<asserts a>
+import("x").A<asserts a>
+A<import("x")>
+typeof a<import("x")>
+import("x").A<import("x")>
+A<A.B.C>
+typeof a<A.B.C>
+import("x").A<A.B.C>
+A<A!>
+typeof a<A!>
+import("x").A<A!>
+A<?A>
+typeof a<?A>
+import("x").A<?A>
+A<A?>
+typeof a<A?>
+import("x").A<A?>
+A<*>
+typeof a<*>
+import("x").A<*>
+A<in A>
+typeof a<in A>
+import("x").A<in A>
+A<out A>
+typeof a<out A>
+import("x").A<out A>
+A<const A>
+typeof a<const A>
+import("x").A<const A>
+A<A = B>
+typeof a<A = B>
+import("x").A<A = B>
+A<A extends B>
+typeof a<A extends B>
+import("x").A<A extends B>
+A<...A>
+typeof a<...A>
+import("x").A<...A>
+A<a: A>
+typeof a<a: A>
+import("x").A<a: A>
+A<\nA\n>
+typeof a<\nA\n>
+import("x").A<\nA\n>
+A<A,\nB>
+typeof a<A,\nB>
+import("x").A<A,\nB>
+A<A
+typeof a<A
+import("x").A<A
+A< A >
+typeof a< A >
+import("x").A< A >
+A<(A)>
+typeof a<(A)>
+import("x").A<(A)>
+A<(a = 1) => void>
+typeof a<(a = 1) => void>
+import("x").A<(a = 1) => void>
+A<({ a = 1 }) => void>
+typeof a<({ a = 1 }) => void>
+import("x").A<({ a = 1 }) => void>
+A<(a: ) => void>
+typeof a<(a: ) => void>
+import("x").A<(a: ) => void>
+A<A | () => void>
+typeof a<A | () => void>
+import("x").A<A | () => void>
+A<keyof () => void>
+typeof a<keyof () => void>
+import("x").A<keyof () => void>
+any
+unknown
+never
+void
+null
+undefined
+number
+string
+boolean
+bigint
+symbol
+object
+this
+any.b
+string.b
+number.b.c
+void.b
+null.b
+this.b
+undefined.b
+object.b
+never.b
+unknown.b
+symbol.b
+bigint.b<T>
+boolean.b
+string<T>
+any<T>
+void<T>
+this<T>
+object<T>
+void[]
+null[]
+this[]
+this["x"]
+undefined[]
+any[]
+never[]
+1
+-1
+1n
+-1n
+"s"
+'s'
+`s`
+true
+false
+0x10
+0b1
+0o7
+1e3
+1.5
+.5
+1_000
+-0x10
+- 1
+-\n1
++1
+-"s"
+-x
+-true
+- -1
+--1
+-1.5e3
+-1n[]
+1[]
+"s"[]
+-Infinity
+-NaN
+-null
+-1 | -2
+-
+1 2
+1n n
+-`s`
+!1
+~1
+A
+A.B
+A.B.C
+a.b.c.d
+A<B>
+A.B<C>
+A<B, C>
+A<B<C>>
+A<B<C<D>>>
+A<B<C<D<E>>>>
+A<B>.C
+A.<B>
+A.
+A..B
+A.1
+A.#b
+A.if
+A.class.new
+A.\nB
+A\n.B
+A.B\n.C
+A.\nB C
+if
+class
+function
+delete
+in
+var
+with
+yield
+await
+let
+static
+enum
+default
+super
+instanceof
+const
+extends
+export
+return
+switch
+while
+do
+for
+try
+catch
+throw
+else
+case
+break
+continue
+debugger
+finally
+type
+as
+of
+async
+get
+set
+is
+asserts
+infer
+keyof
+readonly
+unique
+abstract
+declare
+module
+namespace
+global
+require
+constructor
+from
+out
+satisfies
+accessor
+override
+intrinsic
+using
+defer
+package
+implements
+interface
+private
+public
+protected
+arguments
+eval
+asserts<T>
+asserts.x
+abstract.x
+unique.x
+keyof.x
+infer.x
+readonly.x
+is.x
+is<T>
+abstract<T>
+unique<T>
+out<T>
+type<T>
+if.x
+class<T>
+A.if<T>
+A<B | C>
+A<(B)>
+A<[B]>
+A<{ b: C }>
+A<typeof b>
+A<keyof B>
+A<B[]>
+A<B extends C ? D : E>
+A<infer B>
+A<B, C, D>
+A<B,>
+A<B,,C>
+A<,B>
+A<B C>
+A\n<B>
+A<\nB\n>
+A<B
+A B>
+A<B>>
+A<<B>>
+A<B>C
+A<B><C>
+A<"s">
+A<new () => B>
+A<abstract new () => B>
+A<<T>() => T>
+A<B<C>[]>
+A<B<C>|D>
+A<B<C>,D>
+A<A<A<A<A<A<A<A>>>>>>>
+A<readonly B[]>
+A<...B>
+A<B?>
+A<?B>
+A<B!>
+A[]
+A[][]
+A[B]
+A[B][C]
+A["x"]
+A[number]
+A[keyof A]
+A[]["length"]
+A\n[]
+A\n[B]
+A[\n]
+A[\nB\n]
+A[
+A[]]
+A[B,C]
+A[...B]
+A[B?]
+A[-1]
+A[1]
+A[() => void]
+A[B | C]
+A[typeof b]
+A[B extends C ? D : E]
+A[B[C]]
+A[B[]]
+A[[B]]
+A[{ b: C }]
+A[if]
+A[this]
+A[a is B]
+A[infer U]
+?A
+A?
+!A
+A!
+*
+?
+A!!
+A??
+A![]
+A?[]
+?A[]
+!A[]
+!A | B
+A! | B
+A? | B
+A\n!
+A\n?
+??A
+!!A
+?!A
+A?!
+A!?
+function(A): B
+function(new: A)
+function(this: A)
+function()
+...A
+A=
+Array.<string>
+[A]?
+[A]!
+(A)!
+(A)?
+?(A)
+!(() => void)
+?() => void
+A!.B
+A?.B
+A!<B>
+keyof A!
+keyof !A
+A extends B! ? C : D
+A extends ?B ? C : D
+[]
+[A]
+[A, B]
+[A,]
+[,]
+[,A]
+[A,,B]
+[A?]
+[A?, B?]
+[A?, B]
+[...A]
+[...A[]]
+[A, ...B[]]
+[...A, B]
+[...A, ...B]
+[...A?]
+[......A]
+[...]
+[a: A]
+[a?: A]
+[...a: A[]]
+[...a?: A]
+[a: A, b: B]
+[a: A, B]
+[A, b: B]
+[a: A?]
+[a: ...A]
+[a!: A]
+[a: A = 1]
+[a:]
+[a?:]
+[: A]
+[a: b: C]
+[a?: b?: C]
+[a??: A]
+[readonly A]
+[a: readonly A[]]
+["a": A]
+[1: A]
+[a.b: A]
+[a<T>: A]
+[a[]: A]
+[A | B, C & D]
+[A extends B ? C : D]
+[(a: A) => B]
+[a: (b: B) => C]
+[typeof a]
+[typeof a, typeof b.c]
+[keyof A]
+[readonly A[]]
+[new () => A]
+[import("x")]
+[infer A]
+[unique symbol]
+[abstract new () => A]
+[asserts a]
+[this]
+[a is B]
+[this is B]
+[\nA,\nB\n]
+[A\nB]
+[A B]
+[A; B]
+[A
+A]
+[[A]]
+[[A], [B, [C]]]
+[A][]
+[A][0]
+[a: A]["length"]
+[a?: A, b: B]
+[a: A, ...b: B[]]
+[a: A, b?: B, ...c: C[]]
+[...a: A[], b: B]
+[a: A,]
+[a?: A,]
+[new: A]
+[new?: A]
+[...new: A[]]
+[a: A, new: B]
+[function: A]
+[function?: A]
+[...function: A[]]
+[a: A, function: B]
+[typeof: A]
+[typeof?: A]
+[...typeof: A[]]
+[a: A, typeof: B]
+[import: A]
+[import?: A]
+[...import: A[]]
+[a: A, import: B]
+[const: A]
+[const?: A]
+[...const: A[]]
+[a: A, const: B]
+[keyof: A]
+[keyof?: A]
+[...keyof: A[]]
+[a: A, keyof: B]
+[readonly: A]
+[readonly?: A]
+[...readonly: A[]]
+[a: A, readonly: B]
+[infer: A]
+[infer?: A]
+[...infer: A[]]
+[a: A, infer: B]
+[unique: A]
+[unique?: A]
+[...unique: A[]]
+[a: A, unique: B]
+[abstract: A]
+[abstract?: A]
+[...abstract: A[]]
+[a: A, abstract: B]
+[asserts: A]
+[asserts?: A]
+[...asserts: A[]]
+[a: A, asserts: B]
+[is: A]
+[is?: A]
+[...is: A[]]
+[a: A, is: B]
+[this: A]
+[this?: A]
+[...this: A[]]
+[a: A, this: B]
+[void: A]
+[void?: A]
+[...void: A[]]
+[a: A, void: B]
+[null: A]
+[null?: A]
+[...null: A[]]
+[a: A, null: B]
+[true: A]
+[true?: A]
+[...true: A[]]
+[a: A, true: B]
+[false: A]
+[false?: A]
+[...false: A[]]
+[a: A, false: B]
+[in: A]
+[in?: A]
+[...in: A[]]
+[a: A, in: B]
+[any: A]
+[any?: A]
+[...any: A[]]
+[a: A, any: B]
+[string: A]
+[string?: A]
+[...string: A[]]
+[a: A, string: B]
+[number: A]
+[number?: A]
+[...number: A[]]
+[a: A, number: B]
+[class: A]
+[class?: A]
+[...class: A[]]
+[a: A, class: B]
+[if: A]
+[if?: A]
+[...if: A[]]
+[a: A, if: B]
+[var: A]
+[var?: A]
+[...var: A[]]
+[a: A, var: B]
+[let: A]
+[let?: A]
+[...let: A[]]
+[a: A, let: B]
+[yield: A]
+[yield?: A]
+[...yield: A[]]
+[a: A, yield: B]
+[await: A]
+[await?: A]
+[...await: A[]]
+[a: A, await: B]
+[type: A]
+[type?: A]
+[...type: A[]]
+[a: A, type: B]
+[as: A]
+[as?: A]
+[...as: A[]]
+[a: A, as: B]
+[default: A]
+[default?: A]
+[...default: A[]]
+[a: A, default: B]
+[delete: A]
+[delete?: A]
+[...delete: A[]]
+[a: A, delete: B]
+[enum: A]
+[enum?: A]
+[...enum: A[]]
+[a: A, enum: B]
+[export: A]
+[export?: A]
+[...export: A[]]
+[a: A, export: B]
+[extends: A]
+[extends?: A]
+[...extends: A[]]
+[a: A, extends: B]
+[super: A]
+[super?: A]
+[...super: A[]]
+[a: A, super: B]
+[switch: A]
+[switch?: A]
+[...switch: A[]]
+[a: A, switch: B]
+[undefined: A]
+[undefined?: A]
+[...undefined: A[]]
+[a: A, undefined: B]
+[symbol: A]
+[symbol?: A]
+[...symbol: A[]]
+[a: A, symbol: B]
+[object: A]
+[object?: A]
+[...object: A[]]
+[a: A, object: B]
+[never: A]
+[never?: A]
+[...never: A[]]
+[a: A, never: B]
+[unknown: A]
+[unknown?: A]
+[...unknown: A[]]
+[a: A, unknown: B]
+[bigint: A]
+[bigint?: A]
+[...bigint: A[]]
+[a: A, bigint: B]
+[boolean: A]
+[boolean?: A]
+[...boolean: A[]]
+[a: A, boolean: B]
+[static: A]
+[static?: A]
+[...static: A[]]
+[a: A, static: B]
+[async: A]
+[async?: A]
+[...async: A[]]
+[a: A, async: B]
+[of: A]
+[of?: A]
+[...of: A[]]
+[a: A, of: B]
+[out: A]
+[out?: A]
+[...out: A[]]
+[a: A, out: B]
+[satisfies: A]
+[satisfies?: A]
+[...satisfies: A[]]
+[a: A, satisfies: B]
+[instanceof: A]
+[instanceof?: A]
+[...instanceof: A[]]
+[a: A, instanceof: B]
+[with: A]
+[with?: A]
+[...with: A[]]
+[a: A, with: B]
+[return: A]
+[return?: A]
+[...return: A[]]
+[a: A, return: B]
+[declare: A]
+[declare?: A]
+[...declare: A[]]
+[a: A, declare: B]
+[namespace: A]
+[namespace?: A]
+[...namespace: A[]]
+[a: A, namespace: B]
+[module: A]
+[module?: A]
+[...module: A[]]
+[a: A, module: B]
+[get: A]
+[get?: A]
+[...get: A[]]
+[a: A, get: B]
+[set: A]
+[set?: A]
+[...set: A[]]
+[a: A, set: B]
+[require: A]
+[require?: A]
+[...require: A[]]
+[a: A, require: B]
+[global: A]
+[global?: A]
+[...global: A[]]
+[a: A, global: B]
+[new: A, function: B, typeof: C]
+[typeof: A, import?: B]
+[keyof: keyof A]
+[readonly: readonly A[]]
+[infer: A extends infer U ? U : never]
+[typeof: typeof a]
+[new: new () => A]
+[import: import("x")]
+[unique: unique symbol]
+[this: this]
+[asserts: asserts]
+[abstract: abstract new () => A]
+A | B
+A & B
+| A
+& A
+| A | B
+& A & B
+A | B & C
+A & B | C
+| A & B
+& A | B
+| & A
+& | A
+| | A
+& & A
+| & | A
+A | | B
+A & & B
+A | & B
+A & | B
+A |
+A &
+|
+&
+A | B | C | D
+A & B & C & D
+(A | B) & C
+A | (B & C)
+A\n| B
+A |\n B
+A\n& B
+\n| A\n| B
+A & () => void
+A | new () => B
+A & new () => B
+| () => void
+& () => void
+| new () => A
+() => A | B
+() => A & B
+A | <T>() => void
+A & <T>() => void
+A | abstract new () => B
+A | (a: B) => C
+A | (a) => C
+A | (B)
+A | (() => void)
+A | keyof B
+A | typeof b
+A | readonly B[]
+A | infer B
+A | -1
+A | "s" | 1 | true | null | undefined | void
+A || B
+A && B
+A |= B
+A | B[]
+A[] | B
+A | unique symbol
+A | this
+A | [B]
+A | { b: C }
+A | `x${B}`
+A | import("x")
+A | B extends C ? D : E
+A & B extends C ? D : E
+A | a is B
+A | asserts a
+| if
+A | if
+A & class
+keyof A
+keyof keyof A
+keyof A[]
+keyof A | B
+keyof A & B
+keyof (A | B)
+keyof typeof a
+keyof typeof a.b
+keyof A[B]
+keyof A<B>
+keyof readonly A[]
+keyof unique symbol
+keyof |
+keyof | A
+keyof & A
+keyof new () => A
+keyof <T>() => void
+keyof abstract new () => A
+keyof (a: A) => B
+keyof (() => void)
+keyof A extends B ? C : D
+keyof [A]
+keyof { a: A }
+keyof `a${B}`
+keyof this
+keyof -1
+keyof "s"
+keyof import("x")
+keyof infer U
+keyof\nA
+keyof A\n[]
+keyof if
+keyof a is B
+keyof asserts a
+readonly A[]
+readonly A[][]
+readonly [A, B]
+readonly A
+readonly readonly A[]
+readonly keyof A
+readonly (A[])
+readonly A[] | B
+readonly A[] & B
+readonly A[] extends B ? C : D
+readonly string[]
+readonly []
+readonly Array<A>
+readonly\nA[]
+readonly () => void
+readonly new () => A
+readonly <T>() => T
+readonly typeof a
+readonly unique symbol
+readonly { a: A }
+readonly [a: A, b?: B]
+readonly [...A]
+readonly A[B]
+readonly (() => void)[]
+readonly this[]
+readonly if
+unique symbol
+unique A
+unique symbol[]
+unique unique symbol
+unique\nsymbol
+unique symbol | A
+unique symbol & A
+unique symbol extends A ? B : C
+unique keyof A
+unique readonly A[]
+unique () => void
+unique symbol.x
+unique symbol<T>
+unique (symbol)
+unique typeof a
+unique [A]
+unique { a: A }
+unique string
+unique "s"
+A extends infer U ? U : never
+A extends (infer U)[] ? U : never
+A extends infer U[] ? U : never
+A extends infer U extends B ? U : never
+A extends [infer U extends B] ? U : never
+A extends [infer U extends B ? C : D] ? U : never
+A extends infer U extends B ? C : D ? E : F
+A extends (infer U extends B ? C : D) ? E : F
+A extends { a: infer U } ? U : never
+A extends (a: infer U) => infer V ? [U, V] : never
+A extends (infer U extends B) ? U : never
+A extends infer U | infer V ? U : V
+A extends infer U & infer V ? U : V
+A extends Array<infer U> ? U : never
+A extends Array<infer U extends B> ? U : never
+A extends Array<infer U extends B ? C : D> ? U : never
+A extends `${infer U}x` ? U : never
+A extends `${infer U extends number}` ? U : never
+A extends `${infer U extends number ? 1 : 2}` ? U : never
+A extends (...a: infer U) => any ? U : never
+A extends (a: any) => infer U extends B ? C : D
+A extends ((a: any) => infer U extends B) ? C : D
+A extends new (...a: any) => infer U ? U : never
+A extends new (...a: any) => infer U extends B ? C : D
+A extends keyof infer U ? U : never
+A extends readonly (infer U)[] ? U : never
+A extends readonly infer U[] ? U : never
+A extends [infer U, ...infer V] ? [U, V] : never
+A extends [a: infer U, b?: infer V] ? [U, V] : never
+A extends [infer U extends B, ...infer V extends C[]] ? [U, V] : never
+A extends { [K in infer U]: any } ? U : never
+infer U
+infer U extends B
+infer U[]
+(infer U)[]
+infer U | V
+infer U extends B ? C : D
+A extends infer ? 1 : 2
+A extends infer U extends ? 1 : 2
+A extends infer infer ? 1 : 2
+A extends infer U extends infer V ? 1 : 2
+A extends infer U extends infer V extends W ? 1 : 2
+A extends infer keyof ? 1 : 2
+A extends infer if ? 1 : 2
+A extends infer U.V ? 1 : 2
+A extends infer U<V> ? 1 : 2
+A extends infer\nU ? 1 : 2
+A extends infer U\nextends B ? 1 : 2
+A extends infer type ? 1 : 2
+A extends infer extends ? 1 : 2
+A extends infer extends extends B ? 1 : 2
+A extends infer U extends B | C ? 1 : 2
+A extends infer U extends keyof B ? 1 : 2
+A extends infer U extends () => void ? 1 : 2
+A extends infer U extends B[] ? 1 : 2
+A extends B ? infer U : never
+A extends B ? C : infer U
+infer U extends A ? B : C extends D ? E : F
+A extends B ? C : D
+A extends B ? C : D extends E ? F : G
+A extends B ? C extends D ? E : F : G
+A extends B ? (C extends D ? E : F) : G
+(A extends B ? C : D) extends E ? F : G
+A extends (B extends C ? D : E) ? F : G
+A extends B extends C ? D : E ? F : G
+A | B & C extends D ? E : F
+A extends B | C ? D : E
+A extends B & C ? D : E
+A extends B ? C | D : E | F
+A extends B ? C : D | E
+A extends B ? C : D & E
+A extends B ? C & D : E
+unique symbol extends B ? C : D
+A[] extends B ? C : D
+A[B] extends C ? D : E
+typeof a extends B ? C : D
+typeof a.b extends B ? C : D
+A<B> extends C ? D : E
+A.B extends C ? D : E
+[A] extends [B] ? C : D
+{ a: A } extends B ? C : D
+`a${A}` extends B ? C : D
+-1 extends A ? B : C
+"s" extends A ? B : C
+this extends A ? B : C
+import("x") extends A ? B : C
+(A) extends B ? C : D
+A extends B ? () => C : () => D
+A extends () => B ? C : D
+A extends (() => B) ? C : D
+() => A extends B ? C : D
+(() => A) extends B ? C : D
+A extends B ? C : D[]
+(A extends B ? C : D)[]
+A extends B ? C : () => D extends E ? F : G
+A extends B ? C : new () => D
+A extends new () => B ? C : D
+A extends abstract new () => B ? C : D
+A extends <T>() => B ? C : D
+A extends (a: B) => C ? D : E
+A extends (a: B) => C extends D ? E : F ? G : H
+A extends keyof B ? C : D
+A extends typeof b ? C : D
+A extends [B] ? C : D
+A extends { b: C } ? D : E
+A extends `x` ? C : D
+A extends 1 ? 2 : 3
+A extends -1 ? -2 : -3
+A extends true ? false : null
+A extends readonly B[] ? C : D
+A extends unique symbol ? C : D
+A extends this ? C : D
+A extends B[] ? C : D
+A extends B[C] ? D : E
+A extends B<C> ? D : E
+A extends B ? C : D extends E ? F : G extends H ? I : J
+A extends B ? C : D | E extends F ? G : H
+A extends B ? C : D & E extends F ? G : H
+A extends B ? C : keyof D extends E ? F : G
+A extends B ? C : readonly D[] extends E ? F : G
+A extends B ? C | D extends E ? F : G : H
+A extends B ? C : D[] extends E ? F : G
+A extends B ? C : typeof d extends E ? F : G
+A extends B ? C : (D | E) extends F ? G : H
+A extends B ? C : | D | E
+A extends B ? C : | D extends E ? F : G
+A extends B ? | C : D
+A extends | B ? C : D
+| A extends B ? C : D
+A extends B\n? C\n: D
+A\nextends B ? C : D
+A extends\nB ? C : D
+A extends B ?\nC :\nD
+A extends B ? C
+A extends B ? : D
+A extends ? C : D
+A extends B C : D
+A extends B ? C :
+A extends B ? C ; D
+A extends B ?? C : D
+A extends B ? C : D : E
+A extends B
+A extends
+extends B ? C : D
+A extends B ?
+A implements B ? C : D
+A extends B ? C, D : E
+A extends B ? a is C : D
+A extends B ? C : a is D
+A extends a is B ? C : D
+A extends B ? asserts a : D
+typeof a
+typeof a.b
+typeof a.b.c
+typeof a<B>
+typeof a.b<C>
+typeof a<B>.c
+typeof a<B><C>
+typeof a<B, C>
+typeof a<B,>
+typeof a.#b
+typeof a.b.#c
+typeof a.#b.c
+typeof #a
+typeof import("x")
+typeof import("x").a
+typeof import("x").a.b<C>
+typeof import("x")<C>
+typeof import("x", { with: { a: "b" } })
+typeof import
+typeof import.meta
+typeof import(x)
+typeof this
+typeof this.a
+typeof this.a.b
+typeof this<A>
+typeof a[]
+typeof a[b]
+typeof a["b"]
+typeof a[number]
+typeof a | b
+typeof a & b
+typeof a.b[]
+typeof new
+typeof class
+typeof if
+typeof a.if
+typeof a.new
+typeof a.class.function
+typeof
+typeof 1
+typeof "s"
+typeof (a)
+typeof a()
+typeof a?.b
+typeof a!
+typeof a!.b
+typeof a\n.b
+typeof a.\nb
+typeof a\n<B>
+typeof\na
+typeof typeof a
+typeof keyof a
+typeof void
+typeof null
+typeof true
+typeof super
+typeof async
+typeof await
+typeof yield
+typeof let
+typeof undefined
+typeof globalThis
+typeof typeof
+typeof function
+typeof delete
+typeof in
+typeof var
+typeof const
+typeof enum
+typeof default
+typeof export
+typeof instanceof
+typeof any
+typeof string
+typeof unique
+typeof keyof
+typeof readonly
+typeof infer
+typeof asserts
+typeof is
+typeof abstract
+typeof type
+typeof a.
+typeof a..b
+typeof a.1
+typeof .a
+typeof a.b.
+typeof [a]
+typeof {a}
+typeof `a`
+typeof a.b.c.d.e.f
+import("x")
+import("x").A
+import("x").A.B
+import("x")<T>
+import("x").A<T>.B
+import('x')
+import(`x`)
+import(x)
+import("x" + "y")
+import(1)
+import(A | B)
+import("x", { with: { "resolution-mode": "import" } })
+import("x", { with: { "resolution-mode": "require" } }).A
+import("x", { assert: { "resolution-mode": "import" } })
+import("x", { with: { type: "json" } })
+import("x", { with: {} })
+import("x", {})
+import("x", { with: { a: "b", c: "d" } })
+import("x", { with: { a: "b", } })
+import("x", { with: { a: "b" }, })
+import("x", { with: { a: "b" } }, )
+import("x",)
+import("x", y)
+import("x", { with: { a: 1 } })
+import("x", { with: { [a]: "b" } })
+import("x", { with: { "a": "b" } })
+import("x", { with: { 1: "b" } })
+import("x", { with: { a: "b" } })<T>
+import("x", { with: { a: "b" } }).A<T>
+import("x", { with: { if: "b" } })
+import("x", { with: { a: "b" }, assert: { c: "d" } })
+import("x", { with: y })
+import("x", { with })
+import("x", { with: { a } })
+import("x", { with: { a: "b" c: "d" } })
+import("x", { with: { a: "b"; c: "d" } })
+import("x", { a: "b" })
+import("x", { readonly with: { a: "b" } })
+import("x", { with?: { a: "b" } })
+import("x", { with(): void })
+import("x", { with: { a: `b` } })
+import("x", { with: { a: "b" + "c" } })
+import("x", { "with": { a: "b" } })
+import()
+import("x"
+import "x"
+import("x").
+import("x").default
+import("x").if
+import("x").#a
+import("x")[]
+import("x")["y"]
+import("x") | A
+typeof import("x")[]
+import("x").a.b.c<D, E>[]
+import.meta
+import
+import("x")\n.A
+import("x").\nA
+import("x")\n<T>
+import\n("x")
+import(\n"x"\n)
+import("x", "y")
+import("x").A.<T>
+(a: A) => B
+(a?: A) => B
+(a?) => B
+(a: A, b: B) => C
+(...a: A[]) => B
+(...a) => B
+(this: A) => B
+(this: A, b: B) => C
+(this) => A
+(a, this: A) => B
+(this?: A) => B
+(...this: A) => B
+<T>(a: T) => T
+<T, U>(a: T, b: U) => [T, U]
+<T extends A>(a: T) => T
+<T = A>() => T
+<const T>() => T
+<in T>() => T
+<out T>() => T
+<T,>() => T
+<T>
+<T> => void
+<T>(a: T)
+<T>a => void
+new (a: A) => B
+new <T>() => T
+new <T>(a: T) => T
+abstract new () => A
+abstract new <T>() => A
+abstract\nnew () => A
+abstract () => A
+new abstract () => A
+new () => new () => A
+new
+new ()
+new () =>
+new A
+new (A)
+new () => void
+new (a) => a is B
+abstract new
+abstract abstract new () => A
+new\n() => A
+new ()\n=> A
+new (...a: any[]) => object
+() => () => void
+() => new () => A
+(a: (b: B) => C) => D
+() => void[]
+(() => void)[]
+() => keyof A
+() => typeof a
+() => readonly A[]
+() => unique symbol
+() => this
+() => [A, B]
+() => { a: A }
+() => `a${B}`
+() => import("x")
+() => -1
+() =>
+() = > void
+( => void
+() void
+(): void
+(a: A): B
+(a: A, ) => void
+(a, ) => void
+(a,, b) => void
+(a: A b: B) => void
+(...a, b) => void
+()\n=> void
+(\n) => void
+(\na: A,\nb: B\n) => void
+(private a) => void
+(protected a?: A) => void
+(a: A) => a is B
+(a: any) => asserts a
+(a: any) => asserts a is B
+(this: any) => this is B
+(this: any) => asserts this
+(this: any) => asserts this is B
+(a) => is B
+(a) => a is
+(a) => asserts
+(a) => asserts.b
+(a) => asserts a.b
+(a) => a\nis B
+(a) => asserts\na
+(a) => asserts a\nis B
+(asserts) => asserts asserts
+(is) => is is is
+(a) => asserts is
+(a) => asserts is is B
+new () => a is B
+new () => asserts a
+(a) => a is B | C
+(a) => a is B extends C ? D : E
+(a) => asserts a is B extends C ? D : E
+(a) => a is b is C
+(a) => asserts asserts a
+(a) => asserts if
+(a) => asserts 1
+(a) => asserts a[]
+(a) => asserts (a)
+(a) => (a is B)
+(a) => a is (B)
+(a) => this is B | C
+(a) => asserts this.x
+(a) => b.c is D
+(a) => a is keyof B
+(a) => a is () => void
+(a) => asserts a is () => void
+(a) => asserts a | B
+(a) => asserts a & B
+(a) => asserts a extends B ? C : D
+(a) => asserts<T>
+(a) => asserts a<T>
+(a) => a<T> is B
+(a) => asserts "s"
+(a) => asserts typeof
+(a) => asserts new
+(a | b) => void
+(a[]) => void
+(a<T>) => void
+(keyof A) => void
+(string, number) => void
+(a: A) => B | C
+(abstract new () => A)
+(a: A) => B[]
+(a: A) => B extends C ? D : E
+(a?: A, b?: B) => C
+(a?: A, b: B) => C
+(a: A, b?: B, ...c: C[]) => D
+(a: A,\n b: B) =>\n C
+(A)
+((A))
+(A | B)
+(A)[]
+(A | B)[]
+(() => void)
+(new () => A)
+(keyof A)[]
+(typeof a)[]
+(A extends B ? C : D)
+()
+(A
+A)
+(A,)
+(A, B)
+(A B)
+(\nA\n)
+(a)
+(a?)
+(a: A)
+(this)
+(this)[]
+(a is B)
+(asserts a)
+(infer U)
+(unique symbol)
+(-1)
+("s")
+(void)
+(...A)
+(a.b)
+(a<B>)
+(a[])
+(a | b)
+(a & b)
+(a)\n[]
+((a))
+(((a)))
+((a) => void)
+((a))[]
+(a)<T>
+(a).b
+(if)
+(class)
+(new)
+(typeof a)
+(keyof A)
+(readonly A[])
+([A])
+({ a: A })
+(`a${B}`)
+(import("x"))
+(a,)
+(a, b)
+(a = 1)
+({ a })
+([a])
+({})
+([])
+(a: A) =>
+(a)!
+(a)?
+`a`
+`a${A}b`
+`${A}`
+`${A}${B}`
+`${A | B}-${C & D}`
+`${`${A}`}`
+`${A extends B ? C : D}`
+`${keyof A}`
+`${() => void}`
+`${infer U}`
+`${}`
+`${A`
+`${A B}`
+`a${1}b${"s"}c${true}`
+`${A}`[]
+`${A}` | B
+`\\u{zzz}`
+`\\unicode`
+`a\\nb`
+`\\x`
+`\\u{110000}`
+`${A}\\u`
+`a\nb`
+`${\nA\n}`
+`${A}`\n[]
+`${typeof a}`
+`${A[]}`
+`${A[B]}`
+`${[A]}`
+`${{ a: A }}`
+`${-1}`
+`${1n}`
+`${null}`
+`${undefined}`
+`${this}`
+`${unique symbol}`
+`${readonly A[]}`
+`${new () => A}`
+`${import("x")}`
+`${a is B}`
+`${A,B}`
+`${A}${}`
+`$`
+`$A`
+`{A}`
+`$ {A}`
+`\\${A}`
+`a${A}b${B}c${C}d`
+`${`a${`b${C}`}`}`
+`${A extends `${infer U}` ? U : never}`
+`${if}`
+`${A}`.length
+`${A}`<T>
+a is B
+this is B
+asserts a
+asserts a is B
+asserts this
+asserts this is B
+a is
+is B
+a is B | C
+a is B extends C ? D : E
+asserts a | B
+a is b is C
+asserts a is b is C
+asserts asserts a
+asserts a.b
+asserts a[]
+asserts (a)
+a is B[]
+a is (B)
+a\nis B
+asserts\na
+this\nis B
+asserts 1
+asserts "s"
+asserts a is
+asserts this.x
+asserts new
+asserts if
+asserts is
+asserts is is B
+is is B
+asserts asserts
+asserts asserts is B
+keyof is B
+a.b is C
+a<T> is B
+a[] is B
+asserts a & B
+asserts this | B
+this is
+this is this
+a is this
+asserts a is this
+asserts a\nis B
+asserts this\nis B
+a is\nB
+asserts a is\nB
+asserts undefined
+asserts any
+undefined is B
+any is B
+string is B
+void is B
+null is B
+true is B
+1 is B
+asserts void
+asserts null
+asserts true
+asserts typeof a
+asserts keyof A
+asserts infer U
+asserts readonly
+asserts unique
+asserts abstract
+asserts type
+asserts of
+asserts async
+asserts await
+asserts yield
+asserts let
+asserts static
+asserts out
+asserts a is asserts b
+asserts a is b is c
+[a: A, b?: B]
+string | string
+string & string
+X extends Y ? string : string
+string | number
+string & number
+X extends Y ? string : number
+string | boolean
+string & boolean
+X extends Y ? string : boolean
+string | bigint
+string & bigint
+X extends Y ? string : bigint
+string | symbol
+string & symbol
+X extends Y ? string : symbol
+string | any
+string & any
+X extends Y ? string : any
+string | unknown
+string & unknown
+X extends Y ? string : unknown
+string | never
+string & never
+X extends Y ? string : never
+string | void
+string & void
+X extends Y ? string : void
+string | null
+string & null
+X extends Y ? string : null
+string | undefined
+string & undefined
+X extends Y ? string : undefined
+string | object
+string & object
+X extends Y ? string : object
+string | A
+string & A
+X extends Y ? string : A
+string | B
+string & B
+X extends Y ? string : B
+string | Object
+string & Object
+X extends Y ? string : Object
+string | "s"
+string & "s"
+X extends Y ? string : "s"
+string | 1
+string & 1
+X extends Y ? string : 1
+string | true
+string & true
+X extends Y ? string : true
+string | A[]
+string & A[]
+X extends Y ? string : A[]
+string | [A]
+string & [A]
+X extends Y ? string : [A]
+string | () => void
+string & () => void
+X extends Y ? string : () => void
+string | { a: A }
+string & { a: A }
+X extends Y ? string : { a: A }
+string | keyof A
+string & keyof A
+X extends Y ? string : keyof A
+string | typeof a
+string & typeof a
+X extends Y ? string : typeof a
+string | A.B
+string & A.B
+X extends Y ? string : A.B
+string | A<B>
+string & A<B>
+X extends Y ? string : A<B>
+string | `a${A}`
+string & `a${A}`
+X extends Y ? string : `a${A}`
+string | this
+string & this
+X extends Y ? string : this
+string | (string)
+string & (string)
+X extends Y ? string : (string)
+string | (A | null)
+string & (A | null)
+X extends Y ? string : (A | null)
+number | string
+number & string
+X extends Y ? number : string
+number | number
+number & number
+X extends Y ? number : number
+number | boolean
+number & boolean
+X extends Y ? number : boolean
+number | bigint
+number & bigint
+X extends Y ? number : bigint
+number | symbol
+number & symbol
+X extends Y ? number : symbol
+number | any
+number & any
+X extends Y ? number : any
+number | unknown
+number & unknown
+X extends Y ? number : unknown
+number | never
+number & never
+X extends Y ? number : never
+number | void
+number & void
+X extends Y ? number : void
+number | null
+number & null
+X extends Y ? number : null
+number | undefined
+number & undefined
+X extends Y ? number : undefined
+number | object
+number & object
+X extends Y ? number : object
+number | A
+number & A
+X extends Y ? number : A
+number | B
+number & B
+X extends Y ? number : B
+number | Object
+number & Object
+X extends Y ? number : Object
+number | "s"
+number & "s"
+X extends Y ? number : "s"
+number | 1
+number & 1
+X extends Y ? number : 1
+number | true
+number & true
+X extends Y ? number : true
+number | A[]
+number & A[]
+X extends Y ? number : A[]
+number | [A]
+number & [A]
+X extends Y ? number : [A]
+number | () => void
+number & () => void
+X extends Y ? number : () => void
+number | { a: A }
+number & { a: A }
+X extends Y ? number : { a: A }
+number | keyof A
+number & keyof A
+X extends Y ? number : keyof A
+number | typeof a
+number & typeof a
+X extends Y ? number : typeof a
+number | A.B
+number & A.B
+X extends Y ? number : A.B
+number | A<B>
+number & A<B>
+X extends Y ? number : A<B>
+number | `a${A}`
+number & `a${A}`
+X extends Y ? number : `a${A}`
+number | this
+number & this
+X extends Y ? number : this
+number | (string)
+number & (string)
+X extends Y ? number : (string)
+number | (A | null)
+number & (A | null)
+X extends Y ? number : (A | null)
+boolean | string
+boolean & string
+X extends Y ? boolean : string
+boolean | number
+boolean & number
+X extends Y ? boolean : number
+boolean | boolean
+boolean & boolean
+X extends Y ? boolean : boolean
+boolean | bigint
+boolean & bigint
+X extends Y ? boolean : bigint
+boolean | symbol
+boolean & symbol
+X extends Y ? boolean : symbol
+boolean | any
+boolean & any
+X extends Y ? boolean : any
+boolean | unknown
+boolean & unknown
+X extends Y ? boolean : unknown
+boolean | never
+boolean & never
+X extends Y ? boolean : never
+boolean | void
+boolean & void
+X extends Y ? boolean : void
+boolean | null
+boolean & null
+X extends Y ? boolean : null
+boolean | undefined
+boolean & undefined
+X extends Y ? boolean : undefined
+boolean | object
+boolean & object
+X extends Y ? boolean : object
+boolean | A
+boolean & A
+X extends Y ? boolean : A
+boolean | B
+boolean & B
+X extends Y ? boolean : B
+boolean | Object
+boolean & Object
+X extends Y ? boolean : Object
+boolean | "s"
+boolean & "s"
+X extends Y ? boolean : "s"
+boolean | 1
+boolean & 1
+X extends Y ? boolean : 1
+boolean | true
+boolean & true
+X extends Y ? boolean : true
+boolean | A[]
+boolean & A[]
+X extends Y ? boolean : A[]
+boolean | [A]
+boolean & [A]
+X extends Y ? boolean : [A]
+boolean | () => void
+boolean & () => void
+X extends Y ? boolean : () => void
+boolean | { a: A }
+boolean & { a: A }
+X extends Y ? boolean : { a: A }
+boolean | keyof A
+boolean & keyof A
+X extends Y ? boolean : keyof A
+boolean | typeof a
+boolean & typeof a
+X extends Y ? boolean : typeof a
+boolean | A.B
+boolean & A.B
+X extends Y ? boolean : A.B
+boolean | A<B>
+boolean & A<B>
+X extends Y ? boolean : A<B>
+boolean | `a${A}`
+boolean & `a${A}`
+X extends Y ? boolean : `a${A}`
+boolean | this
+boolean & this
+X extends Y ? boolean : this
+boolean | (string)
+boolean & (string)
+X extends Y ? boolean : (string)
+boolean | (A | null)
+boolean & (A | null)
+X extends Y ? boolean : (A | null)
+bigint | string
+bigint & string
+X extends Y ? bigint : string
+bigint | number
+bigint & number
+X extends Y ? bigint : number
+bigint | boolean
+bigint & boolean
+X extends Y ? bigint : boolean
+bigint | bigint
+bigint & bigint
+X extends Y ? bigint : bigint
+bigint | symbol
+bigint & symbol
+X extends Y ? bigint : symbol
+bigint | any
+bigint & any
+X extends Y ? bigint : any
+bigint | unknown
+bigint & unknown
+X extends Y ? bigint : unknown
+bigint | never
+bigint & never
+X extends Y ? bigint : never
+bigint | void
+bigint & void
+X extends Y ? bigint : void
+bigint | null
+bigint & null
+X extends Y ? bigint : null
+bigint | undefined
+bigint & undefined
+X extends Y ? bigint : undefined
+bigint | object
+bigint & object
+X extends Y ? bigint : object
+bigint | A
+bigint & A
+X extends Y ? bigint : A
+bigint | B
+bigint & B
+X extends Y ? bigint : B
+bigint | Object
+bigint & Object
+X extends Y ? bigint : Object
+bigint | "s"
+bigint & "s"
+X extends Y ? bigint : "s"
+bigint | 1
+bigint & 1
+X extends Y ? bigint : 1
+bigint | true
+bigint & true
+X extends Y ? bigint : true
+bigint | A[]
+bigint & A[]
+X extends Y ? bigint : A[]
+bigint | [A]
+bigint & [A]
+X extends Y ? bigint : [A]
+bigint | () => void
+bigint & () => void
+X extends Y ? bigint : () => void
+bigint | { a: A }
+bigint & { a: A }
+X extends Y ? bigint : { a: A }
+bigint | keyof A
+bigint & keyof A
+X extends Y ? bigint : keyof A
+bigint | typeof a
+bigint & typeof a
+X extends Y ? bigint : typeof a
+bigint | A.B
+bigint & A.B
+X extends Y ? bigint : A.B
+bigint | A<B>
+bigint & A<B>
+X extends Y ? bigint : A<B>
+bigint | `a${A}`
+bigint & `a${A}`
+X extends Y ? bigint : `a${A}`
+bigint | this
+bigint & this
+X extends Y ? bigint : this
+bigint | (string)
+bigint & (string)
+X extends Y ? bigint : (string)
+bigint | (A | null)
+bigint & (A | null)
+X extends Y ? bigint : (A | null)
+symbol | string
+symbol & string
+X extends Y ? symbol : string
+symbol | number
+symbol & number
+X extends Y ? symbol : number
+symbol | boolean
+symbol & boolean
+X extends Y ? symbol : boolean
+symbol | bigint
+symbol & bigint
+X extends Y ? symbol : bigint
+symbol | symbol
+symbol & symbol
+X extends Y ? symbol : symbol
+symbol | any
+symbol & any
+X extends Y ? symbol : any
+symbol | unknown
+symbol & unknown
+X extends Y ? symbol : unknown
+symbol | never
+symbol & never
+X extends Y ? symbol : never
+symbol | void
+symbol & void
+X extends Y ? symbol : void
+symbol | null
+symbol & null
+X extends Y ? symbol : null
+symbol | undefined
+symbol & undefined
+X extends Y ? symbol : undefined
+symbol | object
+symbol & object
+X extends Y ? symbol : object
+symbol | A
+symbol & A
+X extends Y ? symbol : A
+symbol | B
+symbol & B
+X extends Y ? symbol : B
+symbol | Object
+symbol & Object
+X extends Y ? symbol : Object
+symbol | "s"
+symbol & "s"
+X extends Y ? symbol : "s"
+symbol | 1
+symbol & 1
+X extends Y ? symbol : 1
+symbol | true
+symbol & true
+X extends Y ? symbol : true
+symbol | A[]
+symbol & A[]
+X extends Y ? symbol : A[]
+symbol | [A]
+symbol & [A]
+X extends Y ? symbol : [A]
+symbol | () => void
+symbol & () => void
+X extends Y ? symbol : () => void
+symbol | { a: A }
+symbol & { a: A }
+X extends Y ? symbol : { a: A }
+symbol | keyof A
+symbol & keyof A
+X extends Y ? symbol : keyof A
+symbol | typeof a
+symbol & typeof a
+X extends Y ? symbol : typeof a
+symbol | A.B
+symbol & A.B
+X extends Y ? symbol : A.B
+symbol | A<B>
+symbol & A<B>
+X extends Y ? symbol : A<B>
+symbol | `a${A}`
+symbol & `a${A}`
+X extends Y ? symbol : `a${A}`
+symbol | this
+symbol & this
+X extends Y ? symbol : this
+symbol | (string)
+symbol & (string)
+X extends Y ? symbol : (string)
+symbol | (A | null)
+symbol & (A | null)
+X extends Y ? symbol : (A | null)
+any | string
+any & string
+X extends Y ? any : string
+any | number
+any & number
+X extends Y ? any : number
+any | boolean
+any & boolean
+X extends Y ? any : boolean
+any | bigint
+any & bigint
+X extends Y ? any : bigint
+any | symbol
+any & symbol
+X extends Y ? any : symbol
+any | any
+any & any
+X extends Y ? any : any
+any | unknown
+any & unknown
+X extends Y ? any : unknown
+any | never
+any & never
+X extends Y ? any : never
+any | void
+any & void
+X extends Y ? any : void
+any | null
+any & null
+X extends Y ? any : null
+any | undefined
+any & undefined
+X extends Y ? any : undefined
+any | object
+any & object
+X extends Y ? any : object
+any | A
+any & A
+X extends Y ? any : A
+any | B
+any & B
+X extends Y ? any : B
+any | Object
+any & Object
+X extends Y ? any : Object
+any | "s"
+any & "s"
+X extends Y ? any : "s"
+any | 1
+any & 1
+X extends Y ? any : 1
+any | true
+any & true
+X extends Y ? any : true
+any | A[]
+any & A[]
+X extends Y ? any : A[]
+any | [A]
+any & [A]
+X extends Y ? any : [A]
+any | () => void
+any & () => void
+X extends Y ? any : () => void
+any | { a: A }
+any & { a: A }
+X extends Y ? any : { a: A }
+any | keyof A
+any & keyof A
+X extends Y ? any : keyof A
+any | typeof a
+any & typeof a
+X extends Y ? any : typeof a
+any | A.B
+any & A.B
+X extends Y ? any : A.B
+any | A<B>
+any & A<B>
+X extends Y ? any : A<B>
+any | `a${A}`
+any & `a${A}`
+X extends Y ? any : `a${A}`
+any | this
+any & this
+X extends Y ? any : this
+any | (string)
+any & (string)
+X extends Y ? any : (string)
+any | (A | null)
+any & (A | null)
+X extends Y ? any : (A | null)
+unknown | string
+unknown & string
+X extends Y ? unknown : string
+unknown | number
+unknown & number
+X extends Y ? unknown : number
+unknown | boolean
+unknown & boolean
+X extends Y ? unknown : boolean
+unknown | bigint
+unknown & bigint
+X extends Y ? unknown : bigint
+unknown | symbol
+unknown & symbol
+X extends Y ? unknown : symbol
+unknown | any
+unknown & any
+X extends Y ? unknown : any
+unknown | unknown
+unknown & unknown
+X extends Y ? unknown : unknown
+unknown | never
+unknown & never
+X extends Y ? unknown : never
+unknown | void
+unknown & void
+X extends Y ? unknown : void
+unknown | null
+unknown & null
+X extends Y ? unknown : null
+unknown | undefined
+unknown & undefined
+X extends Y ? unknown : undefined
+unknown | object
+unknown & object
+X extends Y ? unknown : object
+unknown | A
+unknown & A
+X extends Y ? unknown : A
+unknown | B
+unknown & B
+X extends Y ? unknown : B
+unknown | Object
+unknown & Object
+X extends Y ? unknown : Object
+unknown | "s"
+unknown & "s"
+X extends Y ? unknown : "s"
+unknown | 1
+unknown & 1
+X extends Y ? unknown : 1
+unknown | true
+unknown & true
+X extends Y ? unknown : true
+unknown | A[]
+unknown & A[]
+X extends Y ? unknown : A[]
+unknown | [A]
+unknown & [A]
+X extends Y ? unknown : [A]
+unknown | () => void
+unknown & () => void
+X extends Y ? unknown : () => void
+unknown | { a: A }
+unknown & { a: A }
+X extends Y ? unknown : { a: A }
+unknown | keyof A
+unknown & keyof A
+X extends Y ? unknown : keyof A
+unknown | typeof a
+unknown & typeof a
+X extends Y ? unknown : typeof a
+unknown | A.B
+unknown & A.B
+X extends Y ? unknown : A.B
+unknown | A<B>
+unknown & A<B>
+X extends Y ? unknown : A<B>
+unknown | `a${A}`
+unknown & `a${A}`
+X extends Y ? unknown : `a${A}`
+unknown | this
+unknown & this
+X extends Y ? unknown : this
+unknown | (string)
+unknown & (string)
+X extends Y ? unknown : (string)
+unknown | (A | null)
+unknown & (A | null)
+X extends Y ? unknown : (A | null)
+never | string
+never & string
+X extends Y ? never : string
+never | number
+never & number
+X extends Y ? never : number
+never | boolean
+never & boolean
+X extends Y ? never : boolean
+never | bigint
+never & bigint
+X extends Y ? never : bigint
+never | symbol
+never & symbol
+X extends Y ? never : symbol
+never | any
+never & any
+X extends Y ? never : any
+never | unknown
+never & unknown
+X extends Y ? never : unknown
+never | never
+never & never
+X extends Y ? never : never
+never | void
+never & void
+X extends Y ? never : void
+never | null
+never & null
+X extends Y ? never : null
+never | undefined
+never & undefined
+X extends Y ? never : undefined
+never | object
+never & object
+X extends Y ? never : object
+never | A
+never & A
+X extends Y ? never : A
+never | B
+never & B
+X extends Y ? never : B
+never | Object
+never & Object
+X extends Y ? never : Object
+never | "s"
+never & "s"
+X extends Y ? never : "s"
+never | 1
+never & 1
+X extends Y ? never : 1
+never | true
+never & true
+X extends Y ? never : true
+never | A[]
+never & A[]
+X extends Y ? never : A[]
+never | [A]
+never & [A]
+X extends Y ? never : [A]
+never | () => void
+never & () => void
+X extends Y ? never : () => void
+never | { a: A }
+never & { a: A }
+X extends Y ? never : { a: A }
+never | keyof A
+never & keyof A
+X extends Y ? never : keyof A
+never | typeof a
+never & typeof a
+X extends Y ? never : typeof a
+never | A.B
+never & A.B
+X extends Y ? never : A.B
+never | A<B>
+never & A<B>
+X extends Y ? never : A<B>
+never | `a${A}`
+never & `a${A}`
+X extends Y ? never : `a${A}`
+never | this
+never & this
+X extends Y ? never : this
+never | (string)
+never & (string)
+X extends Y ? never : (string)
+never | (A | null)
+never & (A | null)
+X extends Y ? never : (A | null)
+void | string
+void & string
+X extends Y ? void : string
+void | number
+void & number
+X extends Y ? void : number
+void | boolean
+void & boolean
+X extends Y ? void : boolean
+void | bigint
+void & bigint
+X extends Y ? void : bigint
+void | symbol
+void & symbol
+X extends Y ? void : symbol
+void | any
+void & any
+X extends Y ? void : any
+void | unknown
+void & unknown
+X extends Y ? void : unknown
+void | never
+void & never
+X extends Y ? void : never
+void | void
+void & void
+X extends Y ? void : void
+void | null
+void & null
+X extends Y ? void : null
+void | undefined
+void & undefined
+X extends Y ? void : undefined
+void | object
+void & object
+X extends Y ? void : object
+void | A
+void & A
+X extends Y ? void : A
+void | B
+void & B
+X extends Y ? void : B
+void | Object
+void & Object
+X extends Y ? void : Object
+void | "s"
+void & "s"
+X extends Y ? void : "s"
+void | 1
+void & 1
+X extends Y ? void : 1
+void | true
+void & true
+X extends Y ? void : true
+void | A[]
+void & A[]
+X extends Y ? void : A[]
+void | [A]
+void & [A]
+X extends Y ? void : [A]
+void | () => void
+void & () => void
+X extends Y ? void : () => void
+void | { a: A }
+void & { a: A }
+X extends Y ? void : { a: A }
+void | keyof A
+void & keyof A
+X extends Y ? void : keyof A
+void | typeof a
+void & typeof a
+X extends Y ? void : typeof a
+void | A.B
+void & A.B
+X extends Y ? void : A.B
+void | A<B>
+void & A<B>
+X extends Y ? void : A<B>
+void | `a${A}`
+void & `a${A}`
+X extends Y ? void : `a${A}`
+void | this
+void & this
+X extends Y ? void : this
+void | (string)
+void & (string)
+X extends Y ? void : (string)
+void | (A | null)
+void & (A | null)
+X extends Y ? void : (A | null)
+null | string
+null & string
+X extends Y ? null : string
+null | number
+null & number
+X extends Y ? null : number
+null | boolean
+null & boolean
+X extends Y ? null : boolean
+null | bigint
+null & bigint
+X extends Y ? null : bigint
+null | symbol
+null & symbol
+X extends Y ? null : symbol
+null | any
+null & any
+X extends Y ? null : any
+null | unknown
+null & unknown
+X extends Y ? null : unknown
+null | never
+null & never
+X extends Y ? null : never
+null | void
+null & void
+X extends Y ? null : void
+null | null
+null & null
+X extends Y ? null : null
+null | undefined
+null & undefined
+X extends Y ? null : undefined
+null | object
+null & object
+X extends Y ? null : object
+null | A
+null & A
+X extends Y ? null : A
+null | B
+null & B
+X extends Y ? null : B
+null | Object
+null & Object
+X extends Y ? null : Object
+null | "s"
+null & "s"
+X extends Y ? null : "s"
+null | 1
+null & 1
+X extends Y ? null : 1
+null | true
+null & true
+X extends Y ? null : true
+null | A[]
+null & A[]
+X extends Y ? null : A[]
+null | [A]
+null & [A]
+X extends Y ? null : [A]
+null | () => void
+null & () => void
+X extends Y ? null : () => void
+null | { a: A }
+null & { a: A }
+X extends Y ? null : { a: A }
+null | keyof A
+null & keyof A
+X extends Y ? null : keyof A
+null | typeof a
+null & typeof a
+X extends Y ? null : typeof a
+null | A.B
+null & A.B
+X extends Y ? null : A.B
+null | A<B>
+null & A<B>
+X extends Y ? null : A<B>
+null | `a${A}`
+null & `a${A}`
+X extends Y ? null : `a${A}`
+null | this
+null & this
+X extends Y ? null : this
+null | (string)
+null & (string)
+X extends Y ? null : (string)
+null | (A | null)
+null & (A | null)
+X extends Y ? null : (A | null)
+undefined | string
+undefined & string
+X extends Y ? undefined : string
+undefined | number
+undefined & number
+X extends Y ? undefined : number
+undefined | boolean
+undefined & boolean
+X extends Y ? undefined : boolean
+undefined | bigint
+undefined & bigint
+X extends Y ? undefined : bigint
+undefined | symbol
+undefined & symbol
+X extends Y ? undefined : symbol
+undefined | any
+undefined & any
+X extends Y ? undefined : any
+undefined | unknown
+undefined & unknown
+X extends Y ? undefined : unknown
+undefined | never
+undefined & never
+X extends Y ? undefined : never
+undefined | void
+undefined & void
+X extends Y ? undefined : void
+undefined | null
+undefined & null
+X extends Y ? undefined : null
+undefined | undefined
+undefined & undefined
+X extends Y ? undefined : undefined
+undefined | object
+undefined & object
+X extends Y ? undefined : object
+undefined | A
+undefined & A
+X extends Y ? undefined : A
+undefined | B
+undefined & B
+X extends Y ? undefined : B
+undefined | Object
+undefined & Object
+X extends Y ? undefined : Object
+undefined | "s"
+undefined & "s"
+X extends Y ? undefined : "s"
+undefined | 1
+undefined & 1
+X extends Y ? undefined : 1
+undefined | true
+undefined & true
+X extends Y ? undefined : true
+undefined | A[]
+undefined & A[]
+X extends Y ? undefined : A[]
+undefined | [A]
+undefined & [A]
+X extends Y ? undefined : [A]
+undefined | () => void
+undefined & () => void
+X extends Y ? undefined : () => void
+undefined | { a: A }
+undefined & { a: A }
+X extends Y ? undefined : { a: A }
+undefined | keyof A
+undefined & keyof A
+X extends Y ? undefined : keyof A
+undefined | typeof a
+undefined & typeof a
+X extends Y ? undefined : typeof a
+undefined | A.B
+undefined & A.B
+X extends Y ? undefined : A.B
+undefined | A<B>
+undefined & A<B>
+X extends Y ? undefined : A<B>
+undefined | `a${A}`
+undefined & `a${A}`
+X extends Y ? undefined : `a${A}`
+undefined | this
+undefined & this
+X extends Y ? undefined : this
+undefined | (string)
+undefined & (string)
+X extends Y ? undefined : (string)
+undefined | (A | null)
+undefined & (A | null)
+X extends Y ? undefined : (A | null)
+object | string
+object & string
+X extends Y ? object : string
+object | number
+object & number
+X extends Y ? object : number
+object | boolean
+object & boolean
+X extends Y ? object : boolean
+object | bigint
+object & bigint
+X extends Y ? object : bigint
+object | symbol
+object & symbol
+X extends Y ? object : symbol
+object | any
+object & any
+X extends Y ? object : any
+object | unknown
+object & unknown
+X extends Y ? object : unknown
+object | never
+object & never
+X extends Y ? object : never
+object | void
+object & void
+X extends Y ? object : void
+object | null
+object & null
+X extends Y ? object : null
+object | undefined
+object & undefined
+X extends Y ? object : undefined
+object | object
+object & object
+X extends Y ? object : object
+object | A
+object & A
+X extends Y ? object : A
+object | B
+object & B
+X extends Y ? object : B
+object | Object
+object & Object
+X extends Y ? object : Object
+object | "s"
+object & "s"
+X extends Y ? object : "s"
+object | 1
+object & 1
+X extends Y ? object : 1
+object | true
+object & true
+X extends Y ? object : true
+object | A[]
+object & A[]
+X extends Y ? object : A[]
+object | [A]
+object & [A]
+X extends Y ? object : [A]
+object | () => void
+object & () => void
+X extends Y ? object : () => void
+object | { a: A }
+object & { a: A }
+X extends Y ? object : { a: A }
+object | keyof A
+object & keyof A
+X extends Y ? object : keyof A
+object | typeof a
+object & typeof a
+X extends Y ? object : typeof a
+object | A.B
+object & A.B
+X extends Y ? object : A.B
+object | A<B>
+object & A<B>
+X extends Y ? object : A<B>
+object | `a${A}`
+object & `a${A}`
+X extends Y ? object : `a${A}`
+object | this
+object & this
+X extends Y ? object : this
+object | (string)
+object & (string)
+X extends Y ? object : (string)
+object | (A | null)
+object & (A | null)
+X extends Y ? object : (A | null)
+A | string
+A & string
+X extends Y ? A : string
+A | number
+A & number
+X extends Y ? A : number
+A | boolean
+A & boolean
+X extends Y ? A : boolean
+A | bigint
+A & bigint
+X extends Y ? A : bigint
+A | symbol
+A & symbol
+X extends Y ? A : symbol
+A | any
+A & any
+X extends Y ? A : any
+A | unknown
+A & unknown
+X extends Y ? A : unknown
+A | never
+A & never
+X extends Y ? A : never
+A | void
+A & void
+X extends Y ? A : void
+A | null
+A & null
+X extends Y ? A : null
+A | undefined
+A & undefined
+X extends Y ? A : undefined
+A | object
+A & object
+X extends Y ? A : object
+A | A
+A & A
+X extends Y ? A : A
+X extends Y ? A : B
+A | Object
+A & Object
+X extends Y ? A : Object
+A | "s"
+A & "s"
+X extends Y ? A : "s"
+A | 1
+A & 1
+X extends Y ? A : 1
+A | true
+A & true
+X extends Y ? A : true
+A | A[]
+A & A[]
+X extends Y ? A : A[]
+A | [A]
+A & [A]
+X extends Y ? A : [A]
+X extends Y ? A : () => void
+A & { a: A }
+X extends Y ? A : { a: A }
+A | keyof A
+A & keyof A
+X extends Y ? A : keyof A
+A | typeof a
+A & typeof a
+X extends Y ? A : typeof a
+A | A.B
+A & A.B
+X extends Y ? A : A.B
+A | A<B>
+A & A<B>
+X extends Y ? A : A<B>
+A | `a${A}`
+A & `a${A}`
+X extends Y ? A : `a${A}`
+A & this
+X extends Y ? A : this
+A | (string)
+A & (string)
+X extends Y ? A : (string)
+A | (A | null)
+A & (A | null)
+X extends Y ? A : (A | null)
+B | string
+B & string
+X extends Y ? B : string
+B | number
+B & number
+X extends Y ? B : number
+B | boolean
+B & boolean
+X extends Y ? B : boolean
+B | bigint
+B & bigint
+X extends Y ? B : bigint
+B | symbol
+B & symbol
+X extends Y ? B : symbol
+B | any
+B & any
+X extends Y ? B : any
+B | unknown
+B & unknown
+X extends Y ? B : unknown
+B | never
+B & never
+X extends Y ? B : never
+B | void
+B & void
+X extends Y ? B : void
+B | null
+B & null
+X extends Y ? B : null
+B | undefined
+B & undefined
+X extends Y ? B : undefined
+B | object
+B & object
+X extends Y ? B : object
+B | A
+B & A
+X extends Y ? B : A
+B | B
+B & B
+X extends Y ? B : B
+B | Object
+B & Object
+X extends Y ? B : Object
+B | "s"
+B & "s"
+X extends Y ? B : "s"
+B | 1
+B & 1
+X extends Y ? B : 1
+B | true
+B & true
+X extends Y ? B : true
+B | A[]
+B & A[]
+X extends Y ? B : A[]
+B | [A]
+B & [A]
+X extends Y ? B : [A]
+B | () => void
+B & () => void
+X extends Y ? B : () => void
+B | { a: A }
+B & { a: A }
+X extends Y ? B : { a: A }
+B | keyof A
+B & keyof A
+X extends Y ? B : keyof A
+B | typeof a
+B & typeof a
+X extends Y ? B : typeof a
+B | A.B
+B & A.B
+X extends Y ? B : A.B
+B | A<B>
+B & A<B>
+X extends Y ? B : A<B>
+B | `a${A}`
+B & `a${A}`
+X extends Y ? B : `a${A}`
+B | this
+B & this
+X extends Y ? B : this
+B | (string)
+B & (string)
+X extends Y ? B : (string)
+B | (A | null)
+B & (A | null)
+X extends Y ? B : (A | null)
+Object | string
+Object & string
+X extends Y ? Object : string
+Object | number
+Object & number
+X extends Y ? Object : number
+Object | boolean
+Object & boolean
+X extends Y ? Object : boolean
+Object | bigint
+Object & bigint
+X extends Y ? Object : bigint
+Object | symbol
+Object & symbol
+X extends Y ? Object : symbol
+Object | any
+Object & any
+X extends Y ? Object : any
+Object | unknown
+Object & unknown
+X extends Y ? Object : unknown
+Object | never
+Object & never
+X extends Y ? Object : never
+Object | void
+Object & void
+X extends Y ? Object : void
+Object | null
+Object & null
+X extends Y ? Object : null
+Object | undefined
+Object & undefined
+X extends Y ? Object : undefined
+Object | object
+Object & object
+X extends Y ? Object : object
+Object | A
+Object & A
+X extends Y ? Object : A
+Object | B
+Object & B
+X extends Y ? Object : B
+Object | Object
+Object & Object
+X extends Y ? Object : Object
+Object | "s"
+Object & "s"
+X extends Y ? Object : "s"
+Object | 1
+Object & 1
+X extends Y ? Object : 1
+Object | true
+Object & true
+X extends Y ? Object : true
+Object | A[]
+Object & A[]
+X extends Y ? Object : A[]
+Object | [A]
+Object & [A]
+X extends Y ? Object : [A]
+Object | () => void
+Object & () => void
+X extends Y ? Object : () => void
+Object | { a: A }
+Object & { a: A }
+X extends Y ? Object : { a: A }
+Object | keyof A
+Object & keyof A
+X extends Y ? Object : keyof A
+Object | typeof a
+Object & typeof a
+X extends Y ? Object : typeof a
+Object | A.B
+Object & A.B
+X extends Y ? Object : A.B
+Object | A<B>
+Object & A<B>
+X extends Y ? Object : A<B>
+Object | `a${A}`
+Object & `a${A}`
+X extends Y ? Object : `a${A}`
+Object | this
+Object & this
+X extends Y ? Object : this
+Object | (string)
+Object & (string)
+X extends Y ? Object : (string)
+Object | (A | null)
+Object & (A | null)
+X extends Y ? Object : (A | null)
+"s" | string
+"s" & string
+X extends Y ? "s" : string
+"s" | number
+"s" & number
+X extends Y ? "s" : number
+"s" | boolean
+"s" & boolean
+X extends Y ? "s" : boolean
+"s" | bigint
+"s" & bigint
+X extends Y ? "s" : bigint
+"s" | symbol
+"s" & symbol
+X extends Y ? "s" : symbol
+"s" | any
+"s" & any
+X extends Y ? "s" : any
+"s" | unknown
+"s" & unknown
+X extends Y ? "s" : unknown
+"s" | never
+"s" & never
+X extends Y ? "s" : never
+"s" | void
+"s" & void
+X extends Y ? "s" : void
+"s" | null
+"s" & null
+X extends Y ? "s" : null
+"s" | undefined
+"s" & undefined
+X extends Y ? "s" : undefined
+"s" | object
+"s" & object
+X extends Y ? "s" : object
+"s" | A
+"s" & A
+X extends Y ? "s" : A
+"s" | B
+"s" & B
+X extends Y ? "s" : B
+"s" | Object
+"s" & Object
+X extends Y ? "s" : Object
+"s" | "s"
+"s" & "s"
+X extends Y ? "s" : "s"
+"s" | 1
+"s" & 1
+X extends Y ? "s" : 1
+"s" | true
+"s" & true
+X extends Y ? "s" : true
+"s" | A[]
+"s" & A[]
+X extends Y ? "s" : A[]
+"s" | [A]
+"s" & [A]
+X extends Y ? "s" : [A]
+"s" | () => void
+"s" & () => void
+X extends Y ? "s" : () => void
+"s" | { a: A }
+"s" & { a: A }
+X extends Y ? "s" : { a: A }
+"s" | keyof A
+"s" & keyof A
+X extends Y ? "s" : keyof A
+"s" | typeof a
+"s" & typeof a
+X extends Y ? "s" : typeof a
+"s" | A.B
+"s" & A.B
+X extends Y ? "s" : A.B
+"s" | A<B>
+"s" & A<B>
+X extends Y ? "s" : A<B>
+"s" | `a${A}`
+"s" & `a${A}`
+X extends Y ? "s" : `a${A}`
+"s" | this
+"s" & this
+X extends Y ? "s" : this
+"s" | (string)
+"s" & (string)
+X extends Y ? "s" : (string)
+"s" | (A | null)
+"s" & (A | null)
+X extends Y ? "s" : (A | null)
+1 | string
+1 & string
+X extends Y ? 1 : string
+1 | number
+1 & number
+X extends Y ? 1 : number
+1 | boolean
+1 & boolean
+X extends Y ? 1 : boolean
+1 | bigint
+1 & bigint
+X extends Y ? 1 : bigint
+1 | symbol
+1 & symbol
+X extends Y ? 1 : symbol
+1 | any
+1 & any
+X extends Y ? 1 : any
+1 | unknown
+1 & unknown
+X extends Y ? 1 : unknown
+1 | never
+1 & never
+X extends Y ? 1 : never
+1 | void
+1 & void
+X extends Y ? 1 : void
+1 | null
+1 & null
+X extends Y ? 1 : null
+1 | undefined
+1 & undefined
+X extends Y ? 1 : undefined
+1 | object
+1 & object
+X extends Y ? 1 : object
+1 | A
+1 & A
+X extends Y ? 1 : A
+1 | B
+1 & B
+X extends Y ? 1 : B
+1 | Object
+1 & Object
+X extends Y ? 1 : Object
+1 | "s"
+1 & "s"
+X extends Y ? 1 : "s"
+1 | 1
+1 & 1
+X extends Y ? 1 : 1
+1 | true
+1 & true
+X extends Y ? 1 : true
+1 | A[]
+1 & A[]
+X extends Y ? 1 : A[]
+1 | [A]
+1 & [A]
+X extends Y ? 1 : [A]
+1 | () => void
+1 & () => void
+X extends Y ? 1 : () => void
+1 | { a: A }
+1 & { a: A }
+X extends Y ? 1 : { a: A }
+1 | keyof A
+1 & keyof A
+X extends Y ? 1 : keyof A
+1 | typeof a
+1 & typeof a
+X extends Y ? 1 : typeof a
+1 | A.B
+1 & A.B
+X extends Y ? 1 : A.B
+1 | A<B>
+1 & A<B>
+X extends Y ? 1 : A<B>
+1 | `a${A}`
+1 & `a${A}`
+X extends Y ? 1 : `a${A}`
+1 | this
+1 & this
+X extends Y ? 1 : this
+1 | (string)
+1 & (string)
+X extends Y ? 1 : (string)
+1 | (A | null)
+1 & (A | null)
+X extends Y ? 1 : (A | null)
+true | string
+true & string
+X extends Y ? true : string
+true | number
+true & number
+X extends Y ? true : number
+true | boolean
+true & boolean
+X extends Y ? true : boolean
+true | bigint
+true & bigint
+X extends Y ? true : bigint
+true | symbol
+true & symbol
+X extends Y ? true : symbol
+true | any
+true & any
+X extends Y ? true : any
+true | unknown
+true & unknown
+X extends Y ? true : unknown
+true | never
+true & never
+X extends Y ? true : never
+true | void
+true & void
+X extends Y ? true : void
+true | null
+true & null
+X extends Y ? true : null
+true | undefined
+true & undefined
+X extends Y ? true : undefined
+true | object
+true & object
+X extends Y ? true : object
+true | A
+true & A
+X extends Y ? true : A
+true | B
+true & B
+X extends Y ? true : B
+true | Object
+true & Object
+X extends Y ? true : Object
+true | "s"
+true & "s"
+X extends Y ? true : "s"
+true | 1
+true & 1
+X extends Y ? true : 1
+true | true
+true & true
+X extends Y ? true : true
+true | A[]
+true & A[]
+X extends Y ? true : A[]
+true | [A]
+true & [A]
+X extends Y ? true : [A]
+true | () => void
+true & () => void
+X extends Y ? true : () => void
+true | { a: A }
+true & { a: A }
+X extends Y ? true : { a: A }
+true | keyof A
+true & keyof A
+X extends Y ? true : keyof A
+true | typeof a
+true & typeof a
+X extends Y ? true : typeof a
+true | A.B
+true & A.B
+X extends Y ? true : A.B
+true | A<B>
+true & A<B>
+X extends Y ? true : A<B>
+true | `a${A}`
+true & `a${A}`
+X extends Y ? true : `a${A}`
+true | this
+true & this
+X extends Y ? true : this
+true | (string)
+true & (string)
+X extends Y ? true : (string)
+true | (A | null)
+true & (A | null)
+X extends Y ? true : (A | null)
+A[] | string
+A[] & string
+X extends Y ? A[] : string
+A[] | number
+A[] & number
+X extends Y ? A[] : number
+A[] | boolean
+A[] & boolean
+X extends Y ? A[] : boolean
+A[] | bigint
+A[] & bigint
+X extends Y ? A[] : bigint
+A[] | symbol
+A[] & symbol
+X extends Y ? A[] : symbol
+A[] | any
+A[] & any
+X extends Y ? A[] : any
+A[] | unknown
+A[] & unknown
+X extends Y ? A[] : unknown
+A[] | never
+A[] & never
+X extends Y ? A[] : never
+A[] | void
+A[] & void
+X extends Y ? A[] : void
+A[] | null
+A[] & null
+X extends Y ? A[] : null
+A[] | undefined
+A[] & undefined
+X extends Y ? A[] : undefined
+A[] | object
+A[] & object
+X extends Y ? A[] : object
+A[] | A
+A[] & A
+X extends Y ? A[] : A
+A[] & B
+X extends Y ? A[] : B
+A[] | Object
+A[] & Object
+X extends Y ? A[] : Object
+A[] | "s"
+A[] & "s"
+X extends Y ? A[] : "s"
+A[] | 1
+A[] & 1
+X extends Y ? A[] : 1
+A[] | true
+A[] & true
+X extends Y ? A[] : true
+A[] | A[]
+A[] & A[]
+X extends Y ? A[] : A[]
+A[] | [A]
+A[] & [A]
+X extends Y ? A[] : [A]
+A[] | () => void
+A[] & () => void
+X extends Y ? A[] : () => void
+A[] | { a: A }
+A[] & { a: A }
+X extends Y ? A[] : { a: A }
+A[] | keyof A
+A[] & keyof A
+X extends Y ? A[] : keyof A
+A[] | typeof a
+A[] & typeof a
+X extends Y ? A[] : typeof a
+A[] | A.B
+A[] & A.B
+X extends Y ? A[] : A.B
+A[] | A<B>
+A[] & A<B>
+X extends Y ? A[] : A<B>
+A[] | `a${A}`
+A[] & `a${A}`
+X extends Y ? A[] : `a${A}`
+A[] | this
+A[] & this
+X extends Y ? A[] : this
+A[] | (string)
+A[] & (string)
+X extends Y ? A[] : (string)
+A[] | (A | null)
+A[] & (A | null)
+X extends Y ? A[] : (A | null)
+[A] | string
+[A] & string
+X extends Y ? [A] : string
+[A] | number
+[A] & number
+X extends Y ? [A] : number
+[A] | boolean
+[A] & boolean
+X extends Y ? [A] : boolean
+[A] | bigint
+[A] & bigint
+X extends Y ? [A] : bigint
+[A] | symbol
+[A] & symbol
+X extends Y ? [A] : symbol
+[A] | any
+[A] & any
+X extends Y ? [A] : any
+[A] | unknown
+[A] & unknown
+X extends Y ? [A] : unknown
+[A] | never
+[A] & never
+X extends Y ? [A] : never
+[A] | void
+[A] & void
+X extends Y ? [A] : void
+[A] | null
+[A] & null
+X extends Y ? [A] : null
+[A] | undefined
+[A] & undefined
+X extends Y ? [A] : undefined
+[A] | object
+[A] & object
+X extends Y ? [A] : object
+[A] | A
+[A] & A
+X extends Y ? [A] : A
+[A] | B
+[A] & B
+X extends Y ? [A] : B
+[A] | Object
+[A] & Object
+X extends Y ? [A] : Object
+[A] | "s"
+[A] & "s"
+X extends Y ? [A] : "s"
+[A] | 1
+[A] & 1
+X extends Y ? [A] : 1
+[A] | true
+[A] & true
+X extends Y ? [A] : true
+[A] | A[]
+[A] & A[]
+X extends Y ? [A] : A[]
+[A] | [A]
+[A] & [A]
+X extends Y ? [A] : [A]
+[A] | () => void
+[A] & () => void
+X extends Y ? [A] : () => void
+[A] | { a: A }
+[A] & { a: A }
+X extends Y ? [A] : { a: A }
+[A] | keyof A
+[A] & keyof A
+X extends Y ? [A] : keyof A
+[A] | typeof a
+[A] & typeof a
+X extends Y ? [A] : typeof a
+[A] | A.B
+[A] & A.B
+X extends Y ? [A] : A.B
+[A] | A<B>
+[A] & A<B>
+X extends Y ? [A] : A<B>
+[A] | `a${A}`
+[A] & `a${A}`
+X extends Y ? [A] : `a${A}`
+[A] | this
+[A] & this
+X extends Y ? [A] : this
+[A] | (string)
+[A] & (string)
+X extends Y ? [A] : (string)
+[A] | (A | null)
+[A] & (A | null)
+X extends Y ? [A] : (A | null)
+() => void | string
+() => void & string
+X extends Y ? () => void : string
+() => void | number
+() => void & number
+X extends Y ? () => void : number
+() => void | boolean
+() => void & boolean
+X extends Y ? () => void : boolean
+() => void | bigint
+() => void & bigint
+X extends Y ? () => void : bigint
+() => void | symbol
+() => void & symbol
+X extends Y ? () => void : symbol
+() => void | any
+() => void & any
+X extends Y ? () => void : any
+() => void | unknown
+() => void & unknown
+X extends Y ? () => void : unknown
+() => void | never
+() => void & never
+X extends Y ? () => void : never
+() => void | void
+() => void & void
+X extends Y ? () => void : void
+() => void | null
+() => void & null
+X extends Y ? () => void : null
+() => void | undefined
+() => void & undefined
+X extends Y ? () => void : undefined
+() => void | object
+() => void & object
+X extends Y ? () => void : object
+() => void | A
+() => void & A
+X extends Y ? () => void : A
+() => void | B
+() => void & B
+X extends Y ? () => void : B
+() => void | Object
+() => void & Object
+X extends Y ? () => void : Object
+() => void | "s"
+() => void & "s"
+X extends Y ? () => void : "s"
+() => void | 1
+() => void & 1
+X extends Y ? () => void : 1
+() => void | true
+() => void & true
+X extends Y ? () => void : true
+() => void | A[]
+() => void & A[]
+X extends Y ? () => void : A[]
+() => void | [A]
+() => void & [A]
+X extends Y ? () => void : [A]
+() => void | () => void
+() => void & () => void
+X extends Y ? () => void : () => void
+() => void | { a: A }
+() => void & { a: A }
+X extends Y ? () => void : { a: A }
+() => void | keyof A
+() => void & keyof A
+X extends Y ? () => void : keyof A
+() => void | typeof a
+() => void & typeof a
+X extends Y ? () => void : typeof a
+() => void | A.B
+() => void & A.B
+X extends Y ? () => void : A.B
+() => void | A<B>
+() => void & A<B>
+X extends Y ? () => void : A<B>
+() => void | `a${A}`
+() => void & `a${A}`
+X extends Y ? () => void : `a${A}`
+() => void | this
+() => void & this
+X extends Y ? () => void : this
+() => void | (string)
+() => void & (string)
+X extends Y ? () => void : (string)
+() => void | (A | null)
+() => void & (A | null)
+X extends Y ? () => void : (A | null)
+{ a: A } | string
+{ a: A } & string
+X extends Y ? { a: A } : string
+{ a: A } | number
+{ a: A } & number
+X extends Y ? { a: A } : number
+{ a: A } | boolean
+{ a: A } & boolean
+X extends Y ? { a: A } : boolean
+{ a: A } | bigint
+{ a: A } & bigint
+X extends Y ? { a: A } : bigint
+{ a: A } | symbol
+{ a: A } & symbol
+X extends Y ? { a: A } : symbol
+{ a: A } | any
+{ a: A } & any
+X extends Y ? { a: A } : any
+{ a: A } | unknown
+{ a: A } & unknown
+X extends Y ? { a: A } : unknown
+{ a: A } | never
+{ a: A } & never
+X extends Y ? { a: A } : never
+{ a: A } | void
+{ a: A } & void
+X extends Y ? { a: A } : void
+{ a: A } | null
+{ a: A } & null
+X extends Y ? { a: A } : null
+{ a: A } | undefined
+{ a: A } & undefined
+X extends Y ? { a: A } : undefined
+{ a: A } | object
+{ a: A } & object
+X extends Y ? { a: A } : object
+{ a: A } | A
+{ a: A } & A
+X extends Y ? { a: A } : A
+{ a: A } | B
+{ a: A } & B
+X extends Y ? { a: A } : B
+{ a: A } | Object
+{ a: A } & Object
+X extends Y ? { a: A } : Object
+{ a: A } | "s"
+{ a: A } & "s"
+X extends Y ? { a: A } : "s"
+{ a: A } | 1
+{ a: A } & 1
+X extends Y ? { a: A } : 1
+{ a: A } | true
+{ a: A } & true
+X extends Y ? { a: A } : true
+{ a: A } | A[]
+{ a: A } & A[]
+X extends Y ? { a: A } : A[]
+{ a: A } | [A]
+{ a: A } & [A]
+X extends Y ? { a: A } : [A]
+{ a: A } | () => void
+{ a: A } & () => void
+X extends Y ? { a: A } : () => void
+{ a: A } | { a: A }
+{ a: A } & { a: A }
+X extends Y ? { a: A } : { a: A }
+{ a: A } | keyof A
+{ a: A } & keyof A
+X extends Y ? { a: A } : keyof A
+{ a: A } | typeof a
+{ a: A } & typeof a
+X extends Y ? { a: A } : typeof a
+{ a: A } | A.B
+{ a: A } & A.B
+X extends Y ? { a: A } : A.B
+{ a: A } | A<B>
+{ a: A } & A<B>
+X extends Y ? { a: A } : A<B>
+{ a: A } | `a${A}`
+{ a: A } & `a${A}`
+X extends Y ? { a: A } : `a${A}`
+{ a: A } | this
+{ a: A } & this
+X extends Y ? { a: A } : this
+{ a: A } | (string)
+{ a: A } & (string)
+X extends Y ? { a: A } : (string)
+{ a: A } | (A | null)
+{ a: A } & (A | null)
+X extends Y ? { a: A } : (A | null)
+keyof A | string
+keyof A & string
+X extends Y ? keyof A : string
+keyof A | number
+keyof A & number
+X extends Y ? keyof A : number
+keyof A | boolean
+keyof A & boolean
+X extends Y ? keyof A : boolean
+keyof A | bigint
+keyof A & bigint
+X extends Y ? keyof A : bigint
+keyof A | symbol
+keyof A & symbol
+X extends Y ? keyof A : symbol
+keyof A | any
+keyof A & any
+X extends Y ? keyof A : any
+keyof A | unknown
+keyof A & unknown
+X extends Y ? keyof A : unknown
+keyof A | never
+keyof A & never
+X extends Y ? keyof A : never
+keyof A | void
+keyof A & void
+X extends Y ? keyof A : void
+keyof A | null
+keyof A & null
+X extends Y ? keyof A : null
+keyof A | undefined
+keyof A & undefined
+X extends Y ? keyof A : undefined
+keyof A | object
+keyof A & object
+X extends Y ? keyof A : object
+keyof A | A
+keyof A & A
+X extends Y ? keyof A : A
+X extends Y ? keyof A : B
+keyof A | Object
+keyof A & Object
+X extends Y ? keyof A : Object
+keyof A | "s"
+keyof A & "s"
+X extends Y ? keyof A : "s"
+keyof A | 1
+keyof A & 1
+X extends Y ? keyof A : 1
+keyof A | true
+keyof A & true
+X extends Y ? keyof A : true
+keyof A | A[]
+keyof A & A[]
+X extends Y ? keyof A : A[]
+keyof A | [A]
+keyof A & [A]
+X extends Y ? keyof A : [A]
+keyof A | () => void
+keyof A & () => void
+X extends Y ? keyof A : () => void
+keyof A | { a: A }
+keyof A & { a: A }
+X extends Y ? keyof A : { a: A }
+keyof A | keyof A
+keyof A & keyof A
+X extends Y ? keyof A : keyof A
+keyof A | typeof a
+keyof A & typeof a
+X extends Y ? keyof A : typeof a
+keyof A | A.B
+keyof A & A.B
+X extends Y ? keyof A : A.B
+keyof A | A<B>
+keyof A & A<B>
+X extends Y ? keyof A : A<B>
+keyof A | `a${A}`
+keyof A & `a${A}`
+X extends Y ? keyof A : `a${A}`
+keyof A | this
+keyof A & this
+X extends Y ? keyof A : this
+keyof A | (string)
+keyof A & (string)
+X extends Y ? keyof A : (string)
+keyof A | (A | null)
+keyof A & (A | null)
+X extends Y ? keyof A : (A | null)
+typeof a | string
+typeof a & string
+X extends Y ? typeof a : string
+typeof a | number
+typeof a & number
+X extends Y ? typeof a : number
+typeof a | boolean
+typeof a & boolean
+X extends Y ? typeof a : boolean
+typeof a | bigint
+typeof a & bigint
+X extends Y ? typeof a : bigint
+typeof a | symbol
+typeof a & symbol
+X extends Y ? typeof a : symbol
+typeof a | any
+typeof a & any
+X extends Y ? typeof a : any
+typeof a | unknown
+typeof a & unknown
+X extends Y ? typeof a : unknown
+typeof a | never
+typeof a & never
+X extends Y ? typeof a : never
+typeof a | void
+typeof a & void
+X extends Y ? typeof a : void
+typeof a | null
+typeof a & null
+X extends Y ? typeof a : null
+typeof a | undefined
+typeof a & undefined
+X extends Y ? typeof a : undefined
+typeof a | object
+typeof a & object
+X extends Y ? typeof a : object
+typeof a | A
+typeof a & A
+X extends Y ? typeof a : A
+typeof a | B
+typeof a & B
+X extends Y ? typeof a : B
+typeof a | Object
+typeof a & Object
+X extends Y ? typeof a : Object
+typeof a | "s"
+typeof a & "s"
+X extends Y ? typeof a : "s"
+typeof a | 1
+typeof a & 1
+X extends Y ? typeof a : 1
+typeof a | true
+typeof a & true
+X extends Y ? typeof a : true
+typeof a | A[]
+typeof a & A[]
+X extends Y ? typeof a : A[]
+typeof a | [A]
+typeof a & [A]
+X extends Y ? typeof a : [A]
+typeof a | () => void
+typeof a & () => void
+X extends Y ? typeof a : () => void
+typeof a | { a: A }
+typeof a & { a: A }
+X extends Y ? typeof a : { a: A }
+typeof a | keyof A
+typeof a & keyof A
+X extends Y ? typeof a : keyof A
+typeof a | typeof a
+typeof a & typeof a
+X extends Y ? typeof a : typeof a
+typeof a | A.B
+typeof a & A.B
+X extends Y ? typeof a : A.B
+typeof a | A<B>
+typeof a & A<B>
+X extends Y ? typeof a : A<B>
+typeof a | `a${A}`
+typeof a & `a${A}`
+X extends Y ? typeof a : `a${A}`
+typeof a | this
+typeof a & this
+X extends Y ? typeof a : this
+typeof a | (string)
+typeof a & (string)
+X extends Y ? typeof a : (string)
+typeof a | (A | null)
+typeof a & (A | null)
+X extends Y ? typeof a : (A | null)
+A.B | string
+A.B & string
+X extends Y ? A.B : string
+A.B | number
+A.B & number
+X extends Y ? A.B : number
+A.B | boolean
+A.B & boolean
+X extends Y ? A.B : boolean
+A.B | bigint
+A.B & bigint
+X extends Y ? A.B : bigint
+A.B | symbol
+A.B & symbol
+X extends Y ? A.B : symbol
+A.B | any
+A.B & any
+X extends Y ? A.B : any
+A.B | unknown
+A.B & unknown
+X extends Y ? A.B : unknown
+A.B | never
+A.B & never
+X extends Y ? A.B : never
+A.B | void
+A.B & void
+X extends Y ? A.B : void
+A.B | null
+A.B & null
+X extends Y ? A.B : null
+A.B | undefined
+A.B & undefined
+X extends Y ? A.B : undefined
+A.B | object
+A.B & object
+X extends Y ? A.B : object
+A.B | A
+A.B & A
+X extends Y ? A.B : A
+A.B | B
+A.B & B
+X extends Y ? A.B : B
+A.B | Object
+A.B & Object
+X extends Y ? A.B : Object
+A.B | "s"
+A.B & "s"
+X extends Y ? A.B : "s"
+A.B | 1
+A.B & 1
+X extends Y ? A.B : 1
+A.B | true
+A.B & true
+X extends Y ? A.B : true
+A.B | A[]
+A.B & A[]
+X extends Y ? A.B : A[]
+A.B | [A]
+A.B & [A]
+X extends Y ? A.B : [A]
+A.B | () => void
+A.B & () => void
+X extends Y ? A.B : () => void
+A.B | { a: A }
+A.B & { a: A }
+X extends Y ? A.B : { a: A }
+A.B | keyof A
+A.B & keyof A
+X extends Y ? A.B : keyof A
+A.B | typeof a
+A.B & typeof a
+X extends Y ? A.B : typeof a
+A.B | A.B
+A.B & A.B
+X extends Y ? A.B : A.B
+A.B | A<B>
+A.B & A<B>
+X extends Y ? A.B : A<B>
+A.B | `a${A}`
+A.B & `a${A}`
+X extends Y ? A.B : `a${A}`
+A.B | this
+A.B & this
+X extends Y ? A.B : this
+A.B | (string)
+A.B & (string)
+X extends Y ? A.B : (string)
+A.B | (A | null)
+A.B & (A | null)
+X extends Y ? A.B : (A | null)
+A<B> | string
+A<B> & string
+X extends Y ? A<B> : string
+A<B> | number
+A<B> & number
+X extends Y ? A<B> : number
+A<B> | boolean
+A<B> & boolean
+X extends Y ? A<B> : boolean
+A<B> | bigint
+A<B> & bigint
+X extends Y ? A<B> : bigint
+A<B> | symbol
+A<B> & symbol
+X extends Y ? A<B> : symbol
+A<B> | any
+A<B> & any
+X extends Y ? A<B> : any
+A<B> | unknown
+A<B> & unknown
+X extends Y ? A<B> : unknown
+A<B> | never
+A<B> & never
+X extends Y ? A<B> : never
+A<B> | void
+A<B> & void
+X extends Y ? A<B> : void
+A<B> | null
+A<B> & null
+X extends Y ? A<B> : null
+A<B> | undefined
+A<B> & undefined
+X extends Y ? A<B> : undefined
+A<B> | object
+A<B> & object
+X extends Y ? A<B> : object
+A<B> | A
+A<B> & A
+X extends Y ? A<B> : A
+A<B> | B
+A<B> & B
+X extends Y ? A<B> : B
+A<B> | Object
+A<B> & Object
+X extends Y ? A<B> : Object
+A<B> | "s"
+A<B> & "s"
+X extends Y ? A<B> : "s"
+A<B> | 1
+A<B> & 1
+X extends Y ? A<B> : 1
+A<B> | true
+A<B> & true
+X extends Y ? A<B> : true
+A<B> | A[]
+A<B> & A[]
+X extends Y ? A<B> : A[]
+A<B> | [A]
+A<B> & [A]
+X extends Y ? A<B> : [A]
+A<B> | () => void
+A<B> & () => void
+X extends Y ? A<B> : () => void
+A<B> | { a: A }
+A<B> & { a: A }
+X extends Y ? A<B> : { a: A }
+A<B> | keyof A
+A<B> & keyof A
+X extends Y ? A<B> : keyof A
+A<B> | typeof a
+A<B> & typeof a
+X extends Y ? A<B> : typeof a
+A<B> | A.B
+A<B> & A.B
+X extends Y ? A<B> : A.B
+A<B> | A<B>
+A<B> & A<B>
+X extends Y ? A<B> : A<B>
+A<B> | `a${A}`
+A<B> & `a${A}`
+X extends Y ? A<B> : `a${A}`
+A<B> | this
+A<B> & this
+X extends Y ? A<B> : this
+A<B> | (string)
+A<B> & (string)
+X extends Y ? A<B> : (string)
+A<B> | (A | null)
+A<B> & (A | null)
+X extends Y ? A<B> : (A | null)
+`a${A}` | string
+`a${A}` & string
+X extends Y ? `a${A}` : string
+`a${A}` | number
+`a${A}` & number
+X extends Y ? `a${A}` : number
+`a${A}` | boolean
+`a${A}` & boolean
+X extends Y ? `a${A}` : boolean
+`a${A}` | bigint
+`a${A}` & bigint
+X extends Y ? `a${A}` : bigint
+`a${A}` | symbol
+`a${A}` & symbol
+X extends Y ? `a${A}` : symbol
+`a${A}` | any
+`a${A}` & any
+X extends Y ? `a${A}` : any
+`a${A}` | unknown
+`a${A}` & unknown
+X extends Y ? `a${A}` : unknown
+`a${A}` | never
+`a${A}` & never
+X extends Y ? `a${A}` : never
+`a${A}` | void
+`a${A}` & void
+X extends Y ? `a${A}` : void
+`a${A}` | null
+`a${A}` & null
+X extends Y ? `a${A}` : null
+`a${A}` | undefined
+`a${A}` & undefined
+X extends Y ? `a${A}` : undefined
+`a${A}` | object
+`a${A}` & object
+X extends Y ? `a${A}` : object
+`a${A}` | A
+`a${A}` & A
+X extends Y ? `a${A}` : A
+`a${A}` | B
+`a${A}` & B
+X extends Y ? `a${A}` : B
+`a${A}` | Object
+`a${A}` & Object
+X extends Y ? `a${A}` : Object
+`a${A}` | "s"
+`a${A}` & "s"
+X extends Y ? `a${A}` : "s"
+`a${A}` | 1
+`a${A}` & 1
+X extends Y ? `a${A}` : 1
+`a${A}` | true
+`a${A}` & true
+X extends Y ? `a${A}` : true
+`a${A}` | A[]
+`a${A}` & A[]
+X extends Y ? `a${A}` : A[]
+`a${A}` | [A]
+`a${A}` & [A]
+X extends Y ? `a${A}` : [A]
+`a${A}` | () => void
+`a${A}` & () => void
+X extends Y ? `a${A}` : () => void
+`a${A}` | { a: A }
+`a${A}` & { a: A }
+X extends Y ? `a${A}` : { a: A }
+`a${A}` | keyof A
+`a${A}` & keyof A
+X extends Y ? `a${A}` : keyof A
+`a${A}` | typeof a
+`a${A}` & typeof a
+X extends Y ? `a${A}` : typeof a
+`a${A}` | A.B
+`a${A}` & A.B
+X extends Y ? `a${A}` : A.B
+`a${A}` | A<B>
+`a${A}` & A<B>
+X extends Y ? `a${A}` : A<B>
+`a${A}` | `a${A}`
+`a${A}` & `a${A}`
+X extends Y ? `a${A}` : `a${A}`
+`a${A}` | this
+`a${A}` & this
+X extends Y ? `a${A}` : this
+`a${A}` | (string)
+`a${A}` & (string)
+X extends Y ? `a${A}` : (string)
+`a${A}` | (A | null)
+`a${A}` & (A | null)
+X extends Y ? `a${A}` : (A | null)
+this | string
+this & string
+X extends Y ? this : string
+this | number
+this & number
+X extends Y ? this : number
+this | boolean
+this & boolean
+X extends Y ? this : boolean
+this | bigint
+this & bigint
+X extends Y ? this : bigint
+this | symbol
+this & symbol
+X extends Y ? this : symbol
+this | any
+this & any
+X extends Y ? this : any
+this | unknown
+this & unknown
+X extends Y ? this : unknown
+this | never
+this & never
+X extends Y ? this : never
+this | void
+this & void
+X extends Y ? this : void
+this | null
+this & null
+X extends Y ? this : null
+this | undefined
+this & undefined
+X extends Y ? this : undefined
+this | object
+this & object
+X extends Y ? this : object
+this | A
+this & A
+X extends Y ? this : A
+this | B
+this & B
+X extends Y ? this : B
+this | Object
+this & Object
+X extends Y ? this : Object
+this | "s"
+this & "s"
+X extends Y ? this : "s"
+this | 1
+this & 1
+X extends Y ? this : 1
+this | true
+this & true
+X extends Y ? this : true
+this | A[]
+this & A[]
+X extends Y ? this : A[]
+this | [A]
+this & [A]
+X extends Y ? this : [A]
+this | () => void
+this & () => void
+X extends Y ? this : () => void
+this | { a: A }
+this & { a: A }
+X extends Y ? this : { a: A }
+this | keyof A
+this & keyof A
+X extends Y ? this : keyof A
+this | typeof a
+this & typeof a
+X extends Y ? this : typeof a
+this | A.B
+this & A.B
+X extends Y ? this : A.B
+this | A<B>
+this & A<B>
+X extends Y ? this : A<B>
+this | `a${A}`
+this & `a${A}`
+X extends Y ? this : `a${A}`
+this | this
+this & this
+X extends Y ? this : this
+this | (string)
+this & (string)
+X extends Y ? this : (string)
+this | (A | null)
+this & (A | null)
+X extends Y ? this : (A | null)
+(string) | string
+(string) & string
+X extends Y ? (string) : string
+(string) | number
+(string) & number
+X extends Y ? (string) : number
+(string) | boolean
+(string) & boolean
+X extends Y ? (string) : boolean
+(string) | bigint
+(string) & bigint
+X extends Y ? (string) : bigint
+(string) | symbol
+(string) & symbol
+X extends Y ? (string) : symbol
+(string) | any
+(string) & any
+X extends Y ? (string) : any
+(string) | unknown
+(string) & unknown
+X extends Y ? (string) : unknown
+(string) | never
+(string) & never
+X extends Y ? (string) : never
+(string) | void
+(string) & void
+X extends Y ? (string) : void
+(string) | null
+(string) & null
+X extends Y ? (string) : null
+(string) | undefined
+(string) & undefined
+X extends Y ? (string) : undefined
+(string) | object
+(string) & object
+X extends Y ? (string) : object
+(string) | A
+(string) & A
+X extends Y ? (string) : A
+(string) | B
+(string) & B
+X extends Y ? (string) : B
+(string) | Object
+(string) & Object
+X extends Y ? (string) : Object
+(string) | "s"
+(string) & "s"
+X extends Y ? (string) : "s"
+(string) | 1
+(string) & 1
+X extends Y ? (string) : 1
+(string) | true
+(string) & true
+X extends Y ? (string) : true
+(string) | A[]
+(string) & A[]
+X extends Y ? (string) : A[]
+(string) | [A]
+(string) & [A]
+X extends Y ? (string) : [A]
+(string) | () => void
+(string) & () => void
+X extends Y ? (string) : () => void
+(string) | { a: A }
+(string) & { a: A }
+X extends Y ? (string) : { a: A }
+(string) | keyof A
+(string) & keyof A
+X extends Y ? (string) : keyof A
+(string) | typeof a
+(string) & typeof a
+X extends Y ? (string) : typeof a
+(string) | A.B
+(string) & A.B
+X extends Y ? (string) : A.B
+(string) | A<B>
+(string) & A<B>
+X extends Y ? (string) : A<B>
+(string) | `a${A}`
+(string) & `a${A}`
+X extends Y ? (string) : `a${A}`
+(string) | this
+(string) & this
+X extends Y ? (string) : this
+(string) | (string)
+(string) & (string)
+X extends Y ? (string) : (string)
+(string) | (A | null)
+(string) & (A | null)
+X extends Y ? (string) : (A | null)
+(A | null) | string
+(A | null) & string
+X extends Y ? (A | null) : string
+(A | null) | number
+(A | null) & number
+X extends Y ? (A | null) : number
+(A | null) | boolean
+(A | null) & boolean
+X extends Y ? (A | null) : boolean
+(A | null) | bigint
+(A | null) & bigint
+X extends Y ? (A | null) : bigint
+(A | null) | symbol
+(A | null) & symbol
+X extends Y ? (A | null) : symbol
+(A | null) | any
+(A | null) & any
+X extends Y ? (A | null) : any
+(A | null) | unknown
+(A | null) & unknown
+X extends Y ? (A | null) : unknown
+(A | null) | never
+(A | null) & never
+X extends Y ? (A | null) : never
+(A | null) | void
+(A | null) & void
+X extends Y ? (A | null) : void
+(A | null) | null
+(A | null) & null
+X extends Y ? (A | null) : null
+(A | null) | undefined
+(A | null) & undefined
+X extends Y ? (A | null) : undefined
+(A | null) | object
+(A | null) & object
+X extends Y ? (A | null) : object
+(A | null) | A
+(A | null) & A
+X extends Y ? (A | null) : A
+(A | null) | B
+(A | null) & B
+X extends Y ? (A | null) : B
+(A | null) | Object
+(A | null) & Object
+X extends Y ? (A | null) : Object
+(A | null) | "s"
+(A | null) & "s"
+X extends Y ? (A | null) : "s"
+(A | null) | 1
+(A | null) & 1
+X extends Y ? (A | null) : 1
+(A | null) | true
+(A | null) & true
+X extends Y ? (A | null) : true
+(A | null) | A[]
+(A | null) & A[]
+X extends Y ? (A | null) : A[]
+(A | null) | [A]
+(A | null) & [A]
+X extends Y ? (A | null) : [A]
+(A | null) | () => void
+(A | null) & () => void
+X extends Y ? (A | null) : () => void
+(A | null) | { a: A }
+(A | null) & { a: A }
+X extends Y ? (A | null) : { a: A }
+(A | null) | keyof A
+(A | null) & keyof A
+X extends Y ? (A | null) : keyof A
+(A | null) | typeof a
+(A | null) & typeof a
+X extends Y ? (A | null) : typeof a
+(A | null) | A.B
+(A | null) & A.B
+X extends Y ? (A | null) : A.B
+(A | null) | A<B>
+(A | null) & A<B>
+X extends Y ? (A | null) : A<B>
+(A | null) | `a${A}`
+(A | null) & `a${A}`
+X extends Y ? (A | null) : `a${A}`
+(A | null) | this
+(A | null) & this
+X extends Y ? (A | null) : this
+(A | null) | (string)
+(A | null) & (string)
+X extends Y ? (A | null) : (string)
+(A | null) | (A | null)
+(A | null) & (A | null)
+X extends Y ? (A | null) : (A | null)
+A extends B ? string : string
+string | A extends B ? string : string
+number | A extends B ? string : string
+K | A extends B ? string : string
+string & A extends B ? string : string
+K & A extends B ? string : string
+keyof A extends B ? string : string
+readonly A[] extends B ? string : string
+unique symbol extends B ? string : string
+A[] extends B ? string : string
+typeof a extends B ? string : string
+(A extends B ? string : string)
+(A extends B ? string : string)[]
+A extends B ? string : string | string
+A extends B ? string : string | number
+A extends B ? string : string | K
+A extends B ? string : string & string
+A extends B ? string : string & K
+A extends B ? string : string | null
+A extends B ? string | string : string
+A extends B ? string & K : string
+A extends B ? string : X extends Y ? string : string
+A extends B ? X extends Y ? string : string : string
+A extends B ? string : string[]
+A extends B ? string : keyof string
+A extends B ? string : readonly string[]
+A extends B ? (string) : (string)
+A extends infer U ? string : string
+A extends infer U extends V ? string : string
+string | (A extends B ? string : string)
+(string | A) extends B ? string : string
+A extends B ? string : number
+string | A extends B ? string : number
+number | A extends B ? string : number
+K | A extends B ? string : number
+string & A extends B ? string : number
+K & A extends B ? string : number
+keyof A extends B ? string : number
+readonly A[] extends B ? string : number
+unique symbol extends B ? string : number
+A[] extends B ? string : number
+typeof a extends B ? string : number
+(A extends B ? string : number)
+(A extends B ? string : number)[]
+A extends B ? string : number | string
+A extends B ? string : number | number
+A extends B ? string : number | K
+A extends B ? string : number & string
+A extends B ? string : number & K
+A extends B ? string : number | null
+A extends B ? string | string : number
+A extends B ? string & K : number
+A extends B ? string : X extends Y ? string : number
+A extends B ? X extends Y ? string : number : number
+A extends B ? string : number[]
+A extends B ? string : keyof number
+A extends B ? string : readonly number[]
+A extends B ? (string) : (number)
+A extends infer U ? string : number
+A extends infer U extends V ? string : number
+string | (A extends B ? string : number)
+(string | A) extends B ? string : number
+A extends B ? string : never
+string | A extends B ? string : never
+number | A extends B ? string : never
+K | A extends B ? string : never
+string & A extends B ? string : never
+K & A extends B ? string : never
+keyof A extends B ? string : never
+readonly A[] extends B ? string : never
+unique symbol extends B ? string : never
+A[] extends B ? string : never
+typeof a extends B ? string : never
+(A extends B ? string : never)
+(A extends B ? string : never)[]
+A extends B ? string : never | string
+A extends B ? string : never | number
+A extends B ? string : never | K
+A extends B ? string : never & string
+A extends B ? string : never & K
+A extends B ? string : never | null
+A extends B ? string | string : never
+A extends B ? string & K : never
+A extends B ? string : X extends Y ? string : never
+A extends B ? X extends Y ? string : never : never
+A extends B ? string : never[]
+A extends B ? string : keyof never
+A extends B ? string : readonly never[]
+A extends B ? (string) : (never)
+A extends infer U ? string : never
+A extends infer U extends V ? string : never
+string | (A extends B ? string : never)
+(string | A) extends B ? string : never
+A extends B ? never : string
+string | A extends B ? never : string
+number | A extends B ? never : string
+K | A extends B ? never : string
+string & A extends B ? never : string
+K & A extends B ? never : string
+keyof A extends B ? never : string
+readonly A[] extends B ? never : string
+unique symbol extends B ? never : string
+A[] extends B ? never : string
+typeof a extends B ? never : string
+(A extends B ? never : string)
+(A extends B ? never : string)[]
+A extends B ? never : string | string
+A extends B ? never : string | number
+A extends B ? never : string | K
+A extends B ? never : string & string
+A extends B ? never : string & K
+A extends B ? never : string | null
+A extends B ? never | string : string
+A extends B ? never & K : string
+A extends B ? never : X extends Y ? never : string
+A extends B ? X extends Y ? never : string : string
+A extends B ? never : string[]
+A extends B ? never : keyof string
+A extends B ? never : readonly string[]
+A extends B ? (never) : (string)
+A extends infer U ? never : string
+A extends infer U extends V ? never : string
+string | (A extends B ? never : string)
+(string | A) extends B ? never : string
+A extends B ? K : K
+string | A extends B ? K : K
+number | A extends B ? K : K
+K | A extends B ? K : K
+string & A extends B ? K : K
+K & A extends B ? K : K
+keyof A extends B ? K : K
+readonly A[] extends B ? K : K
+unique symbol extends B ? K : K
+A[] extends B ? K : K
+typeof a extends B ? K : K
+(A extends B ? K : K)
+(A extends B ? K : K)[]
+A extends B ? K : K | string
+A extends B ? K : K | number
+A extends B ? K : K | K
+A extends B ? K : K & string
+A extends B ? K : K & K
+A extends B ? K : K | null
+A extends B ? K | string : K
+A extends B ? K & K : K
+A extends B ? K : X extends Y ? K : K
+A extends B ? X extends Y ? K : K : K
+A extends B ? K : K[]
+A extends B ? K : keyof K
+A extends B ? K : readonly K[]
+A extends B ? (K) : (K)
+A extends infer U ? K : K
+A extends infer U extends V ? K : K
+string | (A extends B ? K : K)
+(string | A) extends B ? K : K
+A extends B ? K : L
+string | A extends B ? K : L
+number | A extends B ? K : L
+K | A extends B ? K : L
+string & A extends B ? K : L
+K & A extends B ? K : L
+keyof A extends B ? K : L
+readonly A[] extends B ? K : L
+unique symbol extends B ? K : L
+A[] extends B ? K : L
+typeof a extends B ? K : L
+(A extends B ? K : L)
+(A extends B ? K : L)[]
+A extends B ? K : L | string
+A extends B ? K : L | number
+A extends B ? K : L | K
+A extends B ? K : L & string
+A extends B ? K : L & K
+A extends B ? K : L | null
+A extends B ? K | string : L
+A extends B ? K & K : L
+A extends B ? K : X extends Y ? K : L
+A extends B ? X extends Y ? K : L : L
+A extends B ? K : L[]
+A extends B ? K : keyof L
+A extends B ? K : readonly L[]
+A extends B ? (K) : (L)
+A extends infer U ? K : L
+A extends infer U extends V ? K : L
+string | (A extends B ? K : L)
+(string | A) extends B ? K : L
+A extends B ? K : null
+string | A extends B ? K : null
+number | A extends B ? K : null
+K | A extends B ? K : null
+string & A extends B ? K : null
+K & A extends B ? K : null
+keyof A extends B ? K : null
+readonly A[] extends B ? K : null
+unique symbol extends B ? K : null
+A[] extends B ? K : null
+typeof a extends B ? K : null
+(A extends B ? K : null)
+(A extends B ? K : null)[]
+A extends B ? K : null | string
+A extends B ? K : null | number
+A extends B ? K : null | K
+A extends B ? K : null & string
+A extends B ? K : null & K
+A extends B ? K : null | null
+A extends B ? K | string : null
+A extends B ? K & K : null
+A extends B ? K : X extends Y ? K : null
+A extends B ? X extends Y ? K : null : null
+A extends B ? K : null[]
+A extends B ? K : keyof null
+A extends B ? K : readonly null[]
+A extends B ? (K) : (null)
+A extends infer U ? K : null
+A extends infer U extends V ? K : null
+string | (A extends B ? K : null)
+(string | A) extends B ? K : null
+A extends B ? null : K
+string | A extends B ? null : K
+number | A extends B ? null : K
+K | A extends B ? null : K
+string & A extends B ? null : K
+K & A extends B ? null : K
+keyof A extends B ? null : K
+readonly A[] extends B ? null : K
+unique symbol extends B ? null : K
+A[] extends B ? null : K
+typeof a extends B ? null : K
+(A extends B ? null : K)
+(A extends B ? null : K)[]
+A extends B ? null : K | string
+A extends B ? null : K | number
+A extends B ? null : K | K
+A extends B ? null : K & string
+A extends B ? null : K & K
+A extends B ? null : K | null
+A extends B ? null | string : K
+A extends B ? null & K : K
+A extends B ? null : X extends Y ? null : K
+A extends B ? X extends Y ? null : K : K
+A extends B ? null : K[]
+A extends B ? null : keyof K
+A extends B ? null : readonly K[]
+A extends B ? (null) : (K)
+A extends infer U ? null : K
+A extends infer U extends V ? null : K
+string | (A extends B ? null : K)
+(string | A) extends B ? null : K
+A extends B ? K : undefined
+string | A extends B ? K : undefined
+number | A extends B ? K : undefined
+K | A extends B ? K : undefined
+string & A extends B ? K : undefined
+K & A extends B ? K : undefined
+keyof A extends B ? K : undefined
+readonly A[] extends B ? K : undefined
+unique symbol extends B ? K : undefined
+A[] extends B ? K : undefined
+typeof a extends B ? K : undefined
+(A extends B ? K : undefined)
+(A extends B ? K : undefined)[]
+A extends B ? K : undefined | string
+A extends B ? K : undefined | number
+A extends B ? K : undefined | K
+A extends B ? K : undefined & string
+A extends B ? K : undefined & K
+A extends B ? K : undefined | null
+A extends B ? K | string : undefined
+A extends B ? K & K : undefined
+A extends B ? K : X extends Y ? K : undefined
+A extends B ? X extends Y ? K : undefined : undefined
+A extends B ? K : undefined[]
+A extends B ? K : keyof undefined
+A extends B ? K : readonly undefined[]
+A extends B ? (K) : (undefined)
+A extends infer U ? K : undefined
+A extends infer U extends V ? K : undefined
+string | (A extends B ? K : undefined)
+(string | A) extends B ? K : undefined
+A extends B ? any : string
+string | A extends B ? any : string
+number | A extends B ? any : string
+K | A extends B ? any : string
+string & A extends B ? any : string
+K & A extends B ? any : string
+keyof A extends B ? any : string
+readonly A[] extends B ? any : string
+unique symbol extends B ? any : string
+A[] extends B ? any : string
+typeof a extends B ? any : string
+(A extends B ? any : string)
+(A extends B ? any : string)[]
+A extends B ? any : string | string
+A extends B ? any : string | number
+A extends B ? any : string | K
+A extends B ? any : string & string
+A extends B ? any : string & K
+A extends B ? any : string | null
+A extends B ? any | string : string
+A extends B ? any & K : string
+A extends B ? any : X extends Y ? any : string
+A extends B ? X extends Y ? any : string : string
+A extends B ? any : string[]
+A extends B ? any : keyof string
+A extends B ? any : readonly string[]
+A extends B ? (any) : (string)
+A extends infer U ? any : string
+A extends infer U extends V ? any : string
+string | (A extends B ? any : string)
+(string | A) extends B ? any : string
+A extends B ? string : any
+string | A extends B ? string : any
+number | A extends B ? string : any
+K | A extends B ? string : any
+string & A extends B ? string : any
+K & A extends B ? string : any
+keyof A extends B ? string : any
+readonly A[] extends B ? string : any
+unique symbol extends B ? string : any
+A[] extends B ? string : any
+typeof a extends B ? string : any
+(A extends B ? string : any)
+(A extends B ? string : any)[]
+A extends B ? string : any | string
+A extends B ? string : any | number
+A extends B ? string : any | K
+A extends B ? string : any & string
+A extends B ? string : any & K
+A extends B ? string : any | null
+A extends B ? string | string : any
+A extends B ? string & K : any
+A extends B ? string : X extends Y ? string : any
+A extends B ? X extends Y ? string : any : any
+A extends B ? string : any[]
+A extends B ? string : keyof any
+A extends B ? string : readonly any[]
+A extends B ? (string) : (any)
+A extends infer U ? string : any
+A extends infer U extends V ? string : any
+string | (A extends B ? string : any)
+(string | A) extends B ? string : any
+A extends B ? unknown : string
+string | A extends B ? unknown : string
+number | A extends B ? unknown : string
+K | A extends B ? unknown : string
+string & A extends B ? unknown : string
+K & A extends B ? unknown : string
+keyof A extends B ? unknown : string
+readonly A[] extends B ? unknown : string
+unique symbol extends B ? unknown : string
+A[] extends B ? unknown : string
+typeof a extends B ? unknown : string
+(A extends B ? unknown : string)
+(A extends B ? unknown : string)[]
+A extends B ? unknown : string | string
+A extends B ? unknown : string | number
+A extends B ? unknown : string | K
+A extends B ? unknown : string & string
+A extends B ? unknown : string & K
+A extends B ? unknown : string | null
+A extends B ? unknown | string : string
+A extends B ? unknown & K : string
+A extends B ? unknown : X extends Y ? unknown : string
+A extends B ? X extends Y ? unknown : string : string
+A extends B ? unknown : string[]
+A extends B ? unknown : keyof string
+A extends B ? unknown : readonly string[]
+A extends B ? (unknown) : (string)
+A extends infer U ? unknown : string
+A extends infer U extends V ? unknown : string
+string | (A extends B ? unknown : string)
+(string | A) extends B ? unknown : string
+A extends B ? string : unknown
+string | A extends B ? string : unknown
+number | A extends B ? string : unknown
+K | A extends B ? string : unknown
+string & A extends B ? string : unknown
+K & A extends B ? string : unknown
+keyof A extends B ? string : unknown
+readonly A[] extends B ? string : unknown
+unique symbol extends B ? string : unknown
+A[] extends B ? string : unknown
+typeof a extends B ? string : unknown
+(A extends B ? string : unknown)
+(A extends B ? string : unknown)[]
+A extends B ? string : unknown | string
+A extends B ? string : unknown | number
+A extends B ? string : unknown | K
+A extends B ? string : unknown & string
+A extends B ? string : unknown & K
+A extends B ? string : unknown | null
+A extends B ? string | string : unknown
+A extends B ? string & K : unknown
+A extends B ? string : X extends Y ? string : unknown
+A extends B ? X extends Y ? string : unknown : unknown
+A extends B ? string : unknown[]
+A extends B ? string : keyof unknown
+A extends B ? string : readonly unknown[]
+A extends B ? (string) : (unknown)
+A extends infer U ? string : unknown
+A extends infer U extends V ? string : unknown
+string | (A extends B ? string : unknown)
+(string | A) extends B ? string : unknown
+A extends B ? void : string
+string | A extends B ? void : string
+number | A extends B ? void : string
+K | A extends B ? void : string
+string & A extends B ? void : string
+K & A extends B ? void : string
+keyof A extends B ? void : string
+readonly A[] extends B ? void : string
+unique symbol extends B ? void : string
+A[] extends B ? void : string
+typeof a extends B ? void : string
+(A extends B ? void : string)
+(A extends B ? void : string)[]
+A extends B ? void : string | string
+A extends B ? void : string | number
+A extends B ? void : string | K
+A extends B ? void : string & string
+A extends B ? void : string & K
+A extends B ? void : string | null
+A extends B ? void | string : string
+A extends B ? void & K : string
+A extends B ? void : X extends Y ? void : string
+A extends B ? X extends Y ? void : string : string
+A extends B ? void : string[]
+A extends B ? void : keyof string
+A extends B ? void : readonly string[]
+A extends B ? (void) : (string)
+A extends infer U ? void : string
+A extends infer U extends V ? void : string
+string | (A extends B ? void : string)
+(string | A) extends B ? void : string
+A extends B ? string[] : number[]
+string | A extends B ? string[] : number[]
+number | A extends B ? string[] : number[]
+K | A extends B ? string[] : number[]
+string & A extends B ? string[] : number[]
+K & A extends B ? string[] : number[]
+keyof A extends B ? string[] : number[]
+readonly A[] extends B ? string[] : number[]
+unique symbol extends B ? string[] : number[]
+A[] extends B ? string[] : number[]
+typeof a extends B ? string[] : number[]
+(A extends B ? string[] : number[])
+(A extends B ? string[] : number[])[]
+A extends B ? string[] : number[] | string
+A extends B ? string[] : number[] | number
+A extends B ? string[] : number[] | K
+A extends B ? string[] : number[] & string
+A extends B ? string[] : number[] & K
+A extends B ? string[] : number[] | null
+A extends B ? string[] | string : number[]
+A extends B ? string[] & K : number[]
+A extends B ? string[] : X extends Y ? string[] : number[]
+A extends B ? X extends Y ? string[] : number[] : number[]
+A extends B ? string[] : number[][]
+A extends B ? string[] : keyof number[]
+A extends B ? string[] : readonly number[][]
+A extends B ? (string[]) : (number[])
+A extends infer U ? string[] : number[]
+A extends infer U extends V ? string[] : number[]
+string | (A extends B ? string[] : number[])
+(string | A) extends B ? string[] : number[]
+A extends B ? () => void : () => void
+string | A extends B ? () => void : () => void
+number | A extends B ? () => void : () => void
+K | A extends B ? () => void : () => void
+string & A extends B ? () => void : () => void
+K & A extends B ? () => void : () => void
+keyof A extends B ? () => void : () => void
+readonly A[] extends B ? () => void : () => void
+unique symbol extends B ? () => void : () => void
+A[] extends B ? () => void : () => void
+typeof a extends B ? () => void : () => void
+(A extends B ? () => void : () => void)
+(A extends B ? () => void : () => void)[]
+A extends B ? () => void : () => void | string
+A extends B ? () => void : () => void | number
+A extends B ? () => void : () => void | K
+A extends B ? () => void : () => void & string
+A extends B ? () => void : () => void & K
+A extends B ? () => void : () => void | null
+A extends B ? () => void | string : () => void
+A extends B ? () => void & K : () => void
+A extends B ? () => void : X extends Y ? () => void : () => void
+A extends B ? X extends Y ? () => void : () => void : () => void
+A extends B ? () => void : () => void[]
+A extends B ? () => void : keyof () => void
+A extends B ? () => void : readonly () => void[]
+A extends B ? (() => void) : (() => void)
+A extends infer U ? () => void : () => void
+A extends infer U extends V ? () => void : () => void
+string | (A extends B ? () => void : () => void)
+(string | A) extends B ? () => void : () => void
+A extends B ? {} : {}
+string | A extends B ? {} : {}
+number | A extends B ? {} : {}
+K | A extends B ? {} : {}
+string & A extends B ? {} : {}
+K & A extends B ? {} : {}
+keyof A extends B ? {} : {}
+readonly A[] extends B ? {} : {}
+unique symbol extends B ? {} : {}
+A[] extends B ? {} : {}
+typeof a extends B ? {} : {}
+(A extends B ? {} : {})
+(A extends B ? {} : {})[]
+A extends B ? {} : {} | string
+A extends B ? {} : {} | number
+A extends B ? {} : {} | K
+A extends B ? {} : {} & string
+A extends B ? {} : {} & K
+A extends B ? {} : {} | null
+A extends B ? {} | string : {}
+A extends B ? {} & K : {}
+A extends B ? {} : X extends Y ? {} : {}
+A extends B ? X extends Y ? {} : {} : {}
+A extends B ? {} : {}[]
+A extends B ? {} : keyof {}
+A extends B ? {} : readonly {}[]
+A extends B ? ({}) : ({})
+A extends infer U ? {} : {}
+A extends infer U extends V ? {} : {}
+string | (A extends B ? {} : {})
+(string | A) extends B ? {} : {}
+A extends B ? Object : string
+string | A extends B ? Object : string
+number | A extends B ? Object : string
+K | A extends B ? Object : string
+string & A extends B ? Object : string
+K & A extends B ? Object : string
+keyof A extends B ? Object : string
+readonly A[] extends B ? Object : string
+unique symbol extends B ? Object : string
+A[] extends B ? Object : string
+typeof a extends B ? Object : string
+(A extends B ? Object : string)
+(A extends B ? Object : string)[]
+A extends B ? Object : string | string
+A extends B ? Object : string | number
+A extends B ? Object : string | K
+A extends B ? Object : string & string
+A extends B ? Object : string & K
+A extends B ? Object : string | null
+A extends B ? Object | string : string
+A extends B ? Object & K : string
+A extends B ? Object : X extends Y ? Object : string
+A extends B ? X extends Y ? Object : string : string
+A extends B ? Object : string[]
+A extends B ? Object : keyof string
+A extends B ? Object : readonly string[]
+A extends B ? (Object) : (string)
+A extends infer U ? Object : string
+A extends infer U extends V ? Object : string
+string | (A extends B ? Object : string)
+(string | A) extends B ? Object : string
+a is string
+a is K
+this is K
+asserts a is string
+asserts this is K
+a is string | number
+a is K extends B ? C : D
+asserts a is K | null
+K
+K | null
+K | undefined
+string[]
+K[]
+Array<K>
+Promise<K>
+A | B extends C ? string : string

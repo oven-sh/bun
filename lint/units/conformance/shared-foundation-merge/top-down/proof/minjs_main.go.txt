@@ -1,0 +1,27 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// The case insensitive branch of hasMinJsSuffix of internal/vfs/vfsmatch/vfsmatch.go, verbatim.
+func hasMinJsSuffixInsensitive(filename string) bool {
+	const minJs = ".min.js"
+	if len(filename) < len(minJs) {
+		return false
+	}
+	// Avoid allocating via strings.ToLower; compare suffix case-insensitively.
+	return strings.EqualFold(filename[len(filename)-len(minJs):], minJs)
+}
+
+func main() {
+	inputs := []string{"a.min.js", "a.MIN.JS", "a.Min.Js", "a.min.j\u017f", ".min.j\u017f", "a.m\u0131n.js", "a.m\u0130n.js", "\u00e9.min.js", "a.min.js\u00e9", "x\u017f.min.js", "min.js", ".min.js", "a.min.j\u0073", "a.\u212ain.js", "a.min.\u212as", "\u4e2d.MIN.JS", "a.min.j\U0001F600", "a\U0001F600min.js", "a.min.JS"}
+	out := map[string]bool{}
+	for _, s := range inputs {
+		out[s] = hasMinJsSuffixInsensitive(s)
+	}
+	b, _ := json.Marshal(out)
+	fmt.Println(string(b))
+}

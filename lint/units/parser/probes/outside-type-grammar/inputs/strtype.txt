@@ -1,0 +1,42 @@
+import { "type" a } from "x";
+import { "type" a as b } from "x";
+import { "type" as as b } from "x";
+import { "type" as as } from "x";
+import { "type" as } from "x";
+import { "type" "a" as b } from "x";
+export { "type" a } from "x";
+export { "type" a as b } from "x";
+export { "type" "a" } from "x";
+export { "type" as as b } from "x";
+export { "type" as as } from "x";
+export { "type" as } from "x";
+export { "type" as b } from "x";
+export { "type" a };
+export { "type" as as };
+import { typ\u0065 a } from "x";
+import { typ\u0065 as as b } from "x";
+export { typ\u0065 a };
+export { typ\u0065 a } from "x";
+import typ\u0065 A from "x";
+import typ\u0065 { A } from "x";
+export typ\u0065 { A };
+export typ\u0065 T = 1;
+typ\u0065 T = 1;
+declar\u0065 const x: number;
+namespac\u0065 N {}
+interfac\u0065 I {}
+abstrac\u0074 class C {}
+var x = y a\u0073 any;
+var x = y satisfie\u0073 any;
+class C { publi\u0063 x = 1 }
+class C { stati\u0063 x = 1 }
+class C { readonl\u0079 x = 1 }
+class C { declar\u0065 x: number }
+class C { constructor(publi\u0063 x) {} }
+function f(x): x i\u0073 string { return true }
+let x: keyo\u0066 T;
+let x: typ\u0065of y;
+let x: uniqu\u0065 symbol;
+let x: readonl\u0079 string[];
+type T = U extends infe\u0072 V ? V : never;
+enum E { A } const enu\u006d F { A }

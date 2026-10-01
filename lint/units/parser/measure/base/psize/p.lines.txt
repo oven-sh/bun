@@ -1,0 +1,8 @@
+probe lines start at 10433
+ 10433	const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, false>>()];
+ 10434	const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, false>>()];
+ 10435	const _: [(); 0] = [(); core::mem::size_of::<P<'static, true, true>>()];
+ 10436	const _: [(); 0] = [(); core::mem::size_of::<P<'static, false, true>>()];
+ 10437	const _: [(); 0] = [(); core::mem::align_of::<P<'static, true, false>>()];
+ 10438	const _: [(); 0] = [(); core::mem::size_of::<StartsForParseOnly>()];
+ 10439	const _: [(); 0] = [(); core::mem::size_of::<Option<Box<StartsForParseOnly>>>()];

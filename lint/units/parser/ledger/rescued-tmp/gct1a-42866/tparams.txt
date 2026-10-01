@@ -1,0 +1,196 @@
+# type parameters: declarations
+type A<T> = T
+type A<T,> = T
+type A<> = 1
+type A<,> = 1
+type A<T,,> = 1
+type A<T U> = 1
+type A<T, U> = T
+type A<T extends U> = T
+type A<T extends U = V> = T
+type A<T = V> = T
+type A<T = V extends W ? X : Y> = T
+type A<T extends U ? X : Y> = T
+type A<T extends> = T
+type A<T => = T
+type A<T = > = T
+type A<T extends U extends V ? W : X> = T
+type A<T extends (U extends V ? W : X)> = T
+type A<in T> = T
+type A<out T> = T
+type A<in out T> = T
+type A<out in T> = T
+type A<in in T> = T
+type A<out out T> = T
+type A<out out> = T
+type A<out> = T
+type A<out, T> = T
+type A<out = T> = T
+type A<out extends T> = T
+type A<in> = T
+type A<in, T> = T
+type A<const T> = T
+type A<const in out T> = T
+type A<in const T> = T
+type A<const const T> = T
+type A<const> = T
+type A<public T> = T
+type A<private T> = T
+type A<protected T> = T
+type A<readonly T> = T
+type A<static T> = T
+type A<abstract T> = T
+type A<override T> = T
+type A<declare T> = T
+type A<async T> = T
+type A<accessor T> = T
+type A<export T> = T
+type A<default T> = T
+type A<T extends 1> = T
+type A<T extends "a"> = T
+type A<T extends -1> = T
+type A<T extends a + b> = T
+type A<T extends !a> = T
+type A<T extends (1)> = T
+type A<T extends ~a> = T
+type A<T extends ++a> = T
+type A<T extends await a> = T
+type A<T extends @a b> = T
+type A<if> = T
+type A<number> = T
+type A<any> = T
+type A<this> = T
+type A<let> = T
+type A<yield> = T
+type A<await> = T
+type A<type> = T
+type A<of> = T
+type A<infer> = T
+type A<keyof> = T
+type A<readonly> = T
+type A<unique> = T
+type A<abstract> = T
+type A<asserts> = T
+type A<is> = T
+type A<T>\n= T
+type A\n<T> = T
+type\nA<T> = T
+type A<T\n> = T
+interface A<T> {}
+interface A<in T> {}
+interface A<out T> {}
+interface A<in out T> {}
+interface A<const T> {}
+interface A<> {}
+interface A<T,> {}
+class A<T> {}
+class A<in T> {}
+class A<out T> {}
+class A<const T> {}
+class A<> {}
+class A<T,> {}
+class A<T extends U = V> {}
+(class <T> {})
+(class A<T> {})
+(class <in T> {})
+(class <> {})
+function f<T>() {}
+function f<in T>() {}
+function f<out T>() {}
+function f<const T>() {}
+function f<>() {}
+function f<T,>() {}
+function f<const in out T>() {}
+(function <T>() {})
+(function f<in T>() {})
+(function <>() {})
+class C { m<T>() {} }
+class C { m<in T>() {} }
+class C { m<out T>() {} }
+class C { m<const T>() {} }
+class C { m<>() {} }
+class C { constructor<T>() {} }
+class C { get a<T>() { return 1 } }
+class C { set a<T>(v) {} }
+class C { static m<in out T>() {} }
+class C { async m<T>() {} }
+class C { *m<T>() {} }
+class C { m?<T>() {} }
+class C { 'm'<T>() {} }
+class C { [m]<T>() {} }
+class C { #m<T>() {} }
+({ m<T>() {} })
+({ m<in T>() {} })
+({ m<>() {} })
+({ async m<T>() {} })
+({ *m<T>() {} })
+({ get a<T>() { return 1 } })
+const f = <T>(x: T) => x
+const f = <T,>(x: T) => x
+const f = <T extends U>(x: T) => x
+const f = <T = U>(x: T) => x
+const f = <const T>(x: T) => x
+const f = <in T>(x: T) => x
+const f = <out T>(x: T) => x
+const f = <in out T>(x: T) => x
+const f = <>(x) => x
+const f = async <T>(x: T) => x
+const f = async <in T>(x: T) => x
+const f = async <out T>(x: T) => x
+const f = async <const T>(x: T) => x
+const f = async <>(x) => x
+const v = <T>x
+const v = <out>x
+const v = <in>x
+const v = <out T>x
+const v = <const>x
+const v = <const T>x
+const v = <T>(x)
+const v = <out>(x)
+const v = <out>(x) => x
+const v = <out,>(x) => x
+const v = <out T>(x) => x
+const v = <out T>(x)
+const v = <in T>(x)
+const v = <in T>(x) => x
+const v = <T,>(x)
+const v = <T extends U>(x)
+const v = <T = U>(x)
+const v = <T, U>(x)
+const v = <T, U>x
+const v = <T[]>x
+const v = <T[]>(x)
+const v = <[]>(x)
+const v = <{a: 1}>x
+const v = <T | U>x
+const v = <T>(x) + 1
+const v = <T>(x).y
+const v = <any>x
+const v = <const>["a"]
+const v = <readonly T[]>x
+const v = <keyof T>x
+const v = <typeof x>y
+const v = <unique symbol>y
+const v = <T><U>x
+const v = <<T>(x: T) => T>y
+const v = <(x) => y>z
+const v = <new () => y>z
+const v = <abstract new () => y>z
+const v = async <T>(x)
+const v = async <out>(x)
+const v = async <out T>(x)
+let g: <T>() => void
+let g: <in T>() => void
+let g: <out T>() => void
+let g: <const T>() => void
+let g: <const in out T>() => void
+let g: <>() => void
+let g: new <in T>() => void
+let g: new <>() => void
+type A = { <out T>(): void }
+type A = { m<out T>(): void }
+type A = { new <out T>(): void }
+type A = { <>(): void }
+type A = { m<>(): void }
+type A = { new <>(): void }
+type A = { get a<out T>(): void }

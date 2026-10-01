@@ -1,0 +1,53 @@
+{
+ "counts": {
+  "baselines with an instance": 9042,
+  "round trip with the units of the case": 9041,
+  "number of sections differs from the number of input files": 1,
+  "with configuration file: units that the configuration does not name are after the others": 34
+ },
+ "examples": {
+  "baselines with an instance": [
+   "ArrowFunctionExpression1",
+   "ClassDeclaration10",
+   "ClassDeclaration11",
+   "ClassDeclaration13",
+   "ClassDeclaration14",
+   "ClassDeclaration15",
+   "ClassDeclaration21",
+   "ClassDeclaration22",
+   "ClassDeclaration24",
+   "ClassDeclaration25"
+  ],
+  "round trip with the units of the case": [
+   "ArrowFunctionExpression1",
+   "ClassDeclaration10",
+   "ClassDeclaration11",
+   "ClassDeclaration13",
+   "ClassDeclaration14",
+   "ClassDeclaration15",
+   "ClassDeclaration21",
+   "ClassDeclaration22",
+   "ClassDeclaration24",
+   "ClassDeclaration25"
+  ],
+  "number of sections differs from the number of input files": [
+   "augmentExportEquals2: 3 against 4"
+  ],
+  "with configuration file: units that the configuration does not name are after the others": [
+   "configFileExtendsAsList",
+   "declarationEmitMonorepoBaseUrl",
+   "declarationEmitPathMappingMonorepo",
+   "declarationEmitPathMappingMonorepo2",
+   "declarationEmitReexportedSymlinkReference3",
+   "libTypeScriptOverrideSimpleConfig",
+   "libTypeScriptSubfileResolvingConfig",
+   "maxNodeModuleJsDepthDefaultsToZero",
+   "moduleResolutionPackageIdWithRelativeAndAbsolutePath",
+   "moduleResolutionWithExtensions_withPaths"
+  ]
+ },
+ "newLineKinds": {
+  "one line": 802,
+  "LF": 12729
+ }
+}

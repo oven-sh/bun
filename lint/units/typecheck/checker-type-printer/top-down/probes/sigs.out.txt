@@ -1,0 +1,7 @@
+sigs.ts(4,21): error TS2371: A parameter initializer is only allowed in a function or constructor implementation.
+sigs.ts(9,1): error TS2322: Type '(a: string, b?: number | undefined, ...rest: boolean[]) => void' is not assignable to type 'number'.
+sigs.ts(9,9): error TS2322: Type '<T extends Foo, K extends keyof T = keyof T>(this: Foo, x: T, k: K) => x is T' is not assignable to type 'number'.
+sigs.ts(9,17): error TS2322: Type '(x: number | undefined, y: number) => asserts x' is not assignable to type 'number'.
+sigs.ts(9,25): error TS2322: Type 'new (x: number) => Foo' is not assignable to type 'number'.
+sigs.ts(9,33): error TS2322: Type 'abstract new () => Foo' is not assignable to type 'number'.
+sigs.ts(9,41): error TS2322: Type '{ (x: string): void; new (y: number): Foo; [k: string]: unknown; readonly p: 1; q?: "s" | undefined; m(): void; "quoted-name": 1; 0: string; get acc(): number; set acc(v: string); }' is not assignable to type 'number'.

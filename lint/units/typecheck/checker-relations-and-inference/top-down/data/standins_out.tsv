@@ -1,0 +1,155 @@
+layer	function	where	caller status	caller owner	callers
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	earlier	P-PRINT	NodeBuilderImpl.typeReferenceToTypeNode, NodeBuilderImpl.typeToTypeNode
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	earlier	T-CONSTRAINT	c.fillMissingTypeArguments
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	later	c07_check_functions	c.checkFunctionOrConstructorSymbolWorker
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	later	c09_check_classes_interfaces	c.areTypeParametersIdentical, c.checkClassLikeDeclaration, c.checkJSDocAugmentsTagMatchesExtends
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	later	c11_check_variables_decorators	c.checkVariableLikeDeclaration
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	later	emitresolver.go	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant
+R-REL	c.isTypeIdenticalTo	relater.go:117-119	later	nodebuilder_hover.go	NodeBuilderImpl.serializeIndexSignaturesOfType
+R-REL	c.compareTypesIdentical	relater.go:121-126	earlier	P-PRINT	NodeBuilderImpl.pseudoReturnTypeMatchesPredicate, NodeBuilderImpl.pseudoTypeEquivalentToType
+R-REL	c.compareTypesIdentical	relater.go:121-126	earlier	T-UIMEMBERS	c.appendSignatures
+R-REL	c.compareTypesIdentical	relater.go:121-126	later	c09_check_classes_interfaces	c.isPropertyIdenticalTo
+R-REL	c.compareTypesIdentical	relater.go:121-126	later	c16_function_expressions_collisions	c.getContextualSignature
+R-REL	c.compareTypesIdentical	relater.go:121-126	later	nodebuilder_hover.go	NodeBuilderImpl.serializeConstructors
+R-REL	c.compareTypesAssignableWorker	relater.go:135-140	earlier	C-INIT	c.initializeClosures
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	K-COND	c.getConditionalType, c.getSimplifiedConditionalType
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	K-INDEXED	c.couldAccessOptionalProperty, c.getSuggestionForNonexistentIndexSignature
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	K-KEYOF	c.checkComputedPropertyName, c.getMappedTypeNameTypeKind
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	K-PRED	c.isTypeAssignableToKindEx
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	K-TEMPLATE	c.inferTypesFromTemplateLiteralType, c.isMemberOfStringMapping
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-INSTANTIATE	c.instantiateTypeWorker
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-LOOKUP	c.isApplicableIndexType
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-MEMBERS	c.getIndexInfosOfIndexSymbol
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-SIGDECL	c.isTypeUsableAsIndexSignatureDeclaration
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-SYMTYPE	c.getRestType
+R-REL	c.isTypeAssignableTo	relater.go:149-151	earlier	T-TUPLE	c.isArrayLikeType, c.isMutableArrayLikeType
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c06_check_members_type_nodes	c.checkParameter
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c07_check_functions	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c08_check_statements	c.checkForInStatement
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c09_check_classes_interfaces	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c12_iteration_types	c.isIteratorResult, c.reportTypeNotIterableError
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c14_expressions	c.checkImportCallExpression, c.checkIndexedAccessIndexType, c.checkTemplateExpression
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c15_calls	c.isUntypedFunctionCall
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c16_function_expressions_collisions	c.assignContextualParameterTypes
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c19_assertions_binary_operators	c.checkArithmeticOperandType, c.checkBinaryLikeExpression
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c20_object_literals_spread	c.checkObjectLiteral
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	c50_contextual_properties_inference_context	ObjectLiteralDiscriminator.matches, c.getIndexedMappedTypeSubstitutedTypeOfContextualType, c.isExcludedMappedPropertyName
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	exports.go	c.IsTypeAssignableTo
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	flow.go	c.getAssignmentReducedTypeWorker, c.getNarrowedTypeWorker, c.getTypeAtFlowAssignment, c.typeMaybeAssignableTo
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	jsx.go	c.elaborateJsxComponents
+R-REL	c.isTypeAssignableTo	relater.go:149-151	later	services.go	c.IsTypeInvalidDueToUnionDiscriminant
+R-REL	c.isTypeSubtypeOf	relater.go:153-155	earlier	K-INTERSECT	c.extractRedundantTemplateLiterals
+R-REL	c.isTypeSubtypeOf	relater.go:153-155	later	c15_calls	c.resolveInstanceofExpression
+R-REL	c.isTypeSubtypeOf	relater.go:153-155	later	c51_type_facts_awaited	c.isFunctionObjectType
+R-REL	c.isTypeSubtypeOf	relater.go:153-155	later	flow.go	c.getNarrowedTypeWorker, c.isConstructedBy, c.narrowTypeByTypeFacts
+R-REL	c.isTypeStrictSubtypeOf	relater.go:157-159	earlier	K-INTERSECT	c.getIntersectionTypeEx
+R-REL	c.isTypeStrictSubtypeOf	relater.go:157-159	later	flow.go	c.getNarrowedTypeWorker
+R-REL	c.isTypeComparableTo	relater.go:161-163	later	c19_assertions_binary_operators	c.checkAssertionDeferred, c.isTypeEqualityComparableTo
+R-REL	c.areTypesComparable	relater.go:165-167	later	c19_assertions_binary_operators	c.checkBinaryLikeExpression
+R-REL	c.areTypesComparable	relater.go:165-167	later	flow.go	c.narrowTypeByDiscriminant, c.narrowTypeByEquality, c.narrowTypeBySwitchOnDiscriminant
+R-REL	c.isTypeRelatedTo	relater.go:169-203	earlier	K-UNION	c.removeSubtypes
+R-REL	c.isTypeRelatedTo	relater.go:169-203	later	c07_check_functions	c.isImplementationCompatibleWithOverload
+R-REL	c.isTypeRelatedTo	relater.go:169-203	later	c15_calls	c.maybeAddMissingAwaitInfo
+R-REL	c.isTypeRelatedTo	relater.go:169-203	later	c47_promised_mapped_template	c.getPromisedTypeOfPromiseEx
+R-REL	c.isTypeRelatedTo	relater.go:169-203	later	flow.go	c.narrowTypeByTypeFacts
+R-REL	c.isTypeRelatedTo	relater.go:169-203	later	jsx.go	c.elaborateJsxComponents
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	earlier	T-ENUMVAL	c.computeConstantEnumMemberValue
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c05_check_source_file	c.checkTypeParameter, c.checkTypeParameterDeferred
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c06_check_members_type_nodes	c.checkMappedType, c.checkTemplateLiteralType, c.checkTypeArgumentConstraints
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c09_check_classes_interfaces	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration, c.issueMemberSpecificError
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c10_check_enums_modules_imports	c.checkImportAttributes
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c11_check_variables_decorators	c.checkDecorator, c.checkVariableLikeDeclaration
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c12_iteration_types	c.getIteratedTypeOrElementType
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c14_expressions	c.checkImportCallExpression
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c19_assertions_binary_operators	c.checkInExpression, c.checkInstanceOfExpression
+R-REL	c.checkTypeAssignableTo	relater.go:339-341	later	c48_contextual_types	c.checkGeneratorInstantiationAssignabilityToReturnType
+R-REL	c.checkTypeAssignableToEx	relater.go:343-345	later	c06_check_members_type_nodes	c.checkTypePredicate
+R-REL	c.checkTypeAssignableToEx	relater.go:343-345	later	c09_check_classes_interfaces	c.issueMemberSpecificError
+R-REL	c.checkTypeAssignableToEx	relater.go:343-345	later	c12_iteration_types	c.getIterationTypesOfIterableSlow
+R-REL	c.checkTypeAssignableToEx	relater.go:343-345	later	c15_calls	c.checkTypeArguments
+R-REL	c.checkTypeComparableTo	relater.go:347-349	later	c08_check_statements	c.checkSwitchStatement
+R-REL	c.checkTypeComparableTo	relater.go:347-349	later	c19_assertions_binary_operators	c.checkAssertionDeferred
+R-REL	c.checkTypeRelatedTo	relater.go:351-353	later	jsx.go	c.elaborateIterableOrArrayLikeTargetElementwise
+R-REL	c.checkTypeRelatedToEx	relater.go:358-398	later	c15_calls	c.isSignatureApplicable
+R-REL	c.checkTypeRelatedToEx	relater.go:358-398	later	jsx.go	c.checkJsxOpeningLikeElementOrOpeningFragment, c.checkJsxReturnAssignableToAppropriateBound, c.elaborateIterableOrArrayLikeTargetElementwise
+R-REL	c.reportDiagnostic	relater.go:414-422	later	c12_iteration_types	c.getIterationTypesOfMethod
+R-REL	c.reportDiagnostic	relater.go:414-422	later	jsx.go	c.checkApplicableSignatureForJsxCallLikeElement, c.elaborateIterableOrArrayLikeTargetElementwise, c.elaborateJsxComponents
+R-REL	isHyphenatedJsxName	relater.go:743-745	later	jsx.go	c.elaborateJsxComponents
+R-REL	getRecursionIdentity	relater.go:810-812	earlier	T-CONSTRAINT	c.getResolvedBaseConstraint
+R-REL	getRecursionIdentity	relater.go:810-812	later	tracer.go	tracedTypeAdapter.RecursionIdentity
+R-REL	c.getTypeNamesForErrorDisplay	relater.go:1270-1288	later	c19_assertions_binary_operators	c.reportOperatorError
+R-REL	c.getTypeNameForErrorDisplay	relater.go:1290-1292	later	c08_check_statements	c.checkTestingKnownTruthyType
+R-REL	c.isTypeSubsetOf	relater.go:2863-2865	later	flow.go	c.addEvolvingArrayElementType, c.getDiscriminantPropertyAccess, c.getNarrowedTypeWorker, c.getTypeAtFlowBranchLabel, c.getTypeAtFlowLoopLabel
+R-REL	c.isTypeDerivedFrom	relater.go:4993-5022	earlier	K-UNION	c.removeSubtypes
+R-REL	c.isTypeDerivedFrom	relater.go:4993-5022	later	flow.go	c.getNarrowedTypeWorker, c.narrowTypeByInstanceof
+R-SIGREL	c.isSignatureAssignableTo	relater.go:1487-1489	later	c07_check_functions	c.isImplementationCompatibleWithOverload
+R-SIGREL	c.findMatchingSignatures	relater.go:2152-2185	earlier	T-UIMEMBERS	c.getUnionSignatures
+R-SIGREL	c.findMatchingSignature	relater.go:2187-2195	earlier	T-UIMEMBERS	c.getUnionSignatures
+R-SIGREL	c.compareSignaturesIdentical	relater.go:2200-2258	earlier	T-UIMEMBERS	c.appendSignatures
+R-SIGREL	c.compareSignaturesIdentical	relater.go:2200-2258	later	c16_function_expressions_collisions	c.getContextualSignature
+R-SIGREL	c.compareSignaturesIdentical	relater.go:2200-2258	later	nodebuilder_hover.go	NodeBuilderImpl.serializeConstructors
+R-SIGREL	c.compareTypeParametersIdentical	relater.go:2280-2301	earlier	T-UIMEMBERS	c.getUnionSignatures
+R-SIGREL	c.compareTypeParametersIdentical	relater.go:2280-2301	later	c16_function_expressions_collisions	c.getIntersectedSignatures
+R-SIGREL	visibilityToString	relater.go:2559-2567	later	grammarchecks.go	c.checkGrammarModifiers
+R-VARIANCE	c.createMarkerType	relater.go:1446-1460	later	c05_check_source_file	c.checkTypeParameterDeferred
+R-VARIANCE	c.getTypeParameterModifiers	relater.go:1466-1474	earlier	P-PRINT	NodeBuilderImpl.typeParameterToDeclarationWithConstraint
+R-VARIANCE	c.getTypeParameterModifiers	relater.go:1466-1474	later	c05_check_source_file	c.checkTypeParameterDeferred
+R-DISCRIM	c.isDiscriminantProperty	relater.go:1080-1094	later	c50_contextual_properties_inference_context	c.discriminateContextualTypeByObjectMembers
+R-DISCRIM	c.isDiscriminantProperty	relater.go:1080-1094	later	flow.go	c.getDiscriminantPropertyAccess
+R-DISCRIM	c.isDiscriminantProperty	relater.go:1080-1094	later	jsx.go	c.discriminateContextualTypeByJSXAttributes
+R-DISCRIM	c.getKeyPropertyName	relater.go:1111-1120	later	c50_contextual_properties_inference_context	c.getMatchingUnionConstituentForObjectLiteral
+R-DISCRIM	c.getKeyPropertyName	relater.go:1111-1120	later	flow.go	c.getNarrowedTypeWorker, c.narrowTypeByDiscriminantProperty, c.narrowTypeBySwitchOnDiscriminantProperty
+R-DISCRIM	c.getConstituentTypeForKeyType	relater.go:1124-1130	later	c50_contextual_properties_inference_context	c.getMatchingUnionConstituentForObjectLiteral
+R-DISCRIM	c.getConstituentTypeForKeyType	relater.go:1124-1130	later	flow.go	c.getNarrowedTypeWorker, c.narrowTypeByDiscriminantProperty, c.narrowTypeBySwitchOnDiscriminantProperty
+R-DISCRIM	c.discriminateTypeByDiscriminableItems	relater.go:1205-1254	later	c50_contextual_properties_inference_context	c.discriminateContextualTypeByObjectMembers
+R-DISCRIM	c.discriminateTypeByDiscriminableItems	relater.go:1205-1254	later	jsx.go	c.discriminateContextualTypeByJSXAttributes
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c08_check_statements	c.checkForOfStatement, c.checkReturnExpression, c.checkReturnStatement
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c10_check_enums_modules_imports	c.checkExportAssignment
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c11_check_variables_decorators	c.checkVariableLikeDeclaration
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c17_unary_meta_yield	c.checkSatisfiesExpression, c.checkYieldExpression
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c19_assertions_binary_operators	c.checkAssignmentOperator, c.checkReferenceAssignment
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	c20_object_literals_spread	c.checkPropertyAssignment, c.checkShorthandPropertyAssignment
+R-ELAB	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	later	jsx.go	c.resolveJsxOpeningLikeElement
+R-ELAB	c.checkTypeRelatedToAndOptionallyElaborate	relater.go:428-436	later	c15_calls	c.isSignatureApplicable
+R-ELAB	c.checkTypeRelatedToAndOptionallyElaborate	relater.go:428-436	later	jsx.go	c.checkApplicableSignatureForJsxCallLikeElement
+R-ELAB	c.elaborateError	relater.go:438-472	later	jsx.go	c.elaborateIterableOrArrayLikeTargetElementwise
+R-ELAB	c.elaborateElement	relater.go:544-616	later	jsx.go	c.elaborateJsxComponents
+R-ELAB	c.getBestMatchIndexedAccessTypeOrUndefined	relater.go:618-630	later	jsx.go	c.elaborateIterableOrArrayLikeTargetElementwise
+R-ELAB	c.checkExpressionForMutableLocationWithContextualType	relater.go:632-637	later	jsx.go	c.elaborateIterableOrArrayLikeTargetElementwise
+I-INFER	c.inferTypes	inference.go:53-63	earlier	K-COND	c.getConditionalType
+I-INFER	c.inferTypes	inference.go:53-63	earlier	T-SIGINST	c.instantiateSignatureInContextOf
+I-INFER	c.inferTypes	inference.go:53-63	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	c.inferTypes	inference.go:53-63	later	c15_calls	c.inferTypeArguments
+I-INFER	c.inferTypes	inference.go:53-63	later	c16_function_expressions_collisions	c.inferFromAnnotatedParametersAndReturn
+I-INFER	c.inferTypes	inference.go:53-63	later	jsx.go	c.inferJsxTypeArguments
+I-INFER	c.applyToParameterTypes	inference.go:868-894	earlier	T-SIGINST	c.instantiateSignatureInContextOf
+I-INFER	c.applyToParameterTypes	inference.go:868-894	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	c.applyToReturnTypes	inference.go:896-909	earlier	T-SIGINST	c.instantiateSignatureInContextOf
+I-INFER	c.applyToReturnTypes	inference.go:896-909	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	c.newInferenceContext	inference.go:1251-1256	earlier	K-COND	c.getConditionalType
+I-INFER	c.newInferenceContext	inference.go:1251-1256	earlier	T-SIGINST	c.instantiateSignatureInContextOf
+I-INFER	c.newInferenceContext	inference.go:1251-1256	later	c15_calls	c.chooseOverload, c.inferSignatureInstantiationForOverloadFailure, c.inferTypeArguments
+I-INFER	c.cloneInferenceContext	inference.go:1258-1263	later	c15_calls	c.inferTypeArguments
+I-INFER	c.cloneInferredPartOfContext	inference.go:1265-1271	later	c15_calls	c.inferTypeArguments
+I-INFER	c.addIntraExpressionInferenceSite	inference.go:1285-1287	later	c14_expressions	c.checkArrayLiteral
+I-INFER	c.addIntraExpressionInferenceSite	inference.go:1285-1287	later	c20_object_literals_spread	c.checkObjectLiteral
+I-INFER	c.addIntraExpressionInferenceSite	inference.go:1285-1287	later	jsx.go	c.createJsxAttributesTypeFromAttributesProperty
+I-INFER	c.inferFromIntraExpressionSites	inference.go:1302-1315	earlier	MAPPER	InferenceTypeMapper.Map
+I-INFER	c.getInferredType	inference.go:1317-1404	earlier	MAPPER	InferenceTypeMapper.Map
+I-INFER	c.getInferredTypes	inference.go:1406-1412	earlier	T-SIGINST	c.instantiateSignatureInContextOf
+I-INFER	c.getInferredTypes	inference.go:1406-1412	later	c15_calls	c.inferTypeArguments
+I-INFER	c.getInferredTypes	inference.go:1406-1412	later	jsx.go	c.inferJsxTypeArguments
+I-INFER	c.getMapperFromContext	inference.go:1414-1419	later	c15_calls	c.inferTypeArguments
+I-INFER	c.getMapperFromContext	inference.go:1414-1419	later	c18_identifiers_property_access_this	c.getContextualThisParameterType
+I-INFER	c.createOuterReturnMapper	inference.go:1423-1432	later	c15_calls	c.inferTypeArguments
+I-INFER	c.isSkipDirectInferenceNode	inference.go:1621-1623	later	c14_expressions	c.checkExpressionWorker
+I-INFER	newInferenceInfo	inference.go:1625-1627	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	clearCachedInferences	inference.go:1642-1648	earlier	MAPPER	InferenceTypeMapper.Map
+I-INFER	hasInferenceCandidates	inference.go:1650-1652	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	hasInferenceCandidates	inference.go:1650-1652	later	c15_calls	c.inferTypeArguments
+I-INFER	hasInferenceCandidatesOrDefault	inference.go:1654-1656	later	c50_contextual_properties_inference_context	c.instantiateContextualType
+I-INFER	hasOverlappingInferences	inference.go:1669-1676	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-INFER	c.mergeInferences	inference.go:1678-1684	later	c14_expressions	c.instantiateTypeWithSingleGenericCallSignature
+I-REVMAP	c.inferTypeForHomomorphicMappedType	inference.go:1004-1012	earlier	T-INSTANTIATE	c.instantiateReverseMappedType
+I-REVMAP	c.resolveReverseMappedTypeMembers	inference.go:1099-1143	earlier	T-MEMBERS	c.resolveStructuredTypeMembers
+I-REVMAP	c.getTypeOfReverseMappedSymbol	inference.go:1145-1152	earlier	T-SYMTYPE	c.getTypeOfSymbol

@@ -1,0 +1,28 @@
+file /p10.ts scriptKind=3 variant=0 dts=false textLen=83
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=18 identifiers=7 text=7 reparsedClones=0
+root KindSourceFile [0,83) f=0x0
+  .Statements: list [0,82) n=6
+    - KindExpressionStatement [0,31) f=0x0
+      .Expression: KindIdentifier [0,30) f=0x0 Text="yield"
+    - KindExpressionStatement [31,38) f=0x0
+      .Expression: KindIdentifier [31,37) f=0x0 Text="await"
+    - KindExpressionStatement [38,45) f=0x0
+      .Expression: KindIdentifier [38,44) f=0x0 Text="async"
+    - KindExpressionStatement [45,50) f=0x0
+      .Expression: KindIdentifier [45,49) f=0x0 Text="let"
+    - KindFunctionDeclaration [50,72) f=0x0
+      .Body: KindBlock [69,72) f=0x2000
+        .Statements: list [71,71) n=0
+      .Parameters: list [68,68) n=0
+      .modifiers.flags=0x400
+      .modifiers: list [50,56) n=1
+        - KindAsyncKeyword [50,56) f=0x0
+      .name: KindIdentifier [65,67) f=0x0 Text="f"
+    - KindLabeledStatement [72,82) f=0x0
+      .Label: KindIdentifier [72,78) f=0x0 Text="label"
+      .Statement: KindExpressionStatement [79,82) f=0x0
+        .Expression: KindIdentifier [79,81) f=0x0 Text="x"
+  .EndOfFileToken: KindEndOfFile [82,83) f=0x0

@@ -1,0 +1,62 @@
+# D property signature initializer
+type A = { a: number = 1 }
+type A = { a = 1 }
+type A = { a?: number = 1 }
+type A = { a? = 1 }
+type A = { readonly a: number = 1; b: string }
+interface I { a: number = 1 }
+interface I { a = 1 }
+interface I { a: number = f(() => { let q = 2 }) }
+interface I { a: number\n= 1 }
+interface I { a\n= 1 }
+type A = { "a": number = 1, b = 2 }
+type A = { [k]: number = 1 }
+type A = { a: number = 1 = 2 }
+type A = { m(): void = 1 }
+type A = { a: number = b, c }
+let x: { a: number = 1 }
+let x: ({ a: number = 1 })
+class C { @d p: { a: number = 1 } }
+# E accessor in type literal / interface
+type A = { get x(): number }
+type A = { set x(v: number) }
+type A = { get x(): number; set x(v: number) }
+type A = { get x() { return 1 } }
+type A = { set x(v) { this.y = v } }
+interface I { get x() { return 1 } }
+interface I { get x(): number { return 1 } set x(v) { } }
+type A = { get x()\n{ return 1 } }
+type A = { get x() { return 1 }; y: 1 }
+type A = { get x() { return 1 }, y: 1 }
+type A = { get x() { return 1 } y: 1 }
+type A = { get x() { var a; function f() {}; class K {}; return () => a } }
+type A = { get<T>(): T }
+type A = { get: 1, set: 2 }
+type A = { get(): 1; set(v): void }
+type A = { get x<T>(): T }
+type A = { m() { return 1 } }
+type A = { (): void { } }
+type A = { get [Symbol.iterator]() { return 1 } }
+let x: { get a() { return 1 } }
+class C { @d p: { get a() { return 1 } } }
+# F import type attributes
+type A = import("x", { with: { "resolution-mode": "import" } })
+type A = import("x", { with: { type: "json" } })
+type A = import("x", { assert: { type: "json" } })
+type A = import("x", { with: { type: "json" }, })
+type A = import("x", { with: { type: "json", } })
+type A = import("x", { with: { type: f() } })
+type A = import("x", { with: { type: 1 + 1 } })
+type A = import("x", { with: { type: () => { let a } } })
+type A = import("x", { with: { type: a, b: c } })
+type A = import("x", { with: {} })
+type A = import("x", { with: { type } })
+type A = import("x", { with: { [type]: "json" } })
+type A = import("x", { foo: { type: "json" } })
+type A = import("x", {})
+type A = import("x", )
+type A = import("x", { with: { type: "json" } }).Y<Z>
+type A = typeof import("x", { with: { type: "json" } })
+type A = import(x)
+type A = import(`x`)
+type A = import("x" + "y")

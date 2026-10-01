@@ -1,0 +1,22 @@
+file mod1.ts bytes=458
+s_import 0
+s_import 15
+s_import 37
+s_import 63
+s_import 109
+s_import 139
+s_import 172
+s_export_clause 220
+s_export_from 243
+s_export_star 281
+s_export_star 301
+s_local 335
+  b_identifier 341 name="k"
+  e_number 345 value=1
+  b_identifier 348 name="l"
+  e_number 352 value=2
+s_function 362
+s_function 379
+s_class 416
+s_export_default 428
+  s_function 443

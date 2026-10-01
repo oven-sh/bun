@@ -1,0 +1,58 @@
+## checker/emitresolver.go: 65 functions, 1204 lines; K 0/0 D 12/318 P 3/16 S 2/43 O 48/827
+P (ported with the caller): noopAddVisibleAlias@382 EmitResolver.declaredParameterTypeContainsUndefined@609 EmitResolver.isSymbolAccessible@681
+S (stand-ins): EmitResolver.aliasMarkingVisitorWorker@260 EmitResolver.isValueAliasDeclarationWorker@735
+## checker/nodebuilder.go: 29 functions, 229 lines; K 10/86 D 3/12 P 1/4 S 0/0 O 15/127
+P (ported with the caller): NodeBuilder.SymbolToEntityName@225
+## checker/nodebuilder_hover.go: 18 functions, 542 lines; K 0/0 D 1/3 P 0/0 S 0/0 O 17/539
+## checker/nodebuilderimpl.go: 110 functions, 3336 lines; K 4/337 D 89/2842 P 13/123 S 1/19 O 3/15
+P (ported with the caller): isTypeOnStack@191 getResolvedTypeWithoutAbstractConstructSignatures@558 getTopmostIndexedAccessType@750 startsWithSquareBracket@928 isDefaultBindingContext@932 getTypeParametersOfClassOrInterface@1029 typeParameterShadowsOtherTypeParameterInScope@1396 isMappedTypeHomomorphic@1450 isHomomorphicMappedTypeWithNonHomomorphicInstantiation@1454 typeParametersToTypeParameterDeclarations@1624 hasTypeAnnotation@2162 createAccessExpression@3570 lookupInstantiatedTypeArgumentNodes@3588
+S (stand-ins): isExpandableType@169
+## checker/nodebuilderscopes.go: 4 functions, 234 lines; K 0/0 D 4/234 P 0/0 S 0/0 O 0/0
+## checker/nodecopy.go: 28 functions, 837 lines; K 0/0 D 13/734 P 10/72 S 1/19 O 4/12
+P (ported with the caller): wrappingTracker.ReportCyclicStructureError@147 wrappingTracker.ReportInaccessibleThisError@151 wrappingTracker.ReportInaccessibleUniqueSymbolError@155 wrappingTracker.ReportLikelyUnsafeImportRequiredError@163 wrappingTracker.ReportNonSerializableProperty@167 wrappingTracker.ReportPrivateInBaseOfClassExpression@175 wrappingTracker.ReportTruncationError@179 getModuleSpecifierOverride@234 rewriteModuleSpecifier@270 getEnclosingDeclarationIgnoringFakeScope@280
+S (stand-ins): walkNodeForExpandability@78
+## checker/printer.go: 27 functions, 316 lines; K 5/72 D 12/167 P 1/3 S 0/0 O 9/74
+P (ported with the caller): createPrinterWithDefaults@13
+## checker/pseudotypenodebuilder.go: 9 functions, 737 lines; K 0/0 D 7/684 P 2/53 S 0/0 O 0/0
+P (ported with the caller): isStructuralPseudoType@632 pseudoReturnTypeMatchesPredicate@645
+## checker/symbolaccessibility.go: 37 functions, 776 lines; K 0/0 D 32/742 P 4/26 S 0/0 O 1/8
+P (ported with the caller): c.IsSymbolAccessibleByFlags@21 c.compareSymbolChainsWorker@595 isUMDExportSymbol@612 isNamespaceReexportDeclaration@616
+## checker/symboltracker.go: 14 functions, 103 lines; K 1/13 D 4/29 P 6/42 S 0/0 O 3/19
+P (ported with the caller): SymbolTrackerImpl.ReportPrivateInBaseOfClassExpression@50 SymbolTrackerImpl.ReportInaccessibleUniqueSymbolError@58 SymbolTrackerImpl.ReportCyclicStructureError@66 SymbolTrackerImpl.ReportLikelyUnsafeImportRequiredError@74 SymbolTrackerImpl.ReportTruncationError@82 SymbolTrackerImpl.ReportNonSerializableProperty@98
+## modulespecifiers/compare.go: 1 functions, 7 lines; K 0/0 D 0/0 P 1/7 S 0/0 O 0/0
+P (ported with the caller): CountPathComponents@7
+## modulespecifiers/preferences.go: 7 functions, 231 lines; K 0/0 D 1/44 P 0/0 S 1/65 O 5/122
+S (stand-ins): GetAllowedEndingsInPreferredOrder@147
+## modulespecifiers/specifiers.go: 24 functions, 1327 lines; K 0/0 D 10/422 P 0/0 S 2/231 O 12/674
+S (stand-ins): getLocalModuleSpecifier@485 tryGetModuleNameAsNodeModule@743
+## modulespecifiers/util.go: 21 functions, 407 lines; K 0/0 D 0/0 P 2/15 S 1/12 O 18/380
+P (ported with the caller): comparePathsByRedirect@29 PathIsBareSpecifier@42
+S (stand-ins): IsExcludedByRegex@46
+## printer/changetrackerwriter.go: 36 functions, 203 lines; K 0/0 D 0/0 P 0/0 S 0/0 O 36/203
+## printer/emitcontext.go: 87 functions, 791 lines; K 4/17 D 14/98 P 1/4 S 5/34 O 63/638
+P (ported with the caller): AddSyntheticTrailingComment@1035
+S (stand-ins): GetNodeForGeneratedName@394 SourceMapRange@623 AssignCommentAndSourceMapRanges@643 TokenSourceMapRange@653 GetTypeNode@1054
+## printer/factory.go: 91 functions, 1058 lines; K 1/10 D 0/0 P 0/0 S 0/0 O 90/1048
+## printer/generatedidentifierflags.go: 9 functions, 27 lines; K 0/0 D 0/0 P 0/0 S 1/3 O 8/24
+S (stand-ins): GeneratedIdentifierFlags.IsNode@39
+## printer/helpers.go: 1 functions, 15 lines; K 0/0 D 0/0 P 0/0 S 0/0 O 1/15
+## printer/namegenerator.go: 25 functions, 330 lines; K 0/0 D 3/37 P 0/0 S 3/42 O 19/251
+S (stand-ins): NameGenerator.generateNameForNodeCached@138 NameGenerator.makeName@230 NameGenerator.MakeFileLevelOptimisticUniqueName@343
+## printer/printer.go: 378 functions, 5449 lines; K 27/747 D 131/1849 P 23/145 S 88/1059 O 109/1649
+P (ported with the caller): writeSymbol@314 writeLiteral@322 writeComment@346 writeLine@354 shouldEmitTrailingComments@833 emitNoSubstitutionTemplateLiteral@1050 emitPrivateIdentifier@1201 emitImportAttributeName@1330 emitModifierLike@1503 emitFunctionBodyNode@1640 emitAccessorDeclaration@1729 emitGetAccessorDeclaration@1745 emitSetAccessorDeclaration@1749 emitParenthesizedType@2108 emitImportTypeNodeAttributes@2229 emitKeywordExpression@2470 emitElementAccessExpression@2548 emitOmittedExpression@2976 emitExpressionWithTypeArguments@2980 emitNotEmittedTypeElement@3693 emitImportAttributes@4042 emitImportAttribute@4050 emitImportAttributeNode@4064
+S (stand-ins): getEffectiveLines@479 shouldWriteComment@745 emitRegularExpressionLiteral@1056 getUniqueHelperName@1142 emitDecorator@1496 emitFunctionBody@1597 emitPropertyDeclaration@1664 emitMethodDeclaration@1690 emitClassStaticBlockDeclaration@1706 emitConstructor@1715 emitJSDocAllType@2434 emitJSDocNonNullableType@2438 emitJSDocNullableType@2445 emitJSDocOptionalType@2452 emitJSDocVariadicType@2459 emitArrayLiteralExpression@2478 emitObjectLiteralExpression@2484 emitCallExpression@2578 emitNewExpression@2587 emitTaggedTemplateExpression@2613 emitTypeAssertionExpression@2622 emitParenthesizedExpression@2631 emitFunctionExpression@2646 emitArrowFunction@2682 emitDeleteExpression@2700 emitTypeOfExpression@2708 emitVoidExpression@2716 emitAwaitExpression@2724 emitPostfixUnaryExpression@2762 emitBinaryExpression@2871 emitConditionalExpression@2900 emitTemplateExpression@2922 emitYieldExpression@2929 emitSpreadElement@2940 emitClassExpression@2947 emitAsExpression@2987 emitSatisfiesExpression@2997 emitNonNullExpression@3007 emitMetaProperty@3014 emitPartiallyEmittedExpression@3022 emitTemplateSpan@3349 emitSemicolonClassElement@3360 emitVariableDeclaration@3701 emitVariableDeclarationList@3714 emitModuleBlock@3849 emitCaseBlock@3861 emitImportClause@3920 emitNamespaceImport@3937 emitNamedImports@3947 emitImportSpecifier@3969 emitNamespaceExport@4081 emitNamedExports@4091 emitExportSpecifier@4110 emitStatement@4148 emitExternalModuleReference@4234 emitJsxElement@4247 emitJsxSelfClosingElement@4255 emitJsxFragment@4266 emitJsxOpeningElement@4274 emitJsxClosingElement@4290 emitJsxOpeningFragment@4298 emitJsxClosingFragment@4305 emitJsxText@4312 emitJsxAttributes@4319 emitJsxAttribute@4325 emitJsxSpreadAttribute@4335 emitJsxExpression@4354 emitJsxNamespacedName@4370 emitCaseClause@4464 emitDefaultClause@4473 emitHeritageClause@4491 emitCatchClause@4515 emitPropertyAssignment@4535 emitShorthandPropertyAssignment@4556 emitSpreadAssignment@4568 emitEnumMember@4581 emitJSDocNode@4596 emitSourceFile@4656 emitLeadingCommentsOfNode@5413 emitTrailingCommentsOfNode@5448 emitLeadingSyntheticCommentsOfNode@5466 emitTrailingSyntheticCommentsOfNode@5488 shouldEmitCommentIfTripleSlash@5571 shouldEmitNewLineBeforeLeadingCommentOfPosition@5582 emitComments@5758 emitComment@5790 emitSourcePos@5870 isFileLevelUniqueNameInCurrentFile@6109
+## printer/semicolon_writer.go: 28 functions, 104 lines; K 0/0 D 11/44 P 17/60 S 0/0 O 0/0
+P (ported with the caller): trailingSemicolonDeferringWriter.WriteComment@33 trailingSemicolonDeferringWriter.WriteOperator@43 trailingSemicolonDeferringWriter.WriteSymbol@73 trailingSemicolonDeferringWriter.WriteLine@78 trailingSemicolonDeferringWriter.WriteLineForce@83 trailingSemicolonDeferringWriter.IncreaseIndent@88 trailingSemicolonDeferringWriter.DecreaseIndent@93 trailingSemicolonDeferringWriter.String@103 trailingSemicolonDeferringWriter.RawWrite@107 trailingSemicolonDeferringWriter.WriteLiteral@112 trailingSemicolonDeferringWriter.GetTextPos@117 trailingSemicolonDeferringWriter.GetLine@121 trailingSemicolonDeferringWriter.GetColumn@125 trailingSemicolonDeferringWriter.GetIndent@129 trailingSemicolonDeferringWriter.IsAtStartOfLine@133 trailingSemicolonDeferringWriter.HasTrailingComment@137 trailingSemicolonDeferringWriter.HasTrailingWhitespace@141
+## printer/singlelinestringwriter.go: 27 functions, 108 lines; K 0/0 D 11/46 P 16/62 S 0/0 O 0/0
+P (ported with the caller): singleLineStringWriter.DecreaseIndent@39 singleLineStringWriter.GetColumn@43 singleLineStringWriter.GetIndent@47 singleLineStringWriter.GetLine@51 singleLineStringWriter.GetTextPos@59 singleLineStringWriter.HasTrailingComment@63 singleLineStringWriter.HasTrailingWhitespace@67 singleLineStringWriter.IncreaseIndent@78 singleLineStringWriter.IsAtStartOfLine@82 singleLineStringWriter.RawWrite@86 singleLineStringWriter.WriteComment@96 singleLineStringWriter.WriteLine@106 singleLineStringWriter.WriteLineForce@111 singleLineStringWriter.WriteLiteral@116 singleLineStringWriter.WriteOperator@121 singleLineStringWriter.WriteSymbol@151
+## printer/syntheticfile.go: 2 functions, 33 lines; K 0/0 D 0/0 P 0/0 S 0/0 O 2/33
+## printer/textwriter.go: 33 functions, 165 lines; K 9/64 D 9/27 P 14/71 S 0/0 O 1/3
+P (ported with the caller): textWriter.GetColumn@40 textWriter.GetIndent@49 textWriter.GetLine@53 textWriter.GetTextPos@61 textWriter.HasTrailingComment@65 textWriter.HasTrailingWhitespace@69 textWriter.IsAtStartOfLine@84 textWriter.RawWrite@88 textWriter.WriteComment@150 textWriter.writeLineRaw@161 textWriter.WriteLine@170 textWriter.WriteLineForce@176 textWriter.WriteLiteral@182 textWriter.WriteSymbol@210
+## printer/utilities.go: 51 functions, 801 lines; K 2/213 D 6/82 P 10/60 S 7/51 O 26/395
+P (ported with the caller): escapeNonAsciiString@185 RangeIsOnSingleLine@345 RangeStartPositionsAreOnSameLine@349 rangeEndPositionsAreOnSameLine@357 rangeStartIsOnSameLineAsRangeEnd@361 rangeEndIsOnSameLineAsRangeStart@365 getStartPositionOfRange@369 PositionsAreOnSameLine@376 GetLinesBetweenPositions@380 originalNodesHaveSameParent@567
+S (stand-ins): encodeJsxCharacterEntity@58 escapeJsxAttributeString@192 getLinesBetweenRangeEndAndRangeStart@397 getLinesBetweenPositionAndPrecedingNonWhitespaceCharacter@402 getLinesBetweenPositionAndNextNonWhitespaceCharacter@408 siblingNodePositionsAreComparable@422 newLineCharacterCache@904
+## pseudochecker/checker.go: 1 functions, 3 lines; K 1/3 D 0/0 P 0/0 S 0/0 O 0/0
+## pseudochecker/lookup.go: 36 functions, 664 lines; K 0/0 D 24/478 P 12/186 S 0/0 O 0/0
+P (ported with the caller): GetTypeOfAccessor@26 GetTypeOfExpression@30 typeFromVariable@124 typeFromAccessor@146 getTypeAnnotationFromAllAccessorDeclarations@166 getTypeAnnotationFromAccessor@177 getAccessorMember@363 typeFromPrimitiveLiteralPrefix@494 isUndefinedPseudoType@546 typeNodeCouldReferToUndefined@550 CouldAlreadyReferToUndefinedType@578 addUndefinedIfDefinitelyRequired@619
+## pseudochecker/type.go: 35 functions, 141 lines; K 2/7 D 24/97 P 9/37 S 0/0 O 0/0
+P (ported with the caller): NewPseudoTypeUnion@161 PseudoType.AsPseudoTypeUnion@165 NewPseudoTypeTuple@208 PseudoType.AsPseudoTypeTuple@214 NewPseudoSetAccessor@306 PseudoObjectElement.AsPseudoSetAccessor@313 NewPseudoGetAccessor@323 PseudoObjectElement.AsPseudoGetAccessor@330 NewPseudoTypeBigIntLiteral@368

@@ -1,0 +1,59 @@
+file /lazy2.ts scriptKind=3 variant=0 dts=false textLen=183
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=42 identifiers=9 text=16 reparsedClones=0
+root KindSourceFile [0,183) f=0x0
+  .Statements: list [0,182) n=2
+    - KindFunctionDeclaration [0,91) f=0x0
+      .Body: KindBlock [12,91) f=0x0 MultiLine
+        .Statements: list [14,89) n=1
+          - KindForStatement [14,89) f=0x0
+            .Condition: KindBinaryExpression [74,80) f=0x0
+              .Left: KindIdentifier [74,76) f=0x0 Text="i"
+              .OperatorToken: KindLessThanToken [76,78) f=0x0
+              .Right: KindNumericLiteral [78,80) f=0x0 Text="1" TokenFlags=0x0
+            .Incrementor: KindPostfixUnaryExpression [81,85) f=0x0 Operator=KindPlusPlusToken
+              .Operand: KindIdentifier [81,83) f=0x0 Text="i"
+            .Initializer: KindVariableDeclarationList [22,73) f=0x0
+              .Declarations: list [67,73) n=1
+                - KindVariableDeclaration [67,73) f=0x400
+                  .Initializer: KindNumericLiteral [71,73) f=0x400 Text="0" TokenFlags=0x0
+                  .name: KindIdentifier [67,69) f=0x400 Text="i"
+            .Statement: KindBlock [86,89) f=0x0
+              .Statements: list [88,88) n=0
+      .Parameters: list [11,11) n=0
+      .name: KindIdentifier [8,10) f=0x0 Text="f"
+    - KindFunctionDeclaration [91,182) f=0x0
+      .AsteriskToken: KindAsteriskToken [106,107) f=0x0
+      .Body: KindBlock [111,182) f=0x2800 MultiLine
+        .Statements: list [113,180) n=2
+          - KindVariableStatement [113,150) f=0x202800
+            .DeclarationList: KindVariableDeclarationList [113,149) f=0x2802
+              .Declarations: list [143,149) n=1
+                - KindVariableDeclaration [143,149) f=0x2800
+                  .Initializer: KindNumericLiteral [147,149) f=0x2800 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [143,145) f=0x2800 Text="x"
+            .jsdoc: KindJSDoc [113,135) f=0x402800
+              .Comment: list [116,126) n=1
+                - KindJSDocText [116,126) f=0x402800 text="eager"
+              .Tags: list [126,133) n=1
+                - KindJSDocSeeTag [126,133) f=0x402800
+                  .NameExpression: KindJSDocNameReference [131,132) f=0x402800
+                    .name: KindIdentifier [131,132) f=0x402800 Text="f"
+                  .TagName: KindIdentifier [127,130) f=0x402800 Text="see"
+          - KindVariableStatement [150,180) f=0x202800
+            .DeclarationList: KindVariableDeclarationList [150,179) f=0x2802
+              .Declarations: list [173,179) n=1
+                - KindVariableDeclaration [173,179) f=0x2800
+                  .Initializer: KindNumericLiteral [177,179) f=0x2800 Text="2" TokenFlags=0x0
+                  .name: KindIdentifier [173,175) f=0x2800 Text="y"
+            .jsdoc: KindJSDoc [150,165) f=0x400000
+              .Comment: list [153,163) n=1
+                - KindJSDocText [153,163) f=0x400000 text="lazy2"
+      .Parameters: list [110,110) n=0
+      .modifiers.flags=0x400
+      .modifiers: list [91,97) n=1
+        - KindAsyncKeyword [91,97) f=0x0
+      .name: KindIdentifier [107,109) f=0x0 Text="g"
+  .EndOfFileToken: KindEndOfFile [182,183) f=0x0

@@ -1,0 +1,66 @@
+What happens to the committed ground truth when sync.sh moves UPSTREAM to other commits.
+H = test/cli/lint/conformance. GO = a clone of typescript-go, TS = a clone of TypeScript. OLD and NEW = the typescript-go commits before and after.
+Nothing below uses the network. Steps 1 to 6 need no Go.
+
+1. bash H/sync.sh GO TS [NEW]
+   rewrites H/corpus/ (cases, tests/lib, error baselines, the two lists, the licence files), H/corpus/tsgo.expects-no-errors.txt
+   and the two commit records of H/UPSTREAM; prints the added, removed and changed paths.
+
+2. The ports. The runner holds ports of these files; a port is right only for the commit it was made from:
+     git -C GO diff --stat OLD NEW -- internal/testrunner/test_case_parser.go internal/testrunner/compiler_runner.go \
+       internal/testrunner/compiler_runner_test.go internal/testutil/harnessutil/harnessutil.go internal/testutil/baseline/baseline.go \
+       internal/testutil/tsbaseline/error_baseline.go internal/testutil/tsbaseline/util.go internal/diagnosticwriter/diagnosticwriter.go \
+       internal/ast/diagnostic.go internal/core/core.go internal/core/compileroptions.go internal/core/tristate.go internal/scanner/scanner.go \
+       internal/stringutil/util.go internal/stringutil/compare.go internal/tspath/path.go internal/tspath/extension.go \
+       internal/vfs/internal/internal.go internal/vfs/iovfs/iofs.go internal/vfs/vfstest/vfstest.go internal/vfs/vfsmatch/vfsmatch.go \
+       internal/tsoptions/tsconfigparsing.go internal/tsoptions/parsinghelpers.go internal/tsoptions/commandlineoption.go \
+       internal/tsoptions/commandlineparser.go internal/tsoptions/declscompiler.go internal/tsoptions/enummaps.go
+     git -C TS diff --stat OLDTS NEWTS -- src/harness/harnessIO.ts src/compiler/program.ts src/compiler/watch.ts
+   No output: every port and every fixture that was derived from code stays valid; go to 3.
+   Output: the hunks are ported by hand into runner/*.ts (as scripts/sync-react-compiler.sh does for src/react_compiler), the commit in the
+   first line of each port and in runner/UPSTREAM_PORTED moves. Two lists are copies and move with compiler_runner.go: skippedTests (:86) and
+   skippedEmitTests (:441) of runner/compiler_runner.ts.
+
+3. bun H/gen_options_table.ts GO        (today: enumerator/prototype/gen_options_table.ts, paths fixed in the script)
+   rewrites runner/options_table.json from the text of internal/tsoptions/declscompiler.go, enummaps.go and internal/core/compileroptions.go.
+   It stops when the number of declarations is not the one it expects (126 at 89d5d5b): the number is changed in the script with the commit.
+
+4. bun H/pin.ts --write --reference GO  (today: committed-ground-truth/top-down/probes/pin.ts <assembled runner> H <out> --reference GO)
+   rewrites H/reference_counts.json and H/reference_instances.tsv from the runner over the new corpus, and prints what no Go is needed to know:
+     - baseline files of typescript-go (every kind, three directories) that are not the name of a run instance: must be 0 (45811 files at 89d5d5b);
+     - run instances without any baseline file of typescript-go: 34 of 12797 at 89d5d5b, all without errors; their names are printed;
+     - TypeScript's error baselines by use: oracle 6353, of a skipped instance 2081, behind typescript-go's file 552, behind the no-error list 23, no instance 47.
+   So after a sync the names and the status "run" of all but about 34 run instances, and the names of all but about 37 skipped ones
+   (2081 of 2118 have an error baseline of TypeScript), are confirmed by files that upstream committed. The reasons of the skips are the runner's own.
+   The block referenceRun is left out: it belongs to the commit at which the reference's own run was compared (see 8).
+   Rule for the script: with an unchanged UPSTREAM it only compares and fails on a difference; it writes when the commits of the file differ
+   from UPSTREAM, or with --force.
+
+5. bun H/sweep.ts --round-trip ; bun H/sweep.ts --check <a module that replays the oracle>      (release build; 2.5 s and 4 to 10 s)
+   every error baseline is read and written back with the same bytes, and every oracle passes through the writer unchanged.
+
+6. bun bd test test/cli/lint/conformance.test.ts ; bun H/sweep.ts --no-run --since <revision before the sync>
+   the lists of expectations.json against the new corpus: a name whose case upstream removed or renamed is reported there.
+
+7. Only when step 2 printed something for the files behind a fixture that came from Go. Needs Go 1.24 or later, no network, and the notes branch:
+     fixtures/directives-expected.json   test_case_parser.go, vfs/internal/internal.go, stringutil/util.go, scanner.go (SkipTrivia):
+                                         refresh the copies in directive-grammar/groundtruth/main.go from GO, then
+                                         GOTOOLCHAIN=local go build -o gts . && ./gts synthetic-inputs.json > synthetic-expected.json
+     the case tables of gostrings.ts     only when the Go that upstream builds with moves to another Unicode version:
+                                         python3 shared-foundation-merge/bottom-up/groundtruth/build.py GO <work> /usr/bin/go ; <work>/gt <work>/vectors.jsonl ;
+                                         bun shared-foundation-merge/bottom-up/groundtruth/gen_tables.ts <work>/vectors.jsonl
+     the proofs of the research          sh shared-foundation-merge/bottom-up/prove.sh (bottom layer 16.5 million checks, writer, file matching)
+
+8. Only with the toolchain that upstream itself needs (go.mod: go 1.26, and its modules). This machine has no such toolchain offline:
+     the reference's own run             go test ./internal/testrunner -run '^TestSubmodule$' -count=1 -v > test.log, then
+                                         bun H/pin.ts --reference GO --reference-log test.log
+                                         fails and names every subtest or skip reason that differs; when equal it writes the block referenceRun.
+     post-emit-order.txt                 the patched run of oracle-and-expectations (groundtruth/prepost/patch.py or groundtruth/setup.sh).
+                                         Without it the file keeps the three names of 89d5d5b; it gives a tag and changes no pass or fail.
+
+Where the generators live.
+  In the repository, because steps 1, 3 and 4 run at every sync and need no Go: H/sync.sh, H/gen_options_table.ts, H/pin.ts.
+  On the notes branch only: every Go program and its build script (directive-grammar/groundtruth, enumerator/groundtruth,
+  error-baseline-format/groundtruth, instance-materialisation/groundtruth, oracle-and-expectations/*/groundtruth,
+  shared-foundation-merge/*/groundtruth), their verifiers and their vectors (8.2 MB in 67 files).
+  The repository tracks no Go file today (git ls-files '*.go': 0) and its largest compressed test file is 78 KB.

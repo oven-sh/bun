@@ -1,0 +1,35 @@
+// Research probe: checker-type-printer/bottom-up/groundtruth/zz_probe.go.txt as a file of its own.
+package checker
+
+import "github.com/microsoft/typescript-go/internal/ast"
+
+// Research probe only: the text of the type of a type node, printed three ways.
+func (c *Checker) ProbeTypeNodeToStrings(node *ast.Node) (string, string, string) {
+	t := c.getTypeFromTypeNode(node)
+	return c.TypeToString(t), c.typeToStringEx(t, nil, TypeFormatFlagsUseFullyQualifiedType, nil), c.typeToString(t, node.Parent)
+}
+
+// Research probe only: the printed forms of the symbol of a declaration, each prefixed with its form name.
+func (c *Checker) ProbeDeclarationStrings(node *ast.Node) []string {
+	sym := c.getSymbolOfDeclaration(node)
+	if sym == nil {
+		return nil
+	}
+	out := []string{"symbol=" + c.symbolToString(sym), "symbolIn=" + c.symbolToStringEx(sym, node, ast.SymbolFlagsAll, SymbolFormatFlagsAllowAnyNodeKind)}
+	if sym.Flags&ast.SymbolFlagsValue != 0 {
+		t := c.getTypeOfSymbol(sym)
+		out = append(out, "type="+c.TypeToString(t), "typeFq="+c.typeToStringEx(t, nil, TypeFormatFlagsUseFullyQualifiedType, nil), "typeIn="+c.typeToString(t, node))
+	}
+	if sym.Flags&(ast.SymbolFlagsClass|ast.SymbolFlagsInterface|ast.SymbolFlagsTypeAlias|ast.SymbolFlagsEnum|ast.SymbolFlagsTypeParameter) != 0 {
+		t := c.getDeclaredTypeOfSymbol(sym)
+		out = append(out, "declared="+c.TypeToString(t), "declaredFq="+c.typeToStringEx(t, nil, TypeFormatFlagsUseFullyQualifiedType, nil), "declaredIn="+c.typeToString(t, node))
+	}
+	if ast.IsFunctionLike(node) {
+		sig := c.getSignatureFromDeclaration(node)
+		out = append(out, "signature="+c.signatureToString(sig), "signatureArrow="+c.signatureToStringEx(sig, nil, TypeFormatFlagsWriteArrowStyleSignature, nil))
+		if p := c.getTypePredicateOfSignature(sig); p != nil {
+			out = append(out, "predicate="+c.typePredicateToString(p))
+		}
+	}
+	return out
+}

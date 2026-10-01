@@ -1,0 +1,22 @@
+PARSE cls.ts parse=[] js=[] bind=[TS2567 TS2567]
+cls.ts(1,77)+9: error TS2699: Static property 'prototype' conflicts with built-in property 'Function.prototype' of constructor function 'Base'.
+cls.ts(2,7)+1: error TS2654: Non-abstract class 'D' is missing implementations for the following members of 'Base': 'm', 'p'.
+cls.ts(2,24)+1: error TS2416: Property 'q' in type 'D' is not assignable to the same property in base type 'Base'.
+  chain TS2322: Type 'string' is not assignable to type 'number'.
+cls.ts(2,42)+1: error TS4113: This member cannot have an 'override' modifier because it is not declared in the base class 'Base'.
+cls.ts(2,49)+3: error TS2610: 'acc' is defined as an accessor in class 'Base', but is overridden here in 'D' as an instance property.
+cls.ts(3,36)+1: error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
+cls.ts(4,16)+20: error TS2374: Duplicate index signature for type 'string'.
+cls.ts(4,37)+20: error TS2374: Duplicate index signature for type 'string'.
+cls.ts(5,45)+1: error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
+cls.ts(6,11)+11: error TS2392: Multiple constructor implementations are not allowed.
+cls.ts(6,26)+11: error TS2392: Multiple constructor implementations are not allowed.
+cls.ts(6,43)+11: error TS2392: Multiple constructor implementations are not allowed.
+cls.ts(6,60)+1: error TS2564: Property 'x' has no initializer and is not definitely assigned in the constructor.
+cls.ts(7,55)+11: error TS2377: Constructors for derived classes must contain a 'super' call.
+cls.ts(9,10)+5: error TS2389: Function implementation name must be 'over'.
+cls.ts(11,11)+1: error TS2432: In an enum with multiple declarations, only one declaration can omit an initializer for its first enum element.
+cls.ts(14,16)+17: error TS1319: A default export can only be used in an ECMAScript-style module.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=18 Options=1 SourceFiles=1
+COUNTS TypeCount=120 SymbolCount=9 SignatureCount=12 TotalInstantiationCount=1

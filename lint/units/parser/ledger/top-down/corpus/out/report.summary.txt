@@ -1,0 +1,53 @@
+set A (tsc 6.0.2 parses without a diagnostic, the base build rejects): 17350 sources
+  definition D1 (grammar ranges only):       A1=5181  A2=12169
+  definition D2 (every code minus noise):    A1=2343  A2=12065  A3=2942
+  rows whose class differs between D1 and D2: 3046 (D1 A1 -> D2 A3: 2942, D1 A2 -> D2 A1: 104)
+  the checker reports nothing at all: 224
+  D2 A1 split: A1v=1316 (valid by every test here)  A1r=922 (an unresolved name is a reserved word)  A1j=105 (tsc emit rejected by the js loader of Bun)
+  D2 A1v: 1316 rows; tsc emit rejected by Bun's js loader 0; typescript-go rejects 0; pinned by an existing test 13; distinct Bun messages 111
+  D2 A1r: 922 rows; tsc emit rejected by Bun's js loader 213; typescript-go rejects 0; pinned by an existing test 0; distinct Bun messages 49
+  D2 A1j: 105 rows; tsc emit rejected by Bun's js loader 105; typescript-go rejects 0; pinned by an existing test 1; distinct Bun messages 32
+  D2 A2: 12065 rows; tsc emit rejected by Bun's js loader 1478; typescript-go rejects 195; pinned by an existing test 76; distinct Bun messages 433
+  D2 A3: 2942 rows; tsc emit rejected by Bun's js loader 121; typescript-go rejects 0; pinned by an existing test 10; distinct Bun messages 121
+  distinct Bun messages 525, origin families 215
+  per origin set (D2 A1v / A1r / A1j / A2 / A3):
+    bu      9716   429 / 577 / 62 / 6877 / 1771
+    td      2812   191 / 120 / 13 / 2105 / 383
+    otg      541   157 / 16 / 13 / 289 / 66
+    res      838   156 / 41 / 15 / 410 / 216
+    gd      4587   541 / 213 / 6 / 3186 / 641
+    lex      222   8 / 1 / 11 / 167 / 35
+    sc        53   5 / 0 / 0 / 37 / 11
+    test     101   14 / 0 / 1 / 76 / 10
+
+set B (the base build accepts, tsc 6.0.2 reports a parse diagnostic): 20569 sources, 56 distinct first diagnostics (code and message)
+  first codes: TS1005 (7351); TS1110 (5803); TS1131 (3716); TS1109 (1495); TS1385 (397); TS1387 (189); TS1442 (183); TS1136 (163); TS1477 (152); TS1359 (152); TS1011 (145); TS1003 (142); TS1144 (127); TS1386 (125)
+  typescript-go: same first code and span 20454, other first diagnostic 25, parses 90
+  pinned as accepted by an existing test: 9 sources
+
+pinned expectations of the existing tests: 962 rows (15 with a source that is not in the corpus)
+      3  accept A
+    693  accept AA
+      9  accept B
+      2  accept RR
+    101  reject A
+    139  reject RR
+     15  reject not in the corpus
+  a set A fix flips 101 pinned rejections (100 distinct sources): D2 A1v=13 A1r=0 A1j=1 A2=77 A3=10; D1 A1=24 A2=77; tsc emit rejected by Bun's js loader 16
+  by test file: test/bundler/transpiler/transpiler.test.js (101)
+  by pinned message: The modifier "in" is not valid here (15); The modifier "out" is not valid here (12); "<name>" has already been declared (12); "await" can only be used inside an "async" function (7); Cannot use "this" here (7); Unexpected { (6); Cannot use "declare" with a "using" declaration (5); A return statement cannot be used here (4); Cannot use "declare" with an "await using" declaration (4); Unexpected "super" (3); Expected "from" but found "," (2); Expected "=" but found "from" (2)
+
+tsc 6.0.2 against typescript-go 89d5d5b by root cause (sources; verdict tsc parses and typescript-go rejects / tsc rejects and typescript-go parses / both reject differently):
+   312  133 / 1 / 178  JSDoc function type `function(...)` at a type position: a type for tsc 6.0.2 (checker TS8020), no production in typescript-go
+   219  63 / 0 / 156  import assertion (`assert { }`): typescript-go reports TS2880 in the parser, tsc 6.0.2 leaves it to the checker
+   135  65 / 1 / 69  `?` at a type position (JSDoc unknown and nullable types): tsc 6.0.2 reads a lone `?` as a type, typescript-go requires a type behind it
+   106  0 / 90 / 16  private name in a type query (`typeof a.#b`): typescript-go parses it (parseEntityName with allowPrivateName), tsc 6.0.2 reports TS1003
+    18  0 / 18 / 0  modifier before a rest parameter in a function type (`(public ...a) => T`): typescript-go's skipParameterStart skips `...` behind modifiers, tsc 6.0.2 does not
+     9  9 / 0 / 0  `as` / `satisfies` followed by an operator that binds tighter than the one before it: typescript-go stops (TypeScript issue 63527), tsc 6.0.2 continues
+     7  0 / 0 / 7  `export type =` and `export type default`: other first code
+     6  3 / 0 / 3  triple-slash reference directive: malformed directive (TS1084 only in typescript-go's parser) or position of TS1453
+     5  0 / 0 / 5  TS1127 Invalid character: length 0 in tsc 6.0.2, length 1 in typescript-go
+     4  0 / 4 / 0  the word `function` as a type name followed by `.` or `<`: typescript-go reads a type reference, tsc 6.0.2 rejects
+     3  3 / 0 / 0  `await` as the name of an exported type alias or interface
+     3  0 / 0 / 3  numeric literal prefix without digits (`0x`, `0b`, `0o`): TS1351 in tsc 6.0.2, TS1125 / TS1177 / TS1178 in typescript-go
+     3  0 / 0 / 3  source is not ASCII: tsc counts UTF-16 code units, typescript-go bytes

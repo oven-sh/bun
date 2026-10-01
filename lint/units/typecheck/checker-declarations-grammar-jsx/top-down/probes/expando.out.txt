@@ -1,0 +1,5 @@
+PARSE expando.ts parse=[] js=[] bind=[]
+expando.ts(7,5)+1: error TS2322: Type 'number' is not assignable to type 'string'.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=6 Options=1 SourceFiles=1
+COUNTS TypeCount=97 SymbolCount=7 SignatureCount=7 TotalInstantiationCount=0

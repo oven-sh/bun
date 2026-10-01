@@ -1,0 +1,33 @@
+"x = a ? (b) : c => d;"                            OK  x = a ? b : (c) => d;
+"x = a ? (b) : c => d : e;"                        OK  x = a ? (b) => d : e;
+"x = a ? y => (b) : c => d;"                       ERR Expected ":" but found ";"
+"x = a ? (y) => (b) : c => d;"                     ERR Expected ":" but found ";"
+"x = a ? async y => (b) : c => d;"                 ERR Expected ":" but found ";"
+"x = a ? async (y) => (b) : c => d;"               ERR Expected ":" but found ";"
+"x = a ? (b, c) : d => e;"                         OK  x = a ? (b, c) : (d) => e;
+"x = a ? (b): c => d : e ? (f) : g => h : i;"      OK  x = a ? (b) => d : e ? (f) => h : i;
+"x = a ? <T>(b) : c => d;"                         ERR Expected ":" but found ";"
+"x = a ? async <T>(b) : c => d;"                   ERR Expected ":" but found ";"
+"x = a ? -<T>(b) : c;"                             ERR Unexpected :
+"x = a ? !<T>(b) : c;"                             ERR Unexpected :
+"x = a ? typeof <T>(b) : c;"                       ERR Unexpected :
+"x = a ? 1 + async(b) : c;"                        ERR Unexpected :
+"x = a ? -async(b) : c;"                           ERR Unexpected :
+"x = a ? 1 + async<T>(b) : c;"                     ERR Unexpected :
+"switch (x) { case -<T>(b): c; }"                  ERR Unexpected :
+"switch (x) { case 1 + async(b): c; }"             ERR Unexpected :
+"x = a ? y => z => (b) : c => d;"                  ERR Expected ":" but found ";"
+"x = a ? (b) => (c) : d => e;"                     ERR Expected ":" but found ";"
+"x = a ? (b): c => (d) : e => f;"                  OK  x = a ? b : (c) => (d) => f;
+"x = a ? ((b) : c => d) : e;"                      OK  x = a ? (b) => d : e;
+"x = a ? (b) : (c) : d => e;"                      OK  x = a ? b : (c) => e;
+"x = a ? <T,>(b) : c => d : e;"                    OK  x = a ? (b) => d : e;
+"x = a ? (b = (c) : d => e) : f;"                  OK  x = a ? b = (c) => e : f;
+"x = a ? - (b) : c => d : e;"                      ERR Expected ";" but found ":"
+"x = -<T>(b) => c;"                                ERR Unexpected =>
+"x = 1 + (a): b => c;"                             ERR Expected ";" but found ":"
+"let v = (a): => a;"                               OK  let v = (a) => a;
+"x = (a) : b;"                                     ERR Expected ";" but found ":"
+"x = a ? (b) ? (c) : d => e : f;"                  ERR Expected ":" but found ";"
+"y = (a: number, b?: string): void => {};"         OK  y = (a, b) => {};
+"z = async (a: T) : Promise<T> => a;"              OK  z = async (a) => a;

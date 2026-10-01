@@ -1,0 +1,2 @@
+file p2.ts bytes=111
+error: does not parse (errors=1)

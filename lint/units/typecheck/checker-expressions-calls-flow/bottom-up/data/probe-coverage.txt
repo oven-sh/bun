@@ -1,0 +1,29 @@
+layer	functions	min	flow	reach	calls	ctx	oper	access	literal	func	more	entered by any	never entered
+E-CORE	42	5	18	14	20	17	18	18	14	16	25	35	7
+E-LITERAL	27	0	14	4	11	13	13	4	24	5	14	26	1
+E-OPER	41	0	19	4	0	8	39	5	4	9	26	39	2
+E-ACCESS	71	0	19	13	18	24	17	51	34	19	49	58	13
+E-FACTS	15	1	12	5	8	8	10	8	7	7	13	13	2
+E-FUNC	17	0	0	0	9	11	0	0	5	13	10	15	2
+T-RETINFER	15	0	2	4	3	5	0	3	5	13	8	14	1
+E-CALL	63	0	17	16	49	22	7	16	9	23	33	51	12
+E-CTX	55	0	16	11	17	36	14	1	23	22	34	45	10
+F-NARROW	134	2	96	25	22	14	31	30	26	40	89	114	20
+F-REACH	5	2	2	3	2	2	2	4	2	2	3	5	0
+F-UNREACH	2	2	2	2	2	2	2	2	2	2	2	2	0
+TOTAL	487	12	217	101	161	162	153	142	155	171	306	417	70
+== functions of the twelve layers that the first input enters, with call counts:
+ checkSourceElementUnreachable=3 isSourceElementUnreachable=1 checkExpressionCached=1 checkExpressionCachedEx=1 checkExpressionEx=1 instantiateTypeWithSingleGenericCallSignature=1 checkExpressionWorker=1 convertAutoToAny=1 getFlowState=1 putFlowState=1 isReachableFlowNode=1 isReachableFlowNodeWorker=1
+== functions of the twelve layers that no probe input enters:
+ E-CORE (7): checkNonNullNonVoidType getOuterInferenceTypeParameters getUniqueTypeParameters hasTypeParameterByName getUniqueTypeParameterName checkNonNullChain checkMetaPropertyKeyword
+ E-LITERAL (1): getIndexInfoWithReadonly
+ E-OPER (2): getExactOptionalUnassignableProperties isExactOptionalPropertyMismatch
+ E-ACCESS (13): checkQualifiedName getForInVariableSymbol hasNumericPropertyNames getConstituentProperty parameterInitializerContainsUndefined getTypeOfPropertyInBaseClass isUncalledFunctionReference isPropertyDeclaredInAncestorClass symbolHasNonMethodDeclaration isValidOverrideOf isPropertyInClassDerivedFrom isNodeUsedDuringClassInitialization TryGetThisTypeAtEx
+ E-FACTS (2): getIntersectionTypeFacts isZeroBigInt
+ E-FUNC (2): createUnionSignature assignBindingElementTypes
+ T-RETINFER (1): createPromiseLikeType
+ E-CALL (12): addDeprecatedSuggestionWithSignature typeHasProtectedAccessibleBase resolveDecorator isPotentiallyUncalledDecorator getDiagnosticHeadMessageForDecoratorResolution getDecoratorArgumentCount getLegacyDecoratorArgumentCount getThisArgumentOfCall getThisArgumentType isPromiseResolveArityError isGenericFunctionReturningFunction skippedGenericFunction
+ E-CTX (10): getSpreadArgumentType getMutableArrayOrTupleType getContextualTypeForStaticPropertyDeclaration getContextualTypeForAwaitOperand getContextualTypeForDecorator getContextualTypeForSubstitutionExpression getContextualImportAttributeType getIndexedMappedTypeSubstitutedTypeOfContextualType isExcludedMappedPropertyName appendContextualPropertyTypeConstituent
+ F-NARROW (20): isSomeSymbolAssigned isSomeSymbolAssignedWorker isConstraintPosition isGenericTypeWithoutNullableConstraint hasContextualTypeWithNoGenericTypes narrowTypeByConstructor isConstructedBy narrowTypeBySwitchOptionalChainContainment getElementTypeOfEvolvingArrayType reportFlowControlError tryGetNameFromEntityNameExpression tryGetNameFromType getLiteralPropertyNameText replacePrimitivesWithLiterals isCoercibleUnderDoubleEquals getExplicitThisType includeUndefinedInIndexSignature getAssignedTypeOfSpreadExpression getTypeOfDestructuredSpreadExpression isPastLastAssignment
+ F-REACH (0): 
+ F-UNREACH (0): 

@@ -1,0 +1,62 @@
+[
+ {
+  "code": "var x = { __proto__: 1, __proto__: 2 };",
+  "origin": "dupe-probe-extra",
+  "error": "1:25 Parsing error: Redefinition of __proto__ property"
+ },
+ {
+  "code": "var x = { '__proto__': 1, \"__proto__\": 2 };",
+  "origin": "dupe-probe-extra",
+  "error": "1:27 Parsing error: Redefinition of __proto__ property"
+ },
+ {
+  "code": "var x = { __proto__: 1, '__proto__': 2, a: 1, a: 2 };",
+  "origin": "dupe-probe-extra",
+  "error": "1:25 Parsing error: Redefinition of __proto__ property"
+ },
+ {
+  "code": "({ \"__proto\\u005f_\": 1, __proto__: 2 });",
+  "origin": "rdm-show",
+  "error": "1:25 Parsing error: Redefinition of __proto__ property"
+ },
+ {
+  "code": "({a, a}) = obj;",
+  "origin": "rdm-show",
+  "error": "1:1 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "[({a, a})] = obj;",
+  "origin": "rdm-show",
+  "error": "1:2 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "({a: 1, a: 2} = obj);",
+  "origin": "rdm-show",
+  "error": "1:6 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "({a, a} += obj);",
+  "origin": "rdm-show",
+  "error": "1:2 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "for ({a, a} = 1 of list);",
+  "origin": "rdm-show",
+  "error": "1:6 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "({ a: 1, a: 2 }) => 1;",
+  "origin": "rdm-show",
+  "error": "1:7 Parsing error: Assigning to rvalue"
+ },
+ {
+  "code": "({a, a}) => 1;",
+  "origin": "rdm-show",
+  "error": "1:6 Parsing error: Argument name clash"
+ },
+ {
+  "code": "async ({a, a}) => 1;",
+  "origin": "rdm-show",
+  "error": "1:12 Parsing error: Argument name clash"
+ }
+]

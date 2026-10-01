@@ -1,0 +1,583 @@
+{
+ "bun": "1.4.3 e3566be889995ffff8b08823b9233617f979c889",
+ "rows": {
+  "a \":\" after an operand that ends with parentheses": [
+   {
+    "loader": "ts",
+    "src": "x = a ? 1 + async(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? 1 + async(b) : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? 1 + async(b) : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? -async(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? -async(b) : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? -async(b) : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y || async(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? y || async(b) : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? y || async(b) : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? typeof async() : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? typeof async() : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? typeof async() : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? 1 + async<T>(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? 1 + async(b) : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? 1 + async(b) : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? -<T>(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? -b : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? -b : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? !<T>(b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? !b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? !b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? typeof <T>(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? typeof b : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? typeof b : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? 1 + <T>(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? 1 + b : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? 1 + b : c;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "async function f() { x = a ? await <T>(b) : c; }",
+    "tsc": "ok",
+    "expected": "async function f() {\n  x = a ? await b : c;\n}\n",
+    "own": {
+     "ok": true,
+     "out": "async function f() {\n  x = a ? await b : c;\n}\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "switch (x) { case -<T>(b): c; }",
+    "tsc": "ok",
+    "expected": "switch (x) {\n  case -b:\n    c;\n}\n",
+    "own": {
+     "ok": true,
+     "out": "switch (x) {\n  case -b:\n    c;\n}\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "switch (x) { case 1 + async(b): c; }",
+    "tsc": "ok",
+    "expected": "switch (x) {\n  case 1 + async(b):\n    c;\n}\n",
+    "own": {
+     "ok": true,
+     "out": "switch (x) {\n  case 1 + async(b):\n    c;\n}\n"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "x = a ? 1 + async(b) : c;",
+    "tsc": "ok",
+    "expected": "x = a ? 1 + async(b) : c;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? 1 + async(b) : c;\n"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "switch (x) { case -async(b): c; }",
+    "tsc": "ok",
+    "expected": "switch (x) {\n  case -async(b):\n    c;\n}\n",
+    "own": {
+     "ok": true,
+     "out": "switch (x) {\n  case -async(b):\n    c;\n}\n"
+    }
+   }
+  ],
+  "type parameters before parentheses between \"?\" and \":\"": [
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(b, c) : d => e;",
+    "tsc": "ok",
+    "expected": "x = a ? (b, c) : (d) => e;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (b, c) : (d) => e;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async <T>(b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? async(b) : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? async(b) : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? b ? c : <T>(d) : e => f;",
+    "tsc": "ok",
+    "expected": "x = a ? b ? c : d : (e) => f;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? b ? c : d : (e) => f;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? b ? c : async <T>(d) : e => f;",
+    "tsc": "ok",
+    "expected": "x = a ? b ? c : async(d) : (e) => f;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? b ? c : async(d) : (e) => f;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "for (const k of a ? <T>(b) : c => d) {}",
+    "tsc": "ok",
+    "expected": "for (const k of a ? b : (c) => d) {}\n",
+    "own": {
+     "ok": true,
+     "out": "for (const k of a ? b : (c) => d) {}\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = { [a ? <T>(b) : c => d]: 1 };",
+    "tsc": "ok",
+    "expected": "x = { [a ? b : (c) => d]: 1 };\n",
+    "own": {
+     "ok": true,
+     "out": "x = { [a ? b : (c) => d]: 1 };\n"
+    }
+   }
+  ],
+  "the body of an arrow function between \"?\" and \":\"": [
+   {
+    "loader": "ts",
+    "src": "x = a ? y => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => ({ y }) : z => ({ z });",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => ({ y }) : (z) => ({ z });\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => ([y]) : z => z;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => [y] : (z) => z;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => [y] : (z) => z;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => (b, c) : d => e;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => (b, c) : (d) => e;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => (b, c) : (d) => e;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => (b = 1) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b = 1 : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b = 1 : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => async (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => async(b) : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => async(b) : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => <T>(b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => z => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => (z) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => (z) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? y => q ? r : (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => q ? r : b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => q ? r : b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async y => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? async (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? async (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (async) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (async) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? (y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? (y, z) => ({ y, z }) : c => ({ c });",
+    "tsc": "ok",
+    "expected": "x = a ? (y, z) => ({ y, z }) : (c) => ({ c });\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y, z) => ({ y, z }) : (c) => ({ c });\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? (y = 1) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y = 1) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y = 1) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? ({ y }) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? ({ y }) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? ({ y }) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? ({ y }: Y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? ({ y }) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? ({ y }) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? ([y]: Y, z: Z) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? ([y], z) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? ([y], z) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? (y, ...z) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y, ...z) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y, ...z) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async (y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? async (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? async (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T,>(y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? (y): T => (b) : c => d : e;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => (b) => d : e;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => (b) => d : e;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? b ? c : y => (d) : e => f;",
+    "tsc": "ok",
+    "expected": "x = a ? b ? c : (y) => d : (e) => f;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? b ? c : (y) => d : (e) => f;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "f(a ? y => (b) : c => d);",
+    "tsc": "ok",
+    "expected": "f(a ? (y) => b : (c) => d);\n",
+    "own": {
+     "ok": true,
+     "out": "f(a ? (y) => b : (c) => d);\n"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "x = a ? y => ({ y }) : z => ({ z });",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => ({ y }) : (z) => ({ z });\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "x = a ? (y) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   }
+  ],
+  "a name or a type after \"<\" where an expression starts": [
+   {
+    "loader": "ts",
+    "src": "const v = <out>x;",
+    "tsc": "ok",
+    "expected": "const v = x;\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = <out>(x);",
+    "tsc": "ok",
+    "expected": "const v = x;\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = <out>(x) => x;",
+    "tsc": "ok",
+    "expected": "const v = (x) => x;\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = <out, T>(x) => x;",
+    "tsc": "ok",
+    "expected": "const v = (x) => x;\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = <out = A>(x) => x;",
+    "tsc": "ok",
+    "expected": "const v = (x) => x;\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = x as T <= y;",
+    "tsc": "ok",
+    "expected": "const v = x <= y;\n",
+    "own": {
+     "ok": false,
+     "out": "Unexpected ="
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "const v = x satisfies T <= y;",
+    "tsc": "ok",
+    "expected": "const v = x <= y;\n",
+    "own": {
+     "ok": false,
+     "out": "Unexpected ="
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "f(<out, T>(x) => x);",
+    "tsc": "ok",
+    "expected": "f((x) => x);\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "f(<out = A>(x) => x);",
+    "tsc": "ok",
+    "expected": "f((x) => x);\n",
+    "own": {
+     "ok": false,
+     "out": "The modifier \"out\" is not valid here"
+    }
+   },
+   {
+    "loader": "tsx",
+    "src": "const v = [x as T <= y];",
+    "tsc": "ok",
+    "expected": "const v = [x <= y];\n",
+    "own": {
+     "ok": false,
+     "out": "Unexpected ="
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,513 @@
+var x = NaN;
+----
+isNaN(NaN) === true;
+----
+isNaN(123) !== true;
+----
+Number.isNaN(NaN) === true;
+----
+Number.isNaN(123) !== true;
+----
+foo(NaN + 1);
+----
+foo(1 + NaN);
+----
+foo(NaN - 1)
+----
+foo(1 - NaN)
+----
+foo(NaN * 2)
+----
+foo(2 * NaN)
+----
+foo(NaN / 2)
+----
+foo(2 / NaN)
+----
+var x; if (x = NaN) { }
+----
+var x = Number.NaN;
+----
+isNaN(Number.NaN) === true;
+----
+Number.isNaN(Number.NaN) === true;
+----
+foo(Number.NaN + 1);
+----
+foo(1 + Number.NaN);
+----
+foo(Number.NaN - 1)
+----
+foo(1 - Number.NaN)
+----
+foo(Number.NaN * 2)
+----
+foo(2 * Number.NaN)
+----
+foo(Number.NaN / 2)
+----
+foo(2 / Number.NaN)
+----
+var x; if (x = Number.NaN) { }
+----
+x === Number[NaN];
+----
+x === (NaN, 1)
+----
+x === (doStuff(), NaN, 1)
+----
+x === (doStuff(), Number.NaN, 1)
+----
+switch(foo) {}
+----
+switch(foo) { case bar: NaN; }
+----
+switch(foo) { default: NaN; }
+----
+switch(Nan) {}
+----
+switch('NaN') { default: break; }
+----
+switch(foo(NaN)) {}
+----
+switch(foo.NaN) {}
+----
+switch(foo) { case Nan: break }
+----
+switch(foo) { case 'NaN': break }
+----
+switch(foo) { case foo(NaN): break }
+----
+switch(foo) { case foo.NaN: break }
+----
+switch(foo) { case bar: break; case 1: break; default: break; }
+----
+switch(foo) { case bar: Number.NaN; }
+----
+switch(foo) { default: Number.NaN; }
+----
+switch(Number.Nan) {}
+----
+switch('Number.NaN') { default: break; }
+----
+switch(foo(Number.NaN)) {}
+----
+switch(foo.Number.NaN) {}
+----
+switch(foo) { case Number.Nan: break }
+----
+switch(foo) { case 'Number.NaN': break }
+----
+switch(foo) { case foo(Number.NaN): break }
+----
+switch(foo) { case foo.Number.NaN: break }
+----
+switch((NaN, doStuff(), 1)) {}
+----
+switch((Number.NaN, doStuff(), 1)) {}
+----
+foo.indexOf(NaN)
+----
+foo.lastIndexOf(NaN)
+----
+foo.indexOf(Number.NaN)
+----
+foo.lastIndexOf(Number.NaN)
+----
+foo.indexOf(NaN)
+----
+foo.lastIndexOf(NaN)
+----
+foo.indexOf(NaN)
+----
+foo.lastIndexOf(NaN)
+----
+foo.indexOf(Number.NaN)
+----
+foo.lastIndexOf(Number.NaN)
+----
+foo.indexOf(Number.NaN)
+----
+foo.lastIndexOf(Number.NaN)
+----
+let NaN; if (x === NaN) {}
+----
+let Number; if (x === Number.NaN) {}
+----
+function f(NaN) { return x === NaN; }
+----
+function f(Number) { return x === Number.NaN; }
+----
+let NaN; switch (foo) { case NaN: break; }
+----
+let Number; switch (foo) { case Number.NaN: break; }
+----
+let NaN; switch (NaN) { case a: break; }
+----
+let Number; switch (Number.NaN) { case a: break; }
+----
+let Number; if (x === Number?.NaN) {}
+----
+function f(Number) { return x === Number?.NaN; }
+----
+let Number; switch (foo) { case Number?.NaN: break; }
+----
+let Number; switch (Number?.NaN) { case a: break; }
+----
+123 == NaN;
+----
+123 === NaN;
+----
+NaN === "abc";
+----
+NaN == "abc";
+----
+123 != NaN;
+----
+123 !== NaN;
+----
+NaN !== "abc";
+----
+NaN != "abc";
+----
+NaN < "abc";
+----
+"abc" < NaN;
+----
+NaN > "abc";
+----
+"abc" > NaN;
+----
+NaN <= "abc";
+----
+"abc" <= NaN;
+----
+NaN >= "abc";
+----
+"abc" >= NaN;
+----
+123 == Number.NaN;
+----
+123 === Number.NaN;
+----
+Number.NaN === "abc";
+----
+Number.NaN == "abc";
+----
+123 != Number.NaN;
+----
+123 !== Number.NaN;
+----
+Number.NaN !== "abc";
+----
+Number.NaN != "abc";
+----
+Number.NaN < "abc";
+----
+"abc" < Number.NaN;
+----
+Number.NaN > "abc";
+----
+"abc" > Number.NaN;
+----
+Number.NaN <= "abc";
+----
+"abc" <= Number.NaN;
+----
+Number.NaN >= "abc";
+----
+"abc" >= Number.NaN;
+----
+x === Number?.NaN;
+----
+x !== Number?.NaN;
+----
+x === Number['NaN'];
+----
+/* just
+                adding */ x /* some */ === /* comments */ NaN; // here
+----
+(1, 2) === NaN;
+----
+x === (doStuff(), NaN);
+----
+x === (doStuff(), Number.NaN);
+----
+x == (doStuff(), NaN);
+----
+x == (doStuff(), Number.NaN);
+----
+switch(NaN) { case foo: break; }
+----
+switch(foo) { case NaN: break; }
+----
+switch(NaN) { case foo: break; }
+----
+switch(foo) { case NaN: break; }
+----
+switch(NaN) {}
+----
+switch(NaN) { case foo: break; }
+----
+switch(NaN) { default: break; }
+----
+switch(NaN) { case foo: break; default: break; }
+----
+switch(foo) { case NaN: }
+----
+switch(foo) { case NaN: break; }
+----
+switch(foo) { case (NaN): break; }
+----
+switch(foo) { case bar: break; case NaN: break; default: break; }
+----
+switch(foo) { case bar: case NaN: default: break; }
+----
+switch(foo) { case bar: break; case NaN: break; case baz: break; case NaN: break; }
+----
+switch(NaN) { case NaN: break; }
+----
+switch(Number.NaN) { case foo: break; }
+----
+switch(foo) { case Number.NaN: break; }
+----
+switch(Number.NaN) { case foo: break; }
+----
+switch(foo) { case Number.NaN: break; }
+----
+switch(Number.NaN) {}
+----
+switch(Number.NaN) { case foo: break; }
+----
+switch(Number.NaN) { default: break; }
+----
+switch(Number.NaN) { case foo: break; default: break; }
+----
+switch(foo) { case Number.NaN: }
+----
+switch(foo) { case Number.NaN: break; }
+----
+switch(foo) { case (Number.NaN): break; }
+----
+switch(foo) { case bar: break; case Number.NaN: break; default: break; }
+----
+switch(foo) { case bar: case Number.NaN: default: break; }
+----
+switch(foo) { case bar: break; case NaN: break; case baz: break; case Number.NaN: break; }
+----
+switch(Number.NaN) { case Number.NaN: break; }
+----
+switch((doStuff(), NaN)) {}
+----
+switch((doStuff(), Number.NaN)) {}
+----
+x == NaN
+----
+x === NaN
+----
+x != NaN
+----
+x !== NaN
+----
+x < NaN
+----
+x <= NaN
+----
+x > NaN
+----
+x >= NaN
+----
+NaN == x
+----
+NaN === NaN
+----
+x == Number.NaN
+----
+Number.NaN === x
+----
+x == Number["NaN"]
+----
+x == Number['NaN']
+----
+x == Number[`NaN`]
+----
+x == Number?.NaN
+----
+x == Number?.["NaN"]
+----
+x == (Number).NaN
+----
+x == (Number?.NaN)
+----
+x == Number.NaN.toString
+----
+x == Number[NaN]
+----
+x == window.NaN
+----
+x == globalThis.NaN
+----
+x == Math.NaN
+----
+x == a.Number.NaN
+----
+x == Number.NaN()
+----
+x == NaN.x
+----
+x == "NaN"
+----
+x == (NaN)
+----
+x == (a, NaN)
+----
+x == (a, b, NaN)
+----
+x == ((a, b), NaN)
+----
+x == (a, (b, NaN))
+----
+x == (NaN, a)
+----
+(a, NaN) == x
+----
+x == (a, Number.NaN)
+----
+x + NaN
+----
+x = NaN
+----
+x && NaN
+----
+x in NaN
+----
+x instanceof NaN
+----
+x ?? NaN
+----
+isNaN(x)
+----
+Number.isNaN(x)
+----
+foo(NaN)
+----
+[NaN].indexOf(NaN)
+----
+a.indexOf(NaN)
+----
+a.lastIndexOf(NaN)
+----
+x == -NaN
+----
+x == +NaN
+----
+x == !NaN
+----
+x == typeof NaN
+----
+x == NaN + 1
+----
+x == NaN == y
+----
+a == NaN || b != NaN
+----
+switch (NaN) {}
+----
+switch (NaN) { case 1: break; }
+----
+switch (Number.NaN) {}
+----
+switch ((a, NaN)) {}
+----
+switch (a, NaN) {}
+----
+switch (x) { case NaN: break; }
+----
+switch (x) { case Number.NaN: break; default: }
+----
+switch (x) {
+  case 1:
+    break;
+  case NaN:
+  case Number.NaN:
+    break;
+  default:
+    break;
+}
+----
+switch (x) { case (NaN): }
+----
+switch (x) { case (a, NaN): }
+----
+switch (x) { case a, NaN: }
+----
+switch (x) { case /* c */ NaN: }
+----
+switch (x) { case
+ NaN: }
+----
+switch (x) { case NaN + 1: }
+----
+switch (x) { case y == NaN: }
+----
+switch (NaN) { case NaN: }
+----
+switch (foo(NaN)) {}
+----
+switch (x) { case foo(NaN): }
+----
+  switch (NaN) {
+    case NaN:
+  }
+----
+let NaN = 1; x === NaN
+----
+x === NaN; function g(NaN) {}
+----
+function g(NaN) { x === NaN }
+----
+function g(Number) { x === Number.NaN }
+----
+function g(Number) {} x === Number.NaN
+----
+let Number = 1; x === Number.NaN
+----
+import NaN from "x"; y == NaN
+----
+NaN = 1; x == NaN
+----
+try {} catch (NaN) { x == NaN }
+----
+NaN: for(;;){ x == NaN; break NaN; }
+----
+var o = { NaN: 1 }; x == NaN
+----
+function g(NaN) { switch (NaN) { case NaN: } }
+----
+function g(NaN) {} switch (NaN) { case NaN: }
+----
+class NaN {} x == NaN
+----
+(function NaN() { x == NaN })
+----
+(function NaN() {}); x == NaN
+----
+(class NaN { m() { return x == NaN } })
+----
+(class NaN {}); x == NaN
+----
+with (o) { x === NaN }
+----
+function f() { eval(""); return x === NaN }
+----
+function f(NaN) { eval(""); return x === NaN }
+----
+function f(a = x === NaN) { var NaN; }
+----
+x === NaN === NaN
+----
+x == NaN != NaN
+----
+NaN == NaN == NaN
+----
+x === NaN === -0

@@ -1,0 +1,51 @@
+types-dump v1 (probe/sub/types/main.go) and its canonical form (probe/sub/canon/main.go)
+
+One line per record. Sections in this order:
+  types-dump v1
+  mark <text>: TypeCount=<n> SymbolCount=<n> SignatureCount=<n> globals=<n> mergedSymbols=<n> diagnostics=<n>   (5 lines, the places of NewChecker)
+  after NewChecker types=<n> symbols=<n> signatures=<n>
+  == stage <name>            then the lines of the stage:
+       declared <node> = T<id> | typenode <node> = T<id> | typeof <node> = T<id>      (tree order, files in argument order)
+       members types=<n> | returns signatures=<n> | check <file> diagnostics=<n>
+       relate "<name>" T<id> <one 0 or 1 per top level variable of the last file, in order>
+  == fields                  F <field of Checker> T<id> | G<id> | Y<n> | $...   (every field that holds a type, a signature or a symbol,
+                             in struct order, after the stages: anyType is T1, and the global types that are resolved on demand)
+  == counts types=<n> symbols=<n> signatures=<n> files=<n>
+  == types         T<id> <flag names joined by |>(0x<flags>) [of=0x<objectFlags>] <data struct name> [symbol=<sym>] [alias={...}] <field>=<value> ...
+  == signatures    G<id> <field>=<value> ...
+  == symbols       Y<n> <field>=<value> ...            (the symbols the checker created, n = creation index from 1)
+  == links         L <store field of Checker> <key> <field>=<value> ...   (stores in struct order; a value that is not a struct is printed alone)
+  == diagnostics   D <file or -> [<pos>,<end>) TS<code> cat=<category> chain=<n> related=<n>, then D.chain TS<code> and D.related lines; D.global for the global ones
+
+Fields: the fields of the Go struct in declaration order, embedded structs flattened (Type, TypeBase, TypeMapper,
+TypeMapperBase are skipped), the fields named id and checker skipped; SCHEMA.txt lists them per struct. A field is
+printed only when it is not zero (nil, 0, false, "", empty list or map).
+Values:
+  T<id> G<id>                 a type, a signature
+  Y<n>                        a symbol the checker created
+  $"<name>"/0x<flags>@<node>  a symbol of the binder (name quoted as Go's strconv.QuoteToASCII; <node> of its first declaration, - when none)
+  <Kind>[<pos>,<end>)[@<file>]  a node (Kind without the Kind prefix; @file when more than one file; [synthetic] when pos < 0)
+  [a,b,-]                     a list, - for a nil entry
+  {"k":v "k2":v2}             a map with string keys, sorted by key; {field=value ...} an inline struct
+                              (IndexInfo, TypeAlias, TypePredicate, ConditionalRoot, CompositeSignature, TupleElementInfo)
+  #<n>[T1,T5]                 a cache keyed by a hash: the size and the values in ascending number
+  #<n>                        a map keyed by a type, signature or symbol: only the size
+  <Kind>{...}                 a type mapper: Simple, Array, ArrayToSingle, Deferred, Function, Merged, Composite, Inference with its fields
+  &<Name>                     a pointer to any other struct; func for a function value
+  0x<hex>                     an unsigned value whose type name ends in Flags; other numbers in decimal; true for a set bool
+  "<text>"(string) <v>(<go type>)   the value of a literal type
+
+Canonical form: `oracle canon` reads this text and renumbers T, G and Y. The creation order of the reference is not
+stable from run to run (instantiated members and merged global symbols are created in the iteration order of Go maps),
+the structure is. Rules (full text at the top of probe/sub/canon/main.go):
+  1. numbers up to the counts of the first mark line are kept;
+  2. stage lines and then the F lines, top to bottom: first mention gets the next number of its kind (mentions inside
+     #n[...] do not count);
+  3. drain: scan numbered records in number order, all T, then G, then Y, until nothing is left; a Y record is followed by
+     the L lines keyed by it;
+  4. L lines whose key is not a Y, stores in file order, lines of a store in the order of their text; drain;
+  5. records still without a number: ordered by their rendered line (unnumbered references as ?), T before G before Y,
+     each followed by a drain.
+Output: records in the new order, set members ascending, L lines of a store sorted as text.
+Six runs of the 23 goldens gave the same bytes. One patch makes that possible: the probe builds the infer type parameter
+list of a conditional type in declaration order (probe/patch.py), the one list that the reference builds in map order.

@@ -1,0 +1,87 @@
+# HEAD e3566be889 dirty: []
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling rustversion v1.0.22
+   Compiling memchr v2.8.0
+   Compiling heck v0.5.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling unicode-xid v0.2.6
+   Compiling bun_opaque v0.0.0 (/workspace/wt/parser/src/opaque)
+   Compiling thiserror v2.0.18
+   Compiling allocator-api2 v0.2.21
+   Compiling bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+   Compiling bun_mimalloc_sys v0.0.0 (/workspace/wt/parser/src/mimalloc_sys)
+   Compiling bun_output_tags v0.0.0 (/workspace/wt/parser/src/bun_output_tags)
+   Compiling konst v0.2.20
+   Compiling itoa v1.0.18
+   Compiling bytemuck v1.25.0
+   Compiling bun_simdutf_sys v0.0.0 (/workspace/wt/parser/src/simdutf_sys)
+   Compiling fnv v1.0.7
+   Compiling ident_case v1.0.1
+   Compiling scopeguard v1.2.0
+   Compiling rustix v0.38.44
+   Compiling bun_windows_sys v0.0.0 (/workspace/wt/parser/src/windows_sys)
+   Compiling bstr v1.12.1
+   Compiling linux-raw-sys v0.4.15
+   Compiling paste v1.0.15
+   Compiling bitflags v2.11.1
+   Compiling hashbrown v0.15.5
+   Compiling smallvec v1.15.1
+   Compiling rustc-hash v2.1.2
+   Compiling bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+   Compiling bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+   Compiling bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+   Compiling syn v2.0.117
+   Compiling const_format_proc_macros v0.2.34
+   Compiling const_format v0.2.36
+   Compiling bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+   Compiling errno v0.3.14
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_core_macros v0.0.0 (/workspace/wt/parser/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/workspace/wt/parser/src/dispatch)
+   Compiling enum-map-derive v0.17.0
+   Compiling enum-map v2.7.3
+   Compiling darling_macro v0.21.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+   Compiling strum v0.26.3
+   Compiling bun_libuv_sys v0.0.0 (/workspace/wt/parser/src/libuv_sys)
+   Compiling enumset v1.1.10
+   Compiling bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+   Compiling bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+   Compiling bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+   Compiling bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+   Compiling bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+   Compiling bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+   Compiling bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.30s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_ast/46a38c8f478813b1/out/bun_ast-46a38c8f478813b1)
+
+running 20 tests
+test e::json_tape_tests::alloc_str_chunks_never_move ... ok
+test e::json_tape_tests::array_json_survives_later_tape_writes ... ok
+test e::json_tape_tests::object_json_survives_later_tape_writes ... ok
+test e::json_tape_tests::tape_rooted_at_a_mutable_borrow_still_accepts_writes ... ok
+test e::json_tape_tests::zero_count_spans_do_not_read_the_tape ... ok
+test known_global::tests::lookup_exhaustive ... ok
+test lexer_tables::tests::keyword_lookup ... ok
+test lexer_tables::tests::property_modifier_lookup ... ok
+test lexer_tables::tests::strict_mode_reserved_fn_matches_table ... ok
+test line_column_tracker_tests::error_position_counts_utf16_columns ... ok
+test line_column_tracker_tests::line_column_tracker_interleaved_diagnostic_streams_match_full_scan ... ok
+test line_column_tracker_tests::line_column_tracker_matches_full_scan ... ok
+test line_column_tracker_tests::line_column_tracker_resets_for_a_different_source ... ok
+test range_of_identifier_tests::bracketed_escape_does_not_swallow_terminator ... ok
+test range_of_identifier_tests::identifier_at_eof_includes_last_codepoint ... ok
+test range_of_identifier_tests::leading_bracketed_escape ... ok
+test range_of_identifier_tests::non_identifier_start ... ok
+test range_of_identifier_tests::private_names ... ok
+test range_of_identifier_tests::terminated_identifier ... ok
+test runtime::tests::all_sorted_matches_zig_comptime ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.95s
+

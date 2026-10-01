@@ -1,0 +1,415 @@
+# enums, namespaces, modules, declare forms, interfaces, variables, catch, using
+enum E {}
+enum E { A }
+enum E { A, B }
+enum E { A, B, }
+enum E { A = 1, B }
+enum E { A = 'a' }
+enum E { A = 'a', B = 'b' }
+enum E { 'a' = 1 }
+enum E { 'a-b' = 1, C = E['a-b'] }
+enum E { A = B }
+enum E { A = 1 << 2, B = A | 1 }
+enum E { A = `a` }
+enum E { A = `a${1}` }
+enum E { A = -1 }
+enum E { A = x.y }
+enum E { A = f() }
+enum E { A = 1 as number }
+enum E { A⏎B }
+enum E { A;B }
+enum E { A = 1⏎B = 2 }
+enum E { , }
+enum E { ,A }
+enum E { A,, B }
+enum E { [a] = 1 }
+enum E { ['a'] = 1 }
+enum E { 1 = 1 }
+enum E { 1n = 1 }
+enum E { `a` = 1 }
+enum E { #a = 1 }
+enum E { A: 1 }
+enum E { A = }
+enum E { = 1 }
+enum E { A = 1 }⏎enum E { B = 2 }
+enum E { A }⏎namespace E { export const b = 1 }
+enum { A }
+enum E
+enum E<T> { A }
+enum E extends F { A }
+enum⏎E { A }
+enum E⏎{ A }
+enum type { A }
+enum as { A }
+enum await { A }
+enum E { type, as, is, in, out, of, new, this, void, class, enum, await, yield, let, static }
+const enum E { A }
+const enum E { A = 1, B = A }
+const⏎enum E { A }
+declare enum E { A }
+declare const enum E { A }
+const declare enum E { A }
+export enum E { A }
+export const enum E { A }
+export declare enum E { A }
+export declare const enum E { A }
+export default enum E { A }
+let x = enum E {};
+enum E { A } let x: E.A;
+namespace N {}
+namespace N { }
+namespace N { export const a = 1 }
+namespace N { export const a: A = 1; export function f(b: B): C {} export class D<T> {} }
+namespace N { const a = 1 }
+namespace N { export type A = 1 }
+namespace N { export interface I {} }
+namespace N { type A = 1; interface I {} }
+namespace N { export enum E { A } }
+namespace N { export namespace M { export const a = 1 } }
+namespace N { namespace M {} }
+namespace N { export declare const a: A }
+namespace N { declare const a: A }
+namespace N { export declare function f(): void }
+namespace N { export import a = M.b }
+namespace N { import a = M.b }
+namespace N { export import a = require('a') }
+namespace N { export default 1 }
+namespace N { export {} }
+namespace N { export { a } }
+namespace N { export * from 'a' }
+namespace N { import a from 'a' }
+namespace N { export abstract class C {} }
+namespace N { export let a: A, b: B = 1 }
+namespace N { export const { a, b }: A = c }
+namespace N { export const [a, b]: A = c }
+namespace N.M {}
+namespace N.M { export const a = 1 }
+namespace N.M.O { export type A = 1 }
+namespace N.M.O { export const a = 1 }
+namespace N. {}
+namespace .N {}
+namespace N..M {}
+namespace N.type.as {}
+namespace 'a' {}
+namespace N
+namespace N;
+namespace {}
+namespace N<T> {}
+namespace N {} namespace N {}
+namespace N { export const a = 1 } namespace N { export const b = a }
+namespace N⏎{ }
+module N {}
+module N { export const a = 1 }
+module N.M {}
+module 'm' {}
+module "m" { export const a: A }
+module 'm'
+module 'm';
+module N;
+declare module 'm' {}
+declare module "m" {}
+declare module 'm';
+declare module 'm'
+declare module "*.css" { const a: string; export default a }
+declare module '*!text' { const a: string; export = a }
+declare module 'm' { export const a: A; export function f(): void; export class C {} export interface I {} export type T = 1; export default C }
+declare module 'm' { import { A } from 'a'; export { A } }
+declare module 'm' { export * from 'a' }
+declare module 'm' { export = a }
+declare module 'm' { export as namespace N }
+declare module 'm' { namespace N {} }
+declare module 'm' { global { interface Window {} } }
+declare module `m` {}
+declare module m {}
+declare module N {}
+declare module N.M {}
+declare module N { export const a = 1 }
+declare module 'm' with { type: 'text' };
+declare module 'm' with { type: 'text' } {}
+declare namespace N {}
+declare namespace N { const a: A; function f(): void; class C {} interface I {} type T = 1; enum E {} namespace M {} export {} }
+declare namespace N { export const a: A }
+declare namespace N { const a = 1 }
+declare namespace N { let a }
+declare namespace N { function f() {} }
+declare namespace N { declare const a: A }
+declare namespace N.M.O {}
+declare namespace N;
+declare global {}
+declare global { }
+declare global { interface Window { a: A } }
+declare global { var a: A; function f(): void; namespace N {} }
+declare global;
+declare global⏎{}
+global {}
+global { interface Window {} }
+global;
+global = 1;
+let global: A;
+namespace global {}
+module global {}
+declare module global {}
+declare namespace global {}
+export declare global {}
+declare const a: A;
+declare let a: A;
+declare var a: A;
+declare const a: A, b: B;
+declare const a = 1;
+declare const a;
+declare let a;
+declare var a, b;
+declare const a: A = 1;
+declare const { a }: A;
+declare const [a]: A;
+declare const { a, b };
+declare const a: unique symbol;
+declare let a: A⏎declare let b: B
+declare using a: A;
+declare await using a: A;
+declare function f(): void;
+declare function f(): void⏎declare function g(): void
+declare class C {}
+declare interface I {}
+declare type T = 1;
+declare enum E {}
+declare namespace N {}
+declare import a = b;
+declare import a = require('a');
+declare import a from 'a';
+declare export const a: A;
+declare export default a;
+declare export {};
+declare default a;
+declare {};
+declare 1;
+declare a;
+declare a: A;
+declare (a);
+declare.a;
+declare();
+declare = 1;
+declare + 1;
+declare ? a : b;
+declare`a`;
+declare⏎let a: A;
+declare declare const a: A;
+declare if (a) {}
+declare return;
+declare { a }
+declare async function f(): Promise<void>;
+declare abstract class C {}
+export declare const a: A;
+export declare let a: A, b: B;
+export declare var a: A;
+export declare function f(): void;
+export declare class C {}
+export declare abstract class C {}
+export declare interface I {}
+export declare type T = 1;
+export declare namespace N {}
+export declare module N {}
+export declare module 'm' {}
+export declare global {}
+export declare enum E {}
+export declare;
+export declare a;
+export default declare class C {}
+export default declare function f(): void;
+export default interface I {}
+export default interface I<T> extends A<T> { a: T }
+export default interface {}
+export default type;
+export default type + 1;
+export default abstract;
+export default declare;
+export default namespace N {}
+export default enum E {}
+export default namespace;
+export default module;
+export default async;
+export default async function f<T>(a: T): Promise<T> {}
+export namespace N {}
+export namespace N { export const a = 1 }
+export namespace N.M {}
+export module N {}
+export module 'm' {}
+export interface I {}
+export interface I<T> extends A<T>, B {}
+export abstract class C {}
+export as namespace N;
+export as namespace N
+export as namespace N.M;
+export as namespace;
+export as namespace 'a';
+export as namespace type;
+export as namespace as;
+export as namespace namespace;
+export as⏎namespace N;
+export as N;
+export as;
+export = a;
+export = a.b;
+export = { a };
+export = class {};
+export = function () {};
+export = 1
+export =;
+export = a; export = b;
+export = a; export const b = 1;
+export default a; export = b;
+interface I {}
+interface I { a: A }
+interface I { a: A; b: B }
+interface I { a: A, b: B }
+interface I { a: A⏎b: B }
+interface I { (): void; new (): I; [k: string]: any; m(): void; readonly a: A; get b(): B; set b(v: B); c?: C; n?(): void }
+interface I extends A {}
+interface I extends A, B {}
+interface I extends A, {}
+interface I extends A<B> {}
+interface I extends A<B<C>> {}
+interface I extends A<B<C>>, D<E<F>> {}
+interface I extends A.B<C> {}
+interface I extends A.B.C {}
+interface I<T> {}
+interface I<T extends A = B> {}
+interface I<in T, out U> {}
+interface I<const T> {}
+interface I<T> extends A<T> {}
+interface I<T,> {}
+interface I<> {}
+interface I extends {}
+interface I extends A[] {}
+interface I extends typeof a {}
+interface I extends (A) {}
+interface I extends A | B {}
+interface I extends { a: A } {}
+interface I extends import('a').B {}
+interface I extends 'a' {}
+interface I extends a() {}
+interface I extends a.b() {}
+interface I extends A extends B {}
+interface I implements A {}
+interface I extends A implements B {}
+interface I extends A⏎{}
+interface I⏎extends A {}
+interface I
+interface I;
+interface {}
+interface I { a: A }⏎interface I { b: B }
+interface I.J {}
+interface 'a' {}
+interface I = 1;
+interface = 1;
+interface I { a: A } let x: I;
+interface I extends A<B>⏎{ a: A }
+let a: A;
+let a: A = 1;
+let a!: A;
+let a!: A = 1;
+let a!;
+let a! = 1;
+let a?: A;
+let a?;
+const a: A = 1;
+const a: A;
+const a!: A;
+const a!: A = 1;
+var a: A, b: B;
+var a!: A, b!: B;
+var a: A = 1, b: B = 2;
+let { a }: A = b;
+let { a }!: A = b;
+let [a]: A = b;
+let [a]!: A = b;
+let { a: b }: A = c;
+let { a: b }: { a: B } = c;
+let { a = 1 }: A = c;
+let { a: A } = b;
+let [a: A] = b;
+let { a: b: B } = c;
+let a: A⏎let b: B
+let a: A⏎= 1;
+let a:⏎A = 1;
+let a⏎: A = 1;
+let a: A b: B;
+let a: A = 1 as A;
+let a: () => void = () => {};
+let a: (b: B) => C = b => c;
+let a: A<B> = c;
+let a: A<B<C>> = d;
+let a: A<B<C<D>>> = e;
+let a: A<B>= c;
+let a: A<B<C>>= d;
+let a: A<B<C<D>>>= e;
+let a: A<B> =c;
+let a: A<B<C>> =d;
+let a: A<B>=c, d: E<F<G>>=h;
+let a: A<B>>= c;
+let a: A<B>>>= c;
+let a: A<B<C>>>= c;
+let a: A<B> >= c;
+let a: Array<Array<number>>= [];
+let a: Array<Array<Array<number>>>= [];
+let a: A<B>== c;
+let a: A<B>=== c;
+let a: A<B>=> c;
+let a: A<(b: B) => C>= d;
+let a: A<B<C>=>;
+let a: typeof b<C>= d;
+let a: import('a').B<C>= d;
+type T = A<B<C>>;
+type T = A<B<C<D>>>;
+type T = A<B<C>>[]
+type T = A<B<C>> | D;
+type T<U extends A<B>>= U;
+type T<U extends A<B<C>>>= U;
+type T<U = A<B>>= U;
+type T<U = A<B<C>>>= U;
+class C<T extends A<B>>{ }
+class C<T = A<B<C>>>extends D<E<F>>{ }
+function f<T extends A<B<C>>>(a: T<U<V>>): W<X<Y>>{ }
+const f = <T extends A<B>>(a: T): C<D<E>>=> a;
+const f = (a: A<B>=c, d: E<F<G>>=h) => a;
+function f(a: A<B>=c, d: E<F<G>>=h) {}
+class C { a: A<B>=c; d: E<F<G>>=h }
+class C { a: A<B<C>>⏎b: D }
+x as A<B<C>>;
+x as A<B>>C;
+x as A<B<C>>>D;
+f<A<B<C>>>();
+f<A<B>>>(c);
+new f<A<B<C>>>();
+for (let a: A = 1;;) {}
+for (let a: A, b: B = 1; ; ) {}
+for (let a: A of b) {}
+for (const a: A of b) {}
+for (let a: A in b) {}
+for (var a: A in b) {}
+for (let a!: A of b) {}
+for (let { a }: A of b) {}
+for (let [a]: A = b;;) {}
+for await (const a: A of b) {}
+for (using a: A of b) {}
+try {} catch (e: any) {}
+try {} catch (e: unknown) {}
+try {} catch (e: A) {}
+try {} catch (e: any | unknown) {}
+try {} catch (e: A<B>) {}
+try {} catch ({ a }: any) {}
+try {} catch ([a]: any) {}
+try {} catch (e?: any) {}
+try {} catch (e!: any) {}
+try {} catch (e: any = 1) {}
+try {} catch (e:) {}
+try {} catch (e: ) {}
+try {} catch (e, f) {}
+try {} catch (e: any, f: any) {}
+try {} catch (public e) {}
+using a: A = b;
+using a = b;
+await using a: A = b;
+using a: A = b, c: C = d;
+using a!: A = b;
+using { a }: A = b;

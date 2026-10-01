@@ -1,0 +1,36 @@
+PARSE other.ts parse=[] js=[] bind=[]
+PARSE typenodes.ts parse=[] js=[] bind=[]
+typenodes.ts(1,25)+9: error TS1257: A required element cannot follow an optional element.
+typenodes.ts(2,17)+7: error TS5086: A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type.
+typenodes.ts(2,26)+15: error TS5085: A tuple member cannot be both optional and rest.
+typenodes.ts(4,17)+7: error TS1338: 'infer' declarations are only permitted in the 'extends' clause of a conditional type.
+typenodes.ts(5,17)+8: error TS2322: Type '{ x: 1; }' is not assignable to type 'string | number | bigint | boolean | null | undefined'.
+typenodes.ts(6,59)+5: error TS1453: `resolution-mode` should be either `require` or `import`.
+typenodes.ts(6,70)+8: error TS2694: Namespace '"/other"' has no exported member 'readFile'.
+typenodes.ts(7,36)+5: error TS7061: A mapped type may not declare properties or methods.
+typenodes.ts(8,21)+16: error TS2322: Type 'symbol | boolean' is not assignable to type 'string | number | symbol'.
+  chain TS2322: Type 'boolean' is not assignable to type 'string | number | symbol'.
+typenodes.ts(9,21)+3: error TS2339: Property 'b' does not exist on type '{ a: 1; }'.
+typenodes.ts(10,18)+13: error TS2552: Cannot find name 'undefinedName'. Did you mean 'undefined'?
+typenodes.ts(11,20)+6: error TS1005: 'symbol' expected.
+typenodes.ts(12,9)+8: error TS1354: 'readonly' type modifier is only permitted on array and tuple literal types.
+typenodes.ts(13,17)+1: error TS2744: Type parameter defaults can only reference previously declared type parameters.
+typenodes.ts(13,32)+1: error TS2300: Duplicate identifier 'T'.
+typenodes.ts(13,32)+1: error TS2706: Required type parameters may not follow optional type parameters.
+typenodes.ts(14,17)+1: error TS2300: Duplicate identifier 'a'.
+typenodes.ts(14,23)+1: error TS2300: Duplicate identifier 'a'.
+typenodes.ts(14,23)+1: error TS2717: Subsequent property declarations must have the same type.  Property 'a' must be of type '1', but here has type '2'.
+  related typenodes.ts(14,17)+1: message TS6203: 'a' was also declared here.
+typenodes.ts(14,33)+1: error TS2300: Duplicate identifier 'b'.
+typenodes.ts(14,46)+1: error TS2300: Duplicate identifier 'b'.
+typenodes.ts(16,32)+4: error TS1229: A type predicate cannot reference a rest parameter.
+typenodes.ts(17,36)+1: error TS1230: A type predicate cannot reference element 'a' in a binding pattern.
+typenodes.ts(18,12)+8: error TS2637: Variance annotations are only supported in type aliases for object, function, constructor, and mapped types.
+typenodes.ts(19,6)+6: error TS2457: Type alias name cannot be 'string'.
+typenodes.ts(20,13)+9: error TS2795: The 'intrinsic' keyword can only be used to declare compiler provided intrinsic types.
+typenodes.ts(21,24)+1: error TS1009: Trailing comma not allowed.
+typenodes.ts(22,14)+7: error TS2314: Generic type 'Array<T>' requires 1 type argument(s).
+typenodes.ts(22,19)+2: error TS1099: Type argument list cannot be empty.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=12 GetModeForUsageLocation=1 GetResolvedModule=1 GetSourceFile=1 GetSourceFileForResolvedModule=1 Options=1 SourceFiles=1
+COUNTS TypeCount=130 SymbolCount=50 SignatureCount=8 TotalInstantiationCount=2

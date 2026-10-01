@@ -1,0 +1,12 @@
+[
+ "a as T as U",
+ "a! as T",
+ "(a as T)!",
+ "<T>a!",
+ "<T>(a as U)",
+ "a!.b!.c",
+ "a as const satisfies T",
+ "<T><U>a",
+ "(a satisfies T).b(c)!",
+ "(<T>a)(x)"
+]

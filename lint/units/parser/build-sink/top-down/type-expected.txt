@@ -1,0 +1,1193 @@
+== args-gg  "A<B<C>>"
+TypeReference 0 7
+ list typeArguments 2 6 1
+ TypeReference 2 6
+  list typeArguments 4 5 1
+  TypeReference 4 5
+rest 7
+== args-ggg  "A<B<C<D>>>"
+TypeReference 0 10
+ list typeArguments 2 9 1
+ TypeReference 2 9
+  list typeArguments 4 8 1
+  TypeReference 4 8
+   list typeArguments 6 7 1
+   TypeReference 6 7
+rest 10
+== args-ge  "A<B>= y"
+TypeReference 0 4
+ list typeArguments 2 3 1
+ TypeReference 2 3
+rest 4
+== args-gge  "A<B<C>>= y"
+TypeReference 0 7
+ list typeArguments 2 6 1
+ TypeReference 2 6
+  list typeArguments 4 5 1
+  TypeReference 4 5
+rest 7
+== args-ggge  "A<B<C<D>>>= y"
+TypeReference 0 10
+ list typeArguments 2 9 1
+ TypeReference 2 9
+  list typeArguments 4 8 1
+  TypeReference 4 8
+   list typeArguments 6 7 1
+   TypeReference 6 7
+rest 10
+== args-extra-gt  "A<B>> = y"
+diag TS1005 4+1
+diag TS1109 6+1
+TypeReference 0 4
+ list typeArguments 2 3 1
+ TypeReference 2 3
+rest 4
+== fn-tp-gg  "<T extends A<B>>() => void"
+FunctionType 0 26
+ list typeParameters 1 15 1
+ list parameters 17 17 0
+ TypeParameter 1 15
+  TypeReference 11 15
+   list typeArguments 13 14 1
+   TypeReference 13 14
+ VoidKeyword 22 26
+rest 26
+== fn-tp-ggg  "<T extends A<B<C>>>(x: T) => void"
+FunctionType 0 33
+ list typeParameters 1 18 1
+ list parameters 20 24 1
+ TypeParameter 1 18
+  TypeReference 11 18
+   list typeArguments 13 17 1
+   TypeReference 13 17
+    list typeArguments 15 16 1
+    TypeReference 15 16
+ Parameter 20 24
+  TypeReference 23 24
+ VoidKeyword 29 33
+rest 33
+== fn-tp-default-gg  "<T = A<B>>() => T"
+FunctionType 0 17
+ list typeParameters 1 9 1
+ list parameters 11 11 0
+ TypeParameter 1 9
+  TypeReference 5 9
+   list typeArguments 7 8 1
+   TypeReference 7 8
+ TypeReference 16 17
+rest 17
+== ctor-tp-gg  "new <T extends A<B>>() => T"
+ConstructorType 0 27
+ list typeParameters 5 19 1
+ list parameters 21 21 0
+ TypeParameter 5 19
+  TypeReference 15 19
+   list typeArguments 17 18 1
+   TypeReference 17 18
+ TypeReference 26 27
+rest 27
+== members-tp-gg  "{ m<T extends A<B>>(): void; <U extends A<B>>(): U; new <V = A<B>>(): V }"
+TypeLiteral 0 73
+ list members 1 71 3
+ MethodSignature 2 28
+  list typeParameters 4 18 1
+  list parameters 20 20 0
+  TypeParameter 4 18
+   TypeReference 14 18
+    list typeArguments 16 17 1
+    TypeReference 16 17
+  VoidKeyword 23 27
+ CallSignature 29 51
+  list typeParameters 30 44 1
+  list parameters 46 46 0
+  TypeParameter 30 44
+   TypeReference 40 44
+    list typeArguments 42 43 1
+    TypeReference 42 43
+  TypeReference 49 50
+ ConstructSignature 52 71
+  list typeParameters 57 65 1
+  list parameters 67 67 0
+  TypeParameter 57 65
+   TypeReference 61 65
+    list typeArguments 63 64 1
+    TypeReference 63 64
+  TypeReference 70 71
+rest 73
+== open-ll  "A<<T>() => void>"
+TypeReference 0 16
+ list typeArguments 2 15 1
+ FunctionType 2 15
+  list typeParameters 3 4 1
+  list parameters 6 6 0
+  TypeParameter 3 4
+  VoidKeyword 11 15
+rest 16
+== open-ll-nested-close  "A<<T extends B<C>>() => D<E>>"
+TypeReference 0 29
+ list typeArguments 2 28 1
+ FunctionType 2 28
+  list typeParameters 3 17 1
+  list parameters 19 19 0
+  TypeParameter 3 17
+   TypeReference 13 17
+    list typeArguments 15 16 1
+    TypeReference 15 16
+  TypeReference 24 28
+   list typeArguments 26 27 1
+   TypeReference 26 27
+rest 29
+== args-then-index  "A<B>[C<D>]"
+IndexedAccessType 0 10
+ TypeReference 0 4
+  list typeArguments 2 3 1
+  TypeReference 2 3
+ TypeReference 5 9
+  list typeArguments 7 8 1
+  TypeReference 7 8
+rest 10
+== args-gg-array  "A<B<C>>[]"
+ArrayType 0 9
+ TypeReference 0 7
+  list typeArguments 2 6 1
+  TypeReference 2 6
+   list typeArguments 4 5 1
+   TypeReference 4 5
+rest 9
+== typeof-args-gg  "typeof a<B<C>>"
+TypeQuery 0 14
+ list typeArguments 9 13 1
+ TypeReference 9 13
+  list typeArguments 11 12 1
+  TypeReference 11 12
+rest 14
+== import-args-gg  "import(\"m\").X<Y<Z>>"
+ImportType 0 19
+ list typeArguments 14 18 1
+ LiteralType 7 10
+ TypeReference 14 18
+  list typeArguments 16 17 1
+  TypeReference 16 17
+rest 19
+== args-trailing-comma  "A<B, >"
+TypeReference 0 6
+ list typeArguments 2 4 1 trailing
+ TypeReference 2 3
+rest 6
+== args-trailing-comma-gg  "A<B<C,>>"
+TypeReference 0 8
+ list typeArguments 2 7 1
+ TypeReference 2 7
+  list typeArguments 4 6 1 trailing
+  TypeReference 4 5
+rest 8
+== args-empty  "A<>"
+TypeReference 0 3
+ list typeArguments 2 2 0
+rest 3
+== tp-trailing-comma  "<T,>() => void"
+FunctionType 0 14
+ list typeParameters 1 3 1 trailing
+ list parameters 5 5 0
+ TypeParameter 1 2
+ VoidKeyword 10 14
+rest 14
+== comments  "/*1*/ A /*2*/ < /*3*/ B /*4*/ < /*5*/ C /*6*/ >> /*7*/ = y"
+TypeReference 6 48
+ list typeArguments 15 47 1
+ TypeReference 22 47
+  list typeArguments 31 39 1
+  TypeReference 38 39
+rest 55
+== conditional-gge  "A extends B<C> ? D : E<F<G>>= y"
+ConditionalType 0 28
+ TypeReference 0 1
+ TypeReference 10 14
+  list typeArguments 12 13 1
+  TypeReference 12 13
+ TypeReference 17 18
+ TypeReference 21 28
+  list typeArguments 23 27 1
+  TypeReference 23 27
+   list typeArguments 25 26 1
+   TypeReference 25 26
+rest 28
+== tuple-gg  "[A<B<C>>, D<E>]"
+TupleType 0 15
+ list elements 1 14 2
+ TypeReference 1 8
+  list typeArguments 3 7 1
+  TypeReference 3 7
+   list typeArguments 5 6 1
+   TypeReference 5 6
+ TypeReference 10 14
+  list typeArguments 12 13 1
+  TypeReference 12 13
+rest 15
+== union-gg  "A<B<C>> | D<E<F>>= y"
+UnionType 0 17
+ TypeReference 0 7
+  list typeArguments 2 6 1
+  TypeReference 2 6
+   list typeArguments 4 5 1
+   TypeReference 4 5
+ TypeReference 10 17
+  list typeArguments 12 16 1
+  TypeReference 12 16
+   list typeArguments 14 15 1
+   TypeReference 14 15
+rest 17
+== newline-before-lt  "A\n<B>(y)"
+TypeReference 0 1
+rest 2
+== dot-then-args  "a.b<C<D>>"
+TypeReference 0 9
+ list typeArguments 4 8 1
+ QualifiedName 0 3
+ TypeReference 4 8
+  list typeArguments 6 7 1
+  TypeReference 6 7
+rest 9
+== gggg  "A<B<C<D<E>>>>"
+TypeReference 0 13
+ list typeArguments 2 12 1
+ TypeReference 2 12
+  list typeArguments 4 11 1
+  TypeReference 4 11
+   list typeArguments 6 10 1
+   TypeReference 6 10
+    list typeArguments 8 9 1
+    TypeReference 8 9
+rest 13
+== gggge  "A<B<C<D<E>>>>= y"
+TypeReference 0 13
+ list typeArguments 2 12 1
+ TypeReference 2 12
+  list typeArguments 4 11 1
+  TypeReference 4 11
+   list typeArguments 6 10 1
+   TypeReference 6 10
+    list typeArguments 8 9 1
+    TypeReference 8 9
+rest 13
+== template  "`a${B}c${ D<E> }e`"
+TemplateLiteralType 0 18
+ list templateSpans 4 18 2
+ TemplateHead 0 4
+ TemplateLiteralTypeSpan 4 9
+  TypeReference 4 5
+  TemplateMiddle 5 9
+ TemplateLiteralTypeSpan 10 18
+  TypeReference 10 14
+   list typeArguments 12 13 1
+   TypeReference 12 13
+  TemplateTail 15 18
+rest 18
+== union-leading  "| A | B<C>"
+UnionType 0 10
+ TypeReference 2 3
+ TypeReference 6 10
+  list typeArguments 8 9 1
+  TypeReference 8 9
+rest 10
+== union-single-leading  "| A"
+UnionType 0 3
+ TypeReference 2 3
+rest 3
+== conditional  "A | B extends C ? D : E[]"
+ConditionalType 0 25
+ UnionType 0 5
+  TypeReference 0 1
+  TypeReference 4 5
+ TypeReference 14 15
+ TypeReference 18 19
+ ArrayType 22 25
+  TypeReference 22 23
+rest 25
+== array-indexed  "A [ ] [ K ]"
+IndexedAccessType 0 11
+ ArrayType 0 5
+  TypeReference 0 1
+ TypeReference 8 9
+rest 11
+== tuple  "[a: A, b?: B, ...c: C[], D?, ...E]"
+TupleType 0 34
+ list elements 1 33 5
+ NamedTupleMember 1 5
+  TypeReference 4 5
+ NamedTupleMember 7 12
+  TypeReference 11 12
+ NamedTupleMember 14 23
+  ArrayType 20 23
+   TypeReference 20 21
+ OptionalType 25 27
+  TypeReference 25 26
+ RestType 29 33
+  TypeReference 32 33
+rest 34
+== tuple-trailing  "[A, B , ]"
+TupleType 0 9
+ list elements 1 7 2 trailing
+ TypeReference 1 2
+ TypeReference 4 5
+rest 9
+== object  "{ a: A; b?: B, c(x: X): Y\n readonly [k: string]: V ; new <U>(u: U): W }"
+TypeLiteral 0 71
+ list members 1 69 5
+ PropertySignature 2 7
+  TypeReference 5 6
+ PropertySignature 8 14
+  TypeReference 12 13
+ MethodSignature 15 25
+  list parameters 17 21 1
+  Parameter 17 21
+   TypeReference 20 21
+  TypeReference 24 25
+ IndexSignature 27 52
+  list parameters 37 46 1
+  Parameter 37 46
+   StringKeyword 40 46
+  TypeReference 49 50
+ ConstructSignature 53 69
+  list typeParameters 58 59 1
+  list parameters 61 65 1
+  TypeParameter 58 59
+  Parameter 61 65
+   TypeReference 64 65
+  TypeReference 68 69
+rest 71
+== mapped  "{ -readonly [K in keyof U as N<K>]+?: U[K] ; }"
+MappedType 0 46
+ list members 44 44 0
+ TypeParameter 13 25
+  TypeOperator 18 25
+   TypeReference 24 25
+ TypeReference 29 33
+  list typeArguments 31 32 1
+  TypeReference 31 32
+ IndexedAccessType 38 42
+  TypeReference 38 39
+  TypeReference 40 41
+rest 46
+== fn  "<U extends V = W>(this: X, a?: A, ...r: R[]) => a is B"
+FunctionType 0 54
+ list typeParameters 1 16 1
+ list parameters 18 43 3
+ TypeParameter 1 16
+  TypeReference 11 12
+  TypeReference 15 16
+ Parameter 18 25
+  TypeReference 24 25
+ Parameter 27 32
+  TypeReference 31 32
+ Parameter 34 43
+  ArrayType 40 43
+   TypeReference 40 41
+ TypePredicate 48 54
+  TypeReference 53 54
+rest 54
+== ctor  "abstract new (a: A) => B"
+ConstructorType 0 24
+ list parameters 14 18 1
+ Parameter 14 18
+  TypeReference 17 18
+ TypeReference 23 24
+rest 24
+== operators  "keyof readonly A[] | unique symbol"
+UnionType 0 34
+ TypeOperator 0 18
+  TypeOperator 6 18
+   ArrayType 15 18
+    TypeReference 15 16
+ TypeOperator 21 34
+  SymbolKeyword 28 34
+rest 34
+== infer  "A extends (infer U extends V)[] ? U : never"
+ConditionalType 0 43
+ TypeReference 0 1
+ ArrayType 10 31
+  ParenthesizedType 10 29
+   InferType 11 28
+    TypeParameter 17 28
+     TypeReference 27 28
+ TypeReference 34 35
+ NeverKeyword 38 43
+rest 43
+== import  "typeof import(\"m\", { with: { a: \"b\" } }).Q.R<S>"
+ImportType 0 47
+ list typeArguments 45 46 1
+ LiteralType 14 17
+ ImportAttributes 27 37
+  list elements 28 35 1
+  ImportAttribute 29 35
+ QualifiedName 41 44
+ TypeReference 45 46
+rest 47
+== typeof  "typeof a.b<C>"
+TypeQuery 0 13
+ list typeArguments 11 12 1
+ QualifiedName 7 10
+ TypeReference 11 12
+rest 13
+== literal  "- 1 | -2n | \"s\" | `t` | true | null"
+UnionType 0 35
+ LiteralType 0 3
+ LiteralType 6 9
+ LiteralType 12 15
+ LiteralType 18 21
+ LiteralType 24 28
+ LiteralType 31 35
+rest 35
+== paren  "( A | B )[]"
+ArrayType 0 11
+ ParenthesizedType 0 9
+  UnionType 2 7
+   TypeReference 2 3
+   TypeReference 6 7
+rest 11
+== nonnull  "A!"
+JSDocNonNullableType 0 2
+ TypeReference 0 1
+rest 2
+== qualified  "a . b . C<D>"
+TypeReference 0 12
+ list typeArguments 10 11 1
+ QualifiedName 0 9
+  QualifiedName 0 5
+ TypeReference 10 11
+rest 12
+== comments  "/*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;"
+TypeReference 6 31
+ list typeArguments 15 23 1
+ TypeReference 22 23
+rest 38
+== accessor-members  "{ get a(): A; set a(v: A) }"
+TypeLiteral 0 27
+ list members 1 25 2
+ GetAccessor 2 13
+  list parameters 8 8 0
+  TypeReference 11 12
+ SetAccessor 14 25
+  list parameters 20 24 1
+  Parameter 20 24
+   TypeReference 23 24
+rest 27
+== binding-parameter  "({ a, b: [c] }: X, [d]?: Y) => void"
+FunctionType 0 35
+ list parameters 1 26 2
+ Parameter 1 17
+  ObjectBindingPattern 1 14
+   list elements 2 12 2
+   BindingElement 3 4
+   BindingElement 6 12
+    ArrayBindingPattern 9 12
+     list elements 10 11 1
+     BindingElement 10 11
+  TypeReference 16 17
+ Parameter 19 26
+  ArrayBindingPattern 19 22
+   list elements 20 21 1
+   BindingElement 20 21
+  TypeReference 25 26
+ VoidKeyword 31 35
+rest 35
+== initializer-parameter  "(a = 1) => void"
+FunctionType 0 15
+ list parameters 1 6 1
+ Parameter 1 6
+ VoidKeyword 11 15
+rest 15
+== fn-in-union  "A | () => void"
+diag TS1385 3+11
+UnionType 0 14
+ TypeReference 0 1
+ FunctionType 4 14
+  list parameters 5 5 0
+  VoidKeyword 10 14
+rest 14
+== jsdoc-prefix-q  "?A"
+JSDocNullableType 0 2
+ TypeReference 1 2
+rest 2
+== jsdoc-postfix-q  "A?"
+JSDocNullableType 0 2
+ TypeReference 0 1
+rest 2
+== jsdoc-prefix-bang  "!A"
+JSDocNonNullableType 0 2
+ TypeReference 1 2
+rest 2
+== jsdoc-all  "*"
+JSDocAllType 0 1
+rest 1
+== kw-dot  "string.a<B>"
+TypeReference 0 11
+ list typeArguments 9 10 1
+ QualifiedName 0 8
+ TypeReference 9 10
+rest 11
+== typeof-this  "typeof this.a"
+TypeQuery 0 13
+ QualifiedName 7 13
+rest 13
+== import-args  "import(\"x\")<A>"
+ImportType 0 14
+ list typeArguments 12 13 1
+ LiteralType 7 10
+ TypeReference 12 13
+rest 14
+== import-qual  "import(\"x\").A.B<C<D>>"
+ImportType 0 21
+ list typeArguments 16 20 1
+ LiteralType 7 10
+ QualifiedName 12 15
+ TypeReference 16 20
+  list typeArguments 18 19 1
+  TypeReference 18 19
+rest 21
+== import-attr-trailing  "import(\"x\", { with: { \"a\": \"b\", c: \"d\", }, })"
+ImportType 0 45
+ LiteralType 7 10
+ ImportAttributes 20 41
+  list elements 21 39 2 trailing
+  ImportAttribute 22 30
+  ImportAttribute 32 38
+rest 45
+== members-mods  "{ readonly a?: A\n m?<U>(a): R, <V>(b: V): V; new (c): C\n readonly [k: string]: V }"
+TypeLiteral 0 82
+ list members 1 80 5
+ PropertySignature 2 16
+  TypeReference 15 16
+ MethodSignature 18 30
+  list typeParameters 21 22 1
+  list parameters 24 25 1
+  TypeParameter 21 22
+  Parameter 24 25
+  TypeReference 28 29
+ CallSignature 31 44
+  list typeParameters 32 33 1
+  list parameters 35 39 1
+  TypeParameter 32 33
+  Parameter 35 39
+   TypeReference 38 39
+  TypeReference 42 43
+ ConstructSignature 45 55
+  list parameters 50 51 1
+  Parameter 50 51
+  TypeReference 54 55
+ IndexSignature 57 80
+  list parameters 67 76 1
+  Parameter 67 76
+   StringKeyword 70 76
+  TypeReference 79 80
+rest 82
+== member-init  "{ a: A = 1; b }"
+TypeLiteral 0 15
+ list members 1 13 2
+ PropertySignature 2 11
+  TypeReference 5 6
+ PropertySignature 12 13
+rest 15
+== member-computed  "{ [Symbol.iterator](): X; [k]: Y; \"s\": 1; 2: 3 }"
+TypeLiteral 0 48
+ list members 1 46 4
+ MethodSignature 2 25
+  list parameters 20 20 0
+  ComputedPropertyName 2 19
+  TypeReference 23 24
+ PropertySignature 26 33
+  ComputedPropertyName 26 29
+  TypeReference 31 32
+ PropertySignature 34 41
+  LiteralType 39 40
+ PropertySignature 42 46
+  LiteralType 45 46
+rest 48
+== mapped-min  "{ [K in T] }"
+MappedType 0 12
+ list members 10 10 0
+ TypeParameter 3 9
+  TypeReference 8 9
+rest 12
+== mapped-ro-q  "{ readonly [K in T]?: U }"
+MappedType 0 25
+ list members 23 23 0
+ TypeParameter 12 18
+  TypeReference 17 18
+ TypeReference 22 23
+rest 25
+== mapped-plus-minus  "{ +readonly [K in T]-?: U; }"
+MappedType 0 28
+ list members 26 26 0
+ TypeParameter 13 19
+  TypeReference 18 19
+ TypeReference 24 25
+rest 28
+== param-mods  "(public a: A, readonly b?: B) => void"
+FunctionType 0 37
+ list parameters 1 28 2
+ Parameter 1 12
+  TypeReference 11 12
+ Parameter 14 28
+  TypeReference 27 28
+ VoidKeyword 33 37
+rest 37
+== param-patterns  "([a, , ...b]: X, { c = 1, d: { e }, ...f }: Y = z) => void"
+FunctionType 0 58
+ list parameters 1 49 2
+ Parameter 1 15
+  ArrayBindingPattern 1 12
+   list elements 2 11 3
+   BindingElement 2 3
+   BindingElement 7 11
+  TypeReference 14 15
+ Parameter 17 49
+  ObjectBindingPattern 17 42
+   list elements 18 40 3
+   BindingElement 19 24
+   BindingElement 26 34
+    ObjectBindingPattern 29 34
+     list elements 30 32 1
+     BindingElement 31 32
+   BindingElement 36 40
+  TypeReference 44 45
+ VoidKeyword 54 58
+rest 58
+== ctor-type-args  "new <U>(a: U) => A<U>"
+ConstructorType 0 21
+ list typeParameters 5 6 1
+ list parameters 8 12 1
+ TypeParameter 5 6
+ Parameter 8 12
+  TypeReference 11 12
+ TypeReference 17 21
+  list typeArguments 19 20 1
+  TypeReference 19 20
+rest 21
+== conditional-nested  "A extends B ? C : D extends E ? F : G"
+ConditionalType 0 37
+ TypeReference 0 1
+ TypeReference 10 11
+ TypeReference 14 15
+ ConditionalType 18 37
+  TypeReference 18 19
+  TypeReference 28 29
+  TypeReference 32 33
+  TypeReference 36 37
+rest 37
+== intersection-leading  "& A & B | & C"
+UnionType 0 13
+ IntersectionType 0 7
+  TypeReference 2 3
+  TypeReference 6 7
+ IntersectionType 10 13
+  TypeReference 12 13
+rest 13
+== union-of-intersection  "A & B | C & D | E"
+UnionType 0 17
+ IntersectionType 0 5
+  TypeReference 0 1
+  TypeReference 4 5
+ IntersectionType 8 13
+  TypeReference 8 9
+  TypeReference 12 13
+ TypeReference 16 17
+rest 17
+== keyof-union  "keyof A | B"
+UnionType 0 11
+ TypeOperator 0 7
+  TypeReference 6 7
+ TypeReference 10 11
+rest 11
+== infer-constraint-cond  "A extends infer U extends B ? C : D"
+ConditionalType 0 35
+ TypeReference 0 1
+ InferType 10 27
+  TypeParameter 16 27
+   TypeReference 26 27
+ TypeReference 30 31
+ TypeReference 34 35
+rest 35
+== array-of-fn  "(() => void)[]"
+ArrayType 0 14
+ ParenthesizedType 0 12
+  FunctionType 1 11
+   list parameters 2 2 0
+   VoidKeyword 7 11
+rest 14
+== indexed-nl  "{ a: A\n [k: string]: B }"
+TypeLiteral 0 24
+ list members 1 22 2
+ PropertySignature 2 6
+  TypeReference 5 6
+ IndexSignature 8 22
+  list parameters 9 18 1
+  Parameter 9 18
+   StringKeyword 12 18
+  TypeReference 21 22
+rest 24
+== tuple-empty  "[]"
+TupleType 0 2
+ list elements 1 1 0
+rest 2
+== tuple-named-rest-opt  "[...a: A[], b?: B, C?, ...D[]]"
+TupleType 0 30
+ list elements 1 29 4
+ NamedTupleMember 1 10
+  ArrayType 7 10
+   TypeReference 7 8
+ NamedTupleMember 12 17
+  TypeReference 16 17
+ OptionalType 19 21
+  TypeReference 19 20
+ RestType 23 29
+  ArrayType 26 29
+   TypeReference 26 27
+rest 30
+== type-args-multi  "A<B, C<D>, E>"
+TypeReference 0 13
+ list typeArguments 2 12 3
+ TypeReference 2 3
+ TypeReference 5 9
+  list typeArguments 7 8 1
+  TypeReference 7 8
+ TypeReference 11 12
+rest 13
+== fn-type-no-params  "() => A"
+FunctionType 0 7
+ list parameters 1 1 0
+ TypeReference 6 7
+rest 7
+== fn-predicate-this  "(this: A) => this is B"
+FunctionType 0 22
+ list parameters 1 8 1
+ Parameter 1 8
+  TypeReference 7 8
+ TypePredicate 13 22
+  ThisType 13 17
+  TypeReference 21 22
+rest 22
+== fn-asserts  "(x: any) => asserts x is B"
+FunctionType 0 26
+ list parameters 1 7 1
+ Parameter 1 7
+  AnyKeyword 4 7
+ TypePredicate 12 26
+  TypeReference 25 26
+rest 26
+== getter-no-type  "{ get a(); set b(v) }"
+TypeLiteral 0 21
+ list members 1 19 2
+ GetAccessor 2 10
+  list parameters 8 8 0
+ SetAccessor 11 19
+  list parameters 17 18 1
+  Parameter 17 18
+rest 21
+== neg-literal  "-1"
+LiteralType 0 2
+rest 2
+== template-empty-tail  "`${A}`"
+TemplateLiteralType 0 6
+ list templateSpans 3 6 1
+ TemplateHead 0 3
+ TemplateLiteralTypeSpan 3 6
+  TypeReference 3 4
+  TemplateTail 4 6
+rest 6
+== object-empty  "{}"
+TypeLiteral 0 2
+ list members 1 1 0
+rest 2
+== tp-split-ggg  "<U extends A<B<C>>>() => void"
+FunctionType 0 29
+ list typeParameters 1 18 1
+ list parameters 20 20 0
+ TypeParameter 1 18
+  TypeReference 11 18
+   list typeArguments 13 17 1
+   TypeReference 13 17
+    list typeArguments 15 16 1
+    TypeReference 15 16
+ VoidKeyword 25 29
+rest 29
+== tp-trailing-comma  "<U, V,>() => void"
+FunctionType 0 17
+ list typeParameters 1 6 2 trailing
+ list parameters 8 8 0
+ TypeParameter 1 2
+ TypeParameter 4 5
+ VoidKeyword 13 17
+rest 17
+== readonly-array  "readonly A[][]"
+TypeOperator 0 14
+ ArrayType 9 14
+  ArrayType 9 12
+   TypeReference 9 10
+rest 14
+== paren-fn  "((a: A) => B) | C"
+UnionType 0 17
+ ParenthesizedType 0 13
+  FunctionType 1 12
+   list parameters 2 6 1
+   Parameter 2 6
+    TypeReference 5 6
+   TypeReference 11 12
+ TypeReference 16 17
+rest 17
+== keyword-each  "any"
+AnyKeyword 0 3
+rest 3
+== this  "this"
+ThisType 0 4
+rest 4
+== neg-bigint  "-2n"
+LiteralType 0 3
+rest 3
+== string-escape  "\"a\\u0062\""
+LiteralType 0 9
+rest 9
+== true  "true"
+LiteralType 0 4
+rest 4
+== null  "null"
+LiteralType 0 4
+rest 4
+== fn-after-bar  "| (() => A) | B"
+UnionType 0 15
+ ParenthesizedType 2 11
+  FunctionType 3 10
+   list parameters 4 4 0
+   TypeReference 9 10
+ TypeReference 14 15
+rest 15
+== nested-fn-ret  "(a: A) => (b: B) => C"
+FunctionType 0 21
+ list parameters 1 5 1
+ Parameter 1 5
+  TypeReference 4 5
+ FunctionType 10 21
+  list parameters 11 15 1
+  Parameter 11 15
+   TypeReference 14 15
+  TypeReference 20 21
+rest 21
+== ctor-abstract  "abstract new () => A"
+ConstructorType 0 20
+ list parameters 14 14 0
+ TypeReference 19 20
+rest 20
+== index-chain  "A[B][C][]"
+ArrayType 0 9
+ IndexedAccessType 0 7
+  IndexedAccessType 0 4
+   TypeReference 0 1
+   TypeReference 2 3
+  TypeReference 5 6
+rest 9
+== paren-postfix  "(A)[]"
+ArrayType 0 5
+ ParenthesizedType 0 3
+  TypeReference 1 2
+rest 5
+== keyof-typeof  "keyof typeof a.b"
+TypeOperator 0 16
+ TypeQuery 6 16
+  QualifiedName 13 16
+rest 16
+== readonly-tuple  "readonly [A, B]"
+TypeOperator 0 15
+ TupleType 9 15
+  list elements 10 14 2
+  TypeReference 10 11
+  TypeReference 13 14
+rest 15
+== infer-in-cond  "A extends [infer H, ...infer R] ? H : R"
+ConditionalType 0 39
+ TypeReference 0 1
+ TupleType 10 31
+  list elements 11 30 2
+  InferType 11 18
+   TypeParameter 17 18
+  RestType 20 30
+   InferType 23 30
+    TypeParameter 29 30
+ TypeReference 34 35
+ TypeReference 38 39
+rest 39
+== infer-ext-paren  "A extends (infer U extends B ? C : D) ? E : F"
+ConditionalType 0 45
+ TypeReference 0 1
+ ParenthesizedType 10 37
+  ConditionalType 11 36
+   InferType 11 18
+    TypeParameter 17 18
+   TypeReference 27 28
+   TypeReference 31 32
+   TypeReference 35 36
+ TypeReference 40 41
+ TypeReference 44 45
+rest 45
+== object-nl  "{\n a: A\n b?: B\n}"
+TypeLiteral 0 16
+ list members 1 14 2
+ PropertySignature 3 7
+  TypeReference 6 7
+ PropertySignature 9 14
+  TypeReference 13 14
+rest 16
+== object-mixed  "{ a: A, b: B; c(): C\n d: D }"
+TypeLiteral 0 28
+ list members 1 26 4
+ PropertySignature 2 7
+  TypeReference 5 6
+ PropertySignature 8 13
+  TypeReference 11 12
+ MethodSignature 14 20
+  list parameters 16 16 0
+  TypeReference 19 20
+ PropertySignature 22 26
+  TypeReference 25 26
+rest 28
+== method-generic  "{ m<T>(a: T): T }"
+TypeLiteral 0 17
+ list members 1 15 1
+ MethodSignature 2 15
+  list typeParameters 4 5 1
+  list parameters 7 11 1
+  TypeParameter 4 5
+  Parameter 7 11
+   TypeReference 10 11
+  TypeReference 14 15
+rest 17
+== index-sig-mods  "{ readonly [k: string]: V; [s: symbol]: W }"
+TypeLiteral 0 43
+ list members 1 41 2
+ IndexSignature 2 26
+  list parameters 12 21 1
+  Parameter 12 21
+   StringKeyword 15 21
+  TypeReference 24 25
+ IndexSignature 27 41
+  list parameters 28 37 1
+  Parameter 28 37
+   SymbolKeyword 31 37
+  TypeReference 40 41
+rest 43
+== call-ctor-sigs  "{ (a: A): B; new (a: A): B; <T>(a: T): T }"
+TypeLiteral 0 42
+ list members 1 40 3
+ CallSignature 2 12
+  list parameters 3 7 1
+  Parameter 3 7
+   TypeReference 6 7
+  TypeReference 10 11
+ ConstructSignature 13 27
+  list parameters 18 22 1
+  Parameter 18 22
+   TypeReference 21 22
+  TypeReference 25 26
+ CallSignature 28 40
+  list typeParameters 29 30 1
+  list parameters 32 36 1
+  TypeParameter 29 30
+  Parameter 32 36
+   TypeReference 35 36
+  TypeReference 39 40
+rest 42
+== mapped-as  "{ [K in keyof T as `x${K & string}`]: T[K] }"
+MappedType 0 44
+ list members 42 42 0
+ TypeParameter 3 15
+  TypeOperator 8 15
+   TypeReference 14 15
+ TemplateLiteralType 19 35
+  list templateSpans 23 35 1
+  TemplateHead 19 23
+  TemplateLiteralTypeSpan 23 35
+   IntersectionType 23 33
+    TypeReference 23 24
+    StringKeyword 27 33
+   TemplateTail 33 35
+ IndexedAccessType 38 42
+  TypeReference 38 39
+  TypeReference 40 41
+rest 44
+== template-nested  "`a${`b${C}`}d`"
+TemplateLiteralType 0 14
+ list templateSpans 4 14 1
+ TemplateHead 0 4
+ TemplateLiteralTypeSpan 4 14
+  TemplateLiteralType 4 11
+   list templateSpans 8 11 1
+   TemplateHead 4 8
+   TemplateLiteralTypeSpan 8 11
+    TypeReference 8 9
+    TemplateTail 9 11
+  TemplateTail 11 14
+rest 14
+== template-union  "`${A | B}-${C}`"
+TemplateLiteralType 0 15
+ list templateSpans 3 15 2
+ TemplateHead 0 3
+ TemplateLiteralTypeSpan 3 12
+  UnionType 3 8
+   TypeReference 3 4
+   TypeReference 7 8
+  TemplateMiddle 8 12
+ TemplateLiteralTypeSpan 12 15
+  TypeReference 12 13
+  TemplateTail 13 15
+rest 15
+== import-plain  "import(\"m\")"
+ImportType 0 11
+ LiteralType 7 10
+rest 11
+== typeof-import  "typeof import(\"m\")"
+ImportType 0 18
+ LiteralType 14 17
+rest 18
+== predicate-not-return  "(x: A) => x is B"
+FunctionType 0 16
+ list parameters 1 5 1
+ Parameter 1 5
+  TypeReference 4 5
+ TypePredicate 10 16
+  TypeReference 15 16
+rest 16
+== asserts-this-is  "(this: A) => asserts this is B"
+FunctionType 0 30
+ list parameters 1 8 1
+ Parameter 1 8
+  TypeReference 7 8
+ TypePredicate 13 30
+  ThisType 21 25
+  TypeReference 29 30
+rest 30
+== tuple-spread-named  "[first: A, ...rest: B[]]"
+TupleType 0 24
+ list elements 1 23 2
+ NamedTupleMember 1 9
+  TypeReference 8 9
+ NamedTupleMember 11 23
+  ArrayType 20 23
+   TypeReference 20 21
+rest 24
+== tuple-optional-rest  "[A?, ...B[]]"
+TupleType 0 12
+ list elements 1 11 2
+ OptionalType 1 3
+  TypeReference 1 2
+ RestType 5 11
+  ArrayType 8 11
+   TypeReference 8 9
+rest 12
+== union-long  "A | B | C | D | E | F"
+UnionType 0 21
+ TypeReference 0 1
+ TypeReference 4 5
+ TypeReference 8 9
+ TypeReference 12 13
+ TypeReference 16 17
+ TypeReference 20 21
+rest 21
+== inter-union-mix  "A & B | C & D & E | F"
+UnionType 0 21
+ IntersectionType 0 5
+  TypeReference 0 1
+  TypeReference 4 5
+ IntersectionType 8 17
+  TypeReference 8 9
+  TypeReference 12 13
+  TypeReference 16 17
+ TypeReference 20 21
+rest 21
+== lead-both  "| & A"
+UnionType 0 5
+ IntersectionType 2 5
+  TypeReference 4 5
+rest 5
+== cond-in-union-paren  "A | (B extends C ? D : E)"
+UnionType 0 25
+ TypeReference 0 1
+ ParenthesizedType 4 25
+  ConditionalType 5 24
+   TypeReference 5 6
+   TypeReference 15 16
+   TypeReference 19 20
+   TypeReference 23 24
+rest 25
+== cond-false-union  "A extends B ? C : D | E"
+ConditionalType 0 23
+ TypeReference 0 1
+ TypeReference 10 11
+ TypeReference 14 15
+ UnionType 18 23
+  TypeReference 18 19
+  TypeReference 22 23
+rest 23
+== array-of-union-paren  "(A | B)[]"
+ArrayType 0 9
+ ParenthesizedType 0 7
+  UnionType 1 6
+   TypeReference 1 2
+   TypeReference 5 6
+rest 9
+== qualified-keyword  "a.default.in"
+TypeReference 0 12
+ QualifiedName 0 12
+  QualifiedName 0 9
+rest 12
+== ws-and-newlines  "A <\n  B ,\n  C\n>"
+TypeReference 0 15
+ list typeArguments 3 13 2
+ TypeReference 6 7
+ TypeReference 12 13
+rest 15
+== param-this  "(this: A, b: B) => C"
+FunctionType 0 20
+ list parameters 1 14 2
+ Parameter 1 8
+  TypeReference 7 8
+ Parameter 10 14
+  TypeReference 13 14
+ TypeReference 19 20
+rest 20
+== param-rest  "(...a: A[]) => B"
+FunctionType 0 16
+ list parameters 1 10 1
+ Parameter 1 10
+  ArrayType 7 10
+   TypeReference 7 8
+ TypeReference 15 16
+rest 16
+== param-optional  "(a?: A, b?) => C"
+FunctionType 0 16
+ list parameters 1 10 2
+ Parameter 1 6
+  TypeReference 5 6
+ Parameter 8 10
+ TypeReference 15 16
+rest 16
+== tp-constraint-default  "<T extends A = B, U = T>() => [T, U]"
+FunctionType 0 36
+ list typeParameters 1 23 2
+ list parameters 25 25 0
+ TypeParameter 1 16
+  TypeReference 11 12
+  TypeReference 15 16
+ TypeParameter 18 23
+  TypeReference 22 23
+ TupleType 30 36
+  list elements 31 35 2
+  TypeReference 31 32
+  TypeReference 34 35
+rest 36
+== tp-in-out-const  "<const T, in out U>() => void"
+FunctionType 0 29
+ list typeParameters 1 18 2
+ list parameters 20 20 0
+ TypeParameter 1 8
+ TypeParameter 10 18
+ VoidKeyword 25 29
+rest 29

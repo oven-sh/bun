@@ -1,0 +1,16 @@
+load: 672.41 620.33 651.16 432/22401 1248720
+debug --version: 641 ms
+debug --version: 981 ms
+debug --version: 494 ms
+debug -e 0: 2923 ms
+debug -e 0: 1879 ms
+debug -e 0: 3190 ms
+debug test trivial: 2313 ms
+debug test trivial: 1918 ms
+debug test trivial: 1724 ms
+release -e 0: 197 ms
+release -e 0: 169 ms
+release -e 0: 220 ms
+release test trivial: 308 ms
+release test trivial: 193 ms
+load: 701.29 631.25 653.95 265/23805 1249178

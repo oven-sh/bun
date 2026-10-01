@@ -1,0 +1,19 @@
+PARSE other.ts parse=[] js=[] bind=[]
+PARSE unused.ts parse=[] js=[] bind=[]
+unused.ts(2,19)+1: error TS6133: 'p' is declared but its value is never read. [unnecessary]
+unused.ts(2,44)+1: error TS6133: 'a' is declared but its value is never read. [unnecessary]
+unused.ts(3,5)+16: error TS6199: All variables are unused. [unnecessary]
+unused.ts(4,11)+6: error TS6198: All destructured elements are unused. [unnecessary]
+unused.ts(5,10)+5: error TS6196: 'Local' is declared but never used. [unnecessary]
+unused.ts(8,24)+6: error TS6133: 'secret' is declared but its value is never read. [unnecessary]
+unused.ts(8,36)+7: error TS6133: '#hidden' is declared but its value is never read. [unnecessary]
+unused.ts(9,7)+9: error TS6196: 'NotLinked' is declared but never used. [unnecessary]
+unused.ts(10,1)+46: error TS6192: All imports in import declaration are unused. [unnecessary]
+unused.ts(11,10)+1: error TS6133: 'g' is declared but its value is never read. [unnecessary]
+unused.ts(11,15)+1: error TS6196: 'U' is declared but never used. [unnecessary]
+unused.ts(12,6)+1: error TS6196: 'F' is declared but never used. [unnecessary]
+unused.ts(12,16)+6: error TS2842: 'string' is an unused renaming of 'a'. Did you intend to use it as a type annotation?
+  related unused.ts(12,24)+0: error TS2843: We can only write a type for 'a' by adding a type for the entire parameter here.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=20 GetModeForUsageLocation=5 GetResolvedModule=5 GetSourceFile=5 GetSourceFileForResolvedModule=5 Options=1 SourceFiles=1
+COUNTS TypeCount=119 SymbolCount=76 SignatureCount=9 TotalInstantiationCount=13

@@ -1,0 +1,463 @@
+layer	status	owner	callee	where	callers in the layer
+R-REL	earlier	D-SINK	c.addDiagnostic	checker.go:14086-14092	c.reportDiagnostic
+R-REL	earlier	K-COND	c.getTrueTypeFromConditionalType	checker.go:24662-24668	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-COND	c.getFalseTypeFromConditionalType	checker.go:24670-24676	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-GENERIC	c.isGenericObjectType	checker.go:24995-24997	r.structuredTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-GENERIC	c.isGenericIndexType	checker.go:24999-25001	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-GENERIC	c.isGenericTupleType	checker.go:25027-25029	c.getNormalizedType, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-GENERIC	c.isGenericMappedType	checker.go:25031-25046	r.indexSignaturesRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-INDEXED	c.getIndexedAccessType	checker.go:27046-27048	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-INDEXED	c.getIndexedAccessTypeOrUndefined	checker.go:27058-27122	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-INDEXED	c.getSuggestionForNonexistentProperty	checker.go:27346-27352	r.hasExcessProperties
+R-REL	earlier	K-INDEXED	c.getSuggestedTypeForNonexistentStringLiteralType	checker.go:27375-27378	r.reportRelationError
+R-REL	earlier	K-INDEXED	c.getSimplifiedType	checker.go:28025-28033	c.getNormalizedTupleType, c.getNormalizedType
+R-REL	earlier	K-INDEXED	c.getSimplifiedTypeOrConstraint	checker.go:28156-28161	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-INTERSECT	c.intersectTypes	checker.go:26147-26155	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-INTERSECT	c.getIntersectionType	checker.go:26175-26177	c.getNormalizedUnionOrIntersectionType, r.structuredTypeRelatedToWorker, r.unionOrIntersectionRelatedTo
+R-REL	earlier	K-INTERSECT	c.getIntersectionTypeEx	checker.go:26179-26346	c.getEffectiveConstraintOfIntersection
+R-REL	earlier	K-KEYOF	c.getIndexType	checker.go:26803-26805	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-KEYOF	c.getIndexTypeEx	checker.go:26807-26830	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-KEYOF	c.getLiteralTypeFromProperty	checker.go:26869-26890	r.membersRelatedToIndexInfo
+R-REL	earlier	K-KEYOF	c.shouldDeferIndexType	checker.go:26957-26963	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-LIT	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c.getUnmatchedPropertiesWorker
+R-REL	earlier	K-LIT	isFreshLiteralType	checker.go:25424-25426	c.getNormalizedType, c.isTypeRelatedTo
+R-REL	earlier	K-LIT	isLiteralType	checker.go:25516-25527	r.reportRelationError
+R-REL	earlier	K-LIT	isUnitType	checker.go:25533-25535	c.typeCouldHaveTopLevelSingletonTypes, r.isRelatedToEx
+R-REL	earlier	K-LIT	c.getBaseTypeOfLiteralType	checker.go:25557-25573	r.reportRelationError
+R-REL	earlier	K-LIT	c.getBaseTypeOfEnumLikeType	checker.go:25593-25598	c.isTypeSubsetOfUnion
+R-REL	earlier	K-OBJ	c.createTypeReference	checker.go:25226-25228	c.getNormalizedType
+R-REL	earlier	K-PRED	c.IsEmptyAnonymousObjectType	checker.go:26599-26602	c.getEffectiveConstraintOfIntersection, c.isSimpleTypeRelatedTo, c.isTypeDerivedFrom, c.shouldNormalizeIntersection
+R-REL	earlier	K-PRED	c.isEmptyObjectType	checker.go:26608-26620	r.hasExcessProperties, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-PRED	someType	checker.go:26660-26665	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-PRED	everyType	checker.go:26667-26672	r.structuredTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-PRED	c.filterType	checker.go:26681-26715	r.hasExcessProperties
+R-REL	earlier	K-PRED	containsType	checker.go:26739-26742	c.isTypeSubsetOfUnion, r.someTypeRelatedToType, r.typeRelatedToSomeType
+R-REL	earlier	K-PRED	c.isErrorType	checker.go:26761-26765	r.reportErrorResults
+R-REL	earlier	K-PRED	c.isUnknownLikeUnionType	checker.go:27926-27938	c.isSimpleTypeRelatedTo
+R-REL	earlier	K-PRED	c.typeHasCallOrConstructSignatures	checker.go:27984-27986	c.isObjectTypeWithInferableIndex, r.isRelatedToEx
+R-REL	earlier	K-PRED	c.extractTypesOfKind	checker.go:28278-28280	r.getUndefinedStrippedTargetIfNeeded, r.structuredTypeRelatedToWorker
+R-REL	earlier	K-PRED	c.getTargetType	checker.go:31607-31612	c.isTypeDerivedFrom
+R-REL	earlier	K-SUBST	c.getSubstitutionIntersection	checker.go:26950-26955	c.getNormalizedType
+R-REL	earlier	K-TEMPLATE	c.templateLiteralTypesDefinitelyUnrelated	relater.go:2354-2363	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-TEMPLATE	c.isTypeMatchedByTemplateLiteralType	relater.go:2365-2376	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-TEMPLATE	c.isMemberOfStringMapping	relater.go:2531-2549	r.structuredTypeRelatedToWorker
+R-REL	earlier	K-UNION	c.getUnionType	checker.go:25740-25742	c.getTypeOfPropertyInTypes, r.structuredTypeRelatedToWorker
+R-REL	earlier	M-MODULE	c.getMembersOfSymbol	checker.go:16218-16223	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	MAPPER	newTypeMapper	mapper.go:40-45	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	MAPPER	newSimpleTypeMapper	mapper.go:114-120	r.mappedTypeRelatedTo, r.reportErrorResults
+R-REL	earlier	P-PRINT	c.TypeToString	printer.go:43-45	c.checkTypeRelatedToEx, c.getTypeNamesForErrorDisplay, r.hasExcessProperties, r.indexInfoRelatedTo, r.isRelatedToEx, r.propertiesRelatedTo, r.propertyRelatedTo, r.recursiveTypeRelatedTo, r.reportErrorResults, r.reportRelationError, r.tryElaborateArrayLikeErrors, r.tryElaborateErrorsForPrimitivesAndObjects, r.typeRelatedToIndexInfo
+R-REL	earlier	P-PRINT	c.typeToString	printer.go:47-49	c.getTypeNamesForErrorDisplay
+R-REL	earlier	P-PRINT	c.TypeToStringEx	printer.go:55-57	c.isEnumTypeRelatedTo
+R-REL	earlier	P-PRINT	c.typeToStringEx	printer.go:59-118	c.getTypeNameForErrorDisplay, r.reportErrorResults
+R-REL	earlier	P-PRINT	c.SymbolToString	printer.go:120-122	r.reportUnmatchedProperty
+R-REL	earlier	P-PRINT	c.symbolToString	printer.go:124-126	c.isEnumTypeRelatedTo, r.hasExcessProperties, r.membersRelatedToIndexInfo, r.propertiesRelatedTo, r.propertyRelatedTo, r.reportErrorResults, r.reportUnmatchedProperty
+R-REL	earlier	P-PRINT	c.valueToString	printer.go:249-251	c.isEnumTypeRelatedTo
+R-REL	earlier	S-MERGE	createDiagnosticForNode	checker.go:14358-14360	c.checkTypeRelatedToEx, r.reportUnmatchedProperty
+R-REL	earlier	S-MERGE	c.getParentOfSymbol	checker.go:14459-14464	c.isEnumTypeRelatedTo
+R-REL	earlier	T-APPARENT	c.isMappedTypeGenericIndexedAccess	checker.go:21829-21836	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-APPARENT	c.getApparentType	checker.go:21843-21876	c.getTypeOfPropertyInType, r.isSourceIntersectionNeedingExtraCheck, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-APPARENT	c.getReducedType	checker.go:21933-21956	c.getNormalizedUnionOrIntersectionType
+R-REL	earlier	T-APPARENT	c.isDiscriminantWithNeverType	checker.go:21996-22000	r.reportErrorResults
+R-REL	earlier	T-APPARENT	isConflictingPrivateProperty	checker.go:22002-22005	r.reportErrorResults
+R-REL	earlier	T-BASE	c.getBaseTypes	checker.go:19281-19318	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	T-BASE	getBaseTypeNodeOfClass	checker.go:19381-19387	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	T-BASE	c.hasBaseType	checker.go:19665-19678	c.isTypeDerivedFrom
+R-REL	earlier	T-BASE	c.getTypeWithThisArgument	checker.go:19687-19710	c.getSingleBaseForNonAugmentingSubtype, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getConstraintOfType	checker.go:17141-17151	c.getEffectiveConstraintOfIntersection, c.typeCouldHaveTopLevelSingletonTypes, r.isRelatedToEx, r.reportErrorResults, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getConstraintOfTypeParameter	checker.go:17153-17158	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.hasNonCircularBaseConstraint	checker.go:17160-17162	r.reportErrorResults, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getDefaultConstraintOfConditionalType	checker.go:17357-17376	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getConstraintOfDistributiveConditionalType	checker.go:17378-17411	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getMinTypeArgumentCount	checker.go:22052-22060	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.fillMissingTypeArguments	checker.go:22068-22098	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getBaseConstraintOrType	checker.go:27551-27557	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-CONSTRAINT	c.getBaseConstraintOfType	checker.go:27559-27568	c.isTypeDerivedFrom, r.reportRelationError, r.structuredTypeRelatedToWorker, r.unionOrIntersectionRelatedTo
+R-REL	earlier	T-DECLARED	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c.isEnumTypeRelatedTo
+R-REL	earlier	T-ENUMVAL	c.getEnumMemberValue	checker.go:24035-24038	c.isEnumTypeRelatedTo
+R-REL	earlier	T-INSTANTIATE	c.getTypeArguments	checker.go:22007-22045	c.getNormalizedType, c.getSingleBaseForNonAugmentingSubtype, r.propertiesRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-INSTANTIATE	c.instantiateType	checker.go:22214-22216	c.getSingleBaseForNonAugmentingSubtype, r.mappedTypeRelatedTo, r.reportErrorResults, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-INSTANTIATE	c.isTypeParameterPossiblyReferenced	checker.go:22517-22570	c.isDistributionDependent
+R-REL	earlier	T-INSTANTIATE	c.cloneTypeParameter	checker.go:22632-22636	r.reportErrorResults
+R-REL	earlier	T-INSTANTIATE	c.getPermissiveInstantiation	checker.go:24602-24613	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-INSTANTIATE	c.getRestrictiveInstantiation	checker.go:24615-24632	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-KEYS	getRelationKey	checker.go:17723-17739	c.checkTypeRelatedToEx, c.isTypeRelatedTo, r.recursiveTypeRelatedTo
+R-REL	earlier	T-LOOKUP	c.getPropertiesOfType	checker.go:18960-18966	c.getUnmatchedPropertiesWorker, c.hasCommonProperties, c.isEnumTypeRelatedTo, r.hasExcessProperties, r.isRelatedToEx, r.propertiesRelatedTo
+R-REL	earlier	T-LOOKUP	c.getPropertiesOfObjectType	checker.go:18968-18973	c.shouldReportUnmatchedPropertyError, r.membersRelatedToIndexInfo, r.propertiesIdenticalTo
+R-REL	earlier	T-LOOKUP	c.getPropertiesOfUnionOrIntersectionType	checker.go:18975-18999	r.membersRelatedToIndexInfo, r.reportErrorResults
+R-REL	earlier	T-LOOKUP	c.getPropertyOfType	checker.go:19001-19003	c.getUnmatchedPropertiesWorker, c.isEnumTypeRelatedTo, r.propertiesRelatedTo, r.reportUnmatchedProperty
+R-REL	earlier	T-LOOKUP	c.getSignaturesOfType	checker.go:19073-19075	c.shouldReportUnmatchedPropertyError, r.isRelatedToEx
+R-REL	earlier	T-LOOKUP	c.getSignaturesOfStructuredType	checker.go:19077-19086	c.shouldReportUnmatchedPropertyError
+R-REL	earlier	T-LOOKUP	c.getIndexInfosOfType	checker.go:19088-19090	r.indexSignaturesIdenticalTo, r.indexSignaturesRelatedTo, r.membersRelatedToIndexInfo
+R-REL	earlier	T-LOOKUP	c.getIndexInfoOfType	checker.go:19101-19103	c.isKnownProperty, r.indexSignaturesIdenticalTo
+R-REL	earlier	T-LOOKUP	c.getIndexTypeOfTypeEx	checker.go:19115-19120	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-LOOKUP	c.getApplicableIndexInfo	checker.go:19122-19124	r.typeRelatedToIndexInfo
+R-REL	earlier	T-LOOKUP	c.getApplicableIndexInfoForName	checker.go:19126-19131	c.getTypeOfPropertyInType, c.isKnownProperty
+R-REL	earlier	T-LOOKUP	c.isApplicableIndexType	checker.go:19168-19174	r.membersRelatedToIndexInfo
+R-REL	earlier	T-LOOKUP	c.getPropertyOfObjectType	checker.go:21517-21526	c.getTypeOfPropertyInType, c.isKnownProperty, r.propertiesIdenticalTo, r.propertiesRelatedTo
+R-REL	earlier	T-MAPPED	c.getTypeParameterFromMappedType	checker.go:22784-22790	r.mappedTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getConstraintTypeFromMappedType	checker.go:22792-22798	r.mappedTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getNameTypeFromMappedType	checker.go:22800-22809	r.mappedTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getTemplateTypeFromMappedType	checker.go:22811-22821	r.indexSignaturesRelatedTo, r.mappedTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.isMappedTypeWithKeyofConstraintDeclaration	checker.go:22823-22826	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getApparentMappedTypeKeys	checker.go:22832-22839	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getModifiersTypeFromMappedType	checker.go:28250-28276	getRecursionIdentityTarget
+R-REL	earlier	T-MAPPED	getMappedTypeModifiers	checker.go:29135-29145	r.mappedTypeRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MAPPED	c.getCombinedMappedTypeOptionality	checker.go:29163-29181	r.mappedTypeRelatedTo
+R-REL	earlier	T-MAPPED	isPartialMappedType	checker.go:29183-29185	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-MEMBERS	c.resolveStructuredTypeMembers	checker.go:19176-19203	c.isWeakType
+R-REL	earlier	T-SIGDECL	c.getReturnTypeOfSignature	checker.go:20115-20163	r.isRelatedToEx
+R-REL	earlier	T-SYMTYPE	c.getTypeOfSymbol	checker.go:16587-16616	c.checkTypeRelatedToEx, c.getTypeOfPropertyInType, c.getUnmatchedPropertiesWorker, c.isEnumTypeRelatedTo, r.hasExcessProperties
+R-REL	earlier	T-SYMTYPE	c.getNonMissingTypeOfSymbol	checker.go:16618-16620	r.isPropertySymbolTypeRelated, r.membersRelatedToIndexInfo, r.propertiesRelatedTo
+R-REL	earlier	T-SYMTYPE	c.addOptionalityEx	checker.go:18747-18752	r.isPropertySymbolTypeRelated
+R-REL	earlier	T-SYMTYPE	c.removeMissingType	checker.go:29215-29220	r.propertiesRelatedTo
+R-REL	earlier	T-TUPLE	c.createNormalizedTupleType	checker.go:23465-23467	c.getNormalizedTupleType
+R-REL	earlier	T-TUPLE	getStartElementCount	checker.go:23559-23566	r.propertiesRelatedTo
+R-REL	earlier	T-TUPLE	getEndElementCount	checker.go:23569-23576	r.propertiesRelatedTo
+R-REL	earlier	T-TUPLE	c.getElementTypes	checker.go:23582-23589	c.getNormalizedTupleType
+R-REL	earlier	T-TUPLE	c.getTypeReferenceArity	checker.go:23591-23593	r.propertiesRelatedTo
+R-REL	earlier	T-TUPLE	c.isArrayType	checker.go:23595-23597	c.isTypeDerivedFrom, r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	T-TUPLE	c.isReadonlyArrayType	checker.go:23599-23601	c.isTypeDerivedFrom, r.propertiesRelatedTo, r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	T-TUPLE	isTupleType	checker.go:23603-23605	getRecursionIdentityFromTarget, r.propertiesRelatedTo, r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	T-TUPLE	isMutableTupleType	checker.go:23607-23609	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-TUPLE	isSingleElementGenericTupleType	checker.go:23615-23617	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-TUPLE	c.isArrayOrTupleType	checker.go:23619-23621	r.propertiesRelatedTo, r.structuredTypeRelatedTo, r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	T-TUPLE	c.isMutableArrayOrTuple	checker.go:23623-23625	r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	T-TUPLE	c.isEmptyArrayLiteralType	checker.go:23646-23649	r.propertiesRelatedTo, r.structuredTypeRelatedToWorker
+R-REL	earlier	T-TUPLE	c.createArrayType	checker.go:24824-24826	r.propertiesRelatedTo
+R-REL	earlier	T-TUPLE	c.getKnownKeysOfTupleType	relater.go:1930-1938	r.structuredTypeRelatedToWorker
+R-REL	earlier	T-UIMEMBERS	c.getPropertyOfUnionOrIntersectionType	checker.go:21528-21535	c.getTypeOfPropertyInType
+R-REL	earlier	T-UIMEMBERS	c.compareProperties	checker.go:27795-27820	r.propertiesIdenticalTo
+R-REL	earlier	T-WIDEN	c.getRegularTypeOfObjectLiteral	checker.go:28282-28297	r.unionOrIntersectionRelatedTo
+R-REL	earlier	TYPES	Type.AsLiteralType	types.go:706-706	c.getNormalizedType, c.isSimpleTypeRelatedTo, c.isTypeRelatedTo, r.typeRelatedToSomeType
+R-REL	earlier	TYPES	Type.AsMappedType	types.go:712-712	r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsReverseMappedType	types.go:713-713	c.isObjectTypeWithInferableIndex
+R-REL	earlier	TYPES	Type.AsTypeParameter	types.go:715-715	r.reportErrorResults
+R-REL	earlier	TYPES	Type.AsUnionType	types.go:716-716	c.isTypeDerivedFrom, r.unionOrIntersectionRelatedTo
+R-REL	earlier	TYPES	Type.AsIntersectionType	types.go:717-717	c.isTypeDerivedFrom
+R-REL	earlier	TYPES	Type.AsIndexType	types.go:718-718	r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsIndexedAccessType	types.go:719-719	getRecursionIdentityTarget, r.reportRelationError, r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsTemplateLiteralType	types.go:720-720	r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsStringMappingType	types.go:721-721	r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsSubstitutionType	types.go:722-722	c.getNormalizedType, c.isKnownProperty, c.isWeakType, isExcessPropertyCheckTarget, r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsConditionalType	types.go:723-723	getRecursionIdentityFromTarget, r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.AsTypeReference	types.go:730-730	c.getNormalizedType, getRecursionIdentityFromTarget
+R-REL	earlier	TYPES	Type.AsInterfaceType	types.go:731-731	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	TYPES	Type.Distributed	types.go:736-744	r.hasExcessProperties
+R-REL	earlier	TYPES	Type.Target	types.go:748-762	c.getNormalizedTupleType, c.getNormalizedType, c.getSingleBaseForNonAugmentingSubtype, getRecursionIdentityFromTarget, r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	Type.Types	types.go:776-784	c.getNormalizedUnionOrIntersectionType, c.isDeeplyNestedType, c.isKnownProperty, c.isObjectTypeWithInferableIndex, c.isTypeSubsetOfUnion, c.isWeakType, c.shouldNormalizeIntersection, c.typeCouldHaveTopLevelSingletonTypes, getRecursionIdentityTarget, hasMatchingRecursionIdentity, isExcessPropertyCheckTarget, r.eachTypeRelatedToSomeType, r.eachTypeRelatedToType, r.getUndefinedStrippedTargetIfNeeded, r.isRelatedToEx, r.isSourceIntersectionNeedingExtraCheck, r.reportErrorResults, r.someTypeRelatedToType, r.structuredTypeRelatedTo, r.traceUnionsOrIntersectionsTooLarge, r.typeRelatedToEachType, r.typeRelatedToSomeType, r.unionOrIntersectionRelatedTo
+R-REL	earlier	TYPES	Type.TargetTupleType	types.go:790-792	r.propertiesRelatedTo, r.structuredTypeRelatedToWorker, r.tryElaborateArrayLikeErrors
+R-REL	earlier	TYPES	Type.Symbol	types.go:794-796	r.structuredTypeRelatedToWorker
+R-REL	earlier	TYPES	InterfaceType.TypeParameters	types.go:1042-1047	c.getSingleBaseForNonAugmentingSubtype
+R-REL	earlier	UTIL	NewDiagnosticForNode	utilities.go:22-30	c.checkTypeRelatedToEx, createDiagnosticChainFromErrorChain, r.reportErrorResults
+R-REL	earlier	UTIL	isStaticPrivateIdentifierProperty	utilities.go:72-74	c.getUnmatchedPropertiesWorker
+R-REL	earlier	UTIL	getDeclarationModifierFlagsFromSymbol	utilities.go:713-715	r.propertyRelatedTo
+R-REL	earlier	UTIL	isObjectLiteralType	utilities.go:824-826	r.isRelatedToEx, r.propertiesRelatedTo, r.structuredTypeRelatedTo
+R-REL	earlier	UTIL	isNumericLiteralName	utilities.go:898-921	r.propertiesRelatedTo
+R-REL	earlier	UTIL	isLateBoundName	utilities.go:986-988	c.isKnownProperty
+R-REL	earlier	UTIL	isObjectOrArrayLiteralType	utilities.go:990-992	getRecursionIdentityFromTarget
+R-REL	this unit	I-INFER	c.inferTypes	inference.go:53-63	r.structuredTypeRelatedToWorker
+R-REL	this unit	I-INFER	c.newInferenceContext	inference.go:1251-1256	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-DISCRIM	c.getBestMatchingType	relater.go:872-889	r.typeRelatedToSomeType
+R-REL	this unit	R-DISCRIM	c.findMatchingDiscriminantType	relater.go:1055-1068	r.hasExcessProperties
+R-REL	this unit	R-DISCRIM	c.getMatchingUnionConstituentForType	relater.go:1096-1106	r.typeRelatedToSomeType
+R-REL	this unit	R-DISCRIM	c.filterPrimitivesIfContainsNonPrimitive	relater.go:1256-1264	r.hasExcessProperties
+R-REL	this unit	R-DISCRIM	r.typeRelatedToDiscriminatedType	relater.go:4021-4130	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-SIGREL	r.signaturesRelatedTo	relater.go:4473-4548	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-VARIANCE	c.getVariances	relater.go:1317-1323	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-VARIANCE	c.getAliasVariances	relater.go:1325-1327	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-VARIANCE	c.isMarkerType	relater.go:1462-1464	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-VARIANCE	c.hasCovariantVoidArgument	relater.go:1478-1485	r.structuredTypeRelatedToWorker
+R-REL	this unit	R-VARIANCE	r.typeArgumentsRelatedTo	relater.go:3935-3999	r.structuredTypeRelatedToWorker
+R-REL	later	binder.go	binder.GetSymbolNameForPrivateIdentifier	binder.go:369-371	r.reportUnmatchedProperty
+R-REL	later	c18_identifiers_property_access_this	c.getDeclaringClass	checker.go:12011-12016	r.propertyRelatedTo
+R-REL	later	c18_identifiers_property_access_this	c.isValidOverrideOf	checker.go:12019-12026	r.propertyRelatedTo
+R-REL	later	c19_assertions_binary_operators	c.getExactOptionalUnassignableProperties	checker.go:13208-13215	r.reportRelationError
+R-REL	later	c20_object_literals_spread	c.isNonGenericObjectType	checker.go:13627-13629	r.structuredTypeRelatedTo
+R-REL	later	c20_object_literals_spread	c.isReadonlySymbol	checker.go:13950-13964	r.propertyRelatedTo
+R-REL	later	c50_contextual_properties_inference_context	c.isContextSensitive	checker.go:31020-31052	c.symbolValueDeclarationIsContextSensitive
+R-REL	later	c51_type_facts_awaited	c.isFunctionObjectType	checker.go:31263-31271	c.isTypeDerivedFrom
+R-REL	later	c51_type_facts_awaited	c.getTypeWithFacts	checker.go:31273-31277	r.membersRelatedToIndexInfo
+R-REL	later	jsx.go	c.getSuggestedSymbolForNonexistentJSXAttribute	jsx.go:485-498	r.hasExcessProperties
+R-REL	later	jsx.go	c.getJsxType	jsx.go:1293-1302	r.reportErrorResults
+R-REL	later	tracer.go	Tracer.Push	tracer.go:29-43	r.recursiveTypeRelatedTo
+R-REL	later	tracer.go	Tracer.Instant	tracer.go:45-47	c.checkTypeRelatedToEx, r.recursiveTypeRelatedTo, r.traceUnionsOrIntersectionsTooLarge
+R-SIGREL	earlier	MAPPER	newTypeMapper	mapper.go:40-45	c.compareSignaturesIdentical, c.compareTypeParametersIdentical
+R-SIGREL	earlier	P-PRINT	c.TypeToString	printer.go:43-45	c.compareSignaturesRelated, r.signaturesRelatedTo
+R-SIGREL	earlier	P-PRINT	c.signatureToString	printer.go:179-181	c.compareSignaturesRelated, r.signaturesRelatedTo
+R-SIGREL	earlier	P-PRINT	c.typePredicateToString	printer.go:229-231	c.compareTypePredicateRelatedTo
+R-SIGREL	earlier	T-CONSTRAINT	c.getConstraintFromTypeParameter	checker.go:17165-17201	c.compareTypeParametersIdentical
+R-SIGREL	earlier	T-CONSTRAINT	c.getConstraintOrUnknownFromTypeParameter	checker.go:17203-17206	c.compareSignaturesIdentical
+R-SIGREL	earlier	T-CONSTRAINT	c.getDefaultOrUnknownFromTypeParameter	checker.go:22158-22161	c.compareSignaturesIdentical
+R-SIGREL	earlier	T-INSTANTIATE	c.instantiateType	checker.go:22214-22216	c.compareSignaturesIdentical, c.compareSignaturesRelated, c.compareTypeParametersIdentical
+R-SIGREL	earlier	T-LOOKUP	c.getSignaturesOfType	checker.go:19073-19075	r.signaturesIdenticalTo, r.signaturesRelatedTo
+R-SIGREL	earlier	T-SIGDECL	c.getReturnTypeOfSignature	checker.go:20115-20163	c.compareSignaturesIdentical
+R-SIGREL	earlier	T-SIGDECL	c.getNonCircularReturnTypeOfSignature	checker.go:20165-20170	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGINST	c.getSingleCallSignature	checker.go:19455-19457	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGINST	c.getErasedSignature	checker.go:19510-19521	r.signatureRelatedTo
+R-SIGREL	earlier	T-SIGINST	c.getCanonicalSignature	checker.go:19523-19534	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGINST	c.instantiateSignatureInContextOf	checker.go:19580-19610	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGINST	c.instantiateSignatureEx	checker.go:20733-20754	c.compareSignaturesIdentical
+R-SIGREL	earlier	T-SIGSHAPE	c.isTopSignature	relater.go:1708-1720	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getParameterCount	relater.go:1726-1735	c.compareSignaturesIdentical, c.compareSignaturesRelated, c.isMatchingSignature
+R-SIGREL	earlier	T-SIGSHAPE	c.getMinArgumentCount	relater.go:1737-1739	c.compareSignaturesRelated, c.isMatchingSignature
+R-SIGREL	earlier	T-SIGSHAPE	c.hasEffectiveRestParameter	relater.go:1782-1788	c.compareSignaturesRelated, c.isMatchingSignature
+R-SIGREL	earlier	T-SIGSHAPE	c.getTypeAtPosition	relater.go:1790-1796	c.compareSignaturesIdentical
+R-SIGREL	earlier	T-SIGSHAPE	c.tryGetTypeAtPosition	relater.go:1798-1814	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getRestOrAnyTypeAtPosition	relater.go:1819-1827	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getNonArrayRestType	relater.go:1891-1897	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getThisTypeOfSignature	relater.go:1947-1952	c.compareSignaturesIdentical, c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.isInstantiatedGenericParameter	relater.go:1954-1960	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getParameterNameAtPosition	relater.go:1962-1974	c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.getTypePredicateOfSignature	relater.go:2049-2081	c.compareSignaturesIdentical, c.compareSignaturesRelated
+R-SIGREL	earlier	T-SIGSHAPE	c.typePredicateKindsMatch	relater.go:2113-2115	c.compareTypePredicatesIdentical
+R-SIGREL	earlier	T-SYMTYPE	c.GetNonNullableType	checker.go:18777-18782	c.compareSignaturesRelated
+R-SIGREL	earlier	TYPES	Type.Target	types.go:748-762	r.signaturesRelatedTo
+R-SIGREL	this unit	R-REL	c.isTypeIdenticalTo	relater.go:117-119	c.compareTypeParametersIdentical
+R-SIGREL	this unit	R-REL	c.compareTypesIdentical	relater.go:121-126	c.findMatchingSignature
+R-SIGREL	this unit	R-REL	c.compareTypesSubtypeOf	relater.go:142-147	c.findMatchingSignature
+R-SIGREL	this unit	R-REL	r.isRelatedToSimple	relater.go:2621-2623	r.signaturesIdenticalTo
+R-SIGREL	this unit	R-REL	r.isRelatedToEx	relater.go:2633-2745	r.signatureRelatedTo
+R-SIGREL	this unit	R-REL	r.getErrorState	relater.go:3212-3217	r.signaturesRelatedTo
+R-SIGREL	this unit	R-REL	r.restoreErrorState	relater.go:3219-3222	r.signaturesRelatedTo
+R-SIGREL	this unit	R-REL	r.reportError	relater.go:4862-4908	r.constructorVisibilitiesAreCompatible, r.signatureRelatedTo, r.signaturesRelatedTo
+R-SIGREL	later	c51_type_facts_awaited	c.getTypeFacts	checker.go:31097-31099	c.compareSignaturesRelated
+R-VARIANCE	earlier	K-OBJ	c.createTypeReference	checker.go:25226-25228	c.createMarkerType
+R-VARIANCE	earlier	K-PRED	c.isErrorType	checker.go:26761-26765	c.createMarkerType
+R-VARIANCE	earlier	MAPPER	newSimpleTypeMapper	mapper.go:114-120	c.createMarkerType
+R-VARIANCE	earlier	T-DECLARED	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c.createMarkerType, c.getVariancesWorker
+R-VARIANCE	earlier	T-INSTANTIATE	c.instantiateType	checker.go:22214-22216	r.typeArgumentsRelatedTo
+R-VARIANCE	earlier	T-INSTANTIATE	c.instantiateTypes	checker.go:22881-22883	c.createMarkerType
+R-VARIANCE	earlier	T-TYPENODE	c.getTypeAliasInstantiation	checker.go:23755-23777	c.createMarkerType
+R-VARIANCE	earlier	TYPES	VarianceFlags.String	types.go:569-592	c.getVariancesWorker
+R-VARIANCE	earlier	TYPES	Type.AsInterfaceType	types.go:731-731	c.createMarkerType, c.getVariances
+R-VARIANCE	earlier	TYPES	InterfaceType.TypeParameters	types.go:1042-1047	c.createMarkerType, c.getVariances
+R-VARIANCE	this unit	R-REL	c.compareTypesIdentical	relater.go:121-126	r.typeArgumentsRelatedTo
+R-VARIANCE	this unit	R-REL	c.isTypeAssignableTo	relater.go:149-151	c.getVariancesWorker
+R-VARIANCE	this unit	R-REL	r.isRelatedTo	relater.go:2629-2631	r.typeArgumentsRelatedTo
+R-VARIANCE	this unit	R-REL	r.isRelatedToEx	relater.go:2633-2745	r.typeArgumentsRelatedTo
+R-VARIANCE	later	tracer.go	Tracer.Push	tracer.go:29-43	c.getVariancesWorker
+R-DISCRIM	earlier	K-GENERIC	c.isGenericType	checker.go:24991-24993	c.isDiscriminantProperty
+R-DISCRIM	earlier	K-INDEXED	c.getTypeOfPropertyOrIndexSignatureOfType	checker.go:29437-29447	c.discriminateTypeByDiscriminableItems
+R-DISCRIM	earlier	K-INTERSECT	c.getIntersectionType	checker.go:26175-26177	c.findMostOverlappyType
+R-DISCRIM	earlier	K-KEYOF	c.getIndexType	checker.go:26803-26805	c.findMostOverlappyType
+R-DISCRIM	earlier	K-LIT	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c.getConstituentTypeForKeyType, c.mapTypesByKeyProperty
+R-DISCRIM	earlier	K-LIT	isLiteralType	checker.go:25516-25527	c.mapTypesByKeyProperty
+R-DISCRIM	earlier	K-LIT	isUnitType	checker.go:25533-25535	c.findMostOverlappyType, c.getKeyPropertyCandidateName
+R-DISCRIM	earlier	K-PRED	someType	checker.go:26660-26665	c.findBestTypeForObjectLiteral
+R-DISCRIM	earlier	K-PRED	c.filterType	checker.go:26681-26715	c.filterPrimitivesIfContainsNonPrimitive
+R-DISCRIM	earlier	K-PRED	countTypes	checker.go:26751-26759	r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	K-PRED	c.maybeTypeOfKind	checker.go:27729-27741	c.filterPrimitivesIfContainsNonPrimitive
+R-DISCRIM	earlier	K-UNION	c.getUnionTypeEx	checker.go:25751-25774	c.discriminateTypeByDiscriminableItems
+R-DISCRIM	earlier	T-APPARENT	c.getReducedType	checker.go:21933-21956	c.discriminateTypeByDiscriminableItems
+R-DISCRIM	earlier	T-LOOKUP	c.getPropertiesOfType	checker.go:18960-18966	c.findMatchingDiscriminantType, c.getKeyPropertyCandidateName, r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	T-LOOKUP	c.getPropertyOfType	checker.go:19001-19003	r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	T-LOOKUP	c.getTypeOfPropertyOfType	checker.go:19065-19071	c.getMatchingUnionConstituentForType, c.mapTypesByKeyProperty
+R-DISCRIM	earlier	T-LOOKUP	c.getSignaturesOfType	checker.go:19073-19075	c.findBestTypeForInvokable
+R-DISCRIM	earlier	T-SYMTYPE	c.getTypeOfSymbol	checker.go:16587-16616	TypeDiscriminator.matches, c.getKeyPropertyCandidateName, c.isDiscriminantProperty
+R-DISCRIM	earlier	T-SYMTYPE	c.getNonMissingTypeOfSymbol	checker.go:16618-16620	r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	T-TUPLE	isTupleType	checker.go:23603-23605	r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	T-TUPLE	c.isArrayLikeType	checker.go:23634-23638	c.findBestTypeForObjectLiteral
+R-DISCRIM	earlier	T-UIMEMBERS	c.getUnionOrIntersectionProperty	checker.go:21542-21564	c.isDiscriminantProperty
+R-DISCRIM	earlier	TYPES	Type.AsUnionType	types.go:716-716	c.getConstituentTypeForKeyType, c.getKeyPropertyName
+R-DISCRIM	earlier	TYPES	Type.Distributed	types.go:736-744	TypeDiscriminator.matches, c.mapTypesByKeyProperty, r.typeRelatedToDiscriminatedType
+R-DISCRIM	earlier	TYPES	Type.Target	types.go:748-762	c.findMatchingTypeReferenceOrTypeAliasReference
+R-DISCRIM	earlier	TYPES	Type.Types	types.go:776-784	c.computeKeyPropertyNameAndMap, c.discriminateTypeByDiscriminableItems, c.findBestTypeForInvokable, c.findBestTypeForObjectLiteral, c.findMatchingTypeReferenceOrTypeAliasReference, c.findMostOverlappyType, r.typeRelatedToDiscriminatedType
+R-DISCRIM	this unit	R-REL	r.propertiesRelatedTo	relater.go:4132-4300	r.typeRelatedToDiscriminatedType
+R-DISCRIM	this unit	R-REL	r.propertyRelatedTo	relater.go:4302-4364	r.typeRelatedToDiscriminatedType
+R-DISCRIM	this unit	R-REL	r.indexSignaturesRelatedTo	relater.go:4610-4633	r.typeRelatedToDiscriminatedType
+R-DISCRIM	this unit	R-SIGREL	r.signaturesRelatedTo	relater.go:4473-4548	r.typeRelatedToDiscriminatedType
+R-DISCRIM	later	tracer.go	Tracer.Instant	tracer.go:45-47	r.typeRelatedToDiscriminatedType
+R-ELAB	earlier	K-INDEXED	c.getIndexedAccessTypeOrUndefined	checker.go:27058-27122	c.elaborateElement, c.getBestMatchIndexedAccessTypeOrUndefined
+R-ELAB	earlier	K-INDEXED	c.getPropertyNameFromIndex	checker.go:27478-27486	c.elaborateElement
+R-ELAB	earlier	K-KEYOF	c.getLiteralTypeFromProperty	checker.go:26869-26890	c.elaborateObjectLiteral
+R-ELAB	earlier	K-LIT	c.getNumberLiteralType	checker.go:25437-25452	c.elaborateArrayLiteral
+R-ELAB	earlier	K-UNION	c.getUnionType	checker.go:25740-25742	c.elaborateArrowFunction
+R-ELAB	earlier	P-PRINT	c.TypeToString	printer.go:43-45	c.elaborateElement
+R-ELAB	earlier	S-MERGE	createDiagnosticForNode	checker.go:14358-14360	c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct, c.elaborateElement
+R-ELAB	earlier	S-MERGE	c.getSymbolOfDeclaration	checker.go:14484-14490	c.elaborateObjectLiteral
+R-ELAB	earlier	T-LOOKUP	c.getPropertyOfType	checker.go:19001-19003	c.elaborateArrayLiteral, c.elaborateElement
+R-ELAB	earlier	T-LOOKUP	c.getTypeOfPropertyOfType	checker.go:19065-19071	c.elaborateArrowFunction
+R-ELAB	earlier	T-LOOKUP	c.getSignaturesOfType	checker.go:19073-19075	c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct
+R-ELAB	earlier	T-LOOKUP	c.getApplicableIndexInfo	checker.go:19122-19124	c.elaborateElement
+R-ELAB	earlier	T-SIGDECL	c.getReturnTypeOfSignature	checker.go:20115-20163	c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct
+R-ELAB	earlier	T-SIGINST	c.getSingleCallSignature	checker.go:19455-19457	c.elaborateArrowFunction
+R-ELAB	earlier	T-SYMTYPE	c.removeMissingType	checker.go:29215-29220	c.elaborateElement
+R-ELAB	earlier	T-TUPLE	c.isTupleLikeType	checker.go:23658-23668	c.elaborateArrayLiteral
+R-ELAB	earlier	TYPES	Type.Types	types.go:776-784	c.isOrHasGenericConditional
+R-ELAB	earlier	UTIL	isTypeUsableAsPropertyName	utilities.go:879-881	c.elaborateElement
+R-ELAB	earlier	UTIL	getPropertyNameFromType	utilities.go:886-896	c.elaborateElement
+R-ELAB	earlier	UTIL	hasType	utilities.go:1265-1267	c.elaborateArrowFunction
+R-ELAB	this unit	R-DISCRIM	c.getBestMatchingType	relater.go:872-889	c.getBestMatchIndexedAccessTypeOrUndefined
+R-ELAB	this unit	R-REL	c.compareTypesAssignableSimple	relater.go:128-133	c.getBestMatchIndexedAccessTypeOrUndefined
+R-ELAB	this unit	R-REL	c.isTypeRelatedTo	relater.go:169-203	c.checkTypeRelatedToAndOptionallyElaborate
+R-ELAB	this unit	R-REL	c.checkTypeRelatedTo	relater.go:351-353	c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct, c.elaborateElement
+R-ELAB	this unit	R-REL	c.checkTypeRelatedToEx	relater.go:358-398	c.checkTypeRelatedToAndOptionallyElaborate, c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct, c.elaborateElement
+R-ELAB	this unit	R-REL	c.reportDiagnostic	relater.go:414-422	c.elaborateArrowFunction, c.elaborateDidYouMeanToCallOrConstruct, c.elaborateElement
+R-ELAB	later	c14_expressions	c.checkArrayLiteral	checker.go:8111-8191	c.elaborateArrayLiteral
+R-ELAB	later	c15_calls	c.getEffectiveCheckNode	checker.go:9471-9478	c.elaborateArrayLiteral
+R-ELAB	later	c19_assertions_binary_operators	c.isExactOptionalPropertyMismatch	checker.go:13217-13219	c.elaborateElement
+R-ELAB	later	c20_object_literals_spread	c.checkExpressionForMutableLocation	checker.go:13979-13989	c.checkExpressionForMutableLocationWithContextualType
+R-ELAB	later	c34_return_types	c.createPromiseType	checker.go:20462-20472	c.elaborateArrowFunction
+R-ELAB	later	c50_contextual_properties_inference_context	c.pushContextualType	checker.go:30999-31001	c.checkExpressionForMutableLocationWithContextualType, c.elaborateArrayLiteral
+R-ELAB	later	c50_contextual_properties_inference_context	c.popContextualType	checker.go:31003-31007	c.checkExpressionForMutableLocationWithContextualType, c.elaborateArrayLiteral
+R-ELAB	later	jsx.go	c.elaborateJsxComponents	jsx.go:296-367	c.elaborateError
+I-INFER	earlier	K-COND	c.getTrueTypeFromConditionalType	checker.go:24662-24668	c.inferToConditionalType, c.isTypeParameterAtTopLevel
+I-INFER	earlier	K-COND	c.getFalseTypeFromConditionalType	checker.go:24670-24676	c.inferToConditionalType, c.isTypeParameterAtTopLevel
+I-INFER	earlier	K-GENERIC	c.isGenericMappedType	checker.go:25031-25046	c.inferFromObjectTypes, c.inferFromTypes
+I-INFER	earlier	K-INDEXED	c.getSimplifiedType	checker.go:28025-28033	c.inferFromTypes
+I-INFER	earlier	K-INDEXED	c.distributeIndexOverObjectType	checker.go:28113-28127	c.inferFromTypes
+I-INFER	earlier	K-INTERSECT	c.getIntersectionType	checker.go:26175-26177	c.getContravariantInference, c.getTypeFromInference, c.inferFromTypes
+I-INFER	earlier	K-KEYOF	c.getIndexTypeEx	checker.go:26807-26830	c.inferToMappedType
+I-INFER	earlier	K-KEYOF	c.getLiteralTypeFromProperty	checker.go:26869-26890	c.inferFromIndexTypes
+I-INFER	earlier	K-LIT	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c.getCovariantInference
+I-INFER	earlier	K-LIT	c.getNumberLiteralType	checker.go:25437-25452	c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	c.parseBigIntLiteralType	checker.go:25465-25467	c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	getStringLiteralValue	checker.go:25469-25471	c.createEmptyObjectTypeFromStringLiteral, c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	getNumberLiteralValue	checker.go:25473-25475	c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	getBigIntLiteralValue	checker.go:25477-25479	c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	getBooleanLiteralValue	checker.go:25481-25483	c.inferToTemplateLiteralType
+I-INFER	earlier	K-LIT	isLiteralType	checker.go:25516-25527	c.inferFromTypes
+I-INFER	earlier	K-LIT	c.getBaseTypeOfLiteralType	checker.go:25557-25573	c.literalTypesWithSameBaseType
+I-INFER	earlier	K-LIT	c.getWidenedLiteralType	checker.go:25610-25626	c.getCovariantInference
+I-INFER	earlier	K-OBJ	c.newAnonymousType	checker.go:25213-25217	c.createEmptyObjectTypeFromStringLiteral
+I-INFER	earlier	K-OBJ	c.newIndexInfo	checker.go:25386-25394	c.createEmptyObjectTypeFromStringLiteral
+I-INFER	earlier	K-PRED	someType	checker.go:26660-26665	c.applyToParameterTypes
+I-INFER	earlier	K-PRED	c.filterType	checker.go:26681-26715	c.getCommonSupertype
+I-INFER	earlier	K-PRED	c.maybeTypeOfKind	checker.go:27729-27741	c.hasPrimitiveConstraint
+I-INFER	earlier	K-SUBST	c.isNoInferType	checker.go:26945-26948	c.inferFromTypes
+I-INFER	earlier	K-SUBST	c.getSubstitutionIntersection	checker.go:26950-26955	c.inferFromTypes
+I-INFER	earlier	K-SUBST	c.getActualTypeVariable	checker.go:31694-31702	c.inferFromTypes
+I-INFER	earlier	K-TEMPLATE	applyStringMapping	checker.go:29365-29379	c.inferToTemplateLiteralType
+I-INFER	earlier	K-TEMPLATE	c.isTypeMatchedByTemplateLiteralType	relater.go:2365-2376	c.inferToTemplateLiteralType
+I-INFER	earlier	K-TEMPLATE	c.inferTypesFromTemplateLiteralType	relater.go:2378-2395	c.inferToTemplateLiteralType
+I-INFER	earlier	K-UNION	c.mapType	checker.go:25684-25686	c.getInferredType
+I-INFER	earlier	K-UNION	c.getUnionType	checker.go:25740-25742	c.getCommonSupertype, c.inferFromIndexTypes, c.inferFromTypes, c.inferToMappedType, c.inferToMultipleTypes
+I-INFER	earlier	K-UNION	c.getUnionTypeEx	checker.go:25751-25774	c.getCovariantInference, c.getTypeFromInference, c.unionObjectAndArrayLiteralCandidates
+I-INFER	earlier	LINKS	symbolArenaLinkStore.Get	links.go:33-39	c.createEmptyObjectTypeFromStringLiteral
+I-INFER	earlier	MAPPER	mergeTypeMappers	mapper.go:65-70	c.getInferredType
+I-INFER	earlier	MAPPER	c.newBackreferenceMapper	mapper.go:88-94	c.getInferredType
+I-INFER	earlier	MAPPER	newMergedTypeMapper	mapper.go:252-258	c.createOuterReturnMapper
+I-INFER	earlier	MAPPER	c.newInferenceTypeMapper	mapper.go:303-310	c.newInferenceContextWorker
+I-INFER	earlier	S-MERGE	c.newSymbol	checker.go:14170-14176	c.createEmptyObjectTypeFromStringLiteral
+I-INFER	earlier	T-APPARENT	c.getApparentType	checker.go:21843-21876	c.inferFromTypes
+I-INFER	earlier	T-APPARENT	c.getReducedType	checker.go:21933-21956	c.inferFromTypes
+I-INFER	earlier	T-BASE	c.getTypeWithThisArgument	checker.go:19687-19710	c.getInferredType
+I-INFER	earlier	T-CONSTRAINT	c.getConstraintOfType	checker.go:17141-17151	c.inferToMappedType
+I-INFER	earlier	T-CONSTRAINT	c.getConstraintOfTypeParameter	checker.go:17153-17158	c.getInferredType, c.hasPrimitiveConstraint
+I-INFER	earlier	T-CONSTRAINT	c.getDefaultConstraintOfConditionalType	checker.go:17357-17376	c.hasPrimitiveConstraint
+I-INFER	earlier	T-CONSTRAINT	c.getMinTypeArgumentCount	checker.go:22052-22060	c.inferFromTypes
+I-INFER	earlier	T-CONSTRAINT	c.fillMissingTypeArguments	checker.go:22068-22098	c.inferFromTypes
+I-INFER	earlier	T-CONSTRAINT	c.getDefaultFromTypeParameter	checker.go:22110-22119	c.getInferredType
+I-INFER	earlier	T-CONSTRAINT	c.getBaseConstraintOfType	checker.go:27559-27568	c.inferFromObjectTypes, c.inferToTemplateLiteralType
+I-INFER	earlier	T-INSTANTIATE	c.getTypeArguments	checker.go:22007-22045	c.inferFromObjectTypes, c.inferFromTypes, getTypeDepth
+I-INFER	earlier	T-INSTANTIATE	c.instantiateType	checker.go:22214-22216	c.getInferredType
+I-INFER	earlier	T-INSTANTIATE	c.clearActiveMapperCaches	checker.go:22289-22293	c.getInferredType
+I-INFER	earlier	T-LOOKUP	c.getPropertiesOfType	checker.go:18960-18966	c.inferFromIndexTypes, c.inferToMappedType
+I-INFER	earlier	T-LOOKUP	c.getPropertiesOfObjectType	checker.go:18968-18973	c.inferFromProperties
+I-INFER	earlier	T-LOOKUP	c.getPropertyOfType	checker.go:19001-19003	c.inferFromProperties
+I-INFER	earlier	T-LOOKUP	c.getSignaturesOfType	checker.go:19073-19075	c.inferFromSignatures
+I-INFER	earlier	T-LOOKUP	c.getIndexInfosOfType	checker.go:19088-19090	c.inferFromIndexTypes, c.inferToMappedType
+I-INFER	earlier	T-LOOKUP	c.getApplicableIndexInfo	checker.go:19122-19124	c.inferFromIndexTypes
+I-INFER	earlier	T-LOOKUP	c.isApplicableIndexType	checker.go:19168-19174	c.inferFromIndexTypes
+I-INFER	earlier	T-MAPPED	c.getConstraintTypeFromMappedType	checker.go:22792-22798	c.inferFromGenericMappedTypes, c.inferFromObjectTypes
+I-INFER	earlier	T-MAPPED	c.getNameTypeFromMappedType	checker.go:22800-22809	c.inferFromGenericMappedTypes
+I-INFER	earlier	T-MAPPED	c.getTemplateTypeFromMappedType	checker.go:22811-22821	c.inferFromGenericMappedTypes, c.inferToMappedType
+I-INFER	earlier	T-SIGDECL	c.getReturnTypeOfSignature	checker.go:20115-20163	c.applyToReturnTypes, c.isTypeParameterAtTopLevelInReturnType
+I-INFER	earlier	T-SIGINST	c.getErasedSignature	checker.go:19510-19521	c.inferFromSignatures
+I-INFER	earlier	T-SIGINST	c.getBaseSignature	checker.go:19552-19577	c.inferFromSignatures
+I-INFER	earlier	T-SIGSHAPE	c.getParameterCount	relater.go:1726-1735	c.applyToParameterTypes
+I-INFER	earlier	T-SIGSHAPE	c.getTypeAtPosition	relater.go:1790-1796	c.applyToParameterTypes
+I-INFER	earlier	T-SIGSHAPE	c.getRestTypeAtPosition	relater.go:1829-1858	c.applyToParameterTypes
+I-INFER	earlier	T-SIGSHAPE	c.getEffectiveRestType	relater.go:1899-1913	c.applyToParameterTypes
+I-INFER	earlier	T-SIGSHAPE	c.getThisTypeOfSignature	relater.go:1947-1952	c.applyToParameterTypes
+I-INFER	earlier	T-SIGSHAPE	c.getTypePredicateOfSignature	relater.go:2049-2081	c.applyToReturnTypes, c.isTypeParameterAtTopLevelInReturnType
+I-INFER	earlier	T-SIGSHAPE	c.typePredicateKindsMatch	relater.go:2113-2115	c.applyToReturnTypes
+I-INFER	earlier	T-SYMTYPE	c.getTypeOfSymbol	checker.go:16587-16616	c.inferFromIndexTypes, c.inferFromProperties, c.inferToMappedType
+I-INFER	earlier	T-SYMTYPE	c.getNullableType	checker.go:18764-18775	c.getCommonSupertype
+I-INFER	earlier	T-SYMTYPE	c.removeMissingType	checker.go:29215-29220	c.inferFromProperties
+I-INFER	earlier	T-SYMTYPE	c.removeMissingOrUndefinedType	checker.go:29222-29227	c.inferFromIndexTypes
+I-INFER	earlier	T-TUPLE	getEndElementCount	checker.go:23569-23576	c.inferFromObjectTypes
+I-INFER	earlier	T-TUPLE	c.getTypeReferenceArity	checker.go:23591-23593	c.inferFromObjectTypes, c.isTupleTypeStructureMatching
+I-INFER	earlier	T-TUPLE	c.isArrayType	checker.go:23595-23597	c.inferFromObjectTypes, c.inferFromTypes
+I-INFER	earlier	T-TUPLE	isTupleType	checker.go:23603-23605	c.inferFromObjectTypes, c.typesDefinitelyUnrelated
+I-INFER	earlier	T-TUPLE	c.isArrayOrTupleType	checker.go:23619-23621	c.inferFromObjectTypes
+I-INFER	earlier	T-TUPLE	c.isMutableArrayLikeType	checker.go:23640-23644	c.applyToParameterTypes
+I-INFER	earlier	T-TUPLE	c.createArrayType	checker.go:24824-24826	c.inferFromObjectTypes
+I-INFER	earlier	T-TUPLE	c.createTupleTypeEx	checker.go:24863-24872	c.inferFromObjectTypes
+I-INFER	earlier	T-TUPLE	c.getElementTypeOfSliceOfTupleType	checker.go:24953-24972	c.inferFromObjectTypes
+I-INFER	earlier	T-TUPLE	c.sliceTupleType	relater.go:1915-1928	c.inferFromObjectTypes
+I-INFER	earlier	T-WIDEN	c.getWidenedType	checker.go:18469-18471	c.getCovariantInference
+I-INFER	earlier	TYPES	Type.AsIntrinsicType	types.go:705-705	c.inferToTemplateLiteralType
+I-INFER	earlier	TYPES	Type.AsMappedType	types.go:712-712	c.inferFromObjectTypes
+I-INFER	earlier	TYPES	Type.AsIndexType	types.go:718-718	c.inferFromTypes, c.inferToMappedType
+I-INFER	earlier	TYPES	Type.AsIndexedAccessType	types.go:719-719	c.inferFromTypes
+I-INFER	earlier	TYPES	Type.AsTemplateLiteralType	types.go:720-720	c.inferFromTypes, c.inferToTemplateLiteralType
+I-INFER	earlier	TYPES	Type.AsStringMappingType	types.go:721-721	c.inferFromTypes
+I-INFER	earlier	TYPES	Type.AsSubstitutionType	types.go:722-722	c.inferFromTypes
+I-INFER	earlier	TYPES	Type.AsConditionalType	types.go:723-723	c.inferToConditionalType
+I-INFER	earlier	TYPES	Type.AsTypeReference	types.go:730-730	c.inferFromTypes
+I-INFER	earlier	TYPES	Type.Distributed	types.go:736-744	c.createEmptyObjectTypeFromStringLiteral, c.inferToTemplateLiteralType
+I-INFER	earlier	TYPES	Type.Target	types.go:748-762	c.inferFromObjectTypes
+I-INFER	earlier	TYPES	Type.Types	types.go:776-784	c.getCombinedTypeFlags, c.inferFromTypes, c.inferToMappedType, c.inferToMultipleTypes, c.isTypeParameterAtTopLevel, getSingleTypeVariableFromIntersectionTypes, getTypeDepth
+I-INFER	earlier	TYPES	Type.TargetTupleType	types.go:790-792	c.inferFromObjectTypes, c.isTupleTypeStructureMatching, tupleTypesDefinitelyUnrelated
+I-INFER	earlier	UTIL	IsTypeAny	utilities.go:287-289	c.inferToTemplateLiteralType
+I-INFER	earlier	UTIL	CompareTypes	utilities.go:415-579	compareTypesAndDepth
+I-INFER	earlier	UTIL	isValidNumberString	utilities.go:927-933	c.inferToTemplateLiteralType
+I-INFER	earlier	UTIL	isValidBigIntString	utilities.go:935-959	c.inferToTemplateLiteralType
+I-INFER	earlier	UTIL	isObjectOrArrayLiteralType	utilities.go:990-992	c.unionObjectAndArrayLiteralCandidates
+I-INFER	earlier	UTIL	pseudoBigIntToString	utilities.go:1185-1187	c.inferToTemplateLiteralType
+I-INFER	this unit	I-REVMAP	c.inferTypeForHomomorphicMappedType	inference.go:1004-1012	c.inferToMappedType
+I-INFER	this unit	R-REL	c.isTypeIdenticalTo	relater.go:117-119	c.inferFromTypes, c.isTypeOrBaseIdenticalTo
+I-INFER	this unit	R-REL	c.isTypeAssignableTo	relater.go:149-151	c.getInferredType
+I-INFER	this unit	R-REL	c.isTypeSubtypeOf	relater.go:153-155	c.getCommonSubtype, c.getSingleCommonSupertype
+I-INFER	this unit	R-REL	c.isTypeStrictSubtypeOf	relater.go:157-159	c.getSingleCommonSupertype
+I-INFER	this unit	R-REL	c.isDeeplyNestedType	relater.go:766-795	c.invokeOnce
+I-INFER	this unit	R-REL	c.getUnmatchedProperty	relater.go:967-969	c.typesDefinitelyUnrelated
+I-INFER	this unit	R-REL	c.isObjectTypeWithInferableIndex	relater.go:4656-4664	c.inferFromIndexTypes
+I-INFER	this unit	R-VARIANCE	c.getVariances	relater.go:1317-1323	c.inferFromObjectTypes, c.inferFromTypes
+I-INFER	this unit	R-VARIANCE	c.getAliasVariances	relater.go:1325-1327	c.inferFromTypes
+I-INFER	later	c20_object_literals_spread	c.isNonGenericObjectType	checker.go:13627-13629	c.inferFromTypes
+I-INFER	later	c20_object_literals_spread	c.isConstTypeVariable	checker.go:13746-13772	c.applyToParameterTypes, c.getCovariantInference
+I-INFER	later	c48_contextual_types	c.getContextualType	checker.go:29466-29533	c.inferFromIntraExpressionSites
+I-INFER	later	c48_contextual_types	c.getContextualTypeForObjectLiteralMethod	checker.go:30087-30093	c.inferFromIntraExpressionSites
+I-REVMAP	earlier	K-INDEXED	c.getIndexedAccessType	checker.go:27046-27048	c.inferReverseMappedTypeWorker
+I-REVMAP	earlier	K-INTERSECT	c.getIntersectionType	checker.go:26175-26177	c.getLimitedConstraint
+I-REVMAP	earlier	K-KEYOF	c.getIndexType	checker.go:26803-26805	c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	K-KEYOF	c.getLiteralTypeFromProperty	checker.go:26869-26890	c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	K-LIT	c.getNumberLiteralType	checker.go:25437-25452	c.replaceIndexedAccess
+I-REVMAP	earlier	K-OBJ	c.newObjectType	checker.go:25186-25211	c.createReverseMappedType
+I-REVMAP	earlier	K-OBJ	c.setStructuredTypeMembers	checker.go:25268-25289	c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	K-OBJ	c.newIndexInfo	checker.go:25386-25394	c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	LINKS	symbolArenaLinkStore.Get	links.go:33-39	c.getTypeOfReverseMappedSymbol, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	MAPPER	newTypeMapper	mapper.go:40-45	c.replaceIndexedAccess
+I-REVMAP	earlier	S-MERGE	c.newSymbolEx	checker.go:14178-14182	c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	T-INSTANTIATE	c.getTypeArguments	checker.go:22007-22045	c.createReverseMappedType
+I-REVMAP	earlier	T-INSTANTIATE	c.instantiateType	checker.go:22214-22216	c.replaceIndexedAccess
+I-REVMAP	earlier	T-LOOKUP	c.getPropertiesOfType	checker.go:18960-18966	c.createReverseMappedType, c.isPartiallyInferableType, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	T-LOOKUP	c.getIndexInfoOfType	checker.go:19101-19103	c.createReverseMappedType, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	T-MAPPED	c.getTypeParameterFromMappedType	checker.go:22784-22790	c.inferReverseMappedTypeWorker
+I-REVMAP	earlier	T-MAPPED	c.getConstraintTypeFromMappedType	checker.go:22792-22798	c.getLimitedConstraint
+I-REVMAP	earlier	T-MAPPED	c.getTemplateTypeFromMappedType	checker.go:22811-22821	c.inferReverseMappedTypeWorker
+I-REVMAP	earlier	T-MAPPED	getMappedTypeModifiers	checker.go:29135-29145	c.createReverseMappedType, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	T-SYMTYPE	c.getTypeOfSymbol	checker.go:16587-16616	c.isPartiallyInferableType, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	T-TUPLE	c.getElementTypes	checker.go:23582-23589	c.createReverseMappedType, c.isPartiallyInferableType
+I-REVMAP	earlier	T-TUPLE	c.isArrayType	checker.go:23595-23597	c.createReverseMappedType
+I-REVMAP	earlier	T-TUPLE	c.isReadonlyArrayType	checker.go:23599-23601	c.createReverseMappedType
+I-REVMAP	earlier	T-TUPLE	isTupleType	checker.go:23603-23605	c.createReverseMappedType, c.isPartiallyInferableType
+I-REVMAP	earlier	T-TUPLE	c.createArrayTypeEx	checker.go:24828-24830	c.createReverseMappedType
+I-REVMAP	earlier	T-TUPLE	c.createTupleType	checker.go:24858-24861	c.replaceIndexedAccess
+I-REVMAP	earlier	T-TUPLE	c.createTupleTypeEx	checker.go:24863-24872	c.createReverseMappedType
+I-REVMAP	earlier	T-WIDEN	c.getWidenedType	checker.go:18469-18471	c.inferReverseMappedTypeWorker
+I-REVMAP	earlier	TYPES	Type.AsReverseMappedType	types.go:713-713	c.createReverseMappedType, c.getLimitedConstraint, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	TYPES	Type.AsUnionType	types.go:716-716	c.getLimitedConstraint
+I-REVMAP	earlier	TYPES	Type.AsIndexType	types.go:718-718	c.inferReverseMappedTypeWorker, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	TYPES	Type.AsIndexedAccessType	types.go:719-719	c.replaceIndexedAccess, c.resolveReverseMappedTypeMembers
+I-REVMAP	earlier	TYPES	Type.Types	types.go:776-784	c.getLimitedConstraint
+I-REVMAP	earlier	TYPES	Type.TargetTupleType	types.go:790-792	c.createReverseMappedType
+I-REVMAP	earlier	UTIL	isObjectLiteralType	utilities.go:824-826	c.isPartiallyInferableType
+I-REVMAP	this unit	I-INFER	c.inferTypes	inference.go:53-63	c.inferReverseMappedTypeWorker
+I-REVMAP	this unit	I-INFER	c.getTypeFromInference	inference.go:1509-1517	c.inferReverseMappedTypeWorker
+I-REVMAP	this unit	I-INFER	newInferenceInfo	inference.go:1625-1627	c.inferReverseMappedTypeWorker
+I-REVMAP	this unit	R-REL	c.isTypeAssignableTo	relater.go:149-151	c.resolveReverseMappedTypeMembers
+I-REVMAP	this unit	R-REL	c.isDeeplyNestedType	relater.go:766-795	c.inferReverseMappedType
+I-REVMAP	later	c20_object_literals_spread	c.isReadonlySymbol	checker.go:13950-13964	c.resolveReverseMappedTypeMembers

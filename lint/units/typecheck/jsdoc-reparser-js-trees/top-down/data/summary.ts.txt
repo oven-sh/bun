@@ -1,0 +1,26 @@
+== TypeScript family, ranges and text of comment lists masked
+units 14935 same 14908 differ 27 (of them without parse errors 4) failed 0; units with parse errors 774; units with JSDoc 167, of them same 163; same but reparsedClones count differs 0
+     9 err   pos KindIdentifier   e.g. c01026u11_type-clause-bad-import.ts:9 c01026u13_type-clause-no-as.ts:8 c01026u14_type-clause-type-as-as.ts:9
+     4 err   flags KindIdentifier xor=0x8000   e.g. c03430u0_jsxAndTypeAssertion.tsx:137 c05420u0_objectSpreadNegativeParse.ts:14 c07093u0_constructorWithIncompleteTypeAnnotation.ts:1127
+     3 err   flags KindCallExpression xor=0x8000   e.g. c02459u0_errorSuperCalls.ts:125 c11688u0_superWithTypeArgument.ts:17 c11690u0_superWithTypeArgument3.ts:39
+     3 CLEAN label go<.TagName: KindIdentifier> ts<.NameExpression: KindJSDocNameReference>   e.g. c03361u0_seeTag2.ts:15 c07290u0_controlFlowPropertyDeclarations.ts:147 c09752u0_jsxComplexSignatureHasApplicabilityError.
+     2 err   pos KindJsxAttributes   e.g. c03431u0_a.tsx:64 c09741u0_jsxAttributeMissingInitializer.tsx:12
+     2 err   flags KindNumericLiteral xor=0x8000   e.g. c04425u0_parserSuperExpression2.ts:11 c05240u0_objectTypeWithStringNamedNumericProperty.ts:172
+     1 err   shape go<.Statements:> ts<.Statements:>   e.g. c03255u0_jsdocDisallowedInTypescript.ts:2
+     1 err   fields KindJsxText   e.g. c03442u0_jsxParserRecovery.tsx:113
+     1 err   kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>   e.g. c08510u0_expressionWithJSDocTypeArguments.ts:43
+     1 CLEAN shape go<.Comment:> ts<.TagName: KindIdentifier>   e.g. c09719u0_jsdocInTypeScript.ts:208
+== TypeScript family, nothing masked
+units 14935 same 14899 differ 36 (of them without parse errors 12) failed 0; units with parse errors 774; units with JSDoc 167, of them same 154; same but reparsedClones count differs 0
+     9 err   pos KindIdentifier   e.g. c01026u11_type-clause-bad-import.ts:9 c01026u13_type-clause-no-as.ts:8 c01026u14_type-clause-type-as-as.ts:9
+     6 CLEAN shape go<.Comment:> ts<.Comment:>   e.g. c02845u0_fixSignatureCaching.ts:2899 c03290u1_ts.ts:15 c03361u0_seeTag2.ts:13
+     5 CLEAN fields KindJSDocText   e.g. c06881u0_commentsClass.ts:171 c06882u0_commentsClassMembers.ts:843 c11120u0_recursiveConditionalCrash3.ts:31
+     4 err   flags KindIdentifier xor=0x8000   e.g. c03430u0_jsxAndTypeAssertion.tsx:137 c05420u0_objectSpreadNegativeParse.ts:14 c07093u0_constructorWithIncompleteTypeAnnotation.ts:1127
+     3 err   flags KindCallExpression xor=0x8000   e.g. c02459u0_errorSuperCalls.ts:125 c11688u0_superWithTypeArgument.ts:17 c11690u0_superWithTypeArgument3.ts:39
+     2 err   pos KindJsxAttributes   e.g. c03431u0_a.tsx:64 c09741u0_jsxAttributeMissingInitializer.tsx:12
+     2 err   flags KindNumericLiteral xor=0x8000   e.g. c04425u0_parserSuperExpression2.ts:11 c05240u0_objectTypeWithStringNamedNumericProperty.ts:172
+     1 err   shape go<.Statements:> ts<.Statements:>   e.g. c03255u0_jsdocDisallowedInTypescript.ts:2
+     1 err   fields KindJsxText   e.g. c03442u0_jsxParserRecovery.tsx:113
+     1 err   fields KindJSDocText   e.g. c04239u0_parserharness.ts:7883
+     1 err   kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>   e.g. c08510u0_expressionWithJSDocTypeArguments.ts:43
+     1 CLEAN shape go<.Comment:> ts<.TagName: KindIdentifier>   e.g. c09719u0_jsdocInTypeScript.ts:208

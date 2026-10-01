@@ -1,0 +1,21 @@
+TypeScript test cases (conformance and compiler): 11767 tests with a TypeScript unit, 15050 units
+  units of tests that typescript-go has no error baseline for ("clean"): 6040 in 4926 tests; with an error baseline: 7883; test without any baseline in typescript-go: 1127
+  clean units: tsc 6.0.2 reports a parse diagnostic for 4, parsediag (typescript-go) for 4
+  clean units: the base build accepts 5980, REJECTS 60 (in 57 tests), crashes on 0
+  units of tests with an error baseline: the base build accepts 6414, rejects 1469 (the baseline also holds checker errors: no class follows from it)
+  rejected clean units by Bun message:
+      30  The constant "<w>" must be initialized
+       5  "<w>" has already been declared
+       4  Cannot use "<w>" or "<w>" here.
+       4  Unexpected �
+       3  Unexpected )
+       2  Expected ";" but found "<w>"
+       2  "<w>" is a reserved word and cannot be used in strict mode
+       2  Cannot "<w>" to label target1
+       2  Unexpected 
+       1  x has already been declared
+       1  Invalid field name
+       1  Expected "(" but found "{"
+       1  "<w>" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.
+       1  Expected "?" but found ";"
+       1  Cannot use a declaration in a single-statement context

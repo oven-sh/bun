@@ -1,0 +1,70 @@
+file /jsx1.tsx scriptKind=4 variant=1 dts=false textLen=112
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=57 identifiers=17 text=26 reparsedClones=0
+root KindSourceFile [0,112) f=0x0
+  .Statements: list [0,111) n=1
+    - KindVariableStatement [0,111) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,110) f=0x2
+        .Declarations: list [5,110) n=1
+          - KindVariableDeclaration [5,110) f=0x0
+            .Initializer: KindJsxElement [10,110) f=0x0
+              .Children: list [37,104) n=13
+                - KindJsxText [37,45) f=0x0 Text="\n  text " TokenFlags=0x0
+                - KindJsxExpression [45,48) f=0x0
+                  .Expression: KindIdentifier [46,47) f=0x0 Text="x"
+                - KindJsxText [48,49) f=0x0 Text=" " TokenFlags=0x0
+                - KindJsxSelfClosingElement [49,54) f=0x0
+                  .Attributes: KindJsxAttributes [52,52) f=0x0
+                    .Properties: list [52,52) n=0
+                  .TagName: KindIdentifier [50,52) f=0x0 Text="br"
+                - KindJsxText [54,55) f=0x0 Text=" " TokenFlags=0x0
+                - KindJsxExpression [55,57) f=0x0
+                - KindJsxText [57,58) f=0x0 Text=" " TokenFlags=0x0
+                - KindJsxExpression [58,65) f=0x0
+                  .DotDotDotToken: KindDotDotDotToken [59,62) f=0x0
+                  .Expression: KindIdentifier [62,64) f=0x0 Text="ys"
+                - KindJsxText [65,68) f=0x0 ContainsOnlyTriviaWhiteSpaces Text="\n  " TokenFlags=0x0
+                - KindJsxElement [68,95) f=0x0
+                  .Children: list [85,85) n=0
+                  .ClosingElement: KindJsxClosingElement [85,95) f=0x0
+                    .TagName: KindPropertyAccessExpression [87,94) f=0x0
+                      .Expression: KindIdentifier [87,90) f=0x0 Text="Foo"
+                      .name: KindIdentifier [91,94) f=0x0 Text="Bar"
+                  .OpeningElement: KindJsxOpeningElement [68,85) f=0x0
+                    .Attributes: KindJsxAttributes [76,84) f=0x0
+                      .Properties: list [76,84) n=1
+                        - KindJsxAttribute [76,84) f=0x0
+                          .Initializer: KindStringLiteral [81,84) f=0x0 Text="1" TokenFlags=0x0
+                          .name: KindJsxNamespacedName [76,80) f=0x0
+                            .Namespace: KindIdentifier [76,78) f=0x0 Text="x"
+                            .name: KindIdentifier [79,80) f=0x0 Text="y"
+                    .TagName: KindPropertyAccessExpression [69,76) f=0x0
+                      .Expression: KindIdentifier [69,72) f=0x0 Text="Foo"
+                      .name: KindIdentifier [73,76) f=0x0 Text="Bar"
+                - KindJsxText [95,98) f=0x0 ContainsOnlyTriviaWhiteSpaces Text="\n  " TokenFlags=0x0
+                - KindJsxFragment [98,103) f=0x0
+                  .Children: list [100,100) n=0
+                  .ClosingFragment: KindJsxClosingFragment [100,103) f=0x0
+                  .OpeningFragment: KindJsxOpeningFragment [98,100) f=0x0
+                - KindJsxText [103,104) f=0x0 ContainsOnlyTriviaWhiteSpaces Text="\n" TokenFlags=0x0
+              .ClosingElement: KindJsxClosingElement [104,110) f=0x0
+                .TagName: KindIdentifier [106,109) f=0x0 Text="div"
+              .OpeningElement: KindJsxOpeningElement [10,37) f=0x0
+                .Attributes: KindJsxAttributes [15,36) f=0x0
+                  .Properties: list [15,36) n=4
+                    - KindJsxAttribute [15,21) f=0x0
+                      .Initializer: KindStringLiteral [18,21) f=0x0 Text="1" TokenFlags=0x0
+                      .name: KindIdentifier [15,17) f=0x0 Text="a"
+                    - KindJsxAttribute [21,27) f=0x0
+                      .Initializer: KindJsxExpression [24,27) f=0x0
+                        .Expression: KindIdentifier [25,26) f=0x0 Text="c"
+                      .name: KindIdentifier [21,23) f=0x0 Text="b"
+                    - KindJsxSpreadAttribute [27,34) f=0x0
+                      .Expression: KindIdentifier [32,33) f=0x0 Text="d"
+                    - KindJsxAttribute [34,36) f=0x0
+                      .name: KindIdentifier [34,36) f=0x0 Text="e"
+                .TagName: KindIdentifier [12,15) f=0x0 Text="div"
+            .name: KindIdentifier [5,8) f=0x0 Text="el"
+  .EndOfFileToken: KindEndOfFile [111,112) f=0x0

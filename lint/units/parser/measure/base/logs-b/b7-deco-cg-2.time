@@ -1,0 +1,8 @@
+QUEUED 1790703500946 2026-09-29T17:38:20+00:00
+CMD env BUN_JSC_useJIT=0 BUN_DEBUG_QUIET_LOGS=1 /workspace/tools/vg --tool=cachegrind --cache-sim=no --branch-sim=yes --cachegrind-out-file=/workspace/notes/lint/units/parser/measure/base/cg-b/b-deco2.cg /workspace/notes/lint/units/parser/measure/base/bin/bun-profile /workspace/notes/lint/units/parser/measure/deco-bench.mjs --iterations=20
+START 1790703933424 2026-09-29T17:45:33+00:00 load=342.97 385.47 339.02
+END 1790704140269 2026-09-29T17:49:00+00:00 load=152.51 265.40 300.29
+EXIT 0
+WAIT_MS 432478
+RUN_MS 206845
+DONE

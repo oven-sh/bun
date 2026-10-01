@@ -1,0 +1,225 @@
+from	to	callee	where	callers
+D-DRIVER	D-TYPENODE	c.checkTypeParameter	checker.go:2611-2633	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypeParameterDeferred	checker.go:2635-2656	c.checkDeferredNode
+D-DRIVER	D-TYPENODE	c.checkTypeReferenceNode	checker.go:2990-3004	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypePredicate	checker.go:3063-3105	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypeQuery	checker.go:3138-3140	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypeLiteral	checker.go:3142-3148	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkArrayType	checker.go:3237-3239	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTupleType	checker.go:3241-3276	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkUnionOrIntersectionType	checker.go:3278-3281	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkThisType	checker.go:3283-3285	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypeOperator	checker.go:3287-3290	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkConditionalType	checker.go:3292-3294	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkInferType	checker.go:3296-3321	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTemplateLiteralType	checker.go:3323-3330	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkImportType	checker.go:3332-3338	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkNamedTupleMember	checker.go:3373-3386	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkIndexedAccessType	checker.go:3388-3391	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkMappedType	checker.go:3393-3410	c.checkSourceElementWorker
+D-DRIVER	D-TYPENODE	c.checkTypeAliasDeclaration	checker.go:6966-6989	c.checkSourceElementWorker
+D-DRIVER	D-VAR	c.checkVariableStatement	checker.go:5854-5861	c.checkSourceElementWorker
+D-DRIVER	D-VAR	c.checkVariableDeclaration	checker.go:5871-5877	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkParameter	checker.go:2662-2707	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkPropertyDeclaration	checker.go:2709-2722	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkPropertySignature	checker.go:2724-2729	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkSignatureDeclaration	checker.go:2731-2780	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkMethodDeclaration	checker.go:2805-2824	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkClassStaticBlockDeclaration	checker.go:2826-2830	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkConstructorDeclaration	checker.go:2832-2895	c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkAccessorDeclaration	checker.go:2938-2988	c.checkDeferredNode, c.checkSourceElementWorker
+D-DRIVER	D-FUNC	c.checkFunctionDeclaration	checker.go:3412-3416	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkBlock	checker.go:3793-3808	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkIfStatement	checker.go:3810-3820	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkDoStatement	checker.go:3955-3959	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkWhileStatement	checker.go:3961-3965	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkForStatement	checker.go:3967-3991	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkForInStatement	checker.go:3993-4033	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkForOfStatement	checker.go:4040-4086	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkBreakOrContinueStatement	checker.go:4088-4092	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkReturnStatement	checker.go:4094-4135	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkWithStatement	checker.go:4164-4177	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkSwitchStatement	checker.go:4179-4213	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkLabeledStatement	checker.go:4215-4231	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkThrowStatement	checker.go:4233-4241	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkTryStatement	checker.go:4243-4253	c.checkSourceElementWorker
+D-DRIVER	D-STMT	c.checkBindingElement	checker.go:4281-4284	c.checkSourceElementWorker
+D-DRIVER	D-CLASS	c.checkClassDeclaration	checker.go:4286-4299	c.checkSourceElementWorker
+D-DRIVER	D-CLASS	c.checkInterfaceDeclaration	checker.go:5067-5105	c.checkSourceElementWorker
+D-DRIVER	D-ENUMNS	c.checkEnumDeclaration	checker.go:5148-5197	c.checkSourceElementWorker
+D-DRIVER	D-ENUMNS	c.checkEnumMember	checker.go:5199-5206	c.checkSourceElementWorker
+D-DRIVER	D-ENUMNS	c.checkModuleDeclaration	checker.go:5208-5296	c.checkSourceElementWorker
+D-DRIVER	D-IMPEXP	c.checkImportDeclaration	checker.go:5344-5410	c.checkSourceElementWorker
+D-DRIVER	D-IMPEXP	c.checkImportEqualsDeclaration	checker.go:5540-5581	c.checkSourceElementWorker
+D-DRIVER	D-IMPEXP	c.checkExportDeclaration	checker.go:5583-5630	c.checkSourceElementWorker
+D-DRIVER	D-IMPEXP	c.checkExportAssignment	checker.go:5673-5769	c.checkSourceElementWorker
+D-DRIVER	D-IMPEXP	c.checkExternalModuleExports	checker.go:5783-5826	c.checkSourceFile
+D-DRIVER	D-IMPEXP	c.checkMissingDeclaration	checker.go:5850-5852	c.checkSourceElementWorker
+D-DRIVER	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkSourceFile
+D-DRIVER	D-UNUSED	c.checkUnusedIdentifiers	checker.go:7136-7161	c.checkSourceFile
+D-DRIVER	D-UNUSED	c.checkUnusedRenamedBindingElements	checker.go:7404-7417	c.checkSourceFile
+D-DRIVER	G-GRAMMAR	c.checkGrammarSourceFile	grammarchecks.go:2025-2027	c.checkSourceFile
+D-DRIVER	G-GRAMMAR	c.checkGrammarStatementInAmbientContext	grammarchecks.go:2029-2057	c.checkSourceElementWorker
+D-DRIVER	X-JSX	c.checkJsxElementDeferred	jsx.go:77-87	c.checkDeferredNode
+D-DRIVER	X-JSX	c.checkJsxSelfClosingElementDeferred	jsx.go:106-108	c.checkDeferredNode
+D-DRIVER	D-JSDOC	c.checkJSDocComments	checker.go:2547-2551	c.checkSourceElementWorker
+D-DRIVER	D-JSDOC	c.checkJSDocType	checker.go:2587-2590	c.checkSourceElementWorker
+D-TYPENODE	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkTupleType, c.checkTypeLiteral, c.checkTypeReferenceNode
+D-TYPENODE	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkArrayType, c.checkConditionalType, c.checkImportType, c.checkIndexedAccessType, c.checkInferType, c.checkMappedType, c.checkNamedTupleMember, c.checkTemplateLiteralType, c.checkTypeAliasDeclaration, c.checkTypeOperator, c.checkTypeParameter, c.checkTypePredicate, c.checkUnionOrIntersectionType
+D-TYPENODE	D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c.checkTypeParameter
+D-TYPENODE	D-CLASS	c.areTypeParametersIdentical	checker.go:4481-4516	c.checkInferType
+D-TYPENODE	D-CLASS	c.checkIndexConstraints	checker.go:4862-4887	c.checkTypeLiteral
+D-TYPENODE	D-CLASS	c.checkTypeForDuplicateIndexSignatures	checker.go:4980-5007	c.checkTypeLiteral
+D-TYPENODE	D-IMPEXP	c.checkExportsOnMergedDeclarations	checker.go:7000-7049	c.checkTypeAliasDeclaration
+D-TYPENODE	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkInferType, c.checkTypeAliasDeclaration
+D-TYPENODE	G-GRAMMAR	c.grammarErrorOnFirstToken	grammarchecks.go:19-27	c.checkTypeParameter
+D-TYPENODE	G-GRAMMAR	c.grammarErrorAtPos	grammarchecks.go:29-36	c.checkTypeReferenceNode
+D-TYPENODE	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkInferType, c.checkNamedTupleMember, c.checkTupleType, c.checkTypeAliasDeclaration, c.getResolutionModeOverride
+D-TYPENODE	G-GRAMMAR	c.checkGrammarMappedType	grammarchecks.go:120-125	c.checkMappedType
+D-TYPENODE	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkTypeAliasDeclaration, c.checkTypeParameter
+D-TYPENODE	G-GRAMMAR	c.checkGrammarTypeArguments	grammarchecks.go:855-857	c.checkTypeReferenceNode
+D-TYPENODE	G-GRAMMAR	c.checkGrammarTypeOperatorNode	grammarchecks.go:1351-1389	c.checkTypeOperator
+D-TYPENODE	G-GRAMMAR	c.containerAllowsBlockScopedVariable	grammarchecks.go:1796-1811	c.checkTypeAliasDeclaration
+D-VAR	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkVariableDeclarationList, c.checkVariableLikeDeclaration
+D-VAR	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkVariableLikeDeclaration
+D-VAR	D-IMPEXP	c.checkAliasSymbol	checker.go:6826-6952	c.checkVariableLikeDeclaration
+D-VAR	D-IMPEXP	c.areDeclarationFlagsIdentical	checker.go:6954-6964	c.checkVariableLikeDeclaration
+D-VAR	D-IMPEXP	c.checkExportsOnMergedDeclarations	checker.go:7000-7049	c.checkVariableLikeDeclaration
+D-VAR	D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c.checkVariableLikeDeclaration
+D-VAR	D-DECOR	c.checkDecorators	checker.go:6112-6149	c.checkVariableLikeDeclaration
+D-VAR	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.checkVariableDeclarationList, c.checkVariableLikeDeclaration
+D-VAR	E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c.checkVariableLikeDeclaration
+D-VAR	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkVariableStatement
+D-VAR	G-GRAMMAR	c.checkGrammarVariableDeclaration	grammarchecks.go:1539-1594	c.checkVariableDeclaration
+D-VAR	G-GRAMMAR	c.checkGrammarVariableDeclarationList	grammarchecks.go:1628-1656	c.checkVariableStatement
+D-VAR	G-GRAMMAR	c.checkGrammarForDisallowedBlockScopedVariableStatement	grammarchecks.go:1772-1794	c.checkVariableStatement
+D-FUNC	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkSignatureDeclaration
+D-FUNC	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkAccessorDeclaration, c.checkClassStaticBlockDeclaration, c.checkConstructorDeclaration, c.checkFunctionOrMethodDeclaration, c.checkSignatureDeclaration
+D-FUNC	D-TYPENODE	c.shouldCheckErasableSyntax	checker.go:2658-2660	c.checkParameter
+D-FUNC	D-TYPENODE	c.checkTypeParameters	checker.go:7092-7109	c.checkSignatureDeclaration
+D-FUNC	D-VAR	c.checkVariableLikeDeclaration	checker.go:5880-6037	c.checkParameter, c.checkPropertyDeclaration
+D-FUNC	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkSignatureDeclaration
+D-FUNC	D-ITER	c.isReferenceToType	checker.go:6482-6484	c.checkAsyncFunctionReturnType
+D-FUNC	E-AWAIT	c.checkAwaitedType	checker.go:31355-31366	c.checkAsyncFunctionReturnType
+D-FUNC	E-AWAIT	c.getAwaitedTypeNoAlias	checker.go:31389-31391	c.checkAsyncFunctionReturnType
+D-FUNC	D-DECOR	c.checkDecorators	checker.go:6112-6149	c.checkAccessorDeclaration, c.checkFunctionOrMethodDeclaration
+D-FUNC	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.checkSignatureDeclaration
+D-FUNC	E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c.checkFunctionDeclaration
+D-FUNC	E-COLLIDE	c.setNodeLinksForPrivateIdentifierScope	checker.go:10617-10627	c.checkAccessorDeclaration, c.checkMethodDeclaration, c.checkPropertyDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkClassStaticBlockDeclaration, c.checkParameter, c.checkPropertyDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarFunctionLikeDeclaration	grammarchecks.go:758-765	c.checkAccessorDeclaration, c.checkSignatureDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarIndexSignature	grammarchecks.go:840-843	c.checkSignatureDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarComputedPropertyName	grammarchecks.go:961-972	c.checkAccessorDeclaration, c.checkMethodDeclaration, c.checkPropertyDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarForGenerator	grammarchecks.go:974-988	c.checkFunctionDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarAccessor	grammarchecks.go:1289-1339	c.checkAccessorDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarMethod	grammarchecks.go:1414-1460	c.checkMethodDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarConstructorTypeParameters	grammarchecks.go:1841-1854	c.checkConstructorDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarConstructorTypeAnnotation	grammarchecks.go:1856-1862	c.checkConstructorDeclaration
+D-FUNC	G-GRAMMAR	c.checkGrammarProperty	grammarchecks.go:1864-1923	c.checkPropertyDeclaration
+D-FUNC	D-JSDOC	c.checkUnmatchedJSDocParameters	jsdoc.go:9-84	c.checkSignatureDeclaration
+D-STMT	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkBlock, c.checkSwitchStatement
+D-STMT	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkDoStatement, c.checkForInStatement, c.checkForOfStatement, c.checkForStatement, c.checkIfStatement, c.checkLabeledStatement, c.checkWhileStatement
+D-STMT	D-VAR	c.checkVariableDeclarationList	checker.go:5863-5869	c.checkForInStatement, c.checkForOfStatement, c.checkForStatement
+D-STMT	D-VAR	c.checkVariableLikeDeclaration	checker.go:5880-6037	c.checkBindingElement, c.checkCatchClause
+D-STMT	D-FUNC	c.isUnwrappedReturnTypeUndefinedVoidOrAny	checker.go:3788-3791	c.checkReturnStatement
+D-STMT	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkBlock, c.checkForInStatement, c.checkForOfStatement, c.checkForStatement, c.checkSwitchStatement
+D-STMT	E-AWAIT	c.checkAwaitedType	checker.go:31355-31366	c.checkReturnExpression
+D-STMT	E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581-31583	c.checkTestingKnownTruthyType
+D-STMT	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.checkForOfStatement
+D-STMT	G-GRAMMAR	c.grammarErrorOnFirstToken	grammarchecks.go:19-27	c.checkCatchClause, c.checkReturnStatement, c.checkWithStatement
+D-STMT	G-GRAMMAR	c.grammarErrorAtPos	grammarchecks.go:29-36	c.checkThrowStatement, c.checkWithStatement
+D-STMT	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkCatchClause, c.checkForOfStatement, c.checkLabeledStatement, c.checkSwitchStatement
+D-STMT	G-GRAMMAR	c.checkGrammarForInOrForOfStatement	grammarchecks.go:1182-1287	c.checkForInStatement, c.checkForOfStatement
+D-STMT	G-GRAMMAR	c.checkGrammarBreakOrContinueStatement	grammarchecks.go:1462-1516	c.checkBreakOrContinueStatement
+D-STMT	G-GRAMMAR	c.checkGrammarBindingElement	grammarchecks.go:1518-1537	c.checkBindingElement
+D-STMT	G-GRAMMAR	c.checkGrammarVariableDeclarationList	grammarchecks.go:1628-1656	c.checkForStatement
+D-STMT	G-GRAMMAR	c.checkGrammarStatementInAmbientContext	grammarchecks.go:2029-2057	c.checkBlock, c.checkBreakOrContinueStatement, c.checkDoStatement, c.checkForStatement, c.checkIfStatement, c.checkLabeledStatement, c.checkReturnStatement, c.checkSwitchStatement, c.checkThrowStatement, c.checkTryStatement, c.checkWhileStatement, c.checkWithStatement
+D-STMT	Z-SERVICES	c.getSymbolAtLocation	checker.go:31717-31885	c.checkTestingKnownTruthyType, c.isSymbolUsedInBinaryExpressionChain, c.isSymbolUsedInConditionBody
+D-CLASS	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkClassDeclaration, c.checkClassLikeDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkClassLikeDeclaration
+D-CLASS	D-TYPENODE	c.checkTypeReferenceNode	checker.go:2990-3004	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-TYPENODE	c.checkTypeArgumentConstraints	checker.go:3024-3039	c.checkClassLikeDeclaration
+D-CLASS	D-TYPENODE	c.checkObjectTypeForDuplicateDeclarations	checker.go:3150-3219	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-TYPENODE	c.checkTypeNameIsReserved	checker.go:6991-6998	c.checkInterfaceDeclaration
+D-CLASS	D-TYPENODE	c.checkTypeParameters	checker.go:7092-7109	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-FUNC	c.checkFunctionOrConstructorSymbol	checker.go:3469-3475	c.checkClassLikeDeclaration
+D-CLASS	D-IMPEXP	c.checkExportsOnMergedDeclarations	checker.go:7000-7049	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkClassDeclaration, c.checkInterfaceDeclaration
+D-CLASS	D-DECOR	c.checkDecorators	checker.go:6112-6149	c.checkClassLikeDeclaration
+D-CLASS	E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c.checkClassLikeDeclaration
+D-CLASS	G-GRAMMAR	c.grammarErrorOnFirstToken	grammarchecks.go:19-27	c.checkClassDeclaration
+D-CLASS	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkClassDeclaration, c.checkInterfaceDeclaration
+D-CLASS	G-GRAMMAR	getIdentifierFromEntityNameExpression	grammarchecks.go:58-67	c.checkJSDocAugmentsTagMatchesExtends
+D-CLASS	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkInterfaceDeclaration
+D-CLASS	G-GRAMMAR	c.checkGrammarClassLikeDeclaration	grammarchecks.go:767-770	c.checkClassLikeDeclaration
+D-CLASS	G-GRAMMAR	c.checkGrammarInterfaceDeclaration	grammarchecks.go:935-959	c.checkInterfaceDeclaration
+D-CLASS	G-GRAMMAR	c.isNonBindableDynamicName	grammarchecks.go:1410-1412	c.checkMemberForOverrideModifierWorker
+D-CLASS	G-GRAMMAR	c.containerAllowsBlockScopedVariable	grammarchecks.go:1796-1811	c.checkInterfaceDeclaration
+D-CLASS	Z-SERVICES	c.getApplicableIndexInfos	checker.go:32205-32207	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty
+D-ENUMNS	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.checkEnumDeclaration
+D-ENUMNS	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkModuleDeclaration
+D-ENUMNS	D-TYPENODE	c.shouldCheckErasableSyntax	checker.go:2658-2660	c.checkEnumDeclaration, c.checkModuleDeclaration
+D-ENUMNS	D-IMPEXP	c.checkExportsOnMergedDeclarations	checker.go:7000-7049	c.checkEnumDeclaration, c.checkModuleDeclaration
+D-ENUMNS	D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c.checkModuleDeclaration
+D-ENUMNS	E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c.checkEnumDeclaration, c.checkModuleDeclaration
+D-ENUMNS	G-GRAMMAR	c.grammarErrorOnFirstToken	grammarchecks.go:19-27	c.checkModuleAugmentationElement
+D-ENUMNS	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkModuleDeclaration
+D-ENUMNS	G-GRAMMAR	c.checkGrammarModuleElementContext	grammarchecks.go:206-212	c.checkModuleDeclaration
+D-ENUMNS	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkEnumDeclaration, c.checkModuleDeclaration
+D-IMPEXP	D-TYPENODE	c.shouldCheckErasableSyntax	checker.go:2658-2660	c.checkExportAssignment, c.checkImportEqualsDeclaration
+D-IMPEXP	D-TYPENODE	c.getResolutionModeOverride	checker.go:3340-3371	c.checkImportAttributes
+D-IMPEXP	D-TYPENODE	c.checkTypeNameIsReserved	checker.go:6991-6998	c.checkImportEqualsDeclaration
+D-IMPEXP	D-FUNC	c.getEffectiveDeclarationFlags	checker.go:3709-3722	c.checkExportsOnMergedDeclarations
+D-IMPEXP	D-ENUMNS	c.getIsolatedModulesLikeFlagName	checker.go:5312-5314	c.checkAliasSymbol, c.checkExportAssignment
+D-IMPEXP	U-ALIASMARK	c.markLinkedReferences	checker.go:28312-28477	c.checkExportAssignment, c.checkExportSpecifier, c.checkImportEqualsDeclaration
+D-IMPEXP	D-DECOR	c.checkDecorators	checker.go:6112-6149	c.checkMissingDeclaration
+D-IMPEXP	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.checkExportDeclaration, c.checkExportSpecifier, c.checkImportBinding, c.checkImportDeclaration
+D-IMPEXP	E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c.checkImportBinding
+D-IMPEXP	G-GRAMMAR	c.grammarErrorOnFirstToken	grammarchecks.go:19-27	c.checkExportAssignment, c.checkExportDeclaration, c.checkImportDeclaration
+D-IMPEXP	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkExportAssignment, c.checkImportAttributes, c.checkImportEqualsDeclaration, c.checkModuleExportName
+D-IMPEXP	G-GRAMMAR	c.checkGrammarExportDeclaration	grammarchecks.go:199-204	c.checkExportDeclaration
+D-IMPEXP	G-GRAMMAR	c.checkGrammarModuleElementContext	grammarchecks.go:206-212	c.checkExportAssignment, c.checkExportDeclaration, c.checkImportDeclaration, c.checkImportEqualsDeclaration
+D-IMPEXP	G-GRAMMAR	c.checkGrammarModifiers	grammarchecks.go:214-569	c.checkExportAssignment, c.checkExportDeclaration, c.checkImportDeclaration, c.checkImportEqualsDeclaration
+D-IMPEXP	G-GRAMMAR	c.checkGrammarImportClause	grammarchecks.go:2100-2121	c.checkImportDeclaration
+U-ALIASMARK	D-IMPEXP	c.checkExternalImportOrExportDeclaration	checker.go:5412-5453	c.markLinkedReferences
+U-ALIASMARK	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.markDecoratorAliasReferenced
+U-ALIASMARK	X-JSX	c.getJsxNamespace	jsx.go:1339-1386	c.markJsxAliasReferenced
+U-ALIASMARK	X-JSX	c.getJsxFactoryEntity	jsx.go:1404-1412	c.markJsxAliasReferenced
+U-ALIASMARK	X-JSX	c.getJsxNamespaceContainerForImplicitImport	jsx.go:1449-1484	c.markJsxAliasReferenced
+U-ALIASMARK	Z-SERVICES	isConstEnumOrConstEnumOnlyModule	emitresolver.go:693-695	c.markAliasReferenced, c.markEntityNameOrEntityExpressionAsReference, c.markExportAsReferenced, c.markPropertyAliasReferenced
+D-ITER	E-AWAIT	c.getAwaitedTypeEx	checker.go:31380-31386	c.getAsyncFromSyncIterationTypes
+D-ITER	E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581-31583	c.getIteratedTypeOrElementType, c.reportTypeNotIterableError
+E-AWAIT	D-ITER	c.isReferenceToType	checker.go:6482-6484	c.getPromisedTypeOfPromiseEx
+E-AWAIT	G-GRAMMAR	c.checkGrammarAwaitOrAwaitUsing	grammarchecks.go:1658-1757	c.checkAwaitExpression
+D-DECOR	U-ALIASMARK	c.markLinkedReferences	checker.go:28312-28477	c.checkDecorators
+D-DECOR	E-DECOR	c.getDecoratorCallSignature	checker.go:30278-30283	c.checkDecorator
+D-DECOR	D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c.checkDecorators
+D-DECOR	G-GRAMMAR	c.checkGrammarDecorator	grammarchecks.go:127-197	c.checkDecorator
+E-DECOR	Z-SERVICES	c.getTypeOfNode	checker.go:32053-32163	c.getESDecoratorCallSignature, c.getLegacyDecoratorCallSignature
+E-COLLIDE	D-TYPENODE	c.checkTypeNameIsReserved	checker.go:6991-6998	c.checkCollisionsForDeclarationName
+G-GRAMMAR	D-IMPEXP	getVerbatimModuleSyntaxErrorMessage	checker.go:5771-5781	c.checkGrammarImportCallExpression
+X-JSX	D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c.resolveJsxOpeningLikeElement
+X-JSX	D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c.checkJsxAttributes, c.checkJsxElement, c.checkJsxSelfClosingElement
+X-JSX	U-ALIASMARK	c.markJsxAliasReferenced	checker.go:28625-28669	c.checkJsxOpeningLikeElementOrOpeningFragment
+X-JSX	D-ITER	c.getIterationTypeOfIterable	checker.go:6328-6334	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	E-AWAIT	c.getTypeOfFirstParameterOfSignatureWithFallback	checker.go:29128-29133	c.getJsxPropsTypeFromCallSignature, c.getJsxPropsTypeFromClassType
+X-JSX	G-GRAMMAR	c.checkGrammarJsxElement	grammarchecks.go:1138-1160	c.checkJsxOpeningLikeElementOrOpeningFragment
+X-JSX	G-GRAMMAR	c.checkGrammarJsxExpression	grammarchecks.go:1174-1180	c.checkJsxExpression
+X-JSX	Z-SERVICES	c.getSymbolAtLocation	checker.go:31717-31885	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	Z-SERVICES	c.getApplicableIndexSymbol	checker.go:32209-32236	c.getIntrinsicTagSymbol
+D-JSDOC	D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c.checkJSDocType
+D-JSDOC	G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c.checkJSDocTypeIsInJsFile
+D-JSDOC	Z-SERVICES	c.containsArgumentsReference	checker.go:32245-32280	c.checkUnmatchedJSDocParameters
+T-JSDECL	E-AWAIT	c.getTypeOfFirstParameterOfSignature	checker.go:29124-29126	c.getTypeFromPropertyDescriptor
+Z-SERVICES	D-TYPENODE	c.getResolutionModeOverride	checker.go:3340-3371	c.GetResolutionModeOverride
+Z-SERVICES	D-FUNC	c.getEffectiveDeclarationFlags	checker.go:3709-3722	c.GetEffectiveDeclarationFlags
+Z-SERVICES	D-CLASS	c.getMemberOverrideModifierStatus	checker.go:4775-4798	c.GetMemberOverrideModifierStatus
+Z-SERVICES	U-ALIASMARK	c.markLinkedReferences	checker.go:28312-28477	EmitResolver.MarkLinkedReferencesRecursively
+Z-SERVICES	D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c.getTypeOfAssignmentPattern
+Z-SERVICES	X-JSX	c.getContextualTypeForJsxAttribute	jsx.go:215-227	c.GetContextualTypeForJsxAttribute
+Z-SERVICES	X-JSX	c.getIntrinsicTagSymbol	jsx.go:1214-1255	c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	X-JSX	c.getJsxType	jsx.go:1293-1302	c.GetJsxIntrinsicTagNamesAt
+Z-SERVICES	X-JSX	c.getJsxNamespace	jsx.go:1339-1386	c.GetJsxNamespace, c.IsDeclarationUsed
+Z-SERVICES	X-JSX	c.getJsxFactoryEntity	jsx.go:1404-1412	EmitResolver.GetJsxFactoryEntity
+Z-SERVICES	X-JSX	c.getJsxFragmentFactoryEntity	jsx.go:1414-1433	EmitResolver.GetJsxFragmentFactoryEntity, c.GetJsxFragmentFactory
+Z-SERVICES	D-JSDOC	c.resolveJSDocMemberName	checker.go:2562-2585	c.getSymbolOfNameOrPropertyAccessExpression

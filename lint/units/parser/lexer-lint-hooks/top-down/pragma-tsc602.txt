@@ -1,0 +1,212 @@
+"/// <reference path=\"a.d.ts\" />\n/// <reference types=\"node\" />\n/// <reference lib=\"es2015\" />\nlet x;"
+  ref=["a.d.ts@21-27"] types=["node@54-58"] lib=["es2015@83-89"] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:[{"args":{"path":{"value":"a.d.ts","pos":21,"end":27}},"pos":0,"end":31},{"args":{"types":{"value":"node","pos":54,"end":58}},"pos":32,"end":62},{"args":{"lib":{"value":"es2015","pos":83,"end":89}},"pos":63,"end":93}]
+  directives=[] diags=[]
+"/// <reference types=\"node\" resolution-mode=\"import\" preserve=\"true\"/>\nlet x;"
+  ref=[] types=["node@22-26 mode=99 preserve"] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"types":{"value":"node","pos":22,"end":26},"resolution-mode":"import","preserve":"true"},"pos":0,"end":70}
+  directives=[] diags=[]
+"/// <reference types=\"node\" resolution-mode=\"bogus\"/>\nlet x;"
+  ref=[] types=["node@22-26"] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"types":{"value":"node","pos":22,"end":26},"resolution-mode":"bogus"},"pos":0,"end":53}
+  directives=[] diags=["TS1453@22+4"]
+"/// <reference no-default-lib=\"true\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"no-default-lib":"true"},"pos":0,"end":38}
+  directives=[] diags=[]
+"/// <reference no-default-lib=\"false\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"no-default-lib":"false"},"pos":0,"end":39}
+  directives=[] diags=["TS1084@0+39"]
+"/// <reference foo=\"bar\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{},"pos":0,"end":26}
+  directives=[] diags=["TS1084@0+26"]
+"/// <reference path='a.ts'>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/// <reference path=a.ts />\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{},"pos":0,"end":27}
+  directives=[] diags=["TS1084@0+27"]
+"///<reference path=\"a.ts\"/>\nlet x;"
+  ref=["a.ts@20-24"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":20,"end":24}},"pos":0,"end":27}
+  directives=[] diags=[]
+"///  <REFERENCE PATH=\"a.ts\"/>\nlet x;"
+  ref=["a.ts@22-26"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":22,"end":26}},"pos":0,"end":29}
+  directives=[] diags=[]
+"// <reference path=\"a.ts\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"//// <reference path=\"a.ts\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\" path=\"b.ts\"/>\nlet x;"
+  ref=["a.ts@21-25"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":40}
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\" types=\"t\" lib=\"l\"/>\nlet x;"
+  ref=[] types=["t@34-35"] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"types":{"value":"t","pos":34,"end":35},"lib":{"value":"l","pos":42,"end":43},"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":46}
+  directives=[] diags=[]
+"/// <reference path = \"a.ts\"  />\nlet x;"
+  ref=["a.ts@23-27"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":23,"end":27}},"pos":0,"end":32}
+  directives=[] diags=[]
+"/// <reference\tpath=\"a.ts\"/>\nlet x;"
+  ref=["a.ts@21-25"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":28}
+  directives=[] diags=[]
+"/// <referencepath=\"a.ts\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/// <reference-x path=\"a.ts\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\"\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/// <reference path=\"unterminated />\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{},"pos":0,"end":36}
+  directives=[] diags=["TS1084@0+36"]
+"/// <reference />\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{},"pos":0,"end":17}
+  directives=[] diags=["TS1084@0+17"]
+"/// <amd-module name=\"m\"/>\n/// <amd-dependency path=\"p\" name=\"n\"/>\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[{"name":"n","path":"p"}] moduleName="m"
+  pragmas=amd-module:{"args":{"name":"m"},"pos":0,"end":26} ; amd-dependency:{"args":{"path":"p","name":"n"},"pos":27,"end":66}
+  directives=[] diags=[]
+"let x;\n/// <reference path=\"late.ts\"/>\n"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"#!/usr/bin/env node\n/// <reference path=\"a.ts\"/>\nlet x;"
+  ref=["a.ts@41-45"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":41,"end":45}},"pos":20,"end":48}
+  directives=[] diags=[]
+"\n\n   /// <reference path=\"a.ts\"/>\n/* c */ /// <reference path=\"b.ts\"/>\nlet x;"
+  ref=["a.ts@26-30","b.ts@63-67"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:[{"args":{"path":{"value":"a.ts","pos":26,"end":30}},"pos":5,"end":33},{"args":{"path":{"value":"b.ts","pos":63,"end":67}},"pos":42,"end":70}]
+  directives=[] diags=[]
+"/* block */\n/// <reference path=\"a.ts\"/>\n\"use strict\";\n/// <reference path=\"b.ts\"/>\n"
+  ref=["a.ts@33-37"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":33,"end":37}},"pos":12,"end":40}
+  directives=[] diags=[]
+"// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":false,"pos":0,"end":14} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-nocheck:{"args":{},"pos":0,"end":14}
+  directives=[] diags=[]
+"// @ts-check\n// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":false,"pos":13,"end":27} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-check:{"args":{},"pos":0,"end":12} ; ts-nocheck:{"args":{},"pos":13,"end":27}
+  directives=[] diags=[]
+"// @ts-nocheck\n// @ts-check\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":true,"pos":15,"end":27} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-nocheck:{"args":{},"pos":0,"end":14} ; ts-check:{"args":{},"pos":15,"end":27}
+  directives=[] diags=[]
+"//@ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":false,"pos":0,"end":13} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-nocheck:{"args":{},"pos":0,"end":13}
+  directives=[] diags=[]
+"//   @TS-NoCheck   trailing text\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":false,"pos":0,"end":32} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-nocheck:{"args":{},"pos":0,"end":32}
+  directives=[] diags=[]
+"/// @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs={"enabled":false,"pos":0,"end":15} noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=ts-nocheck:{"args":{},"pos":0,"end":15}
+  directives=[] diags=[]
+"/* @ts-nocheck */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"// foo @ts-nocheck\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"// @ts-nocheckx\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"// @ts-nocheck-x\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"let x;\n// @ts-nocheck\n"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"// @ts-ignore\nlet x: number = 'a';\n/* @ts-expect-error */\nlet y;\n/*\n * a\n * @ts-ignore */\nlet z;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[{"pos":0,"end":13,"type":1},{"pos":35,"end":57,"type":0},{"pos":73,"end":89,"type":1}] diags=[]
+"/** @jsx h */\n/* @jsxFrag Fragment */\n/* @jsxImportSource preact\n @jsxRuntime automatic */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=jsx:{"args":{"factory":"h"},"pos":0,"end":13} ; jsxfrag:{"args":{"factory":"Fragment"},"pos":14,"end":37} ; jsximportsource:{"args":{"factory":"preact"},"pos":38,"end":90} ; jsxruntime:{"args":{"factory":"automatic"},"pos":38,"end":90}
+  directives=[] diags=[]
+"// @jsx h\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/* a@b.c @jsx h */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=[]
+"/* @JSX   h   extra */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=jsx:{"args":{"factory":"h"},"pos":0,"end":22}
+  directives=[] diags=[]
+"/* @jsx */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=jsx:{"args":{"factory":"*/"},"pos":0,"end":10}
+  directives=[] diags=[]
+"/* @jsx\n h */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=jsx:{"args":{"factory":"h"},"pos":0,"end":13}
+  directives=[] diags=[]
+"/* @jsx h @jsxFrag F */\nlet x;"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=jsx:{"args":{"factory":"h"},"pos":0,"end":23} ; jsxfrag:{"args":{"factory":"F"},"pos":0,"end":23}
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\"/> trailing\nlet x;"
+  ref=["a.ts@21-25"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":37}
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\" /> <reference path=\"b.ts\" />\nlet x;"
+  ref=["a.ts@21-25"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":55}
+  directives=[] diags=[]
+"///\t<reference path=\"\"/>\nlet x;"
+  ref=["@21-21"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"","pos":21,"end":21}},"pos":0,"end":24}
+  directives=[] diags=[]
+"/// <reference types=\"a\" preserve=\"false\"/>\n/// <reference lib=\"b\" preserve=\"true\"/>\n/// <reference path=\"c\" preserve=\"true\"/>\nlet x;"
+  ref=["c@106-107 preserve"] types=["a@22-23"] lib=["b@64-65 preserve"] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:[{"args":{"types":{"value":"a","pos":22,"end":23},"preserve":"false"},"pos":0,"end":43},{"args":{"lib":{"value":"b","pos":64,"end":65},"preserve":"true"},"pos":44,"end":84},{"args":{"path":{"value":"c","pos":106,"end":107},"preserve":"true"},"pos":85,"end":126}]
+  directives=[] diags=[]
+"﻿/// <reference path=\"a.ts\"/>\nlet x;"
+  ref=["a.ts@22-26"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:{"args":{"path":{"value":"a.ts","pos":22,"end":26}},"pos":1,"end":29}
+  directives=[] diags=[]
+"/// <reference path=\"a.ts\"/>\r\n/// <reference path=\"b.ts\"/>\r\nlet x;"
+  ref=["a.ts@21-25","b.ts@51-55"] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:[{"args":{"path":{"value":"a.ts","pos":21,"end":25}},"pos":0,"end":28},{"args":{"path":{"value":"b.ts","pos":51,"end":55}},"pos":30,"end":58}]
+  directives=[] diags=[]
+"/* unterminated /// <reference path=\"a.ts\"/>"
+  ref=[] types=[] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=
+  directives=[] diags=["TS1010@44+0"]
+"/// <reference types=\"node\" resolution-mode=\"require\"/>\n/// <reference path=\"x\" resolution-mode=\"bogus\"/>\nlet x;"
+  ref=["x@77-78"] types=["node@22-26 mode=1"] lib=[] checkJs=undefined noDefaultLib=false amd=[] moduleName=undefined
+  pragmas=reference:[{"args":{"types":{"value":"node","pos":22,"end":26},"resolution-mode":"require"},"pos":0,"end":55},{"args":{"path":{"value":"x","pos":77,"end":78},"resolution-mode":"bogus"},"pos":56,"end":105}]
+  directives=[] diags=[]

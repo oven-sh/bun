@@ -1,0 +1,5 @@
+{
+  "bun": "1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9",
+  "typescript": "6.0.2",
+  "execPath": "/workspace/bun/build/release/bun"
+}

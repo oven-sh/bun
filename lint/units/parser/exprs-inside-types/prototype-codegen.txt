@@ -1,0 +1,244 @@
+# Crate-level code of the prototype against the base grammar (e3566be889). run.py (RELAX=1) + scmp.py of build-sink-positions/quick.
+# proto = prototype-patch.py (erased parse + cold edges of S2..S7). proto2 = + prototype-patch2.py (rewind_to, retry for '(' and '[', restore_parser_snapshot keeps symbols).
+### base vs proto (grammar functions, P<true,false>)
+functions a 2376 b 2409; matched a 65 b 75; identical 43, different 20, only a 2, only b 12
+DIFF    285 ->   348 insns,  243 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+DIFF     69 ->    67 insns,   28 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type
+DIFF     80 ->    79 insns,   21 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, true>
+DIFF    461 ->   489 insns,  560 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+DIFF    950 ->   956 insns, 1054 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts
+DIFF   1749 ->  1776 insns, 1601 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF    104 ->   111 insns,   51 changed lines  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+DIFF    212 ->     5 insns,  209 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+DIFF    242 ->     5 insns,  241 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF    187 ->     5 insns,  186 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY A   212 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+ONLY B   212 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_return_type_with_backtracking, ()>
+ONLY B   242 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_with_backtracking, bool>
+ONLY B   187 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_result::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters_then_open_paren_with_backtra
+ONLY B   271 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding_at::<false>
+ONLY B   271 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding_at::<true>
+ONLY B    41 insns  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::reference::<bun_js_parser::error::Error, <bun_js_parser::p::P
+ONLY B    41 insns  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::reference::<bun_js_parser::error::Error, <bun_js_parser::p::P
+### base vs proto2 (grammar functions, P<true,false>)
+functions a 2376 b 2409; matched a 65 b 76; identical 41, different 22, only a 2, only b 13
+DIFF    285 ->   376 insns,  307 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+DIFF     69 ->    97 insns,  118 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type
+DIFF    114 ->   138 insns,  166 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF     80 ->    79 insns,   21 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, true>
+DIFF    461 ->   489 insns,  560 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+DIFF    950 ->   956 insns, 1054 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts
+DIFF   1749 ->  1776 insns, 1601 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF    104 ->   111 insns,   51 changed lines  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+DIFF    212 ->     5 insns,  209 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+DIFF    242 ->     5 insns,  241 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF    187 ->     5 insns,  186 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+ONLY A   212 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+ONLY B   212 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_return_type_with_backtracking, ()>
+ONLY B   242 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_with_backtracking, bool>
+ONLY B   187 insns  <bun_js_parser::p::P<true, false>>::lexer_backtracker_result::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters_then_open_paren_with_backtra
+ONLY B   271 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding_at::<false>
+ONLY B   271 insns  <bun_js_parser::p::P<true, false>>::skip_type_script_binding_at::<true>
+ONLY B    20 insns  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::function_type
+ONLY B    41 insns  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::reference::<bun_js_parser::error::Error, <bun_js_parser::p::P
+ONLY B    41 insns  <bun_js_parser::parse::type_sink::DecoratorMetadata as bun_js_parser::parse::type_sink::TypeSink>::reference::<bun_js_parser::error::Error, <bun_js_parser::p::P
+### base vs proto2 (every function of the crate)
+functions a 2376 b 2409; matched a 2376 b 2409; identical 2300, different 53, only a 23, only b 56
+DIFF    184 ->   184 insns,    4 changed lines  <bun_js_parser::p::P<false, false>>::wrap_value_for_server_component_reference
+DIFF    691 ->   691 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::parse_async_prefix_expr
+DIFF    697 ->   700 insns,  221 changed lines  <bun_js_parser::p::P<true, false>>::parse_class
+DIFF    960 ->   981 insns,  437 changed lines  <bun_js_parser::p::P<true, false>>::parse_fn
+DIFF   1213 ->  1248 insns, 1193 changed lines  <bun_js_parser::p::P<true, false>>::parse_jsx_element
+DIFF    851 ->   851 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::parse_paren_expr
+DIFF    522 ->   514 insns,  394 changed lines  <bun_js_parser::p::P<true, false>>::parse_standard_decorator
+DIFF    585 ->   583 insns,  150 changed lines  <bun_js_parser::p::P<true, false>>::pfx_t_identifier
+DIFF    173 ->   173 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::pfx_t_less_than
+DIFF    218 ->   218 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::pfx_t_new
+DIFF    180 ->   106 insns,   94 changed lines  <bun_js_parser::p::P<true, false>>::restore_parser_snapshot
+DIFF    110 ->   110 insns,    8 changed lines  <bun_js_parser::p::P<true, false>>::sfx_handle_typescript_as
+DIFF    118 ->   118 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::sfx_t_less_than
+DIFF    118 ->   118 insns,    2 changed lines  <bun_js_parser::p::P<true, false>>::sfx_t_less_than_less_than
+DIFF    386 ->   378 insns,  312 changed lines  <bun_js_parser::p::P<true, false>>::sfx_t_question_dot
+DIFF    285 ->   376 insns,  307 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+DIFF     69 ->    97 insns,  118 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type
+DIFF    114 ->   138 insns,  166 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF     80 ->    79 insns,   21 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments::<false, true>
+DIFF    461 ->   489 insns,  560 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+DIFF    950 ->   956 insns, 1054 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts
+DIFF   1749 ->  1776 insns, 1601 changed lines  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF    104 ->   111 insns,   51 changed lines  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+DIFF    212 ->     5 insns,  209 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+DIFF    242 ->     5 insns,  241 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF    187 ->     5 insns,  186 changed lines  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+DIFF    184 ->   184 insns,    4 changed lines  <bun_js_parser::p::P<true, false>>::wrap_value_for_server_component_reference
+DIFF    720 ->   720 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::parse_async_prefix_expr
+DIFF    697 ->   700 insns,  221 changed lines  <bun_js_parser::p::P<true, true>>::parse_class
+DIFF    960 ->   981 insns,  437 changed lines  <bun_js_parser::p::P<true, true>>::parse_fn
+DIFF   1214 ->  1249 insns, 1193 changed lines  <bun_js_parser::p::P<true, true>>::parse_jsx_element
+DIFF    840 ->   840 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::parse_paren_expr
+DIFF    489 ->   505 insns,  240 changed lines  <bun_js_parser::p::P<true, true>>::parse_standard_decorator
+DIFF    604 ->   601 insns,  301 changed lines  <bun_js_parser::p::P<true, true>>::pfx_t_identifier
+DIFF    173 ->   173 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::pfx_t_less_than
+DIFF    220 ->   220 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::pfx_t_new
+DIFF    180 ->   106 insns,   94 changed lines  <bun_js_parser::p::P<true, true>>::restore_parser_snapshot
+DIFF    110 ->   110 insns,    8 changed lines  <bun_js_parser::p::P<true, true>>::sfx_handle_typescript_as
+DIFF    118 ->   118 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::sfx_t_less_than
+DIFF    118 ->   118 insns,    2 changed lines  <bun_js_parser::p::P<true, true>>::sfx_t_less_than_less_than
+DIFF    356 ->   310 insns,  290 changed lines  <bun_js_parser::p::P<true, true>>::sfx_t_question_dot
+DIFF    285 ->   376 insns,  307 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_object_type
+DIFF     69 ->    97 insns,  118 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type
+DIFF    114 ->   138 insns,  166 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF     80 ->    79 insns,   21 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, true>
+DIFF    461 ->   489 insns,  560 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_parameters
+DIFF    950 ->   956 insns, 1054 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts
+DIFF   1749 ->  1776 insns, 1601 changed lines  <bun_js_parser::p::P<true, true>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+DIFF    104 ->   111 insns,   51 changed lines  <bun_js_parser::p::P<true, true>>::skip_typescript_fn_args
+DIFF    212 ->     5 insns,  209 changed lines  <bun_js_parser::p::P<true, true>>::try_skip_type_script_arrow_return_type_with_backtracking
+DIFF    242 ->     5 insns,  241 changed lines  <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_arguments_with_backtracking
+DIFF    187 ->     5 insns,  186 changed lines  <bun_js_parser::p::P<true, true>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+DIFF      9 ->     9 insns,    2 changed lines  <bun_js_parser::typescript::SkipTypeOptions as core::ops::bit::Not>::not
+### skip_typescript_fn_args, label-insensitive diff base vs proto
+instructions a 89 b 97, common in order 72
+--- replace a[16:22] b[16:17]
+   - addq	$8, %rsp
+   - popq	%rbx
+   - popq	%r14
+   - popq	%r15
+   - popq	%rbp
+   - retq
+   + jmp	.L
+--- replace a[34:35] b[29:30]
+   - callq	<bun_js_parser::p::P<true, false>>::skip_type_script_binding
+   + callq	<bun_js_parser::p::P<true, false>>::skip_type_script_binding_at::<true>
+--- replace a[66:67] b[61:71]
+   - cmpb	$20, %al
+   + movzbl	%al, %eax
+   + cmpl	$20, %eax
+   + je	.L
+   + movq	%r14, %rdi
+   + movl	$1, %esi
+   + callq	<bun_js_parser::p::P<true, false>>::skip_initializer_in_type
+   + movzwl	%ax, %eax
+   + movl	%eax, %edx
+   + shrl	$8, %edx
+   + cmpb	$-1, %al
+--- insert a[68:68] b[72:78]
+   + testb	$1, %dl
+   + jne	.L
+   + movq	%rbx, %rdi
+   + movl	$20, %esi
+   + callq	<bun_js_parser::lexer::Lexer>::expect
+   + jmp	.L
+--- replace a[71:72] b[81:82]
+   - cmpb	$-1, %dl
+   + cmpb	$-1, %al
+--- replace a[75:76] b[85:91]
+   - jmp	.L
+   + addq	$8, %rsp
+   + popq	%rbx
+   + popq	%r14
+   + popq	%r15
+   + popq	%rbp
+   + retq
+--- delete a[82:89] b[97:97]
+   - movq	%rbx, %rdi
+   - movl	$20, %esi
+   - callq	<bun_js_parser::lexer::Lexer>::expected
+   - movl	%eax, %edx
+   - cmpb	$-1, %al
+   - jne	.L
+   - jmp	.L
+### skip_type_script_paren_or_fn_type::<Discard>, base vs proto2
+instructions a 59 b 86, common in order 24
+--- insert a[2:2] b[2:3]
+   + pushq	%r15
+--- replace a[4:6] b[5:8]
+   - subq	$16, %rsp
+   - movq	%rdi, %r14
+   + pushq	%rax
+   + movq	%rdi, %rbx
+   + movq	752(%rdi), %r15
+--- replace a[9:11] b[11:13]
+   - leaq	-17(%rbp), %rcx
+   - movq	%r14, %rdi
+   + leaq	-25(%rbp), %rcx
+   + movq	%rbx, %rdi
+--- replace a[15:17] b[17:19]
+   - leaq	520(%r14), %rbx
+   - cmpb	$42, 849(%r14)
+   + leaq	520(%rbx), %r14
+   + cmpb	$42, 849(%rbx)
+--- insert a[18:18] b[20:27]
+   + movq	%r14, %rdi
+   + callq	<bun_js_parser::lexer::Lexer>::next
+   + movl	%eax, %edx
+   + movb	$4, %al
+   + cmpb	$-1, %dl
+   + jne	.L
+   + leaq	-25(%rbp), %rcx
+--- insert a[19:19] b[28:38]
+   + xorl	%esi, %esi
+   + xorl	%edx, %edx
+   + callq	<bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+   + cmpb	$20, 849(%rbx)
+   + sete	%cl
+   + cmpb	$-1, %al
+   + jne	.L
+   + testb	%cl, %cl
+   + je	.L
+   + movq	%r14, %rdi
+--- insert a[20:20] b[39:53]
+   + movl	%eax, %edx
+   + cmpb	$-1, %al
+   + sete	%al
+   + negb	%al
+   + orb	$4, %al
+   + addq	$8, %rsp
+   + popq	%rbx
+   + popq	%r14
+   + popq	%r15
+   + popq	%rbp
+   + retq
+   + movq	%r14, %rdi
+   + movl	$42, %esi
+   + callq	<bun_js_parser::lexer::Lexer>::expected
+--- replace a[25:26] b[58:80]
+   - leaq	-17(%rbp), %rcx
+   + xorl	%ecx, %ecx
+   + testb	%cl, %cl
+   + jne	.L
+   + movzbl	%al, %eax
+   + movzbl	%dl, %ecx
+   + movq	%rbx, %rdi
+   + movq	%r15, %rsi
+   + movl	%eax, %edx
+   + xorl	%r8d, %r8d
+   + callq	<bun_js_parser::p::P<true, false>>::retry_in_type
+   + movzwl	%ax, %eax
+   + movl	%eax, %edx
+   + shrl	$8, %edx
+   + cmpb	$-1, %al
+--- replace a[27:48] b[81:82]
+   - xorl	%esi, %esi
+   - xorl	%edx, %edx
+   - callq	<bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+   - cmpb	$-1, %al
+   - jne	.L
+   - cmpb	$20, 849(%r14)
+   - jne	.L
+   - movq	%rbx, %rdi
+   - callq	<bun_js_parser::lexer::Lexer>::next
+   - movl	%eax, %edx
+   - cmpb	$-1, %dl
+   - sete	%al
+   - negb	%al
+   - orb	$4, %al
+   + movl	$20, %esi
+--- delete a[52:59] b[86:86]
+   - movq	%rbx, %rdi
+   - movl	$20, %esi
+   - callq	<bun_js_parser::lexer::Lexer>::expected
+   - movl	%eax, %edx
+   - cmpb	$-1, %al
+   - jne	.L
+   - jmp	.L

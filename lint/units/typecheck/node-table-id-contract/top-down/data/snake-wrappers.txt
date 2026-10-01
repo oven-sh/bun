@@ -1,0 +1,9 @@
+NOT A WRAPPER: ast NodeVisitor VisitNode visitor.go:45 lines 23
+NOT A WRAPPER: ast NodeVisitor VisitEmbeddedStatement visitor.go:74 lines 12
+NOT A WRAPPER: ast NodeVisitor VisitNodes visitor.go:94 lines 14
+NOT A WRAPPER: ast NodeVisitor VisitModifiers visitor.go:116 lines 14
+NOT A WRAPPER: checker Checker IsValidPropertyAccessForCompletions services.go:188 lines 11
+NOT A WRAPPER: tspath <package> TryGetExtensionFromPath extension.go:66 lines 9
+NOT A WRAPPER: printer Printer Write printer.go:5069 lines 211
+NOT A WRAPPER: printer Printer EmitSourceFile printer.go:5050 lines 4
+pairs where the exported function calls the unexported one: 92; others: 8

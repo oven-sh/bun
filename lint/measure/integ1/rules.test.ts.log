@@ -1,0 +1,19 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/lint/rules.test.ts:
+(pass) bun --lint rules > no-compare-neg-zero [2683.93ms]
+(pass) bun --lint rules > no-debugger [2600.99ms]
+(pass) bun --lint rules > no-dupe-class-members [2825.17ms]
+(pass) bun --lint rules > no-dupe-keys [3074.16ms]
+(pass) bun --lint rules > no-duplicate-case [3474.74ms]
+(pass) bun --lint rules > no-empty-pattern [2280.19ms]
+(pass) bun --lint rules > no-self-assign [2567.12ms]
+(pass) bun --lint rules > no-unsafe-negation [1888.67ms]
+(pass) bun --lint rules > no-sparse-arrays [2298.33ms]
+(pass) bun --lint rules > use-isnan [1259.02ms]
+(pass) bun --lint rules > valid-typeof [1022.16ms]
+
+ 11 pass
+ 0 fail
+ 11 expect() calls
+Ran 11 tests across 1 file. [11.20s]

@@ -1,0 +1,452 @@
+AA  "var f = (x): x is string => true;"
+     bun: ok "var f = (x) => true;\n"
+     tsc emit: "\"use strict\";\nvar f = (x) => true;\n"
+AA  "var f = (x: any): x is string => true;"
+     bun: ok "var f = (x) => true;\n"
+     tsc emit: "\"use strict\";\nvar f = (x) => true;\n"
+AA  "var f = (x): asserts x => {};"
+     bun: ok "var f = (x) => {};\n"
+     tsc emit: "\"use strict\";\nvar f = (x) => { };\n"
+AA  "var f = (x): asserts x is string => {};"
+     bun: ok "var f = (x) => {};\n"
+     tsc emit: "\"use strict\";\nvar f = (x) => { };\n"
+AA  "var f = (): this is string => true;"
+     bun: ok "var f = () => true;\n"
+     tsc emit: "\"use strict\";\nvar f = () => true;\n"
+AA  "var f = (): asserts this => {};"
+     bun: ok "var f = () => {};\n"
+     tsc emit: "\"use strict\";\nvar f = () => { };\n"
+AA  "var f = (x?: number, y?: string) => 1;"
+     bun: ok "var f = (x, y) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (x, y) => 1;\n"
+AA  "var f = (x = 1, y?: string) => 1;"
+     bun: ok "var f = (x = 1, y) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (x = 1, y) => 1;\n"
+AA  "var f = ({ a }: any, [b]: any) => 1;"
+     bun: ok "var f = ({ a }, [b]) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ({ a }, [b]) => 1;\n"
+AAg "var f = ({ a }?: any) => 1;"
+     bun: ok "var f = ({ a }) => 1;\n"
+     tsc check: TS2463@9+11 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nvar f = ({ a }) => 1;\n"
+AAg "var f = ({ a } = {}) => 1;"
+     bun: ok "var f = ({ a } = {}) => 1;\n"
+     tsc check: TS2339@11+1 Property 'a' does not exist on type '{}'.
+     tsc emit: "\"use strict\";\nvar f = ({ a } = {}) => 1;\n"
+AA  "var f = ({ a }: any = {}) => 1;"
+     bun: ok "var f = ({ a } = {}) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ({ a } = {}) => 1;\n"
+AA  "var f = ({ a, ...b }: any) => 1;"
+     bun: ok "var f = ({ a, ...b }) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ({ a, ...b }) => 1;\n"
+AA  "var f = ([a, ...b]: any) => 1;"
+     bun: ok "var f = ([a, ...b]) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ([a, ...b]) => 1;\n"
+AA  "var f = (...a: any[]) => 1;"
+     bun: ok "var f = (...a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (...a) => 1;\n"
+AA  "var f = (a: number, ...b: any[]) => 1;"
+     bun: ok "var f = (a, ...b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, ...b) => 1;\n"
+AA  "var f = (a?, ...b) => 1;"
+     bun: ok "var f = (a, ...b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, ...b) => 1;\n"
+AA  "var f = (a: (b: number) => void) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a: { b: number }) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a: typeof b) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a: number = 1, b: string = \"\") => 1;"
+     bun: ok "var f = (a = 1, b = \"\") => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = 1, b = \"\") => 1;\n"
+AA  "var f = (a: number): number => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = (a): number => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = (): void => {};"
+     bun: ok "var f = () => {};\n"
+     tsc emit: "\"use strict\";\nvar f = () => { };\n"
+AA  "var f = async (a: number): Promise<number> => a;"
+     bun: ok "var f = async (a) => a;\n"
+     tsc check: (noise 2583)
+     tsc emit: "\"use strict\";\nvar f = async (a) => a;\n"
+AA  "var f = async (): Promise<void> => {};"
+     bun: ok "var f = async () => {};\n"
+     tsc check: (noise 2583)
+     tsc emit: "\"use strict\";\nvar f = async () => { };\n"
+AA  "var f = async (a?) => 1;"
+     bun: ok "var f = async (a) => 1;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a) => 1;\n"
+AA  "var f = async (a?: number) => 1;"
+     bun: ok "var f = async (a) => 1;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a) => 1;\n"
+AA  "var f = async ({ a }: any) => 1;"
+     bun: ok "var f = async ({ a }) => 1;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async ({ a }) => 1;\n"
+AA  "var f = async (...a: any[]) => 1;"
+     bun: ok "var f = async (...a) => 1;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (...a) => 1;\n"
+AA  "var f = async <T>(a: T) => a;"
+     bun: ok "var f = async (a) => a;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a) => a;\n"
+AA  "var f = async <T,>(a: T): Promise<T> => a;"
+     bun: ok "var f = async (a) => a;\n"
+     tsc check: (noise 2583)
+     tsc emit: "\"use strict\";\nvar f = async (a) => a;\n"
+AA  "var f = <T>(a: T) => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <T,>(a: T): T => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <T extends object>(a: T) => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <T = any>(a: T) => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <const T>(a: T) => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <T, U>(a: T, b: U) => a;"
+     bun: ok "var f = (a, b) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, b) => a;\n"
+AA  "var f = <T>(a?: T) => a;"
+     bun: ok "var f = (a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => a;\n"
+AA  "var f = <T>(...a: T[]) => a;"
+     bun: ok "var f = (...a) => a;\n"
+     tsc emit: "\"use strict\";\nvar f = (...a) => a;\n"
+AAg "var f = <T>({ a }: T) => a;"
+     bun: ok "var f = ({ a }) => a;\n"
+     tsc check: TS2339@14+1 Property 'a' does not exist on type '{}'.
+     tsc emit: "\"use strict\";\nvar f = ({ a }) => a;\n"
+AA  "var f = <T>(): T => null!;"
+     bun: ok "var f = () => null;\n"
+     tsc emit: "\"use strict\";\nvar f = () => null;\n"
+AA  "var f = (a, b?) => 1;"
+     bun: ok "var f = (a, b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, b) => 1;\n"
+AAg "var f = (a?, b) => 1;"
+     bun: ok "var f = (a, b) => 1;\n"
+     tsc check: TS1016@13+1 A required parameter cannot follow an optional parameter.
+     tsc emit: "\"use strict\";\nvar f = (a, b) => 1;\n"
+AA  "var f = (a?) : number => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a ? : number) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a?: number,) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a?,) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a: number,) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a = 1,) => 1;"
+     bun: ok "var f = (a = 1) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AA  "var f = (a?: number, b = a) => 1;"
+     bun: ok "var f = (a, b = a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, b = a) => 1;\n"
+AA  "var f = (async) => 1;"
+     bun: ok "var f = (async) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (async) => 1;\n"
+AA  "var f = (async: any) => 1;"
+     bun: ok "var f = (async) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (async) => 1;\n"
+AA  "var f = (async?) => 1;"
+     bun: ok "var f = (async) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (async) => 1;\n"
+AA  "var f = (type) => 1;"
+     bun: ok "var f = (type) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (type) => 1;\n"
+AA  "var f = (type: any) => 1;"
+     bun: ok "var f = (type) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (type) => 1;\n"
+AA  "var f = (type?) => 1;"
+     bun: ok "var f = (type) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (type) => 1;\n"
+AA  "var f = (of, as, is, get, set) => 1;"
+     bun: ok "var f = (of, as, is, get, set) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (of, as, is, get, set) => 1;\n"
+AA  "var f = (as: any, is?: any) => 1;"
+     bun: ok "var f = (as, is) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (as, is) => 1;\n"
+AA  "var f = (readonly: any) => 1;"
+     bun: ok "var f = (readonly) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (readonly) => 1;\n"
+AA  "var f = (abstract?, declare?) => 1;"
+     bun: ok "var f = (abstract, declare) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (abstract, declare) => 1;\n"
+AAg "var f = (static) => 1;"
+     bun: ok "var f = (static) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'static' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (static) => 1;\n"
+AAg "var f = (static: any) => 1;"
+     bun: ok "var f = (static) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'static' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (static) => 1;\n"
+AAg "var f = (let) => 1;"
+     bun: ok "var f = (let) => 1;\n"
+     tsc check: TS1212@9+3 Identifier expected. 'let' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (let) => 1;\n"
+AAg "var f = (yield) => 1;"
+     bun: ok "var f = (yield) => 1;\n"
+     tsc check: TS1212@9+5 Identifier expected. 'yield' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (yield) => 1;\n"
+AAg "var f = (yield: any) => 1;"
+     bun: ok "var f = (yield) => 1;\n"
+     tsc check: TS1212@9+5 Identifier expected. 'yield' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (yield) => 1;\n"
+A1  "var f = (await) => 1;"
+     bun: Unexpected ) @14
+     tsc emit: "\"use strict\";\nvar f = (await) => 1;\n"
+A1  "var f = (await: any) => 1;"
+     bun: Unexpected : @14
+     tsc emit: "\"use strict\";\nvar f = (await) => 1;\n"
+A1  "var f = (await?) => 1;"
+     bun: Unexpected ? @14
+     tsc emit: "\"use strict\";\nvar f = (await) => 1;\n"
+A2  "var f = async (await) => 1;"
+     bun: Unexpected ) @20
+     tsc check: TS1359@15+5 Identifier expected. 'await' is a reserved word that cannot be used here. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (await) => 1;\n"
+AAg "var f = (arguments) => 1;"
+     bun: ok "var f = (arguments) => 1;\n"
+     tsc check: TS1100@9+9 Invalid use of 'arguments' in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (arguments) => 1;\n"
+AAg "var f = (eval: any) => 1;"
+     bun: ok "var f = (eval) => 1;\n"
+     tsc check: TS1100@9+4 Invalid use of 'eval' in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (eval) => 1;\n"
+A2  "var f = (a: any, a: any) => 1;"
+     bun: "a" cannot be bound multiple times in the same parameter list @17
+     tsc check: TS2300@9+1 Duplicate identifier 'a'. ; TS2300@17+1 Duplicate identifier 'a'.
+     tsc emit: "\"use strict\";\nvar f = (a, a) => 1;\n"
+B  "var f = (a as any) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@19+2 ';' expected.
+B  "var f = (a!) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@13+2 ';' expected.
+B  "var f = (a satisfies any) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@26+2 ';' expected.
+B  "var f = (<any>a) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@17+2 ';' expected.
+B  "var f = ((a)) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@14+2 ';' expected.
+B  "var f = ((a): any) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@12+1 ')' expected. ; TS1005@17+1 ',' expected. ; TS1005@19+2 ';' expected.
+RR  "var f = ((a: any)) => 1;"
+     bun: Unexpected ":" @11
+     tsc parse: TS1005@17+1 '=>' expected. ; TS1005@19+2 ';' expected.
+A2  "var f = (a: any)\n=> 1;"
+     bun: Unexpected newline before "=>" @17
+     tsc check: TS1200@17+2 Line terminator not permitted before arrow.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a)\n: any => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a):\nany => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (a): any\n=> 1;"
+     bun: Unexpected newline before "=>" @17
+     tsc check: TS1200@17+2 Line terminator not permitted before arrow.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+RR  "var f = a: any => 1;"
+     bun: Expected ";" but found ":" @9
+     tsc parse: TS1005@9+1 ',' expected. ; TS1005@15+2 ';' expected.
+RR  "var f = a? => 1;"
+     bun: Unexpected => @11
+     tsc parse: TS1005@11+2 '(' expected. ; TS1005@15+1 ':' expected.
+RR  "var f = async a: any => 1;"
+     bun: Expected ";" but found "a" @14 | Unexpected : @15
+     tsc parse: TS1005@14+1 ',' expected. ; TS1005@21+2 ';' expected.
+RR  "var f = (a: any) : any : any => 1;"
+     bun: Unexpected ":" @10
+     tsc parse: TS1005@23+1 '=>' expected. ; TS1005@29+2 ';' expected.
+A2  "var f = (a?: any = 1, b? = 2) => 1;"
+     bun: Unexpected = @25
+     tsc check: TS1015@9+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nvar f = (a = 1, b = 2) => 1;\n"
+AA  "var f = (a = 1 as any) => 1;"
+     bun: ok "var f = (a = 1) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AA  "var f = (a = <any>1) => 1;"
+     bun: ok "var f = (a = 1) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AA  "var f = (a = 1!) => 1;"
+     bun: ok "var f = (a = 1) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AA  "var f = (a = (b: any) => b) => 1;"
+     bun: ok "var f = (a = (b) => b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = (b) => b) => 1;\n"
+AA  "var f = (a = (b?) => b) => 1;"
+     bun: ok "var f = (a = (b) => b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = (b) => b) => 1;\n"
+AA  "var f = (a: any = (b?: any): any => b) => 1;"
+     bun: ok "var f = (a = (b) => b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a = (b) => b) => 1;\n"
+AA  "var f = ((a?) => 1);"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ((a) => 1);\n"
+AA  "var f = ((a: any) => 1);"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = ((a) => 1);\n"
+AA  "var f = (((a: any): any => 1));"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (((a) => 1));\n"
+AA  "f((a?) => 1);"
+     bun: ok "f((a) => 1);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf((a) => 1);\n"
+AA  "f((a: any) => 1, (b?: any) => 2);"
+     bun: ok "f((a) => 1, (b) => 2);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf((a) => 1, (b) => 2);\n"
+AA  "f(a, (b?) => 1);"
+     bun: ok "f(a, (b) => 1);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf(a, (b) => 1);\n"
+AA  "[(a?) => 1];"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n[(a) => 1];\n"
+AA  "({ x: (a?) => 1 });"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n({ x: (a) => 1 });\n"
+AA  "`${(a?: any) => 1}`;"
+     bun: ok "`${(a) => 1}`;\n"
+     tsc emit: "\"use strict\";\n`${(a) => 1}`;\n"
+AA  "x = y ? (a?) => 1 : (b: any) => 2;"
+     bun: ok "x = y ? (a) => 1 : (b) => 2;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = y ? (a) => 1 : (b) => 2;\n"
+AA  "x = y ? (a: any) => 1 : 2;"
+     bun: ok "x = y ? (a) => 1 : 2;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = y ? (a) => 1 : 2;\n"
+RR  "x = y ? (a?: any) : 2;"
+     bun: Unexpected ":" @11
+     tsc parse: TS1005@21+1 '=>' expected.
+RR  "x = y ? (a?) : 2;"
+     bun: Unexpected ) @11
+     tsc parse: TS1005@16+1 '=>' expected.
+AA  "x = y ? (a) : 2;"
+     bun: ok "x = y ? a : 2;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = y ? (a) : 2;\n"
+RR  "x = (a?) ;"
+     bun: Unexpected ) @7
+     tsc parse: TS1005@9+1 '=>' expected.
+RR  "x = (a?: any);"
+     bun: Unexpected ":" @7
+     tsc parse: TS1005@13+1 '=>' expected.
+RR  "x = (a: any);"
+     bun: Unexpected ":" @6
+     tsc parse: TS1005@12+1 '=>' expected.
+RR  "x = (a, b: any);"
+     bun: Unexpected ":" @9
+     tsc parse: TS1005@9+1 ')' expected. ; TS1434@11+3 Unexpected keyword or identifier. ; TS1128@14+1 Declaration or statement expected.
+RR  "x = (a?, b);"
+     bun: Unexpected , @7
+     tsc parse: TS1005@11+1 '=>' expected.
+RR  "x = (...a);"
+     bun: Unexpected "..." @0
+     tsc parse: TS1005@10+1 '=>' expected.
+RR  "x = (...a: any);"
+     bun: Unexpected ":" @9
+     tsc parse: TS1005@15+1 '=>' expected.
+RR  "x = (a = 1: any);"
+     bun: Unexpected ":" @10
+     tsc parse: TS1005@10+1 ')' expected. ; TS1434@12+3 Unexpected keyword or identifier. ; TS1128@15+1 Declaration or statement expected.
+RR  "x = ();"
+     bun: Expected "=>" but found ";" @6
+     tsc parse: TS1109@5+1 Expression expected.
+RR  "x = (): any;"
+     bun: Expected "=>" but found ":" @6
+     tsc parse: TS1005@11+1 '=>' expected.
+RR  "x = (a: any) + 1;"
+     bun: Unexpected ":" @6
+     tsc parse: TS1005@13+1 '=>' expected.
+AA  "x = (a?) => 1 + 1;"
+     bun: ok "x = (a) => 1 + 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => 1 + 1;\n"
+RR  "x = 1 + (a?) => 1;"
+     bun: Unexpected ) @11
+     tsc parse: TS1109@11+1 Expression expected. ; TS1005@13+2 ';' expected.
+AAg "x = 1 + ((a?) => 1);"
+     bun: ok "x = 1 + ((a) => 1);\n"
+     tsc check: TS2365@4+15 Operator '+' cannot be applied to types 'number' and '(a?: any) => number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nx = 1 + ((a) => 1);\n"
+RR  "x = !(a: any) => 1;"
+     bun: Expected ")" but found ":" @7 | Expected ";" but found "any" @9 | Unexpected ) @12
+     tsc parse: TS1005@7+1 ')' expected. ; TS1434@9+3 Unexpected keyword or identifier. ; TS1128@12+1 Declaration or statement expected. ; TS1128@14+2 Declaration or statement expected.
+RR  "x = typeof (a: any) => 1;"
+     bun: Expected ")" but found ":" @13 | Expected ";" but found "any" @15 | Unexpected ) @18
+     tsc parse: TS1005@13+1 ')' expected. ; TS1434@15+3 Unexpected keyword or identifier. ; TS1128@18+1 Declaration or statement expected. ; TS1128@20+2 Declaration or statement expected.
+RR  "x = await (a: any) => 1;"
+     bun: Expected ")" but found ":" @12 | Expected ";" but found "any" @14 | Unexpected ) @17
+     tsc parse: TS1005@12+1 ',' expected. ; TS1005@19+2 ';' expected.
+RR  "x = new (a: any) => 1;"
+     bun: Expected ")" but found ":" @10 | Expected ";" but found "any" @12 | Unexpected ) @15
+     tsc parse: TS1005@10+1 ')' expected. ; TS1434@12+3 Unexpected keyword or identifier. ; TS1128@15+1 Declaration or statement expected. ; TS1128@17+2 Declaration or statement expected.
+RR  "x = y || (a: any) => 1;"
+     bun: Expected ")" but found ":" @11 | Expected ";" but found "any" @13 | Unexpected ) @16
+     tsc parse: TS1005@11+1 ')' expected. ; TS1434@13+3 Unexpected keyword or identifier. ; TS1128@16+1 Declaration or statement expected. ; TS1128@18+2 Declaration or statement expected.
+RR  "x = y ?? (a?) => 1;"
+     bun: Unexpected ) @12
+     tsc parse: TS1109@12+1 Expression expected. ; TS1005@14+2 ';' expected.
+AA  "x = y, (a: any) => 1;"
+     bun: ok "x = y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = y, (a) => 1;\n"
+AA  "x = (a: any) => 1, y;"
+     bun: ok "x = (a) => 1, y;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => 1, y;\n"
+AA  "x = (a: any) => 1 as any;"
+     bun: ok "x = (a) => 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => 1;\n"
+AA  "x = (a: any) => ({} as any);"
+     bun: ok "x = (a) => ({});\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => ({});\n"
+AA  "x = (a: any) => <any>{};"
+     bun: ok "x = (a) => ({});\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => ({});\n"
+AA  "x = (a: any) => a!;"
+     bun: ok "x = (a) => a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => a;\n"
+AA  "x = ((a: any) => a)!;"
+     bun: ok "x = (a) => a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = ((a) => a);\n"
+AA  "x = (a: any) => a satisfies any;"
+     bun: ok "x = (a) => a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nx = (a) => a;\n"

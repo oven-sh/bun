@@ -1,0 +1,181 @@
+types-dump v1
+mark after inline part of NewChecker (line 1117): TypeCount=63 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+mark start of initializeChecker: TypeCount=63 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+mark after global merge and global augmentations (line 1349): TypeCount=63 SymbolCount=6 SignatureCount=4 globals=2 mergedSymbols=0 diagnostics=0
+mark after special types (line 1376): TypeCount=65 SymbolCount=6 SignatureCount=4 globals=3 mergedSymbols=0 diagnostics=8
+mark end of initializeChecker: TypeCount=65 SymbolCount=6 SignatureCount=4 globals=3 mergedSymbols=0 diagnostics=8
+after NewChecker types=65 symbols=6 signatures=4
+== fields
+F undefinedSymbol Y1
+F argumentsSymbol Y2
+F requireSymbol Y3
+F unknownSymbol Y4
+F globalThisSymbol Y5
+F anyType T1
+F autoType T2
+F wildcardType T3
+F blockedStringType T4
+F errorType T5
+F unresolvedType T6
+F nonInferrableAnyType T7
+F intrinsicMarkerType T8
+F unknownType T9
+F undefinedType T10
+F undefinedWideningType T11
+F missingType T12
+F undefinedOrMissingType T10
+F optionalType T13
+F nullType T14
+F nullWideningType T15
+F stringType T16
+F numberType T17
+F bigintType T18
+F regularFalseType T19
+F falseType T20
+F regularTrueType T21
+F trueType T22
+F booleanType T23
+F esSymbolType T24
+F voidType T25
+F neverType T26
+F silentNeverType T27
+F implicitNeverType T28
+F unreachableNeverType T29
+F nonPrimitiveType T30
+F stringOrNumberType T31
+F stringNumberSymbolType T32
+F numberOrBigIntType T33
+F templateConstraintType T35
+F numericStringType T34
+F uniqueLiteralType T36
+F emptyObjectType T37
+F emptyJsxObjectType T38
+F emptyFreshJsxObjectType T39
+F emptyTypeLiteralType T40
+F unknownEmptyObjectType T41
+F unknownUnionType T9
+F emptyGenericType T42
+F anyFunctionType T43
+F noConstraintType T44
+F circularConstraintType T45
+F resolvingDefaultType T46
+F markerSuperType T47
+F markerSubType T48
+F markerOtherType T49
+F markerSuperTypeForCheck T50
+F markerSubTypeForCheck T51
+F anySignature G1
+F unknownSignature G2
+F resolvingSignature G3
+F silentNeverSignature G4
+F globalObjectType T37
+F globalFunctionType T37
+F globalCallableFunctionType T37
+F globalNewableFunctionType T37
+F globalArrayType T42
+F globalReadonlyArrayType T42
+F globalStringType T37
+F globalNumberType T37
+F globalBooleanType T37
+F globalRegExpType T37
+F globalThisType T42
+F anyArrayType T37
+F autoArrayType T64
+F anyReadonlyArrayType T37
+F emptyStringType T52
+F zeroType T53
+F zeroBigIntType T54
+F typeofType T63
+== counts types=65 symbols=6 signatures=4 files=1
+== types
+T1 Any(0x1) IntrinsicType intrinsicName="any"
+T2 Any(0x1) of=0x40000 IntrinsicType intrinsicName="any"
+T3 Any(0x1) IntrinsicType intrinsicName="any"
+T4 Any(0x1) IntrinsicType intrinsicName="any"
+T5 Any(0x1) IntrinsicType intrinsicName="error"
+T6 Any(0x1) IntrinsicType intrinsicName="unresolved"
+T7 Any(0x1) of=0x10000 IntrinsicType intrinsicName="any"
+T8 Any(0x1) IntrinsicType intrinsicName="intrinsic"
+T9 Unknown(0x2) IntrinsicType intrinsicName="unknown"
+T10 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T11 Undefined(0x4) of=0x10000 IntrinsicType intrinsicName="undefined"
+T12 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T13 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T14 Null(0x8) IntrinsicType intrinsicName="null"
+T15 Null(0x8) of=0x10000 IntrinsicType intrinsicName="null"
+T16 String(0x20) IntrinsicType intrinsicName="string"
+T17 Number(0x40) IntrinsicType intrinsicName="number"
+T18 BigInt(0x80) IntrinsicType intrinsicName="bigint"
+T19 BooleanLiteral(0x2000) LiteralType value=false(bool) freshType=T20 regularType=T19
+T20 BooleanLiteral(0x2000) LiteralType value=false(bool) freshType=T20 regularType=T19
+T21 BooleanLiteral(0x2000) LiteralType value=true(bool) freshType=T22 regularType=T21
+T22 BooleanLiteral(0x2000) LiteralType value=true(bool) freshType=T22 regularType=T21
+T23 Boolean|Union(0x8000100) of=0x8000 UnionType types=[T19,T21]
+T24 ESSymbol(0x200) IntrinsicType intrinsicName="symbol"
+T25 Void(0x10) IntrinsicType intrinsicName="void"
+T26 Never(0x40000) IntrinsicType intrinsicName="never"
+T27 Never(0x40000) of=0x40000 IntrinsicType intrinsicName="never"
+T28 Never(0x40000) IntrinsicType intrinsicName="never"
+T29 Never(0x40000) IntrinsicType intrinsicName="never"
+T30 NonPrimitive(0x20000) IntrinsicType intrinsicName="object"
+T31 Union(0x8000000) of=0x8000 UnionType types=[T16,T17]
+T32 Union(0x8000000) of=0x8000 UnionType types=[T16,T17,T24]
+T33 Union(0x8000000) of=0x8000 UnionType types=[T17,T18]
+T34 TemplateLiteral(0x400000) TemplateLiteralType texts=["",""] types=[T17]
+T35 Union(0x8000000) of=0x8000 UnionType types=[T16,T17,T18,T19,T21]
+T36 Never(0x40000) IntrinsicType intrinsicName="never"
+T37 Object(0x100000) of=0x200010 ObjectType
+T38 Object(0x100000) of=0x200010 ObjectType
+T39 Object(0x100000) of=0x200010 ObjectType
+T40 Object(0x100000) of=0x200010 ObjectType symbol=Y6
+T41 Object(0x100000) of=0x200010 ObjectType
+T42 Object(0x100000) of=0x200010 ObjectType
+T43 Object(0x100000) of=0x240010 ObjectType
+T44 Object(0x100000) of=0x200010 ObjectType
+T45 Object(0x100000) of=0x200010 ObjectType
+T46 Object(0x100000) of=0x200010 ObjectType
+T47 TypeParameter(0x80000) TypeParameter
+T48 TypeParameter(0x80000) TypeParameter constraint=T47
+T49 TypeParameter(0x80000) TypeParameter
+T50 TypeParameter(0x80000) TypeParameter
+T51 TypeParameter(0x80000) TypeParameter constraint=T50
+T52 StringLiteral(0x400) LiteralType value=""(string) regularType=T52
+T53 NumberLiteral(0x800) LiteralType value=0(jsnum.Number) regularType=T53
+T54 BigIntLiteral(0x1000) LiteralType value=0(jsnum.PseudoBigInt) regularType=T54
+T55 StringLiteral(0x400) LiteralType value="bigint"(string) regularType=T55
+T56 StringLiteral(0x400) LiteralType value="boolean"(string) regularType=T56
+T57 StringLiteral(0x400) LiteralType value="function"(string) regularType=T57
+T58 StringLiteral(0x400) LiteralType value="number"(string) regularType=T58
+T59 StringLiteral(0x400) LiteralType value="object"(string) regularType=T59
+T60 StringLiteral(0x400) LiteralType value="string"(string) regularType=T60
+T61 StringLiteral(0x400) LiteralType value="symbol"(string) regularType=T61
+T62 StringLiteral(0x400) LiteralType value="undefined"(string) regularType=T62
+T63 Union(0x8000000) of=0x8000 UnionType types=[T55,T56,T57,T58,T59,T60,T61,T62]
+T64 Object(0x100000) of=0x200010 ObjectType
+T65 Object(0x100000) of=0x10 ObjectType symbol=Y5
+== signatures
+G1 resolvedMinArgumentCount=-1 resolvedReturnType=T1
+G2 resolvedMinArgumentCount=-1 resolvedReturnType=T5
+G3 resolvedMinArgumentCount=-1 resolvedReturnType=T1
+G4 resolvedMinArgumentCount=-1 resolvedReturnType=T27
+== symbols
+Y1 Flags=0x2000004 Name="undefined"
+Y2 Flags=0x2000004 Name="arguments"
+Y3 Flags=0x2000004 Name="require"
+Y4 Flags=0x2000004 Name="unknown"
+Y5 Flags=0x2000600 CheckFlags=0x8 Name="globalThis" Exports={"globalThis":Y5 "undefined":Y1 "x":$"x"/0x2@VariableDeclaration[5,21)}
+Y6 Flags=0x2000800 Name="\xfetype"
+== links
+L valueSymbolLinks Y1 resolvedType=T11
+L valueSymbolLinks Y2 resolvedType=T37
+L valueSymbolLinks Y4 resolvedType=T5
+L valueSymbolLinks Y5 resolvedType=T65
+== diagnostics
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0
+D.global - [0,0) TS2318 cat=1 chain=0 related=0

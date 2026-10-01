@@ -1,0 +1,74 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /empty.ts
+SINCE type=85 signature=4
+DRIVE tuple
+TUPLE string[] T86
+TUPLE string[] again T86
+TUPLE readonly number[] T87
+TUPLE [string, number] T93
+TUPLE [string, number] again T93
+TUPLE [string, number?] T101
+TUPLE readonly [string, ...number[]] T106
+TUPLE [...string[], number] T111
+TUPLE [] T112
+TUPLE [[string, number]] T117
+TUPLE [string, number][] T118
+STATE
+COUNTS TypeCount=118 SymbolCount=18 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=18 mergedSymbols=0 globals=118
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=118 SymbolCount=18 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=118
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T14]
+TYPE 87 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target=T79 targs=[T15]
+TYPE 88 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 89 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 90 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=nil regular=T90
+TYPE 91 flags=0x100000 objectFlags=0xc data=Tuple target=T91 inst=[T91 T93] targs=[T88 T89] tparams=[T88 T89 T92] outer=0 this=T92 dmembers={"0":Y1 "1":Y2 "length":Y3} dcalls=nil dctors=nil dindex=nil elements=[1 1] minLength=2 fixedLength=2 combinedFlags=1 readonly=false
+TYPE 92 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T91 isThisType
+TYPE 93 flags=0x100000 objectFlags=0x4 data=TypeReference target=T91 targs=[T14 T15]
+TYPE 94 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 95 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 96 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=nil regular=T96
+TYPE 97 flags=0x8000000 objectFlags=0x8000 data=Union types=[T96 T90]
+TYPE 98 flags=0x100000 objectFlags=0xc data=Tuple target=T98 inst=[T98 T101] targs=[T94 T95] tparams=[T94 T95 T99] outer=0 this=T99 dmembers={"0":Y4 "1":Y5 "length":Y6} dcalls=nil dctors=nil dindex=nil elements=[1 2] minLength=1 fixedLength=2 combinedFlags=3 readonly=false
+TYPE 99 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T98 isThisType
+TYPE 100 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T15]
+TYPE 101 flags=0x100000 objectFlags=0x4 data=TypeReference target=T98 targs=[T14 T100]
+TYPE 102 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 103 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 104 flags=0x100000 objectFlags=0xc data=Tuple target=T104 inst=[T104 T106] targs=[T102 T103] tparams=[T102 T103 T105] outer=0 this=T105 dmembers={"0":Y7 "length":Y8} dcalls=nil dctors=nil dindex=nil elements=[1 4] minLength=1 fixedLength=1 combinedFlags=5 readonly=true
+TYPE 105 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T104 isThisType
+TYPE 106 flags=0x100000 objectFlags=0x4 data=TypeReference target=T104 targs=[T14 T15]
+TYPE 107 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 108 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 109 flags=0x100000 objectFlags=0xc data=Tuple target=T109 inst=[T109 T111] targs=[T107 T108] tparams=[T107 T108 T110] outer=0 this=T110 dmembers={"length":Y9} dcalls=nil dctors=nil dindex=nil elements=[4 1] minLength=1 fixedLength=0 combinedFlags=5 readonly=false
+TYPE 110 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T109 isThisType
+TYPE 111 flags=0x100000 objectFlags=0x4 data=TypeReference target=T109 targs=[T14 T15]
+TYPE 112 flags=0x100000 objectFlags=0xc data=Tuple target=T112 inst=[T112] targs=[] tparams=[T113] outer=0 this=T113 dmembers={"length":Y10} dcalls=nil dctors=nil dindex=nil elements=[] minLength=0 fixedLength=0 combinedFlags=0 readonly=false
+TYPE 113 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T112 isThisType
+TYPE 114 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 115 flags=0x100000 objectFlags=0xc data=Tuple target=T115 inst=[T115 T117] targs=[T114] tparams=[T114 T116] outer=0 this=T116 dmembers={"0":Y11 "length":Y12} dcalls=nil dctors=nil dindex=nil elements=[1] minLength=1 fixedLength=1 combinedFlags=1 readonly=false
+TYPE 116 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T115 isThisType
+TYPE 117 flags=0x100000 objectFlags=0x4 data=TypeReference target=T115 targs=[T93]
+TYPE 118 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T93]
+GLOBALS count=118 transient=2
+SYMBOL Y1 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y2 name="1" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y3 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y4 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y5 name="1" flags=0x3000004 checkFlags=0x0 declarations=[]
+SYMBOL Y6 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y7 name="0" flags=0x2000004 checkFlags=0x8 declarations=[]
+SYMBOL Y8 name="length" flags=0x2000004 checkFlags=0x8 declarations=[]
+SYMBOL Y9 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y10 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y11 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y12 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOLS named=12 unnamed=6

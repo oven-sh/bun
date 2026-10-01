@@ -1,0 +1,20 @@
+# Research probe: prints the tree that Bun's own parser gives to Parser::parse_only, for the lowering comparison.
+# It is a crate of its own outside the repository. The native symbols that the parser crates expect from the
+# C++ side of bun are replaced by the small Rust stand-ins of src/native_shims.rs, so plain cargo can link it.
+# usage: see run.sh
+[package]
+name = "buntree"
+version = "0.0.0"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bun_js_parser = { path = "/workspace/wt/typecheck/src/js_parser" }
+bun_ast = { path = "/workspace/wt/typecheck/src/ast" }
+bun_alloc = { path = "/workspace/wt/typecheck/src/bun_alloc" }
+libc = "0.2"
+
+[workspace]

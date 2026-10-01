@@ -1,0 +1,73 @@
+# bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889  typescript 6.0.2
+"class C { [k: string]: T, }"
+    tsc  ok
+    bun  ERR "Expected \";\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string]: T, x = 1 }"
+    tsc  ok
+    bun  ERR "Expected \";\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n    x = 1;\n}\n"
+"class C { [k: string]: T, [l: number]: U }"
+    tsc  ok
+    bun  ERR "Expected \";\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [await: string]: T; }"
+    tsc  ok
+    bun  ERR "Unexpected :"
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string]; }"
+    tsc  ok grammar TS1021@10
+    bun  ERR "Expected \":\" but found \";\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k?: string]: T; }"
+    tsc  ok grammar TS1019@12
+    bun  ERR "Unexpected :"
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string, l: number]: T; }"
+    tsc  ok grammar TS1096@11
+    bun  ERR "Expected \"]\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [...k: string[]]: T; }"
+    tsc  ok grammar TS1017@11
+    bun  ERR "Unexpected ..."
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k,]: T; }"
+    tsc  ok grammar TS1022@11 TS1025@12 other 7006
+    bun  ERR "Expected \"]\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { []: T; }"
+    tsc  ok grammar TS1096@10
+    bun  ERR "Unexpected ]"
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [public k: string]: T; }"
+    tsc  ok grammar TS1018@18 other 2369
+    bun  ERR "Expected \"]\" but found \"k\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string = 1]: T; }"
+    tsc  ok grammar TS1020@11 other 2371
+    bun  ERR "Expected \"]\" but found \"=\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { static [k: string]: T, }"
+    tsc  ok
+    bun  ERR "Expected \";\" but found \",\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string]: T\n[l: number]: U }"
+    tsc  ok
+    bun  ok "class C {\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { [k: string]: T [l: number]: U }"
+    tsc  parse TS1005@27 TS1068@29 TS1128@35 TS1128@36 TS1128@40
+    bun  ERR "Expected \"]\" but found \":\""
+    tsc emit  "\"use strict\";\nclass C {\n}\nnumber;\nU;\n"
+"class C { [k: string]?: T; }"
+    tsc  parse TS1005@21 TS1068@22
+    bun  ERR "Expected \":\" but found \"?\""
+    tsc emit  "\"use strict\";\nclass C {\n    T;\n}\n"
+"class C { [k: string](): T; }"
+    tsc  parse TS1005@21 TS1005@26 TS1128@28
+    bun  ERR "Expected \":\" but found \"(\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n() => ;\n"
+"class C { [k: string]: T = 1; }"
+    tsc  parse TS1005@25
+    bun  ERR "Expected \";\" but found \"=\""
+    tsc emit  "\"use strict\";\nclass C {\n    1;\n}\n"

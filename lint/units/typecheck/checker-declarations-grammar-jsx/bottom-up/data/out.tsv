@@ -1,0 +1,780 @@
+layer	callee	where	module	callers in the layer
+D-DRIVER	c.checkExpressionStatement	checker.go:7419-7423	c14_expressions	c.checkSourceElementWorker
+D-DRIVER	c.checkExpression	checker.go:7643-7645	c14_expressions	c.checkDeferredNode
+D-DRIVER	c.resolveUntypedCall	checker.go:9992-10011	c15_calls	c.checkDeferredNode
+D-DRIVER	c.checkClassExpressionDeferred	checker.go:10199-10202	c16_function_expressions_collisions	c.checkDeferredNode
+D-DRIVER	c.checkFunctionExpressionOrObjectLiteralMethodDeferred	checker.go:10296-10327	c16_function_expressions_collisions	c.checkDeferredNode
+D-DRIVER	c.checkAssertionDeferred	checker.go:12406-12420	c19_assertions_binary_operators	c.checkDeferredNode
+D-DRIVER	c.checkContextualDeprecations	checker.go:13447-13457	c20_object_literals_spread	c.checkDeferredNode
+D-DRIVER	c.produceDeferredDiagnostics	checker.go:14079-14084	c21_resolved_symbols_diagnostics	c.checkSourceFile
+D-DRIVER	c.addErrorOrSuggestion	checker.go:14124-14132	c21_resolved_symbols_diagnostics	c.checkSourceElementUnreachable
+D-DRIVER	c.isReachableFlowNode	flow.go:2513-2520	flow.go	c.isSourceElementUnreachable
+D-DRIVER	Tracer.Push	tracer.go:29-43	tracer.go	c.checkDeferredNode, c.checkSourceFile
+D-DRIVER	c.isCanceled	utilities.go:1659-1661	utilities.go	c.checkDeferredNodes, c.checkSourceElements, c.checkSourceFile
+D-TYPENODE	c.checkIndexedAccessIndexType	checker.go:8310-8345	c14_expressions	c.checkIndexedAccessType
+D-TYPENODE	c.getResolvedSymbolOrNil	checker.go:14004-14006	c21_resolved_symbols_diagnostics	c.checkTypeReferenceOrImport
+D-TYPENODE	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.checkTypePredicate
+D-TYPENODE	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkIfTypePredicateVariableIsDeclaredInBindingPattern, c.checkInferType, c.checkObjectTypeForDuplicateDeclarations, c.checkTupleType, c.checkTypeAliasDeclaration, c.checkTypeNameIsReserved, c.checkTypeParameter, c.checkTypeParameterDeferred, c.checkTypeParameters, c.checkTypeParametersNotReferenced, c.checkTypePredicate, c.reportDuplicateMemberErrors
+D-TYPENODE	c.IsDeprecatedDeclaration	checker.go:14134-14136	c21_resolved_symbols_diagnostics	c.checkTypeReferenceOrImport
+D-TYPENODE	c.addDeprecatedSuggestion	checker.go:14138-14141	c21_resolved_symbols_diagnostics	c.checkTypeReferenceOrImport
+D-TYPENODE	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkInferType, c.checkObjectTypeForDuplicateDeclarations, c.checkTypeParameter, c.checkTypeParameterDeferred, c.checkTypeParametersNotReferenced, c.reportDuplicateMemberErrors
+D-TYPENODE	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.checkTypePredicate
+D-TYPENODE	signatureHasRestParameter	checker.go:17132-17134	c28_types_of_symbols	c.checkTypePredicate
+D-TYPENODE	c.getConstraintOfTypeParameter	checker.go:17153-17158	c29_constraints	c.checkTypeArgumentConstraints, c.checkTypeParameter
+D-TYPENODE	c.getTypeParametersForTypeReferenceOrImport	checker.go:17281-17290	c29_constraints	c.checkTypeReferenceOrImport
+D-TYPENODE	c.reportImplicitAny	checker.go:18385-18467	c31_binding_patterns_widening	c.checkMappedType
+D-TYPENODE	c.getTypeWithThisArgument	checker.go:19687-19710	c33_members_base_types_signatures	c.checkTypeParameter
+D-TYPENODE	c.getSignatureFromDeclaration	checker.go:19950-20024	c33_members_base_types_signatures	c.checkTypePredicate
+D-TYPENODE	c.getEffectiveTypeArguments	checker.go:22047-22049	c36_properties_apparent_types	c.checkTypeArgumentConstraints
+D-TYPENODE	c.getDefaultFromTypeParameter	checker.go:22110-22119	c36_properties_apparent_types	c.checkTypeParameter
+D-TYPENODE	c.getResolvedTypeParameterDefault	checker.go:22121-22156	c36_properties_apparent_types	c.checkTypeParameter
+D-TYPENODE	c.instantiateType	checker.go:22214-22216	c37_instantiation	c.checkTypeArgumentConstraints, c.checkTypeParameter
+D-TYPENODE	c.getConstraintTypeFromMappedType	checker.go:22792-22798	c37_instantiation	c.checkMappedType
+D-TYPENODE	c.getNameTypeFromMappedType	checker.go:22800-22809	c37_instantiation	c.checkMappedType
+D-TYPENODE	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkNamedTupleMember, c.checkTemplateLiteralType, c.checkTupleType, c.checkTypeReferenceOrImport, c.checkUnionOrIntersectionType
+D-TYPENODE	c.getTypeFromThisTypeNode	checker.go:23014-23020	c38_type_nodes_references	c.checkThisType
+D-TYPENODE	c.getTypeFromTypeLiteralOrFunctionOrConstructorTypeNode	checker.go:23047-23061	c38_type_nodes_references	c.checkTypeLiteral
+D-TYPENODE	c.getTypeFromIndexedAccessTypeNode	checker.go:23063-23072	c38_type_nodes_references	c.checkIndexedAccessType
+D-TYPENODE	c.getTypeFromTypeReference	checker.go:23117-23132	c38_type_nodes_references	c.checkTypeParametersNotReferenced
+D-TYPENODE	c.isArrayType	checker.go:23595-23597	c38_type_nodes_references	c.checkTupleType
+D-TYPENODE	isTupleType	checker.go:23603-23605	c38_type_nodes_references	c.checkTupleType
+D-TYPENODE	c.isArrayLikeType	checker.go:23634-23638	c38_type_nodes_references	c.checkTupleType
+D-TYPENODE	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.checkTypeParameterDeferred
+D-TYPENODE	c.getDeclaredTypeOfTypeParameter	checker.go:23952-23958	c39_declared_types_enums	c.checkInferType, c.checkTypeParameter, c.checkTypeParameterDeferred
+D-TYPENODE	c.getTypeFromTypeQueryNode	checker.go:24225-24236	c40_type_nodes_conditional_tuples	c.checkTypeQuery
+D-TYPENODE	c.getTypeFromMappedTypeNode	checker.go:24378-24390	c40_type_nodes_conditional_tuples	c.checkMappedType
+D-TYPENODE	c.getTupleElementFlags	checker.go:24832-24849	c40_type_nodes_conditional_tuples	c.checkTupleType
+D-TYPENODE	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkTypeReferenceOrImport
+D-TYPENODE	c.getBaseConstraintOfType	checker.go:27559-27568	c45_base_constraints_normalization	c.checkTypeParameter
+D-TYPENODE	newTypeMapper	mapper.go:40-45	mapper.go	c.checkTypeArgumentConstraints
+D-TYPENODE	newSimpleTypeMapper	mapper.go:114-120	mapper.go	c.checkTypeParameter
+D-TYPENODE	c.TypeToString	printer.go:43-45	printer.go	c.checkTypeParameter
+D-TYPENODE	c.symbolToString	printer.go:124-126	printer.go	c.checkInferType, c.checkObjectTypeForDuplicateDeclarations, c.reportDuplicateMemberErrors
+D-TYPENODE	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.checkMappedType, c.checkTemplateLiteralType, c.checkTypeArgumentConstraints, c.checkTypeParameter, c.checkTypeParameterDeferred
+D-TYPENODE	c.checkTypeAssignableToEx	relater.go:343-345	relater.go	c.checkTypePredicate
+D-TYPENODE	c.createMarkerType	relater.go:1446-1460	relater.go	c.checkTypeParameterDeferred
+D-TYPENODE	c.getTypeParameterModifiers	relater.go:1466-1474	relater.go	c.checkTypeParameterDeferred
+D-TYPENODE	c.getTypePredicateOfSignature	relater.go:2049-2081	relater.go	c.checkTypePredicate
+D-TYPENODE	Tracer.Push	tracer.go:29-43	tracer.go	c.checkTypeParameterDeferred
+D-TYPENODE	Type.TargetTupleType	types.go:790-792	types.go	c.checkTupleType
+D-TYPENODE	getDeclarationsOfKind	utilities.go:1261-1263	utilities.go	c.checkInferType
+D-VAR	c.checkNonNullNonVoidType	checker.go:7527-7544	c14_expressions	c.checkVariableLikeDeclaration
+D-VAR	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.checkVariableLikeDeclaration
+D-VAR	c.checkPropertyAccessibility	checker.go:11844-11846	c18_identifiers_property_access_this	c.checkVariableLikeDeclaration
+D-VAR	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkVarDeclaredNamesNotShadowed, c.checkVariableLikeDeclaration, c.errorNextVariableOrPropertyDeclarationMustHaveSameType
+D-VAR	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.errorNextVariableOrPropertyDeclarationMustHaveSameType
+D-VAR	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkVarDeclaredNamesNotShadowed, c.checkVariableLikeDeclaration
+D-VAR	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.checkVariableLikeDeclaration
+D-VAR	c.getWidenedTypeForVariableLikeDeclaration	checker.go:16741-16743	c28_types_of_symbols	c.checkVariableLikeDeclaration
+D-VAR	c.getTypeForBindingElementParent	checker.go:17805-17815	c31_binding_patterns_widening	c.checkVariableLikeDeclaration
+D-VAR	c.widenTypeForVariableLikeDeclaration	checker.go:18352-18383	c31_binding_patterns_widening	c.checkVariableLikeDeclaration
+D-VAR	c.getDeclarationNodeFlagsFromSymbol	checker.go:18795-18800	c31_binding_patterns_widening	c.checkVarDeclaredNamesNotShadowed
+D-VAR	c.getCombinedNodeFlagsCached	checker.go:18802-18810	c31_binding_patterns_widening	c.checkVarDeclaredNamesNotShadowed, c.checkVariableLikeDeclaration
+D-VAR	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.checkVariableLikeDeclaration
+D-VAR	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.checkVariableLikeDeclaration
+D-VAR	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkVariableLikeDeclaration
+D-VAR	c.getLiteralTypeFromPropertyName	checker.go:26892-26910	c44_index_indexed_access	c.checkVariableLikeDeclaration
+D-VAR	c.checkComputedPropertyName	checker.go:26925-26943	c44_index_indexed_access	c.checkVariableLikeDeclaration
+D-VAR	c.markPropertyAsReferenced	checker.go:27829-27853	c45_base_constraints_normalization	c.checkVariableLikeDeclaration
+D-VAR	c.convertAutoToAny	checker.go:31339-31347	c51_type_facts_awaited	c.checkVariableLikeDeclaration
+D-VAR	c.TypeToString	printer.go:43-45	printer.go	c.errorNextVariableOrPropertyDeclarationMustHaveSameType
+D-VAR	c.symbolToString	printer.go:124-126	printer.go	c.checkVarDeclaredNamesNotShadowed
+D-VAR	c.isTypeIdenticalTo	relater.go:117-119	relater.go	c.checkVariableLikeDeclaration
+D-VAR	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.checkVariableLikeDeclaration
+D-VAR	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	relater.go	c.checkVariableLikeDeclaration
+D-VAR	Tracer.Push	tracer.go:29-43	tracer.go	c.checkVariableDeclaration
+D-VAR	hasDotDotDotToken	utilities.go:273-285	utilities.go	c.checkVariableLikeDeclaration
+D-VAR	isTypeUsableAsPropertyName	utilities.go:879-881	utilities.go	c.checkVariableLikeDeclaration
+D-VAR	getPropertyNameFromType	utilities.go:886-896	utilities.go	c.checkVariableLikeDeclaration
+D-VAR	isInAmbientOrTypeNode	utilities.go:1058-1062	utilities.go	c.checkVariableLikeDeclaration
+D-FUNC	c.getContextualCallSignature	checker.go:10395-10402	c16_function_expressions_collisions	c.checkFunctionOrMethodDeclaration
+D-FUNC	c.classDeclarationExtendsNull	checker.go:12371-12376	c18_identifiers_property_access_this	c.checkConstructorDeclaration
+D-FUNC	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkAccessorDeclaration, c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.checkAsyncFunctionReturnType, c.checkConstructorDeclaration, c.checkFunctionOrConstructorSymbolWorker, c.checkFunctionOrMethodDeclaration, c.checkMethodDeclaration, c.checkParameter, c.checkPropertyDeclaration, c.checkPropertySignature, c.checkSignatureDeclaration
+D-FUNC	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.checkFunctionOrConstructorSymbolWorker
+D-FUNC	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkAccessorDeclaration, c.checkConstructorDeclaration, c.checkFunctionOrMethodDeclaration
+D-FUNC	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.checkParameter
+D-FUNC	c.reportImplicitAny	checker.go:18385-18467	c31_binding_patterns_widening	c.checkFunctionOrMethodDeclaration
+D-FUNC	c.getTypeOfAccessors	checker.go:18625-18678	c31_binding_patterns_widening	c.checkAccessorDeclaration
+D-FUNC	c.getCombinedModifierFlagsCached	checker.go:18851-18859	c31_binding_patterns_widening	c.getEffectiveDeclarationFlags
+D-FUNC	c.getErasedSignature	checker.go:19510-19521	c33_members_base_types_signatures	c.isImplementationCompatibleWithOverload
+D-FUNC	c.getSignaturesOfSymbol	checker.go:19920-19948	c33_members_base_types_signatures	c.checkFunctionOrConstructorSymbolWorker
+D-FUNC	c.getSignatureFromDeclaration	checker.go:19950-20024	c33_members_base_types_signatures	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.checkFunctionOrConstructorSymbolWorker, c.checkFunctionOrMethodDeclaration
+D-FUNC	c.hasBindableName	checker.go:20055-20057	c33_members_base_types_signatures	c.checkAccessorDeclaration, c.checkFunctionOrMethodDeclaration
+D-FUNC	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.checkFunctionOrMethodDeclaration, c.isImplementationCompatibleWithOverload
+D-FUNC	c.getReturnTypeFromAnnotation	checker.go:20172-20184	c34_return_types	c.checkFunctionOrMethodDeclaration
+D-FUNC	c.functionHasImplicitReturn	checker.go:20421-20424	c34_return_types	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow
+D-FUNC	c.unwrapReturnType	checker.go:20502-20519	c34_return_types	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.isUnwrappedReturnTypeUndefinedVoidOrAny
+D-FUNC	c.getReducedType	checker.go:21933-21956	c36_properties_apparent_types	c.checkParameter
+D-FUNC	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkAsyncFunctionReturnType, c.checkFunctionOrMethodDeclaration, c.checkSignatureDeclaration
+D-FUNC	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkAsyncFunctionReturnType
+D-FUNC	c.checkComputedPropertyName	checker.go:26925-26943	c44_index_indexed_access	c.checkAccessorDeclaration, c.checkFunctionOrConstructorSymbolWorker, c.checkFunctionOrMethodDeclaration
+D-FUNC	c.maybeTypeOfKind	checker.go:27729-27741	c45_base_constraints_normalization	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.isUnwrappedReturnTypeUndefinedVoidOrAny
+D-FUNC	c.checkGeneratorInstantiationAssignabilityToReturnType	checker.go:29820-29832	c48_contextual_types	c.checkSignatureDeclaration
+D-FUNC	symbolArenaLinkStore.Get	links.go:33-39	links.go	c.checkFunctionOrConstructorSymbol
+D-FUNC	c.TypeToString	printer.go:43-45	printer.go	c.checkAsyncFunctionReturnType
+D-FUNC	c.isTypeIdenticalTo	relater.go:117-119	relater.go	c.checkFunctionOrConstructorSymbolWorker
+D-FUNC	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow, c.checkParameter
+D-FUNC	c.isTypeRelatedTo	relater.go:169-203	relater.go	c.isImplementationCompatibleWithOverload
+D-FUNC	c.isSignatureAssignableTo	relater.go:1487-1489	relater.go	c.isImplementationCompatibleWithOverload
+D-FUNC	hasDotDotDotToken	utilities.go:273-285	utilities.go	c.checkParameter
+D-FUNC	isOptionalDeclaration	utilities.go:299-301	utilities.go	c.checkFunctionOrConstructorSymbolWorker, c.checkParameter
+D-FUNC	isPrivateWithinAmbient	utilities.go:343-345	utilities.go	c.checkFunctionOrMethodDeclaration
+D-FUNC	isSuperCall	utilities.go:1093-1095	utilities.go	c.checkConstructorDeclaration, c.findFirstSuperCall
+D-FUNC	getEnclosingContainer	utilities.go:1255-1259	utilities.go	c.getEffectiveDeclarationFlags
+D-STMT	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.checkReturnStatement
+D-STMT	c.checkExpression	checker.go:7643-7645	c14_expressions	c.checkForInStatement, c.checkForOfStatement, c.checkForStatement, c.checkReturnExpression, c.checkSwitchStatement, c.checkTestingKnownTruthyType, c.checkThrowStatement, c.checkWithStatement
+D-STMT	c.getEffectiveCheckNode	checker.go:9471-9478	c15_calls	c.checkReturnExpression
+D-STMT	c.checkTruthinessExpression	checker.go:11033-11035	c17_unary_meta_yield	c.checkDoStatement, c.checkForStatement, c.checkIfStatement, c.checkWhileStatement
+D-STMT	c.checkDestructuringAssignment	checker.go:12643-12674	c19_assertions_binary_operators	c.checkForOfStatement
+D-STMT	c.isTypeEqualityComparableTo	checker.go:12952-12954	c19_assertions_binary_operators	c.checkSwitchStatement
+D-STMT	c.checkReferenceExpression	checker.go:13221-13233	c19_assertions_binary_operators	c.checkForInStatement, c.checkForOfStatement
+D-STMT	c.getResolvedSymbolOrNil	checker.go:14004-14006	c21_resolved_symbols_diagnostics	c.checkTestingKnownTruthyType
+D-STMT	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkForInStatement, c.checkIfStatement, c.checkReturnStatement, c.checkSwitchStatement, c.checkTestingKnownTruthyType
+D-STMT	c.errorOrSuggestion	checker.go:14112-14114	c21_resolved_symbols_diagnostics	c.checkLabeledStatement
+D-STMT	c.errorAndMaybeSuggestAwait	checker.go:14116-14122	c21_resolved_symbols_diagnostics	c.checkTestingKnownTruthyType
+D-STMT	c.hasParseDiagnostics	checker.go:14166-14168	c21_resolved_symbols_diagnostics	c.checkWithStatement
+D-STMT	c.checkRightHandSideOfForOf	checker.go:17788-17791	c31_binding_patterns_widening	c.checkForOfStatement
+D-STMT	c.getNonNullableTypeIfNeeded	checker.go:18788-18793	c31_binding_patterns_widening	c.checkForInStatement
+D-STMT	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.checkTestingKnownTruthyType
+D-STMT	c.getSignatureFromDeclaration	checker.go:19950-20024	c33_members_base_types_signatures	c.checkReturnStatement
+D-STMT	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.checkReturnStatement
+D-STMT	c.getReturnTypeFromAnnotation	checker.go:20172-20184	c34_return_types	c.checkReturnStatement
+D-STMT	c.unwrapReturnType	checker.go:20502-20519	c34_return_types	c.checkReturnStatement
+D-STMT	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkCatchClause
+D-STMT	c.getIndexType	checker.go:26803-26805	c44_index_indexed_access	c.getIndexTypeOrString
+D-STMT	c.getExtractStringType	checker.go:26832-26838	c44_index_indexed_access	c.getIndexTypeOrString
+D-STMT	c.isTypeAssignableToKind	checker.go:27764-27766	c45_base_constraints_normalization	c.checkForInStatement
+D-STMT	c.hasTypeFacts	checker.go:31101-31103	c51_type_facts_awaited	c.checkTestingKnownTruthyType
+D-STMT	c.isReachableFlowNode	flow.go:2513-2520	flow.go	c.checkSwitchStatement
+D-STMT	c.TypeToString	printer.go:43-45	printer.go	c.checkForInStatement
+D-STMT	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.checkForInStatement
+D-STMT	c.checkTypeComparableTo	relater.go:347-349	relater.go	c.checkSwitchStatement
+D-STMT	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	relater.go	c.checkForOfStatement, c.checkReturnExpression, c.checkReturnStatement
+D-STMT	c.getTypeNameForErrorDisplay	relater.go:1290-1292	relater.go	c.checkTestingKnownTruthyType
+D-STMT	Type.AsLiteralType	types.go:706-706	types.go	c.checkTestingKnownTruthyType
+D-STMT	isTypeAssertion	utilities.go:347-349	utilities.go	c.checkTestingKnownTruthyType
+D-STMT	getContainingFunctionOrClassStaticBlock	utilities.go:865-867	utilities.go	c.checkForOfStatement, c.checkReturnStatement
+D-CLASS	c.getSpellingSuggestionForName	checker.go:1806-1824	c04_name_resolution_hooks	c.getSuggestedSymbolForNonexistentClassMember
+D-CLASS	c.getTypeOfExpression	checker.go:7427-7447	c14_expressions	c.checkIndexConstraints
+D-CLASS	c.isNodeWithinClass	checker.go:12051-12053	c18_identifiers_property_access_this	c.checkBaseTypeAccessibility
+D-CLASS	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.checkIndexConstraintForProperty, c.checkInheritedPropertiesAreIdentical, c.issueMemberSpecificError
+D-CLASS	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkBaseTypeAccessibility, c.checkClassForStaticPropertyNameConflicts, c.checkClassLikeDeclaration, c.checkIndexConstraintForIndexSignature, c.checkInterfaceDeclaration, c.checkJSDocAugmentsTagMatchesExtends, c.checkKindsOfPropertyMemberOverrides, c.checkMemberForOverrideModifierWorker, c.checkPropertyInitialization, c.checkTypeForDuplicateIndexSignatures, c.checkTypeParameterListsIdentical
+D-CLASS	c.getParentOfSymbol	checker.go:14459-14464	c22_symbols_merge	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty
+D-CLASS	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkClassForStaticPropertyNameConflicts, c.checkClassLikeDeclaration, c.checkClassOrInterfaceForDuplicateIndexSignatures, c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty, c.checkIndexConstraints, c.checkInterfaceDeclaration, c.checkMemberForOverrideModifier, c.checkPropertyInitialization, c.checkTypeForDuplicateIndexSignatures, c.getMemberOverrideModifierStatus, c.issueMemberSpecificError
+D-CLASS	c.getFullyQualifiedName	checker.go:16007-16012	c25_entity_names	c.checkBaseTypeAccessibility
+D-CLASS	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.checkClassLikeDeclaration, c.checkPropertyInitialization, c.getMemberOverrideModifierStatus, c.issueMemberSpecificError
+D-CLASS	c.getNonMissingTypeOfSymbol	checker.go:16618-16620	c28_types_of_symbols	c.checkIndexConstraints
+D-CLASS	c.getBaseConstructorTypeOfClass	checker.go:17051-17101	c28_types_of_symbols	c.checkClassLikeDeclaration, c.checkMembersForOverrideModifier, c.getMemberOverrideModifierStatus
+D-CLASS	c.isMixinConstructorType	checker.go:17120-17130	c28_types_of_symbols	c.checkClassLikeDeclaration
+D-CLASS	c.getConstraintOfTypeParameter	checker.go:17153-17158	c29_constraints	c.areTypeParametersIdentical
+D-CLASS	c.getOptionalType	checker.go:18754-18761	c31_binding_patterns_widening	c.isPropertyInitializedInConstructor, c.isPropertyInitializedInStaticBlocks
+D-CLASS	c.getEffectivePropertyNameForPropertyNameNode	checker.go:18817-18834	c31_binding_patterns_widening	c.checkClassForStaticPropertyNameConflicts
+D-CLASS	c.getPropertiesOfType	checker.go:18960-18966	c33_members_base_types_signatures	c.checkInheritedPropertiesAreIdentical, c.checkKindsOfPropertyMemberOverrides, c.getSuggestedSymbolForNonexistentClassMember
+D-CLASS	c.getPropertiesOfObjectType	checker.go:18968-18973	c33_members_base_types_signatures	c.checkIndexConstraints
+D-CLASS	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.checkMemberForOverrideModifierWorker, c.issueMemberSpecificError
+D-CLASS	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.checkBaseTypeAccessibility, c.checkClassLikeDeclaration
+D-CLASS	c.getIndexInfosOfType	checker.go:19088-19090	c33_members_base_types_signatures	c.checkIndexConstraints
+D-CLASS	c.getIndexInfoOfType	checker.go:19101-19103	c33_members_base_types_signatures	c.checkIndexConstraintForIndexSignature
+D-CLASS	c.getIndexTypeOfType	checker.go:19107-19113	c33_members_base_types_signatures	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty
+D-CLASS	c.resolveStructuredTypeMembers	checker.go:19176-19203	c33_members_base_types_signatures	c.getTypeWithoutSignatures
+D-CLASS	c.getBaseTypes	checker.go:19281-19318	c33_members_base_types_signatures	c.checkClassLikeDeclaration, c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty, c.checkInheritedPropertiesAreIdentical, c.checkInterfaceDeclaration, c.checkKindsOfPropertyMemberOverrides, c.checkMembersForOverrideModifier, c.getMemberOverrideModifierStatus
+D-CLASS	c.getInstantiatedConstructorsForTypeArguments	checker.go:19389-19398	c33_members_base_types_signatures	c.checkClassLikeDeclaration
+D-CLASS	c.getConstructorsForTypeArguments	checker.go:19400-19405	c33_members_base_types_signatures	c.checkClassLikeDeclaration
+D-CLASS	c.isValidBaseType	checker.go:19651-19662	c33_members_base_types_signatures	c.checkClassLikeDeclaration
+D-CLASS	c.getTypeWithThisArgument	checker.go:19687-19710	c33_members_base_types_signatures	c.checkClassLikeDeclaration, c.checkInheritedPropertiesAreIdentical, c.checkInterfaceDeclaration, c.checkMembersForOverrideModifier, c.getMemberOverrideModifierStatus
+D-CLASS	c.resolveDeclaredMembers	checker.go:19726-19737	c33_members_base_types_signatures	c.checkInheritedPropertiesAreIdentical
+D-CLASS	c.getIndexSymbol	checker.go:19916-19918	c33_members_base_types_signatures	c.checkTypeForDuplicateIndexSignatures
+D-CLASS	c.hasBindableName	checker.go:20055-20057	c33_members_base_types_signatures	c.checkIndexConstraints
+D-CLASS	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.checkClassLikeDeclaration
+D-CLASS	c.getPropertyOfObjectType	checker.go:21517-21526	c36_properties_apparent_types	c.checkIndexConstraintForProperty, c.checkKindsOfPropertyMemberOverrides
+D-CLASS	c.getTargetSymbol	checker.go:21775-21783	c36_properties_apparent_types	c.checkKindsOfPropertyMemberOverrides
+D-CLASS	isPrototypeProperty	checker.go:21789-21791	c36_properties_apparent_types	c.checkKindsOfPropertyMemberOverrides
+D-CLASS	c.getApparentType	checker.go:21843-21876	c36_properties_apparent_types	c.checkClassLikeDeclaration
+D-CLASS	c.getReducedType	checker.go:21933-21956	c36_properties_apparent_types	c.checkClassLikeDeclaration
+D-CLASS	c.getMinTypeArgumentCount	checker.go:22052-22060	c36_properties_apparent_types	c.areTypeParametersIdentical
+D-CLASS	c.getDefaultFromTypeParameter	checker.go:22110-22119	c36_properties_apparent_types	c.areTypeParametersIdentical
+D-CLASS	c.isNamedMember	checker.go:22201-22203	c36_properties_apparent_types	c.checkInheritedPropertiesAreIdentical
+D-CLASS	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.areTypeParametersIdentical, c.checkClassLikeDeclaration, c.checkJSDocAugmentsTagMatchesExtends, c.checkTypeForDuplicateIndexSignatures
+D-CLASS	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration, c.checkTypeParameterListsIdentical, c.getMemberOverrideModifierStatus
+D-CLASS	c.newObjectType	checker.go:25186-25211	c41_new_types	c.getTypeWithoutSignatures
+D-CLASS	c.getIntersectionType	checker.go:26175-26177	c43_unions_intersections	c.getTypeWithoutSignatures
+D-CLASS	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkClassLikeDeclaration
+D-CLASS	c.getLiteralTypeFromProperty	checker.go:26869-26890	c44_index_indexed_access	c.checkIndexConstraints
+D-CLASS	c.compareProperties	checker.go:27795-27820	c45_base_constraints_normalization	c.isPropertyIdenticalTo
+D-CLASS	c.containsUndefinedType	checker.go:27977-27982	c45_base_constraints_normalization	c.checkPropertyInitialization, c.isPropertyInitializedInConstructor, c.isPropertyInitializedInStaticBlocks
+D-CLASS	c.getFlowTypeOfReferenceEx	flow.go:81-115	flow.go	c.isPropertyInitializedInConstructor, c.isPropertyInitializedInStaticBlocks
+D-CLASS	c.TypeToString	printer.go:43-45	printer.go	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty, c.checkInheritedPropertiesAreIdentical, c.checkKindsOfPropertyMemberOverrides, c.checkMemberForOverrideModifierWorker, c.checkTypeForDuplicateIndexSignatures, c.issueMemberSpecificError
+D-CLASS	c.symbolToString	printer.go:124-126	printer.go	c.checkClassForStaticPropertyNameConflicts, c.checkIndexConstraintForProperty, c.checkInheritedPropertiesAreIdentical, c.checkKindsOfPropertyMemberOverrides, c.checkMemberForOverrideModifierWorker, c.checkTypeParameterListsIdentical, c.issueMemberSpecificError
+D-CLASS	c.isTypeIdenticalTo	relater.go:117-119	relater.go	c.areTypeParametersIdentical, c.checkClassLikeDeclaration, c.checkJSDocAugmentsTagMatchesExtends
+D-CLASS	c.compareTypesIdentical	relater.go:121-126	relater.go	c.isPropertyIdenticalTo
+D-CLASS	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.checkIndexConstraintForIndexSignature, c.checkIndexConstraintForProperty
+D-CLASS	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.checkClassLikeDeclaration, c.checkInterfaceDeclaration, c.issueMemberSpecificError
+D-CLASS	c.checkTypeAssignableToEx	relater.go:343-345	relater.go	c.issueMemberSpecificError
+D-CLASS	Type.AsIntersectionType	types.go:717-717	types.go	c.getTypeWithoutSignatures
+D-CLASS	Type.AsObjectType	types.go:729-729	types.go	c.getTypeWithoutSignatures
+D-CLASS	Type.AsInterfaceType	types.go:731-731	types.go	c.checkClassLikeDeclaration, c.checkInheritedPropertiesAreIdentical, c.checkInterfaceDeclaration, c.checkMembersForOverrideModifier, c.checkTypeParameterListsIdentical, c.getMemberOverrideModifierStatus
+D-CLASS	Type.Distributed	types.go:736-744	types.go	c.checkTypeForDuplicateIndexSignatures
+D-CLASS	InterfaceType.LocalTypeParameters	types.go:1035-1040	types.go	c.checkTypeParameterListsIdentical
+D-CLASS	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.checkIndexConstraintForProperty, c.checkInheritedPropertiesAreIdentical
+D-CLASS	hasOverrideModifier	utilities.go:56-58	utilities.go	c.checkMemberForOverrideModifier
+D-CLASS	isExclamationToken	utilities.go:295-297	utilities.go	c.checkKindsOfPropertyMemberOverrides, c.isPropertyWithoutInitializer
+D-CLASS	getDeclarationModifierFlagsFromSymbol	utilities.go:713-715	utilities.go	c.checkKindsOfPropertyMemberOverrides
+D-ENUMNS	c.checkExpression	checker.go:7643-7645	c14_expressions	c.checkEnumMember
+D-ENUMNS	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkEnumDeclaration, c.checkEnumMember, c.checkModuleDeclaration
+D-ENUMNS	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkEnumDeclaration, c.checkModuleDeclaration
+D-ENUMNS	c.computeEnumMemberValues	checker.go:24061-24079	c39_declared_types_enums	c.checkEnumDeclaration
+D-IMPEXP	c.getTypeOnlyAliasDeclaration	checker.go:2139-2145	c04_name_resolution_hooks	c.checkAliasSymbol
+D-IMPEXP	c.getTypeOnlyAliasDeclarationEx	checker.go:2149-2159	c04_name_resolution_hooks	c.checkExportAssignment
+D-IMPEXP	c.addTypeOnlyDeclarationRelatedInfo	checker.go:2174-2180	c04_name_resolution_hooks	c.checkAliasSymbol, c.checkExportAssignment
+D-IMPEXP	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.checkExportAssignment
+D-IMPEXP	c.checkExpression	checker.go:7643-7645	c14_expressions	c.getTypeFromImportAttributes
+D-IMPEXP	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkAliasSymbol, c.checkExportAssignment, c.checkExportDeclaration, c.checkExportSpecifier, c.checkExportsOnMergedDeclarations, c.checkExternalImportOrExportDeclaration, c.checkExternalModuleExports, c.checkImportDeclaration, c.checkImportEqualsDeclaration
+D-IMPEXP	c.addDeprecatedSuggestion	checker.go:14138-14141	c21_resolved_symbols_diagnostics	c.checkAliasSymbol
+D-IMPEXP	c.isDeprecatedSymbol	checker.go:14154-14164	c21_resolved_symbols_diagnostics	c.checkAliasSymbol
+D-IMPEXP	c.newSymbol	checker.go:14170-14176	c22_symbols_merge	c.getTypeFromImportAttributes
+D-IMPEXP	c.getMergedSymbol	checker.go:14449-14457	c22_symbols_merge	c.checkAliasSymbol
+D-IMPEXP	c.getExportSymbolOfValueSymbolIfExported	checker.go:14477-14482	c22_symbols_merge	c.checkExportAssignment
+D-IMPEXP	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkAliasSymbol, c.checkExportsOnMergedDeclarations, c.checkExternalModuleExports, c.checkImportEqualsDeclaration, c.getDeclarationSpaces
+D-IMPEXP	c.isOnlyImportableAsDefault	checker.go:14894-14910	c23_alias_targets	c.checkImportDeclaration
+D-IMPEXP	c.getEmitSyntaxForModuleSpecifierExpression	checker.go:14971-14976	c23_alias_targets	c.checkImportAttributes
+D-IMPEXP	getModuleSpecifierFromNode	checker.go:15146-15154	c23_alias_targets	c.checkImportAttributes
+D-IMPEXP	c.resolveExternalModuleName	checker.go:15195-15202	c24_external_modules	c.checkExportDeclaration, c.checkExternalModuleNameInGlobalScope, c.checkImportDeclaration
+D-IMPEXP	c.resolveExternalModuleNameWorker	checker.go:15216-15221	c24_external_modules	c.checkImportDeclaration
+D-IMPEXP	c.resolveEntityName	checker.go:15866-15920	c25_entity_names	c.checkExportAssignment, c.checkImportEqualsDeclaration
+D-IMPEXP	c.getExportsOfModule	checker.go:16225-16233	c26_exports_late_binding	c.checkExternalModuleExports
+D-IMPEXP	c.resolveAlias	checker.go:16360-16385	c27_resolve_alias	c.checkAliasSymbol, c.checkImportEqualsDeclaration, c.getDeclarationSpaces, c.hasShadowedNamespace
+D-IMPEXP	c.resolveAliasWithDeprecationCheck	checker.go:16405-16435	c27_resolve_alias	c.checkAliasSymbol
+D-IMPEXP	c.getSymbolFlags	checker.go:16457-16459	c27_resolve_alias	c.checkAliasSymbol, c.checkExportAssignment, c.checkImportEqualsDeclaration, c.hasExportedMembersOfKind
+D-IMPEXP	c.getSymbolFlagsEx	checker.go:16461-16489	c27_resolve_alias	c.checkExportAssignment
+D-IMPEXP	c.getDeclarationOfAliasSymbol	checker.go:16491-16493	c27_resolve_alias	c.checkExternalModuleExports
+D-IMPEXP	c.getNullableType	checker.go:18764-18775	c31_binding_patterns_widening	c.checkImportAttributes
+D-IMPEXP	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkExportAssignment
+D-IMPEXP	c.newAnonymousType	checker.go:25213-25217	c41_new_types	c.getTypeFromImportAttributes
+D-IMPEXP	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c42_literal_types	c.getTypeFromImportAttributes
+D-IMPEXP	symbolArenaLinkStore.Get	links.go:33-39	links.go	c.getTypeFromImportAttributes
+D-IMPEXP	TryGetModuleSpecifierFromDeclaration	nodebuilderimpl.go:1193-1199	nodebuilderimpl.go	c.checkAliasSymbol
+D-IMPEXP	c.symbolToString	printer.go:124-126	printer.go	c.checkAliasSymbol, c.checkExportDeclaration
+D-IMPEXP	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.checkImportAttributes
+D-IMPEXP	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	relater.go	c.checkExportAssignment
+D-IMPEXP	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.checkAliasSymbol
+D-IMPEXP	getSelectedModifierFlags	utilities.go:64-66	utilities.go	c.areDeclarationFlagsIdentical
+D-IMPEXP	isTopLevelInExternalModuleAugmentation	utilities.go:246-248	utilities.go	c.checkExternalImportOrExportDeclaration, c.checkExternalModuleExports
+D-IMPEXP	hasExportAssignmentSymbol	utilities.go:257-259	utilities.go	c.checkExportDeclaration
+D-IMPEXP	isOptionalDeclaration	utilities.go:299-301	utilities.go	c.areDeclarationFlagsIdentical
+D-IMPEXP	getEnclosingContainer	utilities.go:1255-1259	utilities.go	c.checkExternalModuleNameInGlobalScope
+U-ALIASMARK	c.symbolReferenced	checker.go:1505-1507	c04_name_resolution_hooks	c.markJsxAliasReferenced
+U-ALIASMARK	c.getTypeOnlyAliasDeclaration	checker.go:2139-2145	c04_name_resolution_hooks	c.markEntityNameOrEntityExpressionAsReference, c.markJsxAliasReferenced
+U-ALIASMARK	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.markPropertyAliasReferenced
+U-ALIASMARK	c.isMethodAccessForCall	checker.go:11556-11561	c18_identifiers_property_access_this	c.markPropertyAliasReferenced
+U-ALIASMARK	c.lookupSymbolForPrivateIdentifierDeclaration	checker.go:11564-11578	c18_identifiers_property_access_this	c.markPropertyAliasReferenced
+U-ALIASMARK	c.getPrivateIdentifierPropertyOfType	checker.go:11580-11582	c18_identifiers_property_access_this	c.markPropertyAliasReferenced
+U-ALIASMARK	c.getResolvedSymbol	checker.go:13991-14002	c21_resolved_symbols_diagnostics	c.markIdentifierAliasReferenced, c.markPropertyAliasReferenced
+U-ALIASMARK	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.markEntityNameOrEntityExpressionAsReference
+U-ALIASMARK	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.markEntityNameOrEntityExpressionAsReference
+U-ALIASMARK	c.getExportSymbolOfValueSymbolIfExported	checker.go:14477-14482	c22_symbols_merge	c.markAliasReferenced, c.markExportAssignmentAliasReferenced
+U-ALIASMARK	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.markDecoratorAliasReferenced, c.markExportAsReferenced
+U-ALIASMARK	c.resolveSymbol	checker.go:14522-14524	c22_symbols_merge	c.markAliasSymbolAsReferenced
+U-ALIASMARK	c.resolveEntityName	checker.go:15866-15920	c25_entity_names	c.markExportAssignmentAliasReferenced
+U-ALIASMARK	c.resolveAlias	checker.go:16360-16385	c27_resolve_alias	c.markAliasReferenced, c.markEntityNameOrEntityExpressionAsReference, c.markExportAsReferenced, c.markExportSpecifierAliasReferenced
+U-ALIASMARK	c.getSymbolFlags	checker.go:16457-16459	c27_resolve_alias	c.markAliasSymbolAsReferenced, c.markExportSpecifierAliasReferenced
+U-ALIASMARK	c.getSymbolFlagsEx	checker.go:16461-16489	c27_resolve_alias	c.markAliasReferenced, c.markExportAsReferenced
+U-ALIASMARK	c.getDeclarationOfAliasSymbol	checker.go:16491-16493	c27_resolve_alias	c.markAliasSymbolAsReferenced
+U-ALIASMARK	c.getWidenedType	checker.go:18469-18471	c31_binding_patterns_widening	c.markPropertyAliasReferenced
+U-ALIASMARK	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.markPropertyAliasReferenced
+U-ALIASMARK	c.getAnnotatedAccessorTypeNode	checker.go:20220-20230	c34_return_types	c.markDecoratorAliasReferenced
+U-ALIASMARK	c.getApparentType	checker.go:21843-21876	c36_properties_apparent_types	c.markPropertyAliasReferenced
+U-ALIASMARK	c.symbolIsValue	checker.go:22205-22207	c36_properties_apparent_types	c.markEntityNameOrEntityExpressionAsReference
+U-ALIASMARK	isInvalidComputedPropertyName	checker.go:26919-26923	c44_index_indexed_access	c.markLinkedReferences
+U-ALIASMARK	getAssignmentTargetKind	utilities.go:90-108	utilities.go	c.markPropertyAliasReferenced
+U-ALIASMARK	IsInTypeQuery	utilities.go:169-182	utilities.go	c.markAliasReferenced
+U-ALIASMARK	IsTypeAny	utilities.go:287-289	utilities.go	c.markPropertyAliasReferenced
+U-ALIASMARK	isJsxIntrinsicTagName	utilities.go:1116-1118	utilities.go	c.markLinkedReferences
+D-UNUSED	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.checkUnusedRenamedBindingElements, c.reportUnused
+D-UNUSED	c.addSuggestionDiagnostic	checker.go:14094-14100	c21_resolved_symbols_diagnostics	c.reportUnused
+D-UNUSED	c.getMergedSymbol	checker.go:14449-14457	c22_symbols_merge	c.isUnreferencedTypeParameter
+D-UNUSED	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkUnusedClassMembers, c.checkUnusedRenamedBindingElements, c.checkUnusedTypeParameters, c.isUnreferencedVariableDeclaration
+D-UNUSED	c.getCombinedNodeFlagsCached	checker.go:18802-18810	c31_binding_patterns_widening	c.isUnreferencedVariableDeclaration
+D-UNUSED	c.symbolToString	printer.go:124-126	printer.go	c.checkUnusedClassMembers
+D-UNUSED	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.checkUnusedClassMembers, c.checkUnusedInferTypeParameter, c.checkUnusedRenamedBindingElements, c.checkUnusedTypeParameters, c.reportUnusedBindingElements, c.reportUnusedImports, c.reportUnusedLocal, c.reportUnusedVariableDeclarations, c.reportUnusedVariables
+D-UNUSED	hasDotDotDotToken	utilities.go:273-285	utilities.go	c.isUnreferencedVariableDeclaration
+D-UNUSED	rangeOfTypeParameters	utilities.go:1555-1557	utilities.go	c.checkUnusedTypeParameters
+D-UNUSED	allDeclarationsInSameSourceFile	utilities.go:1579-1591	utilities.go	c.checkUnusedTypeParameters
+D-ITER	c.addDeferredDiagnostic	checker.go:14075-14077	c21_resolved_symbols_diagnostics	c.getIterationTypesOfIterableWorker
+D-ITER	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.getIterationTypesOfIterableWorker
+D-ITER	c.errorAndMaybeSuggestAwait	checker.go:14116-14122	c21_resolved_symbols_diagnostics	c.getIteratedTypeOrElementType, c.reportTypeNotIterableError
+D-ITER	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.getIterationTypesOfIterableSlow, c.getIterationTypesOfMethod
+D-ITER	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.getIterationTypesOfIterableSlow, c.getIterationTypesOfMethod
+D-ITER	c.getTypeOfPropertyOfType	checker.go:19065-19071	c33_members_base_types_signatures	c.getIterationTypesOfIteratorResult, c.isIteratorResult
+D-ITER	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.getIterationTypesOfIterableSlow, c.getIterationTypesOfMethod
+D-ITER	c.getIndexTypeOfType	checker.go:19107-19113	c33_members_base_types_signatures	c.getIteratedTypeOrElementType
+D-ITER	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.getIterationTypesOfIterableSlow, c.getIterationTypesOfMethod
+D-ITER	c.getReducedType	checker.go:21933-21956	c36_properties_apparent_types	c.getIterationTypesOfIterable
+D-ITER	c.getTypeArguments	checker.go:22007-22045	c36_properties_apparent_types	c.getIterationTypesOfIterableFast, c.getIterationTypesOfIteratorFast, c.getIterationTypesOfIteratorResult
+D-ITER	c.isArrayLikeType	checker.go:23634-23638	c38_type_nodes_references	c.getIteratedTypeOrElementType
+D-ITER	c.createTypeFromGenericGlobalType	checker.go:24791-24796	c40_type_nodes_conditional_tuples	c.reportTypeNotIterableError
+D-ITER	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.getIterationTypeUnion, c.getIterationTypesOfMethod
+D-ITER	c.getUnionTypeEx	checker.go:25751-25774	c43_unions_intersections	c.getIteratedTypeOrElementType
+D-ITER	c.getIntersectionType	checker.go:26175-26177	c43_unions_intersections	c.getIterationTypesOfIterableSlow, c.getIterationTypesOfMethod
+D-ITER	c.filterType	checker.go:26681-26715	c43_unions_intersections	c.getIterationTypesOfIteratorResult
+D-ITER	c.getTypeWithFacts	checker.go:31273-31277	c51_type_facts_awaited	c.getIterationTypesOfMethod
+D-ITER	c.getPropertyNameForKnownSymbolName	flow.go:2107-2116	flow.go	c.getIterationTypesOfIterableSlow
+D-ITER	c.includeUndefinedInIndexSignature	flow.go:2339-2347	flow.go	c.getIteratedTypeOrElementType
+D-ITER	TypeMapper.Map	mapper.go:26-26	mapper.go	c.getIterationTypesOfMethod
+D-ITER	c.TypeToString	printer.go:43-45	printer.go	c.getIteratedTypeOrElementType, c.reportTypeNotIterableError
+D-ITER	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.isIteratorResult, c.reportTypeNotIterableError
+D-ITER	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.getIteratedTypeOrElementType
+D-ITER	c.checkTypeAssignableToEx	relater.go:343-345	relater.go	c.getIterationTypesOfIterableSlow
+D-ITER	c.reportDiagnostic	relater.go:414-422	relater.go	c.getIterationTypesOfMethod
+D-ITER	c.getMinArgumentCount	relater.go:1737-1739	relater.go	c.getIterationTypesOfIterableSlow
+D-ITER	c.getTypeAtPosition	relater.go:1790-1796	relater.go	c.getIterationTypesOfMethod
+D-ITER	Type.AsInterfaceType	types.go:731-731	types.go	c.getIterationTypesOfMethod
+D-ITER	Type.Target	types.go:748-762	types.go	c.isReferenceToSomeType, c.isReferenceToType
+D-ITER	Type.Mapper	types.go:764-774	types.go	c.getIterationTypesOfMethod
+D-ITER	Type.Types	types.go:776-784	types.go	c.getIteratedTypeOrElementType, c.getIterationTypesOfIterableWorker
+D-ITER	InterfaceType.TypeParameters	types.go:1042-1047	types.go	c.getIterationTypesOfMethod
+D-ITER	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.getIterationTypesOfMethod
+D-ITER	IsTypeAny	utilities.go:287-289	utilities.go	c.checkIteratedTypeOrElementType, c.getIterationTypeOfGeneratorFunctionReturnType, c.getIterationTypeOfIterable, c.getIterationTypesOfGeneratorFunctionReturnType, c.getIterationTypesOfIterable, c.getIterationTypesOfIterableSlow, c.getIterationTypesOfIteratorResult, c.getIterationTypesOfIteratorWorker, c.getIterationTypesOfMethod
+E-AWAIT	c.checkExpression	checker.go:7643-7645	c14_expressions	c.checkAwaitExpression
+E-AWAIT	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.getAwaitedTypeNoAliasEx
+E-AWAIT	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.getAwaitedTypeNoAliasEx, c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.addErrorOrSuggestion	checker.go:14124-14132	c21_resolved_symbols_diagnostics	c.checkAwaitExpression
+E-AWAIT	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.checkAwaitExpression
+E-AWAIT	c.getTypeOfPropertyOfType	checker.go:19065-19071	c33_members_base_types_signatures	c.getPromisedTypeOfPromiseEx, c.isThenableType
+E-AWAIT	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.getPromisedTypeOfPromiseEx, c.isThenableType
+E-AWAIT	c.getTypeArguments	checker.go:22007-22045	c36_properties_apparent_types	c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.getTypeAliasInstantiation	checker.go:23755-23777	c38_type_nodes_references	c.tryCreateAwaitedType
+E-AWAIT	c.isGenericObjectType	checker.go:24995-24997	c40_type_nodes_conditional_tuples	c.isAwaitedTypeNeeded
+E-AWAIT	c.mapType	checker.go:25684-25686	c42_literal_types	c.getAwaitedTypeNoAliasEx, c.unwrapAwaitedType
+E-AWAIT	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.getUnionTypeEx	checker.go:25751-25774	c43_unions_intersections	c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.isEmptyObjectType	checker.go:26608-26620	c43_unions_intersections	c.isAwaitedTypeNeeded
+E-AWAIT	someType	checker.go:26660-26665	c43_unions_intersections	c.isAwaitedTypeNeeded
+E-AWAIT	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkAwaitExpression
+E-AWAIT	c.getBaseConstraintOrType	checker.go:27551-27557	c45_base_constraints_normalization	c.getPromisedTypeOfPromiseEx, c.isThenableType
+E-AWAIT	c.getBaseConstraintOfType	checker.go:27559-27568	c45_base_constraints_normalization	c.isAwaitedTypeNeeded
+E-AWAIT	c.maybeTypeOfKind	checker.go:27729-27741	c45_base_constraints_normalization	c.isAwaitedTypeNeeded
+E-AWAIT	c.allTypesAssignableToKind	checker.go:27751-27753	c45_base_constraints_normalization	c.getPromisedTypeOfPromiseEx, c.isThenableType
+E-AWAIT	c.getTypeWithFacts	checker.go:31273-31277	c51_type_facts_awaited	c.getPromisedTypeOfPromiseEx, c.isThenableType
+E-AWAIT	c.TypeToString	printer.go:43-45	printer.go	c.getAwaitedTypeNoAliasEx, c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.isTypeRelatedTo	relater.go:169-203	relater.go	c.getPromisedTypeOfPromiseEx
+E-AWAIT	c.getTypeAtPosition	relater.go:1790-1796	relater.go	c.getTypeOfFirstParameterOfSignatureWithFallback
+E-AWAIT	c.getThisTypeOfSignature	relater.go:1947-1952	relater.go	c.getPromisedTypeOfPromiseEx
+E-AWAIT	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.getAwaitedTypeNoAliasEx
+E-AWAIT	NewDiagnosticChainForNode	utilities.go:32-37	utilities.go	c.getAwaitedTypeNoAliasEx
+E-AWAIT	IsTypeAny	utilities.go:287-289	utilities.go	c.getAwaitedTypeNoAliasEx, c.getPromisedTypeOfPromiseEx, c.isAwaitedTypeNeeded
+D-DECOR	c.checkDeprecatedSignature	checker.go:8454-8463	c15_calls	c.checkDecorator
+D-DECOR	c.getResolvedSignature	checker.go:8497-8541	c15_calls	c.checkDecorator
+D-DECOR	c.getFirstTransformableStaticClassElement	checker.go:10144-10169	c16_function_expressions_collisions	c.checkDecorators
+D-DECOR	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.checkDecorator
+D-DECOR	c.checkTypeAssignableTo	relater.go:339-341	relater.go	c.checkDecorator
+E-DECOR	c.checkExpression	checker.go:7643-7645	c14_expressions	c.resolveDecorator
+E-DECOR	c.resolveCall	checker.go:8933-9045	c15_calls	c.resolveDecorator
+E-DECOR	c.resolveUntypedCall	checker.go:9992-10011	c15_calls	c.resolveDecorator
+E-DECOR	c.resolveErrorCall	checker.go:10013-10016	c15_calls	c.resolveDecorator
+E-DECOR	c.isUntypedFunctionCall	checker.go:10023-10028	c15_calls	c.resolveDecorator
+E-DECOR	c.invocationErrorDetails	checker.go:10030-10084	c15_calls	c.resolveDecorator
+E-DECOR	c.invocationErrorRecovery	checker.go:10095-10109	c15_calls	c.resolveDecorator
+E-DECOR	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.resolveDecorator
+E-DECOR	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.resolveDecorator
+E-DECOR	c.newParameter	checker.go:14184-14188	c22_symbols_merge	c.getLegacyDecoratorCallSignature, c.newClassFieldDecoratorInitializerMutatorType, c.newESDecoratorCallSignature, c.newSetterFunctionType
+E-DECOR	c.newProperty	checker.go:14190-14194	c22_symbols_merge	c.getClassMemberDecoratorContextOverrideType
+E-DECOR	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.getESDecoratorCallSignature, c.getLegacyDecoratorCallSignature
+E-DECOR	c.getSymbolOfNode	checker.go:14494-14500	c22_symbols_merge	c.getParentTypeOfClassElement
+E-DECOR	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.getESDecoratorCallSignature, c.getEffectiveDecoratorArguments, c.getLegacyDecoratorCallSignature, c.getParentTypeOfClassElement
+E-DECOR	signatureHasRestParameter	checker.go:17132-17134	c28_types_of_symbols	c.isPotentiallyUncalledDecorator
+E-DECOR	c.getDeclaredTypeOfClassOrInterface	checker.go:17413-17441	c29_constraints	c.getESDecoratorCallSignature
+E-DECOR	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.resolveDecorator
+E-DECOR	c.getOrCreateTypeFromSignature	checker.go:19482-19508	c33_members_base_types_signatures	c.getContextualTypeForDecorator, c.getESDecoratorCallSignature, c.newFunctionType
+E-DECOR	c.getSignatureFromDeclaration	checker.go:19950-20024	c33_members_base_types_signatures	c.getESDecoratorCallSignature
+E-DECOR	c.getApparentType	checker.go:21843-21876	c36_properties_apparent_types	c.resolveDecorator
+E-DECOR	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.getParentTypeOfClassElement
+E-DECOR	c.createTypeFromGenericGlobalType	checker.go:24791-24796	c40_type_nodes_conditional_tuples	c.newTypedPropertyDescriptorType
+E-DECOR	c.newAnonymousType	checker.go:25213-25217	c41_new_types	c.getClassMemberDecoratorContextOverrideType
+E-DECOR	c.tryCreateTypeReference	checker.go:25219-25224	c41_new_types	c.newClassAccessorDecoratorContextType, c.newClassAccessorDecoratorResultType, c.newClassAccessorDecoratorTargetType, c.newClassDecoratorContextType, c.newClassFieldDecoratorContextType, c.newClassGetterDecoratorContextType, c.newClassMethodDecoratorContextType, c.newClassSetterDecoratorContextType
+E-DECOR	c.newSignature	checker.go:25370-25384	c41_new_types	c.newCallSignature
+E-DECOR	c.getStringLiteralType	checker.go:25428-25435	c42_literal_types	c.getClassElementPropertyKeyType, c.newClassMemberDecoratorContextTypeForNode
+E-DECOR	c.getNumberLiteralType	checker.go:25437-25452	c42_literal_types	c.getLegacyDecoratorCallSignature
+E-DECOR	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.getLegacyDecoratorCallSignature, c.newESDecoratorCallSignature
+E-DECOR	c.getIntersectionType	checker.go:26175-26177	c43_unions_intersections	c.newClassMemberDecoratorContextTypeForNode
+E-DECOR	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.resolveDecorator
+E-DECOR	c.getLiteralTypeFromPropertyName	checker.go:26892-26910	c44_index_indexed_access	c.newClassMemberDecoratorContextTypeForNode
+E-DECOR	c.checkComputedPropertyName	checker.go:26925-26943	c44_index_indexed_access	c.getClassElementPropertyKeyType
+E-DECOR	c.isTypeAssignableToKind	checker.go:27764-27766	c45_base_constraints_normalization	c.getClassElementPropertyKeyType
+E-DECOR	c.createSyntheticExpression	checker.go:30239-30244	c49_call_arguments_decorator_signatures	c.getEffectiveDecoratorArguments
+E-DECOR	c.getParameterCount	relater.go:1726-1735	relater.go	c.getDecoratorArgumentCount
+D-HELPERS	c.getSymbol	checker.go:2182-2200	c04_name_resolution_hooks	c.checkExternalEmitHelpers
+D-HELPERS	c.getFirstTransformableStaticClassElement	checker.go:10144-10169	c16_function_expressions_collisions	c.checkClassExpressionExternalHelpers
+D-HELPERS	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkExternalEmitHelpers
+D-HELPERS	c.resolveSymbol	checker.go:14522-14524	c22_symbols_merge	c.checkExternalEmitHelpers
+D-HELPERS	c.resolveExternalModule	checker.go:15243-15526	c24_external_modules	c.resolveHelpersModule
+D-HELPERS	c.getExportsOfModule	checker.go:16225-16233	c26_exports_late_binding	c.checkExternalEmitHelpers
+D-HELPERS	c.getSignaturesOfSymbol	checker.go:19920-19948	c33_members_base_types_signatures	c.hasSignatureWithArityGreaterThan
+D-HELPERS	c.getParameterCount	relater.go:1726-1735	relater.go	c.hasSignatureWithArityGreaterThan
+D-HELPERS	walkUpOuterExpressions	utilities.go:1853-1859	utilities.go	c.checkClassExpressionExternalHelpers
+E-COLLIDE	c.addDeferredDiagnostic	checker.go:14075-14077	c21_resolved_symbols_diagnostics	c.recordPotentialCollisionWithReflectInGeneratedCode, c.recordPotentialCollisionWithWeakMapSetInGeneratedCode
+E-COLLIDE	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkClassNameCollisionWithObject
+E-COLLIDE	c.errorSkippedOnNoEmit	checker.go:14106-14110	c21_resolved_symbols_diagnostics	c.checkCollisionWithGlobalObjectInGeneratedCode, c.checkCollisionWithGlobalPromiseInGeneratedCode, c.checkCollisionWithRequireExportsInGeneratedCode, c.checkReflectCollision, c.checkWeakMapSetCollision
+G-GRAMMAR	binder.FindUseStrictPrologue	binder.go:1352-1364	binder/binder.go	c.checkGrammarForUseStrictSimpleParameterList
+G-GRAMMAR	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.isInitializerSimpleLiteralEnumReference
+G-GRAMMAR	c.getSymbolForPrivateIdentifierExpression	checker.go:7936-7942	c14_expressions	c.checkGrammarPrivateIdentifierExpression
+G-GRAMMAR	c.isInParameterInitializerBeforeContainingFunction	checker.go:12326-12343	c18_identifiers_property_access_this	c.checkGrammarAwaitOrAwaitUsing, c.checkGrammarYieldExpression
+G-GRAMMAR	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.checkGrammarAwaitOrAwaitUsing, c.checkGrammarForInOrForOfStatement, c.checkGrammarRegularExpressionLiteral, c.grammarErrorAtPos, c.grammarErrorOnFirstToken, c.grammarErrorOnNodeSkippedOnNoEmit
+G-GRAMMAR	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkGrammarAwaitOrAwaitUsing, c.checkGrammarDecorator, c.checkGrammarForDisallowedBlockScopedVariableStatement, c.checkGrammarForUseStrictSimpleParameterList, c.checkGrammarModifiers, c.checkGrammarYieldExpression, c.grammarErrorOnNode
+G-GRAMMAR	c.addErrorOrSuggestion	checker.go:14124-14132	c21_resolved_symbols_diagnostics	c.checkGrammarNumericLiteral, c.checkGrammarObjectLiteralExpression
+G-GRAMMAR	c.hasParseDiagnostics	checker.go:14166-14168	c21_resolved_symbols_diagnostics	c.checkGrammarAwaitOrAwaitUsing, c.checkGrammarDecorator, c.checkGrammarForInOrForOfStatement, c.checkGrammarModifiers, c.checkGrammarRegularExpressionLiteral, c.grammarErrorAtPos, c.grammarErrorOnFirstToken, c.grammarErrorOnNode, c.grammarErrorOnNodeSkippedOnNoEmit
+G-GRAMMAR	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.checkGrammarDecorator, c.checkGrammarForInOrForOfStatement, c.checkGrammarForUseStrictSimpleParameterList, c.checkGrammarModifiers, c.checkGrammarNumericLiteral, c.checkGrammarObjectLiteralExpression
+G-GRAMMAR	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	c.checkGrammarModifiers
+G-GRAMMAR	c.getCombinedNodeFlagsCached	checker.go:18802-18810	c31_binding_patterns_widening	c.checkGrammarForDisallowedBlockScopedVariableStatement, c.checkGrammarVariableDeclaration
+G-GRAMMAR	c.isVarConstLike	checker.go:18812-18815	c31_binding_patterns_widening	c.checkAmbientInitializer
+G-GRAMMAR	c.getEffectivePropertyNameForPropertyNameNode	checker.go:18817-18834	c31_binding_patterns_widening	c.checkGrammarObjectLiteralExpression
+G-GRAMMAR	c.isValidIndexKeyType	checker.go:19901-19905	c33_members_base_types_signatures	c.checkGrammarIndexSignatureParameters
+G-GRAMMAR	c.getAccessorThisParameter	checker.go:20045-20050	c33_members_base_types_signatures	c.doesAccessorHaveCorrectParameterCount
+G-GRAMMAR	c.isLateBindableName	checker.go:20075-20083	c33_members_base_types_signatures	c.isNonBindableDynamicName
+G-GRAMMAR	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkGrammarIndexSignatureParameters
+G-GRAMMAR	c.isGenericType	checker.go:24991-24993	c40_type_nodes_conditional_tuples	c.checkGrammarIndexSignatureParameters
+G-GRAMMAR	someType	checker.go:26660-26665	c43_unions_intersections	c.checkGrammarIndexSignatureParameters
+G-GRAMMAR	everyType	checker.go:26667-26672	c43_unions_intersections	c.checkGrammarIndexSignatureParameters
+G-GRAMMAR	isRestParameter	checker.go:27915-27917	c45_base_constraints_normalization	c.checkGrammarForUseStrictSimpleParameterList
+G-GRAMMAR	visibilityToString	relater.go:2559-2567	relater.go	c.checkGrammarModifiers
+G-GRAMMAR	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.checkGrammarAwaitOrAwaitUsing, c.grammarErrorOnNodeSkippedOnNoEmit
+G-GRAMMAR	hasAsyncModifier	utilities.go:60-62	utilities.go	c.checkGrammarAwaitOrAwaitUsing
+G-GRAMMAR	hasReadonlyModifier	utilities.go:68-70	utilities.go	c.checkGrammarTypeOperatorNode
+G-GRAMMAR	isOptionalDeclaration	utilities.go:299-301	utilities.go	c.checkGrammarParameterList
+G-GRAMMAR	isDeclarationReadonly	utilities.go:828-830	utilities.go	c.checkAmbientInitializer
+G-GRAMMAR	getContainingFunctionOrClassStaticBlock	utilities.go:865-867	utilities.go	c.checkGrammarAwaitOrAwaitUsing
+G-GRAMMAR	isVariableDeclarationInVariableStatement	utilities.go:971-973	utilities.go	c.checkGrammarTypeOperatorNode
+G-GRAMMAR	GetSetAccessorValueParameter	utilities.go:1861-1868	utilities.go	c.checkGrammarAccessor
+X-JSX	c.getGlobalSymbol	checker.go:1247-1250	c03_init	c.getJsxNamespaceAt
+X-JSX	c.getSpellingSuggestionForName	checker.go:1806-1824	c04_name_resolution_hooks	c.getSuggestedSymbolForNonexistentJSXAttribute
+X-JSX	c.getSymbol	checker.go:2182-2200	c04_name_resolution_hooks	c.createSignatureForJSXIntrinsic, c.getJSXFragmentType, c.getJsxElementTypeSymbol, c.getJsxLibraryManagedAttributes, c.getJsxNamespaceAt, c.getJsxType, c.getNameFromJsxElementAttributesContainer
+X-JSX	c.checkExpressionWithContextualType	checker.go:7574-7593	c14_expressions	c.checkApplicableSignatureForJsxCallLikeElement, c.inferJsxTypeArguments, c.resolveJsxOpeningLikeElement
+X-JSX	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.getStaticTypeOfReferencedJsxConstructor
+X-JSX	c.checkExpression	checker.go:7643-7645	c14_expressions	c.checkApplicableSignatureForJsxCallLikeElement, c.checkJsxElementDeferred, c.checkJsxOpeningLikeElementOrOpeningFragment, c.getJsxReferenceKind, c.resolveJsxOpeningLikeElement
+X-JSX	c.checkExpressionEx	checker.go:7647-7661	c14_expressions	c.checkJsxExpression, c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.checkDeprecatedSignature	checker.go:8454-8463	c15_calls	c.checkJsxOpeningLikeElementOrOpeningFragment
+X-JSX	c.getResolvedSignature	checker.go:8497-8541	c15_calls	c.checkJsxOpeningLikeElementOrOpeningFragment
+X-JSX	c.resolveCall	checker.go:8933-9045	c15_calls	c.resolveJsxOpeningLikeElement
+X-JSX	c.resolveUntypedCall	checker.go:9992-10011	c15_calls	c.resolveJsxOpeningLikeElement
+X-JSX	c.resolveErrorCall	checker.go:10013-10016	c15_calls	c.resolveJsxOpeningLikeElement
+X-JSX	c.isUntypedFunctionCall	checker.go:10023-10028	c15_calls	c.resolveJsxOpeningLikeElement
+X-JSX	c.isExactOptionalPropertyMismatch	checker.go:13217-13219	c19_assertions_binary_operators	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.checkSpreadPropOverrides	checker.go:13472-13481	c20_object_literals_spread	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.getSpreadType	checker.go:13488-13596	c20_object_literals_spread	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.isValidSpreadType	checker.go:13605-13609	c20_object_literals_spread	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.checkExpressionForMutableLocation	checker.go:13979-13989	c20_object_literals_spread	c.checkJsxAttribute, c.checkJsxChildren
+X-JSX	c.addDiagnostic	checker.go:14086-14092	c21_resolved_symbols_diagnostics	c.checkJsxOpeningLikeElementOrOpeningFragment, c.checkJsxReturnAssignableToAppropriateBound, c.resolveJsxOpeningLikeElement
+X-JSX	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkJsxExpression, c.checkJsxFragment, c.checkJsxPreconditions, c.createJsxAttributesTypeFromAttributesProperty, c.elaborateJsxComponents, c.getIntrinsicTagSymbol, c.getJsxPropsTypeFromClassType, c.getNameFromJsxElementAttributesContainer, c.getUninstantiatedJsxSignaturesOfType, c.resolveJsxOpeningLikeElement
+X-JSX	c.newSymbol	checker.go:14170-14176	c22_symbols_merge	c.createJsxAttributesTypeFromAttributesProperty, c.createSignatureForJSXIntrinsic
+X-JSX	createDiagnosticForNode	checker.go:14358-14360	c22_symbols_merge	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.getMergedSymbol	checker.go:14449-14457	c22_symbols_merge	c.getJsxNamespaceContainerForImplicitImport
+X-JSX	c.resolveSymbol	checker.go:14522-14524	c22_symbols_merge	c.getJsxNamespaceAt, c.getJsxNamespaceContainerForImplicitImport
+X-JSX	c.resolveExternalModule	checker.go:15243-15526	c24_external_modules	c.getJsxNamespaceContainerForImplicitImport
+X-JSX	c.resolveEntityName	checker.go:15866-15920	c25_entity_names	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.getExportsOfSymbol	checker.go:16014-16022	c26_exports_late_binding	c.createSignatureForJSXIntrinsic, c.getJSXFragmentType, c.getJsxNamespaceAt, c.getJsxType
+X-JSX	c.resolveAlias	checker.go:16360-16385	c27_resolve_alias	c.getJSXFragmentType
+X-JSX	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.checkApplicableSignatureForJsxCallLikeElement, c.getIntrinsicAttributesTypeFromJsxOpeningLikeElement, c.getIntrinsicAttributesTypeFromStringLiteralType, c.getJSXFragmentType
+X-JSX	c.getPropertiesOfType	checker.go:18960-18966	c33_members_base_types_signatures	c.discriminateContextualTypeByJSXAttributes, c.getNameFromJsxElementAttributesContainer, c.getSuggestedSymbolForNonexistentJSXAttribute
+X-JSX	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.elaborateIterableOrArrayLikeTargetElementwise, c.getIntrinsicAttributesTypeFromStringLiteralType, c.getIntrinsicTagSymbol
+X-JSX	c.getTypeOfPropertyOfType	checker.go:19065-19071	c33_members_base_types_signatures	c.getJsxPropsTypeForSignatureFromMember
+X-JSX	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.checkApplicableSignatureForJsxCallLikeElement, c.getJsxReferenceKind, c.getUninstantiatedJsxSignaturesOfType
+X-JSX	c.getIndexTypeOfType	checker.go:19107-19113	c33_members_base_types_signatures	c.getIntrinsicAttributesTypeFromStringLiteralType
+X-JSX	c.getApplicableIndexInfoForName	checker.go:19126-19131	c33_members_base_types_signatures	c.getIntrinsicAttributesTypeFromJsxOpeningLikeElement
+X-JSX	c.getOrCreateTypeFromSignature	checker.go:19482-19508	c33_members_base_types_signatures	c.getStaticTypeOfReferencedJsxConstructor
+X-JSX	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.checkJsxOpeningLikeElementOrOpeningFragment, c.getJsxPropsTypeForSignatureFromMember, c.getJsxPropsTypeFromClassType
+X-JSX	c.getUnionSignatures	checker.go:21226-21295	c35_resolve_members	c.getUninstantiatedJsxSignaturesOfType
+X-JSX	c.getApparentType	checker.go:21843-21876	c36_properties_apparent_types	c.getJsxReferenceKind, c.getUninstantiatedJsxSignaturesOfType, c.resolveJsxOpeningLikeElement
+X-JSX	c.getReducedType	checker.go:21933-21956	c36_properties_apparent_types	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.getMinTypeArgumentCount	checker.go:22052-22060	c36_properties_apparent_types	c.getJsxPropsTypeFromClassType
+X-JSX	c.fillMissingTypeArguments	checker.go:22068-22098	c36_properties_apparent_types	c.getJsxPropsTypeFromClassType, c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	c.instantiateType	checker.go:22214-22216	c37_instantiation	c.getJsxPropsTypeFromClassType
+X-JSX	c.isArrayType	checker.go:23595-23597	c38_type_nodes_references	c.checkJsxExpression
+X-JSX	c.isArrayLikeType	checker.go:23634-23638	c38_type_nodes_references	c.getContextualTypeForChildJsxExpression
+X-JSX	c.isTupleLikeType	checker.go:23658-23668	c38_type_nodes_references	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.isArrayOrTupleLikeType	checker.go:23670-23672	c38_type_nodes_references	c.elaborateIterableOrArrayLikeTargetElementwise, c.elaborateJsxComponents
+X-JSX	c.getTypeAliasInstantiation	checker.go:23755-23777	c38_type_nodes_references	c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.createSignatureForJSXIntrinsic, c.getJsxType, c.getNameFromJsxElementAttributesContainer, c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	c.getLocalTypeParametersOfClassOrInterfaceOrTypeAlias	checker.go:23929-23931	c39_declared_types_enums	c.getJsxPropsTypeFromClassType
+X-JSX	c.createIterableType	checker.go:24820-24822	c40_type_nodes_conditional_tuples	c.elaborateJsxComponents
+X-JSX	c.createArrayType	checker.go:24824-24826	c40_type_nodes_conditional_tuples	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.createTupleType	checker.go:24858-24861	c40_type_nodes_conditional_tuples	c.createJsxAttributesTypeFromAttributesProperty, c.elaborateJsxComponents
+X-JSX	c.newAnonymousType	checker.go:25213-25217	c41_new_types	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.createTypeReference	checker.go:25226-25228	c41_new_types	c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	c.getPropagatingFlagsOfTypes	checker.go:25301-25309	c41_new_types	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.newSignature	checker.go:25370-25384	c41_new_types	c.createSignatureForJSXIntrinsic
+X-JSX	c.getStringLiteralType	checker.go:25428-25435	c42_literal_types	c.checkJsxOpeningLikeElementOrOpeningFragment, c.elaborateJsxComponents, c.getIntrinsicTagSymbol
+X-JSX	c.getNumberLiteralType	checker.go:25437-25452	c42_literal_types	c.generateJsxChildren, c.getContextualTypeForChildJsxExpression
+X-JSX	getStringLiteralValue	checker.go:25469-25471	c42_literal_types	c.getIntrinsicAttributesTypeFromStringLiteralType, c.getUninstantiatedJsxSignaturesOfType
+X-JSX	c.mapTypeEx	checker.go:25688-25723	c42_literal_types	c.getContextualTypeForChildJsxExpression
+X-JSX	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.checkJsxReturnAssignableToAppropriateBound, c.createJsxAttributesTypeFromAttributesProperty, c.elaborateIterableOrArrayLikeTargetElementwise, c.getJsxStatelessElementTypeAt
+X-JSX	c.intersectTypes	checker.go:26147-26155	c43_unions_intersections	c.getJsxPropsTypeFromCallSignature, c.getJsxPropsTypeFromClassType
+X-JSX	c.getIntersectionType	checker.go:26175-26177	c43_unions_intersections	c.createJsxAttributesTypeFromAttributesProperty, c.getJsxPropsTypeForSignatureFromMember
+X-JSX	someType	checker.go:26660-26665	c43_unions_intersections	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.filterType	checker.go:26681-26715	c43_unions_intersections	c.elaborateIterableOrArrayLikeTargetElementwise, c.elaborateJsxComponents
+X-JSX	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	c.checkJsxFragment, c.getIntrinsicAttributesTypeFromStringLiteralType, c.getIntrinsicTagSymbol, c.getJsxElementClassTypeAt, c.getJsxElementTypeTypeAt, c.getJsxPropsTypeFromCallSignature, c.getJsxPropsTypeFromClassType, c.resolveJsxOpeningLikeElement
+X-JSX	c.getIndexedAccessType	checker.go:27046-27048	c44_index_indexed_access	c.elaborateJsxComponents, c.getContextualTypeForChildJsxExpression
+X-JSX	c.getIndexedAccessTypeOrUndefined	checker.go:27058-27122	c44_index_indexed_access	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.getPropertyNameFromIndex	checker.go:27478-27486	c44_index_indexed_access	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.getRegularTypeOfObjectLiteral	checker.go:28282-28297	c45_base_constraints_normalization	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.removeMissingType	checker.go:29215-29220	c47_promised_mapped_template	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.getTypeOfPropertyOrIndexSignatureOfType	checker.go:29437-29447	c47_promised_mapped_template	c.getIntrinsicTagSymbol
+X-JSX	c.getContextualType	checker.go:29466-29533	c48_contextual_types	c.createJsxAttributesTypeFromAttributesProperty, c.getContextualTypeForJsxAttribute, c.getContextualTypeForJsxExpression
+X-JSX	c.getContextualTypeForArgumentAtIndex	checker.go:29895-29922	c48_contextual_types	c.getContextualJsxElementAttributesType
+X-JSX	c.getTypeOfPropertyOfContextualType	checker.go:30674-30676	c50_contextual_properties_inference_context	c.createJsxAttributesTypeFromAttributesProperty, c.getContextualTypeForChildJsxExpression, c.getContextualTypeForJsxAttribute
+X-JSX	c.getApparentTypeOfContextualType	checker.go:30809-30834	c50_contextual_properties_inference_context	c.createJsxAttributesTypeFromAttributesProperty, c.getContextualTypeForChildJsxExpression, c.getContextualTypeForJsxAttribute
+X-JSX	c.isPossiblyDiscriminantValue	checker.go:30925-30936	c50_contextual_properties_inference_context	c.discriminateContextualTypeByJSXAttributes
+X-JSX	c.findContextualNode	checker.go:31009-31016	c50_contextual_properties_inference_context	c.getContextualJsxElementAttributesType
+X-JSX	c.isContextSensitive	checker.go:31020-31052	c50_contextual_properties_inference_context	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.getInferenceContext	checker.go:31088-31095	c50_contextual_properties_inference_context	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.inferTypes	inference.go:53-63	inference.go	c.inferJsxTypeArguments
+X-JSX	c.addIntraExpressionInferenceSite	inference.go:1285-1287	inference.go	c.createJsxAttributesTypeFromAttributesProperty
+X-JSX	c.getInferredTypes	inference.go:1406-1412	inference.go	c.inferJsxTypeArguments
+X-JSX	nodeLinkStore.Get	links.go:14-16	links.go	c.getIntrinsicTagSymbol
+X-JSX	symbolArenaLinkStore.Get	links.go:33-39	links.go	c.createJsxAttributesTypeFromAttributesProperty, c.createSignatureForJSXIntrinsic
+X-JSX	newTypeMapper	mapper.go:40-45	mapper.go	c.getJsxPropsTypeFromClassType
+X-JSX	c.TypeToString	printer.go:43-45	printer.go	c.elaborateIterableOrArrayLikeTargetElementwise, c.elaborateJsxComponents
+X-JSX	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.elaborateJsxComponents
+X-JSX	c.isTypeRelatedTo	relater.go:169-203	relater.go	c.elaborateJsxComponents
+X-JSX	c.checkTypeRelatedTo	relater.go:351-353	relater.go	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.checkTypeRelatedToEx	relater.go:358-398	relater.go	c.checkJsxOpeningLikeElementOrOpeningFragment, c.checkJsxReturnAssignableToAppropriateBound, c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.reportDiagnostic	relater.go:414-422	relater.go	c.checkApplicableSignatureForJsxCallLikeElement, c.elaborateIterableOrArrayLikeTargetElementwise, c.elaborateJsxComponents
+X-JSX	c.checkTypeAssignableToAndOptionallyElaborate	relater.go:424-426	relater.go	c.resolveJsxOpeningLikeElement
+X-JSX	c.checkTypeRelatedToAndOptionallyElaborate	relater.go:428-436	relater.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.elaborateError	relater.go:438-472	relater.go	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.elaborateElement	relater.go:544-616	relater.go	c.elaborateJsxComponents
+X-JSX	c.getBestMatchIndexedAccessTypeOrUndefined	relater.go:618-630	relater.go	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	c.checkExpressionForMutableLocationWithContextualType	relater.go:632-637	relater.go	c.elaborateIterableOrArrayLikeTargetElementwise
+X-JSX	isHyphenatedJsxName	relater.go:743-745	relater.go	c.elaborateJsxComponents
+X-JSX	c.isDiscriminantProperty	relater.go:1080-1094	relater.go	c.discriminateContextualTypeByJSXAttributes
+X-JSX	c.discriminateTypeByDiscriminableItems	relater.go:1205-1254	relater.go	c.discriminateContextualTypeByJSXAttributes
+X-JSX	c.getParameterCount	relater.go:1726-1735	relater.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.getMinArgumentCount	relater.go:1737-1739	relater.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.hasEffectiveRestParameter	relater.go:1782-1788	relater.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	c.getTypeAtPosition	relater.go:1790-1796	relater.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	Type.AsInterfaceType	types.go:731-731	types.go	c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	Type.Types	types.go:776-784	types.go	c.getUninstantiatedJsxSignaturesOfType
+X-JSX	InterfaceType.TypeParameters	types.go:1042-1047	types.go	c.instantiateAliasOrInterfaceWithDefaults
+X-JSX	NewDiagnosticForNode	utilities.go:22-30	utilities.go	c.checkApplicableSignatureForJsxCallLikeElement, c.getElaborationElementForJsxChild
+X-JSX	entityNameToString	utilities.go:218-220	utilities.go	c.checkApplicableSignatureForJsxCallLikeElement
+X-JSX	IsTypeAny	utilities.go:287-289	utilities.go	c.createJsxAttributesTypeFromAttributesProperty, c.getContextualTypeForChildJsxExpression, c.getContextualTypeForJsxAttribute, c.getJsxPropsTypeForSignatureFromMember, c.getJsxPropsTypeFromClassType
+X-JSX	isJsxIntrinsicTagName	utilities.go:1116-1118	utilities.go	c.checkApplicableSignatureForJsxCallLikeElement, c.checkJsxElementDeferred, c.checkJsxOpeningLikeElementOrOpeningFragment, c.getIntrinsicAttributesTypeFromJsxOpeningLikeElement, c.getJsxReferenceKind, c.getStaticTypeOfReferencedJsxConstructor, c.resolveJsxOpeningLikeElement
+D-JSDOC	c.error	checker.go:14102-14104	c21_resolved_symbols_diagnostics	c.checkUnmatchedJSDocParameters
+D-JSDOC	c.errorOrSuggestion	checker.go:14112-14114	c21_resolved_symbols_diagnostics	c.checkUnmatchedJSDocParameters
+D-JSDOC	c.resolveEntityName	checker.go:15866-15920	c25_entity_names	c.resolveJSDocMemberName
+D-JSDOC	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	c.resolveJSDocMemberName
+D-JSDOC	c.getNullableType	checker.go:18764-18775	c31_binding_patterns_widening	c.checkJSDocTypeIsInJsFile
+D-JSDOC	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	c.resolveJSDocMemberName
+D-JSDOC	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.checkJSDocTypeIsInJsFile, c.checkUnmatchedJSDocParameters
+D-JSDOC	c.isArrayType	checker.go:23595-23597	c38_type_nodes_references	c.checkUnmatchedJSDocParameters
+D-JSDOC	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.resolveJSDocMemberName
+D-JSDOC	c.TypeToString	printer.go:43-45	printer.go	c.checkJSDocTypeIsInJsFile
+D-JSDOC	entityNameToString	utilities.go:218-220	utilities.go	c.checkUnmatchedJSDocParameters
+T-JSDECL	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.getAssignmentDeclarationInitializerType, c.getTypeFromPropertyDescriptor
+T-JSDECL	c.getTypeOfPropertyInBaseClass	checker.go:11545-11554	c18_identifiers_property_access_this	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.checkExpressionForMutableLocation	checker.go:13979-13989	c20_object_literals_spread	c.getAssignmentDeclarationInitializerType
+T-JSDECL	c.getParentOfSymbol	checker.go:14459-14464	c22_symbols_merge	c.getTypeOfPrototypeProperty
+T-JSDECL	c.getSymbolOfNode	checker.go:14494-14500	c22_symbols_merge	c.hasParentWithTypeAnnotation, c.isGlobalSymbolConstructor
+T-JSDECL	c.reportImplicitAny	checker.go:18385-18467	c31_binding_patterns_widening	c.getAssignmentDeclarationInitializerType, c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.getWidenedType	checker.go:18469-18471	c31_binding_patterns_widening	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.getTypeOfPropertyOfType	checker.go:19065-19071	c33_members_base_types_signatures	c.getTypeFromPropertyDescriptor
+T-JSDECL	c.getSingleCallSignature	checker.go:19455-19457	c33_members_base_types_signatures	c.getTypeFromPropertyDescriptor
+T-JSDECL	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.getTypeFromPropertyDescriptor
+T-JSDECL	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.isEmptyArrayLiteralType	checker.go:23646-23649	c38_type_nodes_references	c.getAssignmentDeclarationInitializerType
+T-JSDECL	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	c.getTypeOfPrototypeProperty
+T-JSDECL	c.createTypeReference	checker.go:25226-25228	c41_new_types	c.getTypeOfPrototypeProperty
+T-JSDECL	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c42_literal_types	c.getAssignmentDeclarationInitializerType
+T-JSDECL	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.filterType	checker.go:26681-26715	c43_unions_intersections	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	c.getDeclaringConstructor	checker.go:27468-27476	c44_index_indexed_access	c.isConstructorDeclaredThisProperty
+T-JSDECL	c.isMatchingReference	flow.go:1597-1649	flow.go	c.containsSameNamedThisProperty
+T-JSDECL	c.getFlowTypeInConstructor	flow.go:2466-2486	flow.go	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	Type.Flags	types.go:695-697	types.go	c.getWidenedTypeForAssignmentDeclaration
+T-JSDECL	Type.AsInterfaceType	types.go:731-731	types.go	c.getTypeOfPrototypeProperty
+T-JSDECL	InterfaceType.TypeParameters	types.go:1042-1047	types.go	c.getTypeOfPrototypeProperty
+Z-SERVICES	binder.NewReferenceResolver	referenceresolver.go:37-42	binder/referenceresolver.go	EmitResolver.getReferenceResolver
+Z-SERVICES	c.getGlobalSymbol	checker.go:1247-1250	c03_init	EmitResolver.IsDefinitelyReferenceToGlobalSymbolObject, c.GetFirstTypeArgumentFromKnownType, c.GetGlobalSymbol
+Z-SERVICES	c.getTypeOnlyAliasDeclaration	checker.go:2139-2145	c04_name_resolution_hooks	EmitResolver.isAliasResolvedToValue, c.GetTypeOnlyAliasDeclaration
+Z-SERVICES	c.getTypeOnlyAliasDeclarationEx	checker.go:2149-2159	c04_name_resolution_hooks	EmitResolver.GetReferencedImportDeclaration, EmitResolver.GetTypeReferenceSerializationKind, EmitResolver.getReferenceResolver
+Z-SERVICES	c.getImmediateAliasedSymbol	checker.go:2161-2172	c04_name_resolution_hooks	c.GetImmediateAliasedSymbol, c.getSymbolAtLocation
+Z-SERVICES	c.getSymbol	checker.go:2182-2200	c04_name_resolution_hooks	c.GetSymbolsOfParameterPropertyDeclaration, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getTypeOfExpression	checker.go:7427-7447	c14_expressions	c.getIndexSignaturesAtLocation, c.getRegularTypeOfExpression, c.getSymbolAtLocation, c.getTypeOfAssignmentPattern, c.getUninstantiatedSignatures
+Z-SERVICES	c.checkExpressionCached	checker.go:7603-7605	c14_expressions	c.GetConstantValue, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.checkExpression	checker.go:7643-7645	c14_expressions	c.getSymbolAtLocation, c.getTypeArgumentConstraint, c.isValidPropertyAccess
+Z-SERVICES	c.getSymbolForPrivateIdentifierExpression	checker.go:7936-7942	c14_expressions	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.checkQualifiedName	checker.go:8212-8221	c14_expressions	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getResolvedSignature	checker.go:8497-8541	c15_calls	c.GetResolvedSignature, c.getResolvedSignatureWorker
+Z-SERVICES	c.getRestTypeOfSignature	checker.go:9721-9723	c15_calls	c.GetRestTypeOfSignature
+Z-SERVICES	c.checkNewTargetMetaProperty	checker.go:10858-10870	c17_unary_meta_yield	c.getSymbolAtLocation
+Z-SERVICES	c.checkMetaPropertyKeyword	checker.go:10889-10892	c17_unary_meta_yield	c.getSymbolAtLocation, c.getTypeOfNode
+Z-SERVICES	c.checkPropertyAccessExpression	checker.go:11334-11340	c18_identifiers_property_access_this	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.isPropertyAccessible	checker.go:11730-11742	c18_identifiers_property_access_this	c.IsPropertyAccessible, c.IsValidPropertyAccessForCompletions, c.isValidPropertyAccessWithType
+Z-SERVICES	c.getThisContainer	checker.go:12279-12324	c18_identifiers_property_access_this	EmitResolver.isEntityNameVisible, c.getSymbolAtLocation, c.isThisPropertyAndThisTyped
+Z-SERVICES	c.checkDestructuringAssignment	checker.go:12643-12674	c19_assertions_binary_operators	c.getTypeOfAssignmentPattern
+Z-SERVICES	c.checkObjectLiteralDestructuringPropertyAssignment	checker.go:12688-12732	c19_assertions_binary_operators	c.getTypeOfAssignmentPattern
+Z-SERVICES	c.checkArrayLiteralDestructuringElementAssignment	checker.go:12754-12793	c19_assertions_binary_operators	c.getTypeOfAssignmentPattern
+Z-SERVICES	c.isReadonlySymbol	checker.go:13950-13964	c20_object_literals_spread	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant
+Z-SERVICES	c.getResolvedSymbol	checker.go:13991-14002	c21_resolved_symbols_diagnostics	EmitResolver.IsDefinitelyReferenceToGlobalSymbolObject, c.GetResolvedSymbol, c.containsArgumentsReference
+Z-SERVICES	c.getResolvedSymbolOrNil	checker.go:14004-14006	c21_resolved_symbols_diagnostics	EmitResolver.getReferenceResolver, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getReferencedValueOrAliasSymbol	checker.go:14008-14014	c21_resolved_symbols_diagnostics	EmitResolver.GetReferencedImportDeclaration
+Z-SERVICES	c.newSymbol	checker.go:14170-14176	c22_symbols_merge	c.getApplicableIndexSymbol
+Z-SERVICES	c.getMergedSymbol	checker.go:14449-14457	c22_symbols_merge	EmitResolver.IsImportRequiredByAugmentation, EmitResolver.getReferenceResolver, c.GetExportSymbolOfSymbol, c.GetMergedSymbol, c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getParentOfSymbol	checker.go:14459-14464	c22_symbols_merge	EmitResolver.getReferenceResolver
+Z-SERVICES	c.getExportSymbolOfValueSymbolIfExported	checker.go:14477-14482	c22_symbols_merge	EmitResolver.getReferenceResolver, EmitResolver.isAliasResolvedToValue
+Z-SERVICES	c.getSymbolOfDeclaration	checker.go:14484-14490	c22_symbols_merge	EmitResolver.CreateLiteralConstValue, EmitResolver.CreateTypeOfDeclaration, EmitResolver.GetPropertiesOfContainerFunction, EmitResolver.IsImplementationOfOverload, EmitResolver.IsLateBound, EmitResolver.IsLiteralConstDeclaration, EmitResolver.IsReferencedAliasDeclaration, EmitResolver.IsThisPropertyAssignmentDeclarationRedundant, EmitResolver.IsTopLevelValueImportEqualsWithEntityName, EmitResolver.getReferenceResolver, EmitResolver.isAliasResolvedToValue, EmitResolver.isEntityNameVisible, EmitResolver.isValueAliasDeclarationWorker, EmitResolver.requiresAddingImplicitUndefined, c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression, c.getSymbolsInScope, c.getTypeOfNode, runWithoutResolvedSignatureCaching
+Z-SERVICES	c.getSymbolOfNode	checker.go:14494-14500	c22_symbols_merge	c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getSymbolOfPartOfRightHandSideOfImportEquals	checker.go:14568-14586	c23_alias_targets	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getExternalModuleMember	checker.go:14761-14830	c23_alias_targets	c.GetExportSpecifierLocalTargetSymbol
+Z-SERVICES	c.getTargetOfExportSpecifier	checker.go:15045-15068	c23_alias_targets	EmitResolver.markLinkedAliases
+Z-SERVICES	c.resolveExternalModuleName	checker.go:15195-15202	c24_external_modules	c.ResolveExternalModuleName, c.getSymbolAtLocation
+Z-SERVICES	c.getExternalModuleFileFromDeclaration	checker.go:15223-15241	c24_external_modules	EmitResolver.GetExternalModuleFileFromDeclaration
+Z-SERVICES	c.tryFindAmbientModule	checker.go:15627-15637	c24_external_modules	c.TryFindAmbientModule
+Z-SERVICES	c.resolveExternalModuleSymbol	checker.go:15650-15658	c24_external_modules	EmitResolver.isAliasResolvedToValue, c.ForEachExportAndPropertyOfModule, c.GetExportsAndPropertiesOfModule, c.ResolveExternalModuleSymbol, c.TryGetMemberInModuleExportsAndProperties
+Z-SERVICES	c.resolveEntityName	checker.go:15866-15920	c25_entity_names	EmitResolver.GetTypeReferenceSerializationKind, c.GetConstantValue, c.GetExportSpecifierLocalTargetSymbol, c.GetShorthandAssignmentValueSymbol, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getFullyQualifiedName	checker.go:16007-16012	c25_entity_names	c.GetFullyQualifiedName
+Z-SERVICES	c.getExportsOfSymbol	checker.go:16014-16022	c26_exports_late_binding	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getMembersOfSymbol	checker.go:16218-16223	c26_exports_late_binding	EmitResolver.CreateLateBoundIndexSignatures, c.GetSymbolsOfParameterPropertyDeclaration, c.getSymbolsInScope
+Z-SERVICES	c.getExportsOfModule	checker.go:16225-16233	c26_exports_late_binding	EmitResolver.IsImportRequiredByAugmentation, c.ForEachExportAndPropertyOfModule, c.GetExportsOfModule, c.TryGetMemberInModuleExports, c.getExportsOfModuleAsArray
+Z-SERVICES	c.resolveAlias	checker.go:16360-16385	c27_resolve_alias	EmitResolver.GetTypeReferenceSerializationKind, EmitResolver.isAliasResolvedToValue, c.GetAliasedSymbol
+Z-SERVICES	c.getSymbolFlags	checker.go:16457-16459	c27_resolve_alias	EmitResolver.IsReferencedAliasDeclaration, c.GetSymbolFlags
+Z-SERVICES	c.getSymbolFlagsEx	checker.go:16461-16489	c27_resolve_alias	EmitResolver.isAliasResolvedToValue
+Z-SERVICES	c.getDeclarationOfAliasSymbol	checker.go:16491-16493	c27_resolve_alias	EmitResolver.GetReferencedImportDeclaration
+Z-SERVICES	c.getTypeOfSymbol	checker.go:16587-16616	c28_types_of_symbols	EmitResolver.CreateLateBoundIndexSignatures, EmitResolver.CreateLiteralConstValue, EmitResolver.GetPropertiesOfContainerFunction, EmitResolver.GetTypeReferenceSerializationKind, EmitResolver.IsLiteralConstDeclaration, EmitResolver.IsThisPropertyAssignmentDeclarationRedundant, EmitResolver.requiresAddingImplicitUndefined, c.ForEachExportAndPropertyOfModule, c.GetExportsAndPropertiesOfModule, c.GetTypeOfSymbol, c.TryGetMemberInModuleExportsAndProperties, c.getTypeOfNode
+Z-SERVICES	c.getTypeForVariableLikeDeclaration	checker.go:16746-16889	c28_types_of_symbols	c.getTypeOfNode
+Z-SERVICES	c.getBaseConstructorTypeOfClass	checker.go:17051-17101	c28_types_of_symbols	c.GetBaseConstructorTypeOfClass
+Z-SERVICES	c.isFunctionType	checker.go:17103-17105	c28_types_of_symbols	EmitResolver.GetTypeReferenceSerializationKind
+Z-SERVICES	c.isConstructorType	checker.go:17107-17116	c28_types_of_symbols	EmitResolver.GetTypeReferenceSerializationKind
+Z-SERVICES	c.getConstraintOfTypeParameter	checker.go:17153-17158	c29_constraints	c.GetConstraintOfTypeParameter, c.getTypeArgumentConstraint, c.getTypeParameterConstraintForPositionAcrossSignatures
+Z-SERVICES	c.getTypeParametersForTypeReferenceOrImport	checker.go:17281-17290	c29_constraints	c.getTypeArgumentConstraint
+Z-SERVICES	c.getDeclaredTypeOfClassOrInterface	checker.go:17413-17441	c29_constraints	c.getTypeOfNode
+Z-SERVICES	c.checkRightHandSideOfForOf	checker.go:17788-17791	c31_binding_patterns_widening	c.getTypeOfAssignmentPattern
+Z-SERVICES	c.getWidenedType	checker.go:18469-18471	c31_binding_patterns_widening	c.GetWidenedType, c.isValidPropertyAccess
+Z-SERVICES	c.getCombinedModifierFlagsCached	checker.go:18851-18859	c31_binding_patterns_widening	EmitResolver.determineIfDeclarationIsVisible
+Z-SERVICES	c.getPropertiesOfType	checker.go:18960-18966	c33_members_base_types_signatures	EmitResolver.GetPropertiesOfContainerFunction, c.GetExportsAndPropertiesOfModule, c.GetPropertiesOfType, c.getAugmentedPropertiesOfType
+Z-SERVICES	c.getPropertyOfType	checker.go:19001-19003	c33_members_base_types_signatures	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant, c.GetPropertyOfType, c.GetPropertySymbolOfDestructuringAssignment, c.GetPropertySymbolsFromContextualType, c.TryGetMemberInModuleExportsAndProperties, c.getImmediateRootSymbols, c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression, c.isValidPropertyAccessWithType
+Z-SERVICES	c.getTypeOfPropertyOfType	checker.go:19065-19071	c33_members_base_types_signatures	c.GetTypeOfPropertyOfType, c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	c.getSignaturesOfType	checker.go:19073-19075	c33_members_base_types_signatures	c.GetCallSignatures, c.GetConstructSignatures, c.GetSignaturesOfType, c.getAugmentedPropertiesOfType, c.getTypeArgumentConstraint, c.getUninstantiatedSignatures
+Z-SERVICES	c.getIndexInfosOfType	checker.go:19088-19090	c33_members_base_types_signatures	EmitResolver.CreateLateBoundIndexSignatures, c.GetIndexInfosOfType, c.getApplicableIndexInfos, c.getApplicableIndexSymbol
+Z-SERVICES	c.getIndexInfoOfType	checker.go:19101-19103	c33_members_base_types_signatures	c.GetIndexInfoOfType
+Z-SERVICES	c.getIndexTypeOfType	checker.go:19107-19113	c33_members_base_types_signatures	c.GetNumberIndexType, c.GetStringIndexType
+Z-SERVICES	c.getApplicableIndexInfo	checker.go:19122-19124	c33_members_base_types_signatures	c.getApplicableIndexSymbol
+Z-SERVICES	c.isApplicableIndexType	checker.go:19168-19174	c33_members_base_types_signatures	c.getApplicableIndexInfos, c.getApplicableIndexSymbol
+Z-SERVICES	c.resolveStructuredTypeMembers	checker.go:19176-19203	c33_members_base_types_signatures	c.ForEachExportAndPropertyOfModule
+Z-SERVICES	c.getBaseTypes	checker.go:19281-19318	c33_members_base_types_signatures	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant, c.GetBaseTypes, c.getTypeOfNode
+Z-SERVICES	c.getTypeWithThisArgument	checker.go:19687-19710	c33_members_base_types_signatures	c.getTypeOfNode
+Z-SERVICES	c.getIndexInfosOfIndexSymbol	checker.go:19748-19832	c33_members_base_types_signatures	EmitResolver.CreateLateBoundIndexSignatures
+Z-SERVICES	c.getIndexSymbol	checker.go:19916-19918	c33_members_base_types_signatures	EmitResolver.CreateLateBoundIndexSignatures
+Z-SERVICES	c.getSignaturesOfSymbol	checker.go:19920-19948	c33_members_base_types_signatures	EmitResolver.IsImplementationOfOverload
+Z-SERVICES	c.getSignatureFromDeclaration	checker.go:19950-20024	c33_members_base_types_signatures	c.GetSignatureFromDeclaration, c.getSymbolAtLocation
+Z-SERVICES	c.hasLateBindableName	checker.go:20062-20065	c33_members_base_types_signatures	EmitResolver.CreateLateBoundIndexSignatures
+Z-SERVICES	c.getReturnTypeOfSignature	checker.go:20115-20163	c34_return_types	c.GetReturnTypeOfSignature
+Z-SERVICES	c.getSignatureOfFullSignatureType	checker.go:20186-20191	c34_return_types	EmitResolver.IsImplementationOfOverload
+Z-SERVICES	c.createUnionOrIntersectionProperty	checker.go:21566-21773	c36_properties_apparent_types	c.GetAllPossiblePropertiesOfTypes
+Z-SERVICES	c.getApparentType	checker.go:21843-21876	c36_properties_apparent_types	c.GetApparentType, c.getAugmentedPropertiesOfType
+Z-SERVICES	c.getReducedApparentType	checker.go:21974-21980	c36_properties_apparent_types	c.ForEachExportAndPropertyOfModule
+Z-SERVICES	c.getTypeArguments	checker.go:22007-22045	c36_properties_apparent_types	c.GetFirstTypeArgumentFromKnownType, c.GetTypeArguments, c.getThisTypeArgument
+Z-SERVICES	c.getEffectiveTypeArguments	checker.go:22047-22049	c36_properties_apparent_types	c.getTypeArgumentConstraint
+Z-SERVICES	c.getMinTypeArgumentCount	checker.go:22052-22060	c36_properties_apparent_types	c.GetMinTypeArgumentCount
+Z-SERVICES	c.fillMissingTypeArguments	checker.go:22068-22098	c36_properties_apparent_types	c.FillMissingTypeArguments
+Z-SERVICES	c.getDefaultFromTypeParameter	checker.go:22110-22119	c36_properties_apparent_types	c.GetDefaultFromTypeParameter
+Z-SERVICES	c.getNamedMembers	checker.go:22163-22188	c36_properties_apparent_types	c.getAugmentedPropertiesOfType
+Z-SERVICES	c.isNamedMember	checker.go:22201-22203	c36_properties_apparent_types	c.ForEachExportAndPropertyOfModule
+Z-SERVICES	c.instantiateType	checker.go:22214-22216	c37_instantiation	c.getTypeArgumentConstraint
+Z-SERVICES	c.getTypeFromTypeNode	checker.go:22921-22923	c38_type_nodes_references	EmitResolver.declaredParameterTypeContainsUndefined, c.GetTypeFromTypeNode, c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression, c.getTypeOfNode, c.isValidPropertyAccess
+Z-SERVICES	c.getTypeFromThisTypeNode	checker.go:23014-23020	c38_type_nodes_references	c.getSymbolAtLocation
+Z-SERVICES	c.getUnresolvedSymbolForEntityName	checker.go:23216-23251	c38_type_nodes_references	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.isArrayType	checker.go:23595-23597	c38_type_nodes_references	EmitResolver.GetTypeReferenceSerializationKind, c.IsArrayType, c.shouldTreatPropertiesOfExternalModuleAsExports
+Z-SERVICES	isTupleType	checker.go:23603-23605	c38_type_nodes_references	EmitResolver.GetTypeReferenceSerializationKind, IsTupleType, c.IsLibTypeForHoverVerbosity, c.shouldTreatPropertiesOfExternalModuleAsExports
+Z-SERVICES	c.getElementTypeOfArrayType	checker.go:23627-23632	c38_type_nodes_references	c.GetElementTypeOfArrayType
+Z-SERVICES	c.isArrayLikeType	checker.go:23634-23638	c38_type_nodes_references	c.IsArrayLikeType
+Z-SERVICES	c.getDeclaredTypeOfSymbol	checker.go:23784-23790	c38_type_nodes_references	EmitResolver.GetTypeReferenceSerializationKind, EmitResolver.IsThisPropertyAssignmentDeclarationRedundant, c.GetDeclaredTypeOfSymbol, c.getSymbolOfNameOrPropertyAccessExpression, c.getTypeOfNode
+Z-SERVICES	c.getLocalTypeParametersOfClassOrInterfaceOrTypeAlias	checker.go:23929-23931	c39_declared_types_enums	c.GetLocalTypeParametersOfClassOrInterfaceOrTypeAlias
+Z-SERVICES	c.getEnumMemberValue	checker.go:24035-24038	c39_declared_types_enums	c.GetConstantValue
+Z-SERVICES	c.computeEnumMemberValues	checker.go:24061-24079	c39_declared_types_enums	EmitResolver.GetEnumMemberValue
+Z-SERVICES	c.getTrueTypeFromConditionalType	checker.go:24662-24668	c40_type_nodes_conditional_tuples	c.GetTrueTypeOfConditionalType
+Z-SERVICES	c.getFalseTypeFromConditionalType	checker.go:24670-24676	c40_type_nodes_conditional_tuples	c.GetFalseTypeOfConditionalType
+Z-SERVICES	c.getGlobalImportMetaExpressionType	checker.go:24805-24818	c40_type_nodes_conditional_tuples	c.getSymbolAtLocation
+Z-SERVICES	c.getRegularTypeOfLiteralType	checker.go:25396-25408	c42_literal_types	c.getRegularTypeOfExpression
+Z-SERVICES	isFreshLiteralType	checker.go:25424-25426	c42_literal_types	EmitResolver.IsLiteralConstDeclaration
+Z-SERVICES	c.getStringLiteralType	checker.go:25428-25435	c42_literal_types	c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	isLiteralType	checker.go:25516-25527	c42_literal_types	c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	c.getBaseTypeOfLiteralType	checker.go:25557-25573	c42_literal_types	c.GetBaseTypeOfLiteralType
+Z-SERVICES	c.getWidenedLiteralType	checker.go:25610-25626	c42_literal_types	c.GetWidenedLiteralType
+Z-SERVICES	c.mapType	checker.go:25684-25686	c42_literal_types	c.getThisTypeFromContextualType
+Z-SERVICES	c.getUnionType	checker.go:25740-25742	c43_unions_intersections	c.GetAllPossiblePropertiesOfTypes, c.GetUnionType, c.getTypeParameterConstraintForPositionAcrossSignatures
+Z-SERVICES	c.getUnionTypeEx	checker.go:25751-25774	c43_unions_intersections	c.GetUnionTypeEx
+Z-SERVICES	c.getIntersectionType	checker.go:26175-26177	c43_unions_intersections	c.getTypeArgumentConstraint
+Z-SERVICES	c.isErrorType	checker.go:26761-26765	c43_unions_intersections	EmitResolver.GetTypeReferenceSerializationKind, EmitResolver.declaredParameterTypeContainsUndefined, c.getTypeOfNode
+Z-SERVICES	c.getIndexType	checker.go:26803-26805	c44_index_indexed_access	c.GetTypeParameterAtPosition
+Z-SERVICES	c.getLiteralTypeFromPropertyName	checker.go:26892-26910	c44_index_indexed_access	c.IsTypeInvalidDueToUnionDiscriminant, c.getIndexSignaturesAtLocation, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	c.getBaseConstraintOfType	checker.go:27559-27568	c45_base_constraints_normalization	c.GetBaseConstraintOfType, c.GetTypeParameterAtPosition
+Z-SERVICES	c.isTypeAssignableToKind	checker.go:27764-27766	c45_base_constraints_normalization	EmitResolver.GetTypeReferenceSerializationKind
+Z-SERVICES	isConstEnumSymbol	checker.go:27791-27793	c45_base_constraints_normalization	isConstEnumOrConstEnumOnlyModule
+Z-SERVICES	c.containsUndefinedType	checker.go:27977-27982	c45_base_constraints_normalization	EmitResolver.declaredParameterTypeContainsUndefined
+Z-SERVICES	c.typeHasCallOrConstructSignatures	checker.go:27984-27986	c45_base_constraints_normalization	c.TypeHasCallOrConstructSignatures
+Z-SERVICES	c.removeOptionalTypeMarker	checker.go:29198-29203	c47_promised_mapped_template	c.GetNonOptionalType
+Z-SERVICES	c.removeMissingOrUndefinedType	checker.go:29222-29227	c47_promised_mapped_template	c.RemoveMissingOrUndefinedType
+Z-SERVICES	c.getContextualType	checker.go:29466-29533	c48_contextual_types	c.GetContextualType
+Z-SERVICES	c.getContextualTypeForArgumentAtIndex	checker.go:29895-29922	c48_contextual_types	c.GetContextualTypeForArgumentAtIndex
+Z-SERVICES	c.getContextualTypeForObjectLiteralElement	checker.go:30043-30082	c48_contextual_types	c.GetContextualTypeForObjectLiteralElement
+Z-SERVICES	c.getContextualTypeForElementExpression	checker.go:30095-30142	c48_contextual_types	c.GetContextualTypeForArrayLiteralAtPosition
+Z-SERVICES	c.getTypeOfPropertyOfContextualType	checker.go:30674-30676	c50_contextual_properties_inference_context	c.GetTypeOfPropertyOfContextualType
+Z-SERVICES	c.getApparentTypeOfContextualType	checker.go:30809-30834	c50_contextual_properties_inference_context	c.getThisTypeOfObjectLiteralFromContextualType, c.isThisPropertyAndThisTyped
+Z-SERVICES	c.isContextSensitive	checker.go:31020-31052	c50_contextual_properties_inference_context	c.IsContextSensitive
+Z-SERVICES	c.tryGetElementAccessExpressionName	flow.go:1743-1751	flow.go	EmitResolver.getReferenceResolver
+Z-SERVICES	c.getSymbolHasInstanceMethodOfObjectType	flow.go:2093-2105	flow.go	c.getSymbolAtLocation
+Z-SERVICES	nodeLinkStore.Get	links.go:14-16	links.go	c.GetConstantValue, c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	symbolArenaLinkStore.Get	links.go:33-39	links.go	c.getApplicableIndexSymbol, c.getImmediateRootSymbols, c.tryGetTarget, runWithoutResolvedSignatureCaching
+Z-SERVICES	symbolArenaLinkStore.Has	links.go:41-43	links.go	c.GetNameTypeOfSymbol, c.tryGetTarget
+Z-SERVICES	symbolArenaLinkStore.TryGet	links.go:45-50	links.go	c.GetMappedTypeSymbolOfProperty, c.GetNameTypeOfSymbol
+Z-SERVICES	newTypeMapper	mapper.go:40-45	mapper.go	c.getTypeArgumentConstraint
+Z-SERVICES	NodeBuilder.IndexInfoToIndexSignatureDeclaration	nodebuilder.go:111-114	nodebuilder.go	EmitResolver.CreateLateBoundIndexSignatures
+Z-SERVICES	NodeBuilder.SerializeReturnTypeForSignature	nodebuilder.go:117-124	nodebuilder.go	EmitResolver.CreateReturnTypeOfSignatureDeclaration
+Z-SERVICES	NodeBuilder.SerializeTypeParametersForSignature	nodebuilder.go:126-131	nodebuilder.go	EmitResolver.CreateTypeParametersOfSignatureDeclaration
+Z-SERVICES	NodeBuilder.SerializeTypeForDeclaration	nodebuilder.go:134-137	nodebuilder.go	EmitResolver.CreateTypeOfDeclaration
+Z-SERVICES	NodeBuilder.SerializeTypeForExpression	nodebuilder.go:140-143	nodebuilder.go	EmitResolver.CreateTypeOfExpression
+Z-SERVICES	NodeBuilder.SymbolToExpression	nodebuilder.go:231-234	nodebuilder.go	EmitResolver.CreateLiteralConstValue
+Z-SERVICES	NodeBuilder.TypeToTypeNode	nodebuilder.go:267-270	nodebuilder.go	EmitResolver.CreateLateBoundIndexSignatures
+Z-SERVICES	NodeBuilder.TryJSTypeNodeToTypeNode	nodebuilder.go:272-275	nodebuilder.go	EmitResolver.TryJSTypeNodeToTypeNode
+Z-SERVICES	NewNodeBuilder	nodebuilder.go:279-281	nodebuilder.go	EmitResolver.CreateLateBoundIndexSignatures, EmitResolver.CreateLiteralConstValue, EmitResolver.CreateReturnTypeOfSignatureDeclaration, EmitResolver.CreateTypeOfDeclaration, EmitResolver.CreateTypeOfExpression, EmitResolver.CreateTypeParametersOfSignatureDeclaration, EmitResolver.TryJSTypeNodeToTypeNode
+Z-SERVICES	c.getExpandedParameters	nodebuilderimpl.go:1912-1998	nodebuilderimpl.go	c.GetExpandedParameters
+Z-SERVICES	c.typePredicateToString	printer.go:229-231	printer.go	c.TypePredicateToString
+Z-SERVICES	c.isTypeIdenticalTo	relater.go:117-119	relater.go	EmitResolver.IsThisPropertyAssignmentDeclarationRedundant
+Z-SERVICES	c.isTypeAssignableTo	relater.go:149-151	relater.go	c.IsTypeAssignableTo, c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	c.hasEffectiveRestParameter	relater.go:1782-1788	relater.go	c.HasEffectiveRestParameter
+Z-SERVICES	c.getTypeAtPosition	relater.go:1790-1796	relater.go	c.GetTypeAtPosition, c.GetTypeParameterAtPosition
+Z-SERVICES	c.getTypePredicateOfSignature	relater.go:2049-2081	relater.go	c.GetTypePredicateOfSignature
+Z-SERVICES	c.IsSymbolAccessible	symbolaccessibility.go:839-841	symbolaccessibility.go	EmitResolver.isSymbolAccessible
+Z-SERVICES	Type.AsLiteralType	types.go:706-706	types.go	EmitResolver.CreateLiteralConstValue
+Z-SERVICES	Type.AsIntersectionType	types.go:717-717	types.go	c.getThisTypeFromContextualType
+Z-SERVICES	Type.AsIndexType	types.go:718-718	types.go	c.GetTypeParameterAtPosition
+Z-SERVICES	Type.AsObjectType	types.go:729-729	types.go	c.getSymbolAtLocation
+Z-SERVICES	Type.AsTypeReference	types.go:730-730	types.go	c.getThisTypeArgument
+Z-SERVICES	Type.AsInterfaceType	types.go:731-731	types.go	c.getTypeOfNode
+Z-SERVICES	Type.Distributed	types.go:736-744	types.go	c.getIndexSignaturesAtLocation
+Z-SERVICES	Type.Target	types.go:748-762	types.go	c.GetFirstTypeArgumentFromKnownType, c.IsLibTypeForHoverVerbosity
+Z-SERVICES	Type.Types	types.go:776-784	types.go	c.GetPropertySymbolsFromContextualType, c.getImmediateRootSymbols
+Z-SERVICES	Type.Symbol	types.go:794-796	types.go	c.IsLibTypeForHoverVerbosity
+Z-SERVICES	Type.IsIndex	types.go:846-848	types.go	c.GetTypeParameterAtPosition
+Z-SERVICES	isTypeReferenceIdentifier	utilities.go:162-167	utilities.go	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	canHaveLocals	utilities.go:184-196	utilities.go	c.getSymbolsInScope
+Z-SERVICES	IsTypeAny	utilities.go:287-289	utilities.go	c.isThisPropertyAndThisTyped, c.isValidPropertyAccessWithType
+Z-SERVICES	isOptionalDeclaration	utilities.go:299-301	utilities.go	EmitResolver.requiresAddingImplicitUndefined
+Z-SERVICES	c.isOptionalParameter	utilities.go:303-328	utilities.go	EmitResolver.isOptionalParameter
+Z-SERVICES	createSymbolTable	utilities.go:351-360	utilities.go	c.getAugmentedPropertiesOfType
+Z-SERVICES	getDeclarationModifierFlagsFromSymbol	utilities.go:713-715	utilities.go	GetDeclarationModifierFlagsFromSymbol
+Z-SERVICES	isDeclarationReadonly	utilities.go:828-830	utilities.go	EmitResolver.IsLiteralConstDeclaration
+Z-SERVICES	isTypeUsableAsPropertyName	utilities.go:879-881	utilities.go	IsTypeUsableAsPropertyName, c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	getPropertyNameFromType	utilities.go:886-896	utilities.go	GetPropertyNameFromType, c.IsTypeInvalidDueToUnionDiscriminant
+Z-SERVICES	isThisTypeParameter	utilities.go:1013-1015	utilities.go	c.GetTypeParameterAtPosition
+Z-SERVICES	isInRightSideOfImportOrExportAssignment	utilities.go:1107-1114	utilities.go	c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression, c.getTypeOfNode
+Z-SERVICES	isJsxIntrinsicTagName	utilities.go:1116-1118	utilities.go	c.getSymbolAtLocation, c.getSymbolOfNameOrPropertyAccessExpression, c.getUninstantiatedSignatures
+Z-SERVICES	getContainingObjectLiteral	utilities.go:1120-1129	utilities.go	c.isThisPropertyAndThisTyped
+Z-SERVICES	isImportTypeQualifierPart	utilities.go:1131-1143	utilities.go	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference	utilities.go:1145-1152	utilities.go	c.getSymbolOfNameOrPropertyAccessExpression
+Z-SERVICES	pseudoBigIntToString	utilities.go:1185-1187	utilities.go	EmitResolver.CreateLiteralConstValue
+Z-SERVICES	containsNonMissingUndefinedType	utilities.go:1593-1601	utilities.go	EmitResolver.requiresAddingImplicitUndefined
+Z-SERVICES	getAnyImportSyntax	utilities.go:1603-1618	utilities.go	EmitResolver.hasVisibleDeclarations
+Z-SERVICES	isReservedMemberName	utilities.go:1623-1625	utilities.go	c.ForEachExportAndPropertyOfModule
+Z-SERVICES	introducesArgumentsExoticObject	utilities.go:1627-1634	utilities.go	c.getSymbolsInScope
+Z-SERVICES	symbolsToArray	utilities.go:1636-1644	utilities.go	c.GetExportsOfModule, c.getExportsOfModuleAsArray, c.getSymbolsInScope
+Z-SERVICES	nodeStartsNewLexicalEnvironment	utilities.go:1710-1717	utilities.go	c.containsArgumentsReference

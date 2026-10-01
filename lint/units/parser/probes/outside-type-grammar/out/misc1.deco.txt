@@ -1,0 +1,395 @@
+A2  "try {} catch (e = 1) {}"
+     bun: Expected ")" but found "=" @16 | Expected "{" but found "1" @18 | Unexpected ) @19
+     tsc check: TS1197@18+1 Catch clause variable cannot have an initializer.
+     tsc emit: "\"use strict\";\ntry { }\ncatch (e = 1) { }\n"
+A1  "try {} catch (e: any = 1) {}"
+     bun: Expected ")" but found "=" @21 | Expected "{" but found "1" @23 | Unexpected ) @24
+     tsc emit: "\"use strict\";\ntry { }\ncatch (e = 1) { }\n"
+AA  "try {} catch (e: unknown) {}"
+     bun: ok "try {} catch (e) {}\n"
+     tsc emit: "\"use strict\";\ntry { }\ncatch (e) { }\n"
+AA  "try {} catch (e: any) {}"
+     bun: ok "try {} catch (e) {}\n"
+     tsc emit: "\"use strict\";\ntry { }\ncatch (e) { }\n"
+AAg "try {} catch (e: string) {}"
+     bun: ok "try {} catch (e) {}\n"
+     tsc check: TS1196@17+6 Catch clause variable type annotation must be 'any' or 'unknown' if specified.
+     tsc emit: "\"use strict\";\ntry { }\ncatch (e) { }\n"
+AA  "try {} catch ({ a }: any) {}"
+     bun: ok "try {} catch ({ a }) {}\n"
+     tsc emit: "\"use strict\";\ntry { }\ncatch ({ a }) { }\n"
+A2  "try {} catch ({ a } = {}) {}"
+     bun: Expected ")" but found "=" @20 | Unexpected ) @24
+     tsc check: TS1197@22+1 Catch clause variable cannot have an initializer.
+     tsc emit: "\"use strict\";\ntry { }\ncatch ({ a } = {}) { }\n"
+A2  "try {} catch ([a] = []) {}"
+     bun: Expected ")" but found "=" @18 | Expected "{" but found "[" @20 | Unexpected ] @21
+     tsc check: TS1197@20+1 Catch clause variable cannot have an initializer.
+     tsc emit: "\"use strict\";\ntry { }\ncatch ([a] = []) { }\n"
+RR  "try {} catch (e!) {}"
+     bun: Expected ")" but found "!" @15 | Expected "{" but found ")" @16 | Unexpected end of file @20
+     tsc parse: TS1005@15+1 ')' expected. ; TS1109@16+1 Expression expected.
+RR  "try {} catch (e!: any) {}"
+     bun: Expected ")" but found "!" @15 | Expected "{" but found ":" @16 | Expected ";" but found ")" @21 | Unexpected end of file @25
+     tsc parse: TS1005@15+1 ')' expected. ; TS1109@16+1 Expression expected. ; TS1434@18+3 Unexpected keyword or identifier. ; TS1128@21+1 Declaration or statement expected.
+RR  "try {} catch (e?) {}"
+     bun: Expected ")" but found "?" @15 | Expected "{" but found ")" @16 | Unexpected end of file @20
+     tsc parse: TS1005@15+1 ')' expected. ; TS1128@16+1 Declaration or statement expected.
+RR  "try {} catch (e, f) {}"
+     bun: Expected ")" but found "," @15 | Expected "{" but found "f" @17 | Unexpected ) @18
+     tsc parse: TS1005@15+1 ')' expected. ; TS1434@17+1 Unexpected keyword or identifier. ; TS1128@18+1 Declaration or statement expected.
+RR  "try {} catch () {}"
+     bun: Expected identifier but found ")" @14 | Expected ")" but found "{" @16 | Expected "{" but found "}" @17 | Unexpected end of file @18
+     tsc parse: TS1003@14+1 Identifier expected.
+RR  "try {} catch (...e) {}"
+     bun: Expected identifier but found "..." @14 | Expected ")" but found "e" @17 | Expected "{" but found ")" @18 | Unexpected end of file @22
+     tsc parse: TS1003@14+3 Identifier expected. ; TS1434@17+1 Unexpected keyword or identifier. ; TS1128@18+1 Declaration or statement expected.
+A2  "let a!;"
+     bun: Expected ":" but found ";" @6 | Unexpected end of file @7
+     tsc check: TS1264@5+1 Declarations with definite assignment assertions must also have type annotations.
+     tsc emit: "\"use strict\";\nlet a;\n"
+AA  "let a!: number;"
+     bun: ok "let a;\n"
+     tsc emit: "\"use strict\";\nlet a;\n"
+A2  "let a! = 1;"
+     bun: Expected ":" but found "=" @7
+     tsc check: TS1263@5+1 Declarations with initializers cannot also have definite assignment assertions.
+     tsc emit: "\"use strict\";\nlet a = 1;\n"
+AAg "let a!: number = 1;"
+     bun: ok "let a = 1;\n"
+     tsc check: TS1263@5+1 Declarations with initializers cannot also have definite assignment assertions.
+     tsc emit: "\"use strict\";\nlet a = 1;\n"
+A2  "var a!;"
+     bun: Expected ":" but found ";" @6 | Unexpected end of file @7
+     tsc check: TS1264@5+1 Declarations with definite assignment assertions must also have type annotations.
+     tsc emit: "\"use strict\";\nvar a;\n"
+AA  "var a!: number;"
+     bun: ok "var a;\n"
+     tsc emit: "\"use strict\";\nvar a;\n"
+AAg "const a!: number = 1;"
+     bun: ok "const a = 1;\n"
+     tsc check: TS1263@7+1 Declarations with initializers cannot also have definite assignment assertions.
+     tsc emit: "\"use strict\";\nconst a = 1;\n"
+A2  "const a!;"
+     bun: Expected ":" but found ";" @8 | Unexpected end of file @9 | The constant "a" must be initialized @6
+     tsc check: TS1155@6+1 'const' declarations must be initialized.
+     tsc emit: "\"use strict\";\nconst a;\n"
+A2  "let a!, b!;"
+     bun: Expected ":" but found "," @6
+     tsc check: TS1264@5+1 Declarations with definite assignment assertions must also have type annotations. ; TS1264@9+1 Declarations with definite assignment assertions must also have type annotations.
+     tsc emit: "\"use strict\";\nlet a, b;\n"
+AA  "let a!: number, b!: string;"
+     bun: ok "let a, b;\n"
+     tsc emit: "\"use strict\";\nlet a, b;\n"
+RR  "let a\n!;"
+     bun: Unexpected ; @7
+     tsc parse: TS1109@7+1 Expression expected.
+RR  "let a\n!: number;"
+     bun: Unexpected : @7
+     tsc parse: TS1109@7+1 Expression expected.
+B  "let { a }!: any = x;"
+     bun: ok "let { a } = x;\n"
+     tsc parse: TS1005@9+1 ',' expected. ; TS1109@10+1 Expression expected.
+B  "let [a]!: any = x;"
+     bun: ok "let [a] = x;\n"
+     tsc parse: TS1005@7+1 ',' expected. ; TS1109@8+1 Expression expected.
+RR  "let a!!: number;"
+     bun: Expected ":" but found "!" @6 | Unexpected : @7
+     tsc parse: TS1005@6+1 ',' expected. ; TS1109@7+1 Expression expected.
+RR  "let a?: number;"
+     bun: Expected ";" but found "?" @5 | Unexpected : @6
+     tsc parse: TS1005@5+1 ',' expected. ; TS1134@6+1 Variable declaration expected.
+B  "for (let a!: number;;) {}"
+     bun: ok "for (let a;; ) {}\n"
+     tsc parse: TS1005@10+1 ',' expected. ; TS1109@11+1 Expression expected. ; TS1128@21+1 Declaration or statement expected.
+RR  "for (let a! of []) {}"
+     bun: Expected ":" but found "of" @12 | Expected ";" but found ")" @17 | Expected ";" but found end of file @21
+     tsc parse: TS1005@10+1 ',' expected. ; TS1011@16+0 An element access expression should take an argument. ; TS1005@17+1 ';' expected.
+B  "for (let a!: any of []) {}"
+     bun: ok "for (let a of []) {}\n"
+     tsc parse: TS1005@10+1 ',' expected. ; TS1109@11+1 Expression expected. ; TS1434@13+3 Unexpected keyword or identifier. ; TS1011@21+0 An element access expression should take an argument. ; TS1005@22+1 ';' expected.
+RR  "for (let a! in {}) {}"
+     bun: Expected ":" but found "in" @12 | Expected ";" but found ")" @17 | Expected ";" but found end of file @21
+     tsc parse: TS1005@10+1 ',' expected. ; TS1109@12+2 Expression expected. ; TS1005@17+1 ';' expected.
+RR  "for (var a!;;) {}"
+     bun: Expected ":" but found ";" @11 | Unexpected ; @12 | Unexpected ) @13
+     tsc parse: TS1005@10+1 ',' expected. ; TS1109@11+1 Expression expected. ; TS1109@12+1 Expression expected. ; TS1128@13+1 Declaration or statement expected.
+AAg "for (const a: number of []) {}"
+     bun: ok "for (const a of []) {}\n"
+     tsc check: TS2483@11+1 The left-hand side of a 'for...of' statement cannot use a type annotation.
+     tsc emit: "\"use strict\";\nfor (const a of []) { }\n"
+AAg "for (let a: number in {}) {}"
+     bun: ok "for (let a in {}) {}\n"
+     tsc check: TS2404@9+1 The left-hand side of a 'for...in' statement cannot use a type annotation.
+     tsc emit: "\"use strict\";\nfor (let a in {}) { }\n"
+A2  "for (let a = 1 of []) {}"
+     bun: for-of loop variables cannot have an initializer @13
+     tsc check: TS1190@9+1 The variable declaration of a 'for...of' statement cannot have an initializer.
+     tsc emit: "\"use strict\";\nfor (let a = 1 of []) { }\n"
+A2  "for (let a: any = 1 of []) {}"
+     bun: for-of loop variables cannot have an initializer @18
+     tsc check: TS1190@9+1 The variable declaration of a 'for...of' statement cannot have an initializer.
+     tsc emit: "\"use strict\";\nfor (let a = 1 of []) { }\n"
+AAg "for (var a = 1 in {}) {}"
+     bun: ok "a = 1;\nfor (a in {}) {}\nvar a;\n"
+     tsc check: TS1189@9+1 The variable declaration of a 'for...in' statement cannot have an initializer.
+     tsc emit: "\"use strict\";\nfor (var a = 1 in {}) { }\n"
+AAg "using a!: any = x;"
+     bun: ok "import { __callDispose as __callDispose_vyva085h, __using as __using_nccbhqtj } from \"bun:wrap\";\nlet __bun_temp_ref_1$ = [];\ntry {\n  var a = __using_nccbhqtj(__bun_temp_ref_1$, x, 0);\n} catch (__bun_temp_ref_2$) {\n  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;\n} finally {\n  __callDispose_vyva085h(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);\n}\n"
+     tsc check: TS1263@7+1 Declarations with initializers cannot also have definite assignment assertions. ; (noise 2318,2304)
+     tsc emit: "\"use strict\";\nusing a = x;\n"
+AAg "declare let a!: number;"
+     bun: ok ""
+     tsc check: TS1255@13+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\n"
+AAg "declare const a!: number;"
+     bun: ok ""
+     tsc check: TS1255@15+1 A definite assignment assertion '!' is not permitted in this context.
+     tsc emit: "\"use strict\";\n"
+AA  "export let a!: number;"
+     bun: ok "export let a;\n"
+     tsc emit: "export let a;\n"
+AA  "namespace N { export let a!: number }"
+     bun: ok "var N;\n((N) => {})(N ||= {});\n"
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n})(N || (N = {}));\n"
+AA  "enum E { A }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AA  "enum E { \"a\" }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"a\"] = 0] = \"a\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"a\"] = 0] = \"a\";\n})(E || (E = {}));\n"
+AA  "enum E { \"a-b\" = 1 }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"a-b\"] = 1] = \"a-b\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"a-b\"] = 1] = \"a-b\";\n})(E || (E = {}));\n"
+A2  "enum E { 1 }"
+     bun: Expected identifier but found "1" @9
+     tsc check: TS2452@9+1 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[1] = 0] = 1;\n})(E || (E = {}));\n"
+A2  "enum E { 1 = 1 }"
+     bun: Expected identifier but found "1" @9
+     tsc check: TS2452@9+1 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[1] = 1] = 1;\n})(E || (E = {}));\n"
+A2  "enum E { 1.5 }"
+     bun: Expected identifier but found "1.5" @9
+     tsc check: TS2452@9+3 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[1.5] = 0] = 1.5;\n})(E || (E = {}));\n"
+A2  "enum E { 0x10 }"
+     bun: Expected identifier but found "0x10" @9
+     tsc check: TS2452@9+4 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[16] = 0] = 16;\n})(E || (E = {}));\n"
+A2  "enum E { 1n }"
+     bun: Expected identifier but found "1n" @9
+     tsc check: TS2452@9+2 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[1n] = 0] = 1n;\n})(E || (E = {}));\n"
+RR  "enum E { -1 }"
+     bun: Expected identifier but found "-" @9
+     tsc parse: TS1132@9+1 Enum member expected. ; TS1128@12+1 Declaration or statement expected.
+A1  "enum E { [\"x\"] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 0] = \"x\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n"
+A1  "enum E { ['x'] = 1, B = E.x }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E['x'] = 1] = 'x';\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [`x`] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[`x`] = 1] = `x`;\n})(E || (E = {}));\n"
+A2  "enum E { [`a${1}`] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+9 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[`a${1}`] = 1] = `a${1}`;\n})(E || (E = {}));\n"
+A2  "enum E { [1] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS2452@9+3 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[1] = 1] = 1;\n})(E || (E = {}));\n"
+A2  "enum E { [x] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+3 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[x] = 1] = x;\n})(E || (E = {}));\n"
+A2  "enum E { [x.y] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+5 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[x.y] = 1] = x.y;\n})(E || (E = {}));\n"
+A2  "enum E { [\"a\" + \"b\"] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+11 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"a\" + \"b\"] = 1] = \"a\" + \"b\";\n})(E || (E = {}));\n"
+A2  "enum E { #a }"
+     bun: Expected identifier but found "#a" @9
+     tsc check: TS18024@9+2 An enum member cannot be named with a private identifier.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[] = 0] = ;\n})(E || (E = {}));\n"
+RR  "enum E { `a` }"
+     bun: Expected identifier but found "`a`" @9
+     tsc parse: TS1132@9+3 Enum member expected. ; TS1128@13+1 Declaration or statement expected.
+A2  "enum E { A, A }"
+     bun: "A" has already been declared @12
+     tsc check: TS2300@9+1 Duplicate identifier 'A'. ; TS2300@12+1 Duplicate identifier 'A'.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n    E[E[\"A\"] = 1] = \"A\";\n})(E || (E = {}));\n"
+A2  "enum E { \"a\", \"a\" }"
+     bun: "a" has already been declared @14
+     tsc check: TS2300@9+3 Duplicate identifier '"a"'. ; TS2300@14+3 Duplicate identifier '"a"'.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"a\"] = 0] = \"a\";\n    E[E[\"a\"] = 1] = \"a\";\n})(E || (E = {}));\n"
+A2  "enum E { A = 1, 2 }"
+     bun: Expected identifier but found "2" @16
+     tsc check: TS2452@16+1 An enum member cannot have a numeric name.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 1] = \"A\";\n    E[E[2] = 2] = 2;\n})(E || (E = {}));\n"
+AA  "enum E { if }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"if\"] = 0] = \"if\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"if\"] = 0] = \"if\";\n})(E || (E = {}));\n"
+AA  "enum E { if = 1 }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"if\"] = 1] = \"if\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"if\"] = 1] = \"if\";\n})(E || (E = {}));\n"
+AA  "enum E { await }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"await\"] = 0] = \"await\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"await\"] = 0] = \"await\";\n})(E || (E = {}));\n"
+AA  "enum E { yield }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"yield\"] = 0] = \"yield\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"yield\"] = 0] = \"yield\";\n})(E || (E = {}));\n"
+AA  "enum E { this }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"this\"] = 0] = \"this\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"this\"] = 0] = \"this\";\n})(E || (E = {}));\n"
+AA  "enum E { null }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"null\"] = 0] = \"null\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"null\"] = 0] = \"null\";\n})(E || (E = {}));\n"
+AA  "enum E { true }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"true\"] = 0] = \"true\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"true\"] = 0] = \"true\";\n})(E || (E = {}));\n"
+AA  "enum E { default }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"default\"] = 0] = \"default\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"default\"] = 0] = \"default\";\n})(E || (E = {}));\n"
+AA  "enum E { class }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"class\"] = 0] = \"class\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"class\"] = 0] = \"class\";\n})(E || (E = {}));\n"
+A2  "enum E { A = this }"
+     bun: Cannot use "this" here @13
+     tsc check: TS2332@13+4 'this' cannot be referenced in current location.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = this] = \"A\";\n})(E || (E = {}));\n"
+A2  "enum E { A = super.x }"
+     bun: Unexpected "super" @13
+     tsc check: TS2660@13+5 'super' can only be referenced in members of derived classes or object literal expressions.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = super.x] = \"A\";\n})(E || (E = {}));\n"
+RR  "enum E { A,, B }"
+     bun: Expected identifier but found "," @11
+     tsc parse: TS1132@11+1 Enum member expected.
+RR  "enum E { , }"
+     bun: Expected identifier but found "," @9
+     tsc parse: TS1132@9+1 Enum member expected.
+B  "enum E { A; B }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n  E[E[\"B\"] = 1] = \"B\";\n})(E ||= {});\n"
+     tsc parse: TS1357@10+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A B }"
+     bun: Expected "}" but found "B" @11 | Unexpected } @13
+     tsc parse: TS1357@11+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A\nB }"
+     bun: Expected "}" but found "B" @11 | Unexpected } @13
+     tsc parse: TS1357@11+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A = 1 B }"
+     bun: Expected "}" but found "B" @15 | Unexpected } @17
+     tsc parse: TS1357@15+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A: 1 }"
+     bun: Expected "}" but found ":" @10 | Unexpected } @14
+     tsc parse: TS1357@10+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A? }"
+     bun: Expected "}" but found "?" @10 | Unexpected } @12
+     tsc parse: TS1357@10+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { A! }"
+     bun: Expected "}" but found "!" @10 | Unexpected } @12
+     tsc parse: TS1357@10+1 An enum member name must be followed by a ',', '=', or '}'. ; TS1109@12+1 Expression expected.
+RR  "enum E { A() {} }"
+     bun: Expected "}" but found "(" @10 | Unexpected ) @11
+     tsc parse: TS1357@10+1 An enum member name must be followed by a ',', '=', or '}'. ; TS1005@13+1 '=>' expected. ; TS1128@16+1 Declaration or statement expected.
+RR  "enum E { get A() { return 1 } }"
+     bun: Expected "}" but found "A" @13 | Expected "=>" but found "{" @17
+     tsc parse: TS1357@13+1 An enum member name must be followed by a ',', '=', or '}'. ; TS1357@14+1 An enum member name must be followed by a ',', '=', or '}'. ; TS1005@17+1 '=>' expected. ; TS1128@30+1 Declaration or statement expected.
+RR  "enum E { public A }"
+     bun: Expected "}" but found "A" @16 | Unexpected } @18
+     tsc parse: TS1357@16+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { readonly A }"
+     bun: Expected "}" but found "A" @18 | Unexpected } @20
+     tsc parse: TS1357@18+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { static A }"
+     bun: Expected "}" but found "A" @16 | Unexpected } @18
+     tsc parse: TS1357@16+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { @dec A }"
+     bun: Expected identifier but found "@" @9
+     tsc parse: TS1132@9+1 Enum member expected. ; TS1146@13+0 Declaration expected. ; TS1128@16+1 Declaration or statement expected.
+RR  "enum E { ...A }"
+     bun: Expected identifier but found "..." @9
+     tsc parse: TS1132@9+3 Enum member expected.
+RR  "enum E<T> { A }"
+     bun: Expected "{" but found "<" @6 | Expected "}" but found ">" @8
+     tsc parse: TS1005@6+1 '{' expected.
+RR  "enum E extends F { A }"
+     bun: Expected "{" but found "extends" @7 | Expected "}" but found "{" @17 | Unexpected } @21
+     tsc parse: TS1005@7+7 '{' expected. ; TS1434@15+1 Unexpected keyword or identifier.
+RR  "enum { A }"
+     bun: Expected identifier but found "{" @5 | Expected "{" but found "A" @7
+     tsc parse: TS1003@5+1 Identifier expected.
+RR  "enum \"E\" { A }"
+     bun: Expected identifier but found ""E"" @5
+     tsc parse: TS1003@5+3 Identifier expected. ; TS1005@9+1 ';' expected.
+RR  "enum E.F { A }"
+     bun: Expected "{" but found "." @6 | Expected "}" but found "{" @9 | Unexpected } @13
+     tsc parse: TS1005@6+1 '{' expected. ; TS1434@7+1 Unexpected keyword or identifier.
+AA  "enum await { A }"
+     bun: ok "var await;\n((await) => {\n  await[await[\"A\"] = 0] = \"A\";\n})(await ||= {});\n"
+     tsc emit: "\"use strict\";\nvar await;\n(function (await) {\n    await[await[\"A\"] = 0] = \"A\";\n})(await || (await = {}));\n"
+AAg "enum yield { A }"
+     bun: ok "var yield;\n((yield) => {\n  yield[yield[\"A\"] = 0] = \"A\";\n})(yield ||= {});\n"
+     tsc check: TS1212@5+5 Identifier expected. 'yield' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar yield;\n(function (yield) {\n    yield[yield[\"A\"] = 0] = \"A\";\n})(yield || (yield = {}));\n"
+AAg "enum let { A }"
+     bun: ok "var let;\n((let) => {\n  let[let[\"A\"] = 0] = \"A\";\n})(let ||= {});\n"
+     tsc check: TS1212@5+3 Identifier expected. 'let' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar let;\n(function (let) {\n    let[let[\"A\"] = 0] = \"A\";\n})(let || (let = {}));\n"
+AAg "enum static { A }"
+     bun: ok "var static;\n((static) => {\n  static[static[\"A\"] = 0] = \"A\";\n})(static ||= {});\n"
+     tsc check: TS1212@5+6 Identifier expected. 'static' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar static;\n(function (static) {\n    static[static[\"A\"] = 0] = \"A\";\n})(static || (static = {}));\n"
+AA  "enum type { A }"
+     bun: ok "var type;\n((type) => {\n  type[type[\"A\"] = 0] = \"A\";\n})(type ||= {});\n"
+     tsc emit: "\"use strict\";\nvar type;\n(function (type) {\n    type[type[\"A\"] = 0] = \"A\";\n})(type || (type = {}));\n"
+AA  "enum as { A }"
+     bun: ok "var as;\n((as) => {\n  as[as[\"A\"] = 0] = \"A\";\n})(as ||= {});\n"
+     tsc emit: "\"use strict\";\nvar as;\n(function (as) {\n    as[as[\"A\"] = 0] = \"A\";\n})(as || (as = {}));\n"
+AAg "enum any { A }"
+     bun: ok "var any;\n((any) => {\n  any[any[\"A\"] = 0] = \"A\";\n})(any ||= {});\n"
+     tsc check: TS2431@5+3 Enum name cannot be 'any'.
+     tsc emit: "\"use strict\";\nvar any;\n(function (any) {\n    any[any[\"A\"] = 0] = \"A\";\n})(any || (any = {}));\n"
+AAg "enum string { A }"
+     bun: ok "var string;\n((string) => {\n  string[string[\"A\"] = 0] = \"A\";\n})(string ||= {});\n"
+     tsc check: TS2431@5+6 Enum name cannot be 'string'.
+     tsc emit: "\"use strict\";\nvar string;\n(function (string) {\n    string[string[\"A\"] = 0] = \"A\";\n})(string || (string = {}));\n"
+AA  "enum E\n{ A }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AA  "enum\nE { A }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AA  "const enum E { A }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AA  "const\nenum E { A }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AAg "declare enum E { A = x }"
+     bun: ok ""
+     tsc check: TS1066@21+1 In ambient enum declarations member initializer must be constant expression. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "declare const enum E { A }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "export enum E { A }"
+     bun: ok "export var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "export var E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+AA  "export const enum E { A }"
+     bun: ok "export var E;\n((E) => {\n  E[E[\"A\"] = 0] = \"A\";\n})(E ||= {});\n"
+     tsc emit: "export var E;\n(function (E) {\n    E[E[\"A\"] = 0] = \"A\";\n})(E || (E = {}));\n"
+RR  "export default enum E { A }"
+     bun: Unexpected enum @15
+     tsc parse: TS1109@15+4 Expression expected.
+AA  "export declare enum E { A }"
+     bun: ok ""
+     tsc emit: "export {};\n"

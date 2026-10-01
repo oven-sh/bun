@@ -1,0 +1,33 @@
+   Compiling ntc_probe v0.0.0 (/tmp/ntc/probe)
+error: linking with `cc` failed: exit status: 1
+  |
+  = note:  "cc" "-m64" "/tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/rustcNSjRJw/symbols.o" "<55 object files omitted>" "-Wl,--as-needed" "-Wl,-Bstatic" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/tmp/ntc/target/debug/build/bun_collections/2b10a40a3cda467d/out/libbun_collections-2b10a40a3cda467d.rlib" "/tmp/ntc/target/debug/build/rustc-hash/2fe138b38307879b/out/librustc_hash-2fe138b38307879b.rlib" "/tmp/ntc/target/debug/build/smallvec/c08dc44b408a5e8b/out/libsmallvec-c08dc44b408a5e8b.rlib" "/tmp/ntc/target/debug/build/bun_ptr/52963abdecce25fc/out/libbun_ptr-52963abdecce25fc.rlib" "/tmp/ntc/target/debug/build/hashbrown/87f2895156b8b37e/out/libhashbrown-87f2895156b8b37e.rlib" "/tmp/ntc/target/debug/build/bun_core/d9cffd0ad90bb8cb/out/libbun_core-d9cffd0ad90bb8cb.rlib" "/tmp/ntc/target/debug/build/thiserror/14e466340997a63f/out/libthiserror-14e466340997a63f.rlib" "/tmp/ntc/target/debug/build/bun_output_tags/07f9af5f5e855c93/out/libbun_output_tags-07f9af5f5e855c93.rlib" "/tmp/ntc/target/debug/build/itoa/ab8f5991f451663b/out/libitoa-ab8f5991f451663b.rlib" "/tmp/ntc/target/debug/build/strum/3b15a77f1643b2ed/out/libstrum-3b15a77f1643b2ed.rlib" "/tmp/ntc/target/debug/build/bun_simdutf_sys/be05f1fef49b0f09/out/libbun_simdutf_sys-be05f1fef49b0f09.rlib" "/tmp/ntc/target/debug/build/bun_hash/1ecd14b16deb5d42/out/libbun_hash-1ecd14b16deb5d42.rlib" "/tmp/ntc/target/debug/build/bun_highway/7267166d3f018e1c/out/libbun_highway-7267166d3f018e1c.rlib" "/tmp/ntc/target/debug/build/bstr/f14bcd4736992894/out/libbstr-f14bcd4736992894.rlib" "/tmp/ntc/target/debug/build/memchr/645173e3a9f4b28b/out/libmemchr-645173e3a9f4b28b.rlib" "/tmp/ntc/target/debug/build/bytemuck/c95067b1235ca52e/out/libbytemuck-c95067b1235ca52e.rlib" "/tmp/ntc/target/debug/build/bun_alloc/22b50f7d0d0f75db/out/libbun_alloc-22b50f7d0d0f75db.rlib" "/tmp/ntc/target/debug/build/bun_wyhash/2cc0dac9d86a1f9f/out/libbun_wyhash-2cc0dac9d86a1f9f.rlib" "/tmp/ntc/target/debug/build/libc/66c2ee2779187262/out/liblibc-66c2ee2779187262.rlib" "/tmp/ntc/target/debug/build/allocator-api2/c6385194198d6a30/out/liballocator_api2-c6385194198d6a30.rlib" "/tmp/ntc/target/debug/build/bun_mimalloc_sys/a809a7b8cde212e4/out/libbun_mimalloc_sys-a809a7b8cde212e4.rlib" "/tmp/ntc/target/debug/build/bun_opaque/0a78f0bbe997f9aa/out/libbun_opaque-0a78f0bbe997f9aa.rlib" "/tmp/ntc/target/debug/build/const_format/2f86df9bea22ccfa/out/libconst_format-2f86df9bea22ccfa.rlib" "/tmp/ntc/target/debug/build/konst/d996f685ecf7746b/out/libkonst-d996f685ecf7746b.rlib" "/tmp/ntc/target/debug/build/konst_macro_rules/a47710a20b4d8a4a/out/libkonst_macro_rules-a47710a20b4d8a4a.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/rustcNSjRJw/raw-dylibs" "-B<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld" "-fuse-ld=lld" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/ntc_probe-fc6f57dd4c2fbc89" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: rust-lld: error: undefined symbol: mi_heap_new
+          >>> referenced by MimallocArena.rs:102 (/workspace/wt/typecheck/src/bun_alloc/MimallocArena.rs:102)
+          >>>               /tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/ntc_probe-fc6f57dd4c2fbc89.acznpdlxl0wbaiow7zp29pv83.1px8af5.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena>::new)
+          
+          rust-lld: error: undefined symbol: mi_heap_malloc
+          >>> referenced by MimallocArena.rs:560 (/workspace/wt/typecheck/src/bun_alloc/MimallocArena.rs:560)
+          >>>               /tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/ntc_probe-fc6f57dd4c2fbc89.acznpdlxl0wbaiow7zp29pv83.1px8af5.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          rust-lld: error: undefined symbol: mi_heap_malloc_aligned
+          >>> referenced by MimallocArena.rs:558 (/workspace/wt/typecheck/src/bun_alloc/MimallocArena.rs:558)
+          >>>               /tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/ntc_probe-fc6f57dd4c2fbc89.acznpdlxl0wbaiow7zp29pv83.1px8af5.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          rust-lld: error: undefined symbol: mi_malloc_usable_size
+          >>> referenced by MimallocArena.rs:566 (/workspace/wt/typecheck/src/bun_alloc/MimallocArena.rs:566)
+          >>>               /tmp/ntc/target/debug/build/ntc_probe/fc6f57dd4c2fbc89/out/ntc_probe-fc6f57dd4c2fbc89.acznpdlxl0wbaiow7zp29pv83.1px8af5.rcgu.o:(bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned)
+          
+          rust-lld: error: undefined symbol: __bun_crash_handler_out_of_memory
+          >>> referenced by lib.rs:614
+          >>>               bun_alloc-22b50f7d0d0f75db.175da4a85j15tavmcuhr6au5u.00b6hii.rcgu.o:(bun_alloc::out_of_memory) in archive /tmp/ntc/target/debug/build/bun_alloc/22b50f7d0d0f75db/out/libbun_alloc-22b50f7d0d0f75db.rlib
+          
+          rust-lld: error: undefined symbol: mi_heap_destroy
+          >>> referenced by MimallocArena.rs:452
+          >>>               bun_alloc-22b50f7d0d0f75db.5jarmyfv006rnqkjd47a8z1re.00b6hii.rcgu.o:(<bun_alloc::mimalloc_arena::MimallocArena as core::ops::drop::Drop>::drop) in archive /tmp/ntc/target/debug/build/bun_alloc/22b50f7d0d0f75db/out/libbun_alloc-22b50f7d0d0f75db.rlib
+          collect2: error: ld returned 1 exit status
+          
+
+error: could not compile `ntc_probe` (lib test) due to 1 previous error
+rc=101

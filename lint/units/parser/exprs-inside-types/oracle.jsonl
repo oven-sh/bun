@@ -1,0 +1,380 @@
+{"id":"A1","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A2","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nconst k = \"a\";\n"}
+{"id":"A3","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A4","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A5","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A6","parse":[],"gram":["TS1170@47"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A7","parse":[],"gram":["TS1170@41"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A8","parse":[],"gram":["TS1170@49"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A9","parse":[],"gram":["TS1096@42"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A10","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A11","parse":[],"gram":["TS1170@43"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A12","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A13","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A14","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A15","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A16","parse":[],"gram":["TS1170@41"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A17","parse":[],"gram":["TS1170@45"],"sem":["TS2635@48"],"emit":"\"use strict\";\n"}
+{"id":"A18","parse":["TS1005@14 ']' expected.","TS1005@26 ';' expected.","TS1005@31 ';' expected.","TS1131@32 Property or signature expected."],"gram":[],"sem":["TS2304@12","TS2304@30"],"emit":"\"use strict\";\n"}
+{"id":"A19","parse":["TS1005@18 ']' expected.","TS1128@19 Declaration or statement expected.","TS1128@20 Declaration or statement expected.","TS1128@29 Declaration or statement expected."],"gram":[],"sem":["TS2304@12","TS2304@18","TS2693@22"],"emit":"\"use strict\";\nA;\nnumber;\n;\n"}
+{"id":"A20","parse":["TS1011@14 An element access expression should take an argument."],"gram":[],"sem":["TS2304@12"],"emit":"\"use strict\";\n"}
+{"id":"A21","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A22","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A23","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A24","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11","TS2307@19"],"emit":"\"use strict\";\n"}
+{"id":"A25","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"export {};\n"}
+{"id":"A26","parse":[],"gram":["TS1212@28"],"sem":["TS2304@28"],"emit":"\"use strict\";\nfunction* g() {  }\n"}
+{"id":"A28","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A29","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A30","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A31","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A32","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A33","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A34","parse":[],"gram":["TS1170@36"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A35","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A36","parse":[],"gram":["TS1170@11","TS1170@30","TS1170@48"],"sem":["TS2304@16","TS2532@31","TS2339@61"],"emit":"export {};\n"}
+{"id":"A37","parse":[],"gram":["TS1170@39"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A38","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A39","parse":[],"gram":["TS1170@11"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A41","parse":[],"gram":["TS1170@33"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A43","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A44","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A45","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"A46","parse":[],"gram":[],"sem":["TS2304@12","TS2304@40"],"emit":"\"use strict\";\n"}
+{"id":"A47","parse":[],"gram":[],"sem":["TS2304@12"],"emit":"\"use strict\";\n"}
+{"id":"A48","parse":[],"gram":[],"sem":["TS2304@25"],"emit":"\"use strict\";\nlet z = 1;\n"}
+{"id":"A49","parse":[],"gram":[],"sem":["TS2307@20"],"emit":"import { foo } from \"./x\";\nexport let t;\n"}
+{"id":"A50","parse":[],"gram":[],"sem":["TS2307@20"],"emit":"import { foo } from \"./x\";\nexport let t;\n"}
+{"id":"A51","parse":[],"gram":[],"sem":["TS2307@20"],"emit":"import { foo } from \"./x\";\nexport let t;\n"}
+{"id":"A52","parse":[],"gram":[],"sem":["TS2693@12"],"emit":"\"use strict\";\n"}
+{"id":"A53","parse":[],"gram":["TS1170@11"],"sem":["TS2304@12","TS2304@16"],"emit":"\"use strict\";\n"}
+{"id":"A54","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11","TS2304@13","TS2304@16"],"emit":"\"use strict\";\n"}
+{"id":"A55","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A56","parse":[],"gram":["TS1170@11","TS1170@27","TS1170@43","TS1170@59"],"sem":["TS2464@11","TS2464@27","TS2464@43","TS2464@59"],"emit":"\"use strict\";\n"}
+{"id":"A57","parse":[],"gram":["TS1170@11"],"sem":["TS2304@12","TS2304@16"],"emit":"\"use strict\";\n"}
+{"id":"A58","parse":["TS1005@19 ']' expected.","TS1128@25 Declaration or statement expected.","TS1128@26 Declaration or statement expected.","TS1128@35 Declaration or statement expected."],"gram":[],"sem":["TS2304@12","TS2552@19","TS2693@28"],"emit":"\"use strict\";\nsymbol;\nnumber;\n;\n"}
+{"id":"A59","parse":["TS1109@22 Expression expected."],"gram":[],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A60","parse":["TS1005@14 ']' expected.","TS1434@17 Unexpected keyword or identifier.","TS1128@23 Declaration or statement expected.","TS1128@24 Declaration or statement expected.","TS1128@33 Declaration or statement expected."],"gram":[],"sem":["TS2304@12","TS2304@14","TS2693@17","TS2693@26"],"emit":"\"use strict\";\nis;\nstring;\nnumber;\n;\n"}
+{"id":"A61","parse":[],"gram":["TS1170@11"],"sem":["TS2304@12","TS2304@18"],"emit":"\"use strict\";\n"}
+{"id":"A62","parse":[],"gram":["TS1170@11"],"sem":["TS2464@11"],"emit":"\"use strict\";\n"}
+{"id":"A63","parse":[],"gram":["TS1170@11"],"sem":["TS2304@12"],"emit":"\"use strict\";\n"}
+{"id":"A64","parse":["TS1005@27 ',' expected."],"gram":[],"sem":["TS2369@12"],"emit":"\"use strict\";\n"}
+{"id":"A65","parse":[],"gram":["TS1170@11","TS1170@33"],"sem":["TS2304@19","TS2307@48"],"emit":"\"use strict\";\n"}
+{"id":"A66","parse":[],"gram":[],"sem":["TS2304@12","TS2304@27"],"emit":"\"use strict\";\n"}
+{"id":"A67","parse":["TS1131@36 Property or signature expected.","TS1005@49 ';' expected.","TS1128@58 Declaration or statement expected."],"gram":[],"sem":["TS2304@21","TS2304@37","TS2304@47","TS2693@51"],"emit":"\"use strict\";\n-readonly[c];\nnumber;\n;\n"}
+{"id":"A68","parse":["TS1005@28 ';' expected.","TS1005@29 ';' expected.","TS1128@38 Declaration or statement expected."],"gram":[],"sem":["TS2693@31"],"emit":"\"use strict\";\nnumber;\n;\n"}
+{"id":"B1","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B2","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B3","parse":[],"gram":["TS1015@8"],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B4","parse":[],"gram":[],"sem":["TS2371@12","TS2304@22"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B5","parse":[],"gram":[],"sem":["TS2371@12"],"emit":"\"use strict\";\n"}
+{"id":"B6","parse":[],"gram":[],"sem":["TS2371@16","TS2304@24"],"emit":"\"use strict\";\n"}
+{"id":"B7","parse":[],"gram":[],"sem":["TS2371@13"],"emit":"\"use strict\";\n"}
+{"id":"B8","parse":[],"gram":[],"sem":["TS2371@16"],"emit":"\"use strict\";\n"}
+{"id":"B9","parse":[],"gram":["TS1020@12"],"sem":["TS2371@12"],"emit":"\"use strict\";\n"}
+{"id":"B10","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B11","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B12","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B13","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B14","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B15","parse":[],"gram":[],"sem":["TS2371@42"],"emit":"let g;\nexport {};\n"}
+{"id":"B16","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B17","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"let g;\nexport {};\n"}
+{"id":"B18","parse":[],"gram":[],"sem":["TS2371@8","TS2371@15"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B19","parse":[],"gram":["TS1048@11"],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B20","parse":["TS1005@13 ',' expected.","TS1003@15 Identifier expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B21","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B22","parse":["TS1005@19 ',' expected."],"gram":[],"sem":["TS2371@13"],"emit":"\"use strict\";\nfor (let g = null;;) { }\n"}
+{"id":"B23","parse":[],"gram":[],"sem":["TS2371@24"],"emit":"\"use strict\";\nfunction* f() { let g; }\n"}
+{"id":"B24","parse":[],"gram":[],"sem":["TS2371@29"],"emit":"\"use strict\";\nasync function f() { let g; }\n"}
+{"id":"B25","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B26","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B27","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B28","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B29","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B30","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B31","parse":[],"gram":[],"sem":["TS2371@15"],"emit":"\"use strict\";\nfunction f() { return null; }\n"}
+{"id":"B32","parse":[],"gram":[],"sem":["TS2371@43"],"emit":"\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nclass C {\n    p;\n}\n__decorate([\n    dec,\n    __metadata(\"design:type\", Function)\n], C.prototype, \"p\", void 0);\n"}
+{"id":"B33","parse":[],"gram":[],"sem":["TS2371@10","TS2304@25"],"emit":"\"use strict\";\nlet x = y;\n"}
+{"id":"B34","parse":[],"gram":[],"sem":["TS2304@8","TS2371@14"],"emit":"\"use strict\";\nlet x = y;\n"}
+{"id":"B35","parse":[],"gram":[],"sem":["TS2304@0","TS2371@3","TS2304@19"],"emit":"\"use strict\";\nf(x);\n"}
+{"id":"B36","parse":[],"gram":[],"sem":["TS2371@14"],"emit":"\"use strict\";\nlet x = (a) => a;\n"}
+{"id":"B37","parse":[],"gram":[],"sem":["TS2304@8","TS2371@18","TS2304@40"],"emit":"\"use strict\";\nlet x = c ? (a) => a : d;\n"}
+{"id":"B38","parse":[],"gram":[],"sem":["TS2371@12"],"emit":"\"use strict\";\n"}
+{"id":"B39","parse":[],"gram":[],"sem":["TS2371@22"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"B40","parse":["TS1005@14 '=>' expected."],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B41","parse":[],"gram":[],"sem":["TS2371@8","TS2371@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B42","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B43","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B44","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B45","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B46","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B47","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B48","parse":[],"gram":[],"sem":["TS2304@16","TS2371@24"],"emit":"\"use strict\";\nclass K extends B {\n    p;\n}\n"}
+{"id":"B49","parse":[],"gram":[],"sem":["TS2371@14"],"emit":"\"use strict\";\nclass K {\n    p;\n    #x = 1;\n}\n"}
+{"id":"B50","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B51","parse":[],"gram":[],"sem":["TS2371@25"],"emit":"\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"A\"] = 1] = \"A\";\n})(E || (E = {}));\nlet g;\n"}
+{"id":"B52","parse":[],"gram":[],"sem":["TS2307@20","TS2371@35"],"emit":"import { foo } from \"./x\";\nlet g;\nexport { g };\n"}
+{"id":"B53","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\nlet z = 1;\n"}
+{"id":"B54","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\nlet z = 1;\n"}
+{"id":"B55","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g = null, h = 2;\n"}
+{"id":"B56","parse":[],"gram":[],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"B57","parse":[],"gram":[],"sem":["TS2371@30"],"emit":"\"use strict\";\nclass K {\n}\n"}
+{"id":"B58","parse":[],"gram":[],"sem":["TS2371@11"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"B59","parse":[],"gram":[],"sem":["TS2371@19"],"emit":"\"use strict\";\n"}
+{"id":"B60","parse":[],"gram":["TS1101@44"],"sem":["TS2371@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C1","parse":[],"gram":[],"sem":["TS2304@18"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C2","parse":[],"gram":[],"sem":["TS2304@16"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C3","parse":[],"gram":[],"sem":["TS2371@10","TS2304@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C4","parse":[],"gram":[],"sem":["TS2371@9","TS2304@17"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C5","parse":[],"gram":[],"sem":["TS2371@15","TS2304@26"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C6","parse":[],"gram":[],"sem":["TS2842@15","TS2304@20"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C7","parse":[],"gram":[],"sem":["TS2304@24"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C8","parse":[],"gram":[],"sem":["TS2304@21"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C9","parse":[],"gram":[],"sem":["TS2371@10","TS2304@26"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C10","parse":[],"gram":[],"sem":["TS2842@15","TS2842@21","TS2304@26"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C11","parse":[],"gram":[],"sem":["TS2371@8","TS2339@10"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C12","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C13","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C14","parse":["TS1131@10 Property or signature expected.","TS1128@16 Declaration or statement expected.","TS1128@17 Declaration or statement expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g, a = 1;\n;\n"}
+{"id":"C15","parse":[],"gram":[],"sem":["TS2304@9"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C16","parse":["TS1005@16 ')' expected.","TS1005@19 ',' expected.","TS1005@21 ';' expected.","TS1109@28 Expression expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g, T;\nvoid ;\n"}
+{"id":"C17","parse":[],"gram":[],"sem":["TS2842@14","TS2304@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C18","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C19","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C20","parse":[],"gram":[],"sem":["TS2304@9","TS2304@12"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C21","parse":[],"gram":[],"sem":["TS2304@16"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C22","parse":[],"gram":[],"sem":["TS2304@13","TS2304@23"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C23","parse":[],"gram":[],"sem":["TS2304@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C24","parse":[],"gram":[],"sem":["TS2371@10"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C25","parse":["TS1005@21 '=>' expected."],"gram":[],"sem":["TS2371@10"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C26","parse":[],"gram":[],"sem":["TS2842@19","TS2304@28"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C27","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C28","parse":[],"gram":[],"sem":["TS2371@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C29","parse":[],"gram":[],"sem":["TS2371@15","TS2371@42","TS2371@62"],"emit":"\"use strict\";\n"}
+{"id":"C30","parse":[],"gram":[],"sem":["TS2304@16"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C31","parse":[],"gram":[],"sem":["TS2371@10","TS2371@20","TS2304@34"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C32","parse":["TS1131@10 Property or signature expected.","TS1131@13 Property or signature expected.","TS1128@19 Declaration or statement expected.","TS1128@20 Declaration or statement expected.","TS1434@22 Unexpected keyword or identifier.","TS1128@23 Declaration or statement expected.","TS1128@25 Declaration or statement expected.","TS1109@32 Expression expected."],"gram":[],"sem":["TS2304@22"],"emit":"\"use strict\";\nlet g, { a };\nT;\nvoid ;\n"}
+{"id":"C33","parse":[],"gram":[],"sem":["TS2842@14","TS2304@19"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"C34","parse":[],"gram":[],"sem":["TS2371@8","TS2371@9","TS2371@16"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D1","parse":["TS1110@32 Type expected.","TS1146@36 Declaration expected.","TS1434@37 Unexpected keyword or identifier.","TS1128@38 Declaration or statement expected.","TS1128@40 Declaration or statement expected.","TS1109@47 Expression expected."],"gram":[],"sem":["TS2304@37"],"emit":"\"use strict\";\nlet g;\na;\nvoid ;\n"}
+{"id":"D2","parse":["TS1110@32 Type expected.","TS1146@38 Declaration expected.","TS1434@42 Unexpected keyword or identifier.","TS1128@48 Declaration or statement expected.","TS1128@50 Declaration or statement expected.","TS1109@57 Expression expected."],"gram":[],"sem":["TS2693@42"],"emit":"\"use strict\";\nlet g;\na: number;\nvoid ;\n"}
+{"id":"D3","parse":[],"gram":["TS1206@37"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"D4","parse":["TS1110@32 Type expected.","TS1146@44 Declaration expected.","TS1434@45 Unexpected keyword or identifier.","TS1128@46 Declaration or statement expected.","TS1128@48 Declaration or statement expected.","TS1109@55 Expression expected."],"gram":[],"sem":["TS2304@45"],"emit":"\"use strict\";\nlet g;\na;\nvoid ;\n"}
+{"id":"D5","parse":[],"gram":[],"sem":["TS2369@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D6","parse":[],"gram":[],"sem":["TS2369@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D7","parse":["TS1109@40 Expression expected.","TS1005@41 ']' expected.","TS1005@50 ';' expected.","TS1131@51 Property or signature expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"D8","parse":[],"gram":["TS1018@19"],"sem":["TS2369@12"],"emit":"\"use strict\";\n"}
+{"id":"D9","parse":["TS1110@32 Type expected.","TS1146@36 Declaration expected.","TS1128@38 Declaration or statement expected.","TS1109@45 Expression expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nlet g;\nvoid ;\n"}
+{"id":"D10","parse":["TS1110@32 Type expected.","TS1146@60 Declaration expected.","TS1109@63 Expression expected.","TS1005@75 ';' expected.","TS1128@77 Declaration or statement expected.","TS1109@84 Expression expected."],"gram":[],"sem":["TS2304@61","TS2693@65"],"emit":"\"use strict\";\nlet g;\na ?  : number = 1;\nvoid ;\n"}
+{"id":"D11","parse":["TS1110@32 Type expected.","TS1146@36 Declaration expected.","TS1005@41 ';' expected.","TS1434@43 Unexpected keyword or identifier.","TS1128@46 Declaration or statement expected.","TS1128@48 Declaration or statement expected.","TS1109@55 Expression expected."],"gram":[],"sem":["TS2693@43"],"emit":"\"use strict\";\nlet g;\nthis;\nany;\nvoid ;\n"}
+{"id":"D12","parse":["TS1110@32 Type expected.","TS1146@36 Declaration expected.","TS1128@37 Declaration or statement expected.","TS1011@47 An element access expression should take an argument.","TS1005@48 ';' expected.","TS1128@50 Declaration or statement expected.","TS1109@57 Expression expected."],"gram":[],"sem":["TS2693@43"],"emit":"\"use strict\";\nlet g;\na: any[];\nvoid ;\n"}
+{"id":"D13","parse":["TS1110@32 Type expected.","TS1146@36 Declaration expected.","TS1128@42 Declaration or statement expected.","TS1434@44 Unexpected keyword or identifier.","TS1128@47 Declaration or statement expected.","TS1128@49 Declaration or statement expected.","TS1109@56 Expression expected."],"gram":[],"sem":["TS2304@39","TS2693@44"],"emit":"\"use strict\";\nlet g;\n{\n    a;\n}\nany;\nvoid ;\n"}
+{"id":"D14","parse":["TS1110@32 Type expected.","TS1146@45 Declaration expected.","TS1434@46 Unexpected keyword or identifier.","TS1128@47 Declaration or statement expected.","TS1128@49 Declaration or statement expected.","TS1109@56 Expression expected."],"gram":[],"sem":["TS2304@46"],"emit":"\"use strict\";\nlet g;\na;\nvoid ;\n"}
+{"id":"D15","parse":["TS1110@32 Type expected.","TS1146@43 Declaration expected.","TS1434@44 Unexpected keyword or identifier.","TS1128@45 Declaration or statement expected.","TS1128@47 Declaration or statement expected.","TS1109@54 Expression expected."],"gram":[],"sem":["TS2304@44"],"emit":"\"use strict\";\nlet g;\na;\nvoid ;\n"}
+{"id":"D16","parse":["TS1110@32 Type expected.","TS1146@61 Declaration expected.","TS1434@62 Unexpected keyword or identifier.","TS1128@63 Declaration or statement expected.","TS1128@65 Declaration or statement expected.","TS1109@72 Expression expected."],"gram":[],"sem":["TS2304@62"],"emit":"\"use strict\";\nlet g;\na;\nvoid ;\n"}
+{"id":"D17","parse":["TS1110@53 Type expected.","TS1146@65 Declaration expected.","TS1434@66 Unexpected keyword or identifier.","TS1128@67 Declaration or statement expected.","TS1128@69 Declaration or statement expected.","TS1109@76 Expression expected."],"gram":[],"sem":["TS2304@66"],"emit":"\"use strict\";\nasync function f() { let g;  a; void ; }\n"}
+{"id":"D18","parse":[],"gram":["TS1206@36"],"sem":["TS2304@47"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D19","parse":[],"gram":["TS1206@36"],"sem":[],"emit":"\"use strict\";\nclass K {\n    m(a) { }\n}\n"}
+{"id":"D20","parse":[],"gram":["TS1206@44"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"D21","parse":[],"gram":["TS1212@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D22","parse":[],"gram":["TS1212@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D23","parse":[],"gram":[],"sem":["TS2369@8"],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D24","parse":[],"gram":["TS1090@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D25","parse":[],"gram":["TS1090@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D26","parse":[],"gram":["TS1090@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D27","parse":[],"gram":["TS1242@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D28","parse":[],"gram":["TS1090@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D29","parse":[],"gram":["TS1275@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D30","parse":[],"gram":["TS1274@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D31","parse":[],"gram":["TS1274@8"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"D32","parse":["TS1005@14 ')' expected.","TS1005@15 ',' expected.","TS1005@17 ';' expected.","TS1109@24 Expression expected."],"gram":[],"sem":["TS2304@8"],"emit":"\"use strict\";\nlet g, a;\nvoid ;\n"}
+{"id":"E1","parse":[],"gram":["TS1247@23"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E2","parse":[],"gram":["TS1246@26"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E3","parse":["TS1131@11 Property or signature expected.","TS1128@17 Declaration or statement expected."],"gram":[],"sem":["TS2304@11"],"emit":"\"use strict\";\na = 1;\n;\n"}
+{"id":"E4","parse":[],"gram":["TS1247@16"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E5","parse":["TS1131@11 Property or signature expected.","TS1128@31 Declaration or statement expected."],"gram":[],"sem":["TS2304@11"],"emit":"\"use strict\";\na = () => { var x; };\n;\n"}
+{"id":"E6","parse":[],"gram":["TS1247@32"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E7","parse":["TS1131@11 Property or signature expected.","TS1128@24 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@18"],"emit":"\"use strict\";\na = 1, b = 2;\n;\n"}
+{"id":"E8","parse":["TS1131@11 Property or signature expected.","TS1005@17 ';' expected.","TS1128@23 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@17"],"emit":"\"use strict\";\na = 1;\nb = 2;\n;\n"}
+{"id":"E9","parse":["TS1131@11 Property or signature expected.","TS1128@24 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@18"],"emit":"\"use strict\";\na = 1;\nb = 2;\n;\n"}
+{"id":"E10","parse":["TS1131@11 Property or signature expected.","TS1128@35 Declaration or statement expected."],"gram":[],"sem":["TS2364@11","TS2364@20","TS2488@27","TS2304@28"],"emit":"\"use strict\";\n\"a\" = 1;\n2 = 3;\n[k] = 4;\n;\n"}
+{"id":"E11","parse":[],"gram":["TS1247@23"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E12","parse":["TS1131@11 Property or signature expected.","TS1128@43 Declaration or statement expected."],"gram":[],"sem":["TS2304@11"],"emit":"\"use strict\";\na = class {\n    static { var q; }\n};\n;\n"}
+{"id":"E13","parse":["TS1131@11 Property or signature expected.","TS1128@29 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2307@22"],"emit":"\"use strict\";\na = import(\"./x\");\n;\n"}
+{"id":"E14","parse":["TS1131@11 Property or signature expected.","TS1128@20 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@15","TS2304@18"],"emit":"\"use strict\";\na = x, y;\n;\n"}
+{"id":"E15","parse":["TS1005@24 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E16","parse":[],"gram":["TS1247@23"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"E17","parse":[],"gram":["TS1247@56"],"sem":[],"emit":"\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nclass C {\n    p;\n}\n__decorate([\n    dec,\n    __metadata(\"design:type\", Object)\n], C.prototype, \"p\", void 0);\n"}
+{"id":"E18","parse":["TS1131@11 Property or signature expected.","TS1128@21 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@15"],"emit":"\"use strict\";\na = yield;\n;\n"}
+{"id":"E19","parse":["TS1131@11 Property or signature expected.","TS1128@23 Declaration or statement expected."],"gram":[],"sem":["TS2304@11"],"emit":"a = await 1;\n;\nexport {};\n"}
+{"id":"F1","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F2","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F3","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F4","parse":[],"gram":["TS1183@20"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F5","parse":["TS1131@39 Property or signature expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F6","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F7","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F8","parse":[],"gram":["TS1094@15"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F9","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F10","parse":[],"gram":["TS1183@19","TS1308@28"],"sem":[],"emit":"export {};\n"}
+{"id":"F11","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F12","parse":[],"gram":["TS1183@19"],"sem":["TS2307@35"],"emit":"\"use strict\";\n"}
+{"id":"F13","parse":["TS1005@15 ';' expected.","TS1128@28 Declaration or statement expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n{\n    return 1;\n}\n;\n"}
+{"id":"F14","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F15","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F16","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F17","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F18","parse":[],"gram":["TS1183@19","TS1163@21"],"sem":["TS2378@15"],"emit":"\"use strict\";\n"}
+{"id":"F19","parse":[],"gram":["TS1183@19"],"sem":["TS2660@28"],"emit":"\"use strict\";\n"}
+{"id":"F20","parse":[],"gram":["TS1183@19"],"sem":["TS17013@28"],"emit":"\"use strict\";\n"}
+{"id":"F21","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F22","parse":[],"gram":["TS1183@19","TS1101@35"],"sem":["TS2378@15","TS2410@35","TS2304@41"],"emit":"\"use strict\";\n"}
+{"id":"F23","parse":[],"gram":["TS1183@19","TS1232@21"],"sem":["TS2378@15"],"emit":"\"use strict\";\n"}
+{"id":"F24","parse":[],"gram":["TS1183@19","TS1184@21"],"sem":["TS2378@15"],"emit":"\"use strict\";\n"}
+{"id":"F25","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\nconst after = 1;\n"}
+{"id":"F26","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F27","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F28","parse":[],"gram":["TS1183@24"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F29","parse":[],"gram":["TS1183@22","TS1183@44"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F30","parse":[],"gram":["TS1183@19","TS1235@61"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F31","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\nlet z = 1;\n"}
+{"id":"F32","parse":[],"gram":["TS1183@52"],"sem":[],"emit":"\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nclass C {\n    p;\n}\n__decorate([\n    dec,\n    __metadata(\"design:type\", Object)\n], C.prototype, \"p\", void 0);\n"}
+{"id":"F33","parse":[],"gram":["TS1183@19"],"sem":["TS2378@15"],"emit":"\"use strict\";\n"}
+{"id":"F34","parse":[],"gram":["TS1183@19"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F35","parse":[],"gram":["TS1183@19"],"sem":["TS2378@15","TS2304@31"],"emit":"\"use strict\";\n"}
+{"id":"F36","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F37","parse":["TS1005@19 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F38","parse":["TS1131@11 Property or signature expected.","TS1434@17 Unexpected keyword or identifier.","TS1005@25 ';' expected.","TS1128@37 Declaration or statement expected."],"gram":[],"sem":["TS2304@11","TS2304@17","TS2304@21"],"emit":"\"use strict\";\nasync;\nget;\nx();\n{\n    await 1;\n}\n;\n"}
+{"id":"F39","parse":["TS1131@11 Property or signature expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"F40","parse":["TS1131@31 Property or signature expected.","TS1131@32 Property or signature expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"G1","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G2","parse":[],"gram":[],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"G3","parse":["TS1005@24 ')' expected.","TS1005@27 ';' expected.","TS1109@28 Expression expected.","TS1109@30 Expression expected.","TS1005@32 ';' expected."],"gram":[],"sem":["TS2304@22","TS2304@26"],"emit":"\"use strict\";\n+b;\n > ();\n{ }\n"}
+{"id":"G4","parse":[],"gram":[],"sem":["TS17020@21","TS2304@22"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G5","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G6","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G7","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G8","parse":["TS1005@33 '>' expected.","TS1109@42 Expression expected.","TS1109@44 Expression expected.","TS1005@46 ';' expected."],"gram":[],"sem":["TS7014@21"],"emit":"\"use strict\";\nfunction f() { var x; }\n > ();\n{ }\n"}
+{"id":"G9","parse":["TS1005@33 ',' expected."],"gram":[],"sem":["TS2552@27"],"emit":"\"use strict\";\nasync function f() { }\n"}
+{"id":"G10","parse":[],"gram":["TS1110@21","TS1102@28"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G11","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G12","parse":[],"gram":["TS1110@18"],"sem":[],"emit":"\"use strict\";\nclass K {\n}\n"}
+{"id":"G13","parse":[],"gram":["TS1110@22"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"G14","parse":[],"gram":["TS1110@17"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"G15","parse":[],"gram":["TS1110@18"],"sem":[],"emit":"\"use strict\";\nlet g;\n"}
+{"id":"G16","parse":[],"gram":["TS1110@23"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"G17","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nconst h = (x) => x;\n"}
+{"id":"G18","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nconst h = (x) => x;\n"}
+{"id":"G19","parse":["TS1005@22 ',' expected.","TS1109@24 Expression expected.","TS1109@26 Expression expected.","TS1005@28 ';' expected."],"gram":[],"sem":["TS2304@21"],"emit":"\"use strict\";\n++ > ();\n{ }\n"}
+{"id":"G20","parse":["TS1005@25 ',' expected.","TS1109@32 Expression expected.","TS1005@34 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n+\"b\" > ();\n{ }\n"}
+{"id":"G21","parse":["TS1005@26 ',' expected.","TS1109@29 Expression expected.","TS1005@31 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n0 > ();\n{ }\n"}
+{"id":"G22","parse":["TS1005@25 '(' expected.","TS1005@28 '>' expected.","TS1144@30 '{' or ';' expected.","TS1109@32 Expression expected.","TS1005@34 ';' expected."],"gram":[],"sem":["TS2304@25"],"emit":"\"use strict\";\n > ();\n{ }\n"}
+{"id":"G23","parse":[],"gram":["TS1110@45"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G24","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G25","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G26","parse":["TS1005@26 '(' expected.","TS1109@29 Expression expected.","TS1005@31 ';' expected."],"gram":[],"sem":["TS2304@26"],"emit":"\"use strict\";\ny > ();\n{ }\n"}
+{"id":"G27","parse":["TS1005@24 '(' expected.","TS1109@26 Expression expected.","TS1005@28 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n > ();\n{ }\n"}
+{"id":"G28","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G29","parse":["TS1005@24 ',' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G30","parse":["TS1005@24 '(' expected."],"gram":[],"sem":["TS2304@24"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G31","parse":["TS1005@27 ',' expected.","TS1003@36 Identifier expected.","TS1109@50 Expression expected.","TS1109@52 Expression expected.","TS1005@54 ';' expected."],"gram":[],"sem":["TS2304@21"],"emit":"\"use strict\";\nfunction () { await 1; }\n > ();\n{ }\n"}
+{"id":"G32","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G33","parse":["TS1110@35 Type expected."],"gram":[],"sem":["TS2304@9","TS2304@40","TS2693@44"],"emit":"\"use strict\";\n+1 ? U : never;\n"}
+{"id":"G34","parse":["TS1110@17 Type expected.","TS1005@18 '?' expected.","TS1005@19 ';' expected.","TS1128@20 Declaration or statement expected.","TS1128@24 Declaration or statement expected."],"gram":[],"sem":["TS2304@22"],"emit":"\"use strict\";\n1;\nK;\n;\n"}
+{"id":"G35","parse":[],"gram":["TS1110@22"],"sem":[],"emit":"\"use strict\";\nclass K {\n    m() { }\n}\n"}
+{"id":"G36","parse":["TS1110@21 Type expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G37","parse":[],"gram":["TS1212@21"],"sem":["TS2304@21"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G38","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G39","parse":["TS1005@4 ';' expected."],"gram":[],"sem":["TS2304@0","TS2304@2","TS2304@16"],"emit":"\"use strict\";\nf < T;\n+1 > (x);\n"}
+{"id":"G40","parse":[],"gram":[],"sem":["TS2304@25"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G41","parse":["TS1131@23 Property or signature expected.","TS1005@29 ',' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G42","parse":[],"gram":[],"sem":["TS2552@21"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G43","parse":["TS1005@27 '(' expected.","TS1005@32 ')' expected."],"gram":["TS1141@27"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G44","parse":[],"gram":["TS1110@21"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"G45","parse":["TS1003@28 Identifier expected.","TS1109@32 Expression expected.","TS1005@34 ';' expected."],"gram":[],"sem":[],"emit":"\"use strict\";\n+1 > ();\n{ }\n"}
+{"id":"G46","parse":[],"gram":["TS1274@11","TS1110@24"],"sem":[],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"H1","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H2","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H3","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H4","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H5","parse":[],"gram":[],"sem":["TS2307@16","TS2880@33"],"emit":"\"use strict\";\n"}
+{"id":"H6","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H7","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H8","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H9","parse":[],"gram":["TS1464@31"],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H10","parse":[],"gram":[],"sem":["TS2307@23"],"emit":"\"use strict\";\n"}
+{"id":"H11","parse":["TS1005@25 'with' expected.","TS1128@47 Declaration or statement expected.","TS1128@48 Declaration or statement expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\nfoo: {\n    type: \"json\";\n}\n;\n"}
+{"id":"H12","parse":[],"gram":["TS1141@16"],"sem":["TS2304@16"],"emit":"\"use strict\";\n"}
+{"id":"H13","parse":["TS1478@33 Identifier or string literal expected.","TS1005@34 ';' expected.","TS1128@40 Declaration or statement expected.","TS1128@42 Declaration or statement expected.","TS1128@43 Declaration or statement expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n1;\n\"a\";\n;\n"}
+{"id":"H14","parse":["TS1005@49 ')' expected.","TS1128@51 Declaration or statement expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n;\n"}
+{"id":"H15","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H16","parse":["TS1005@45 ',' expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H17","parse":[],"gram":["TS1464@31"],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H18","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H19","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H20","parse":["TS1005@38 ':' expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H21","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H22","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H23","parse":["TS1005@30 ':' expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H24","parse":["TS1005@23 '{' expected."],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H25","parse":[],"gram":[],"sem":["TS2307@16"],"emit":"\"use strict\";\n"}
+{"id":"H26","parse":["TS1005@50 ')' expected.","TS1434@53 Unexpected keyword or identifier.","TS1128@56 Declaration or statement expected."],"gram":[],"sem":["TS2307@16","TS2304@50","TS2693@53"],"emit":"\"use strict\";\nas;\nany;\n;\n"}
+{"id":"H27","parse":[],"gram":["TS1141@16"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"H28","parse":[],"gram":["TS1141@16"],"sem":[],"emit":"\"use strict\";\n"}
+{"id":"I1","parse":[],"gram":[],"sem":["TS2503@20","TS2304@24","TS2304@28"],"emit":"\"use strict\";\n"}
+{"id":"I2","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I3","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I4","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I5","parse":[],"gram":[],"sem":["TS2503@20","TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I6","parse":["TS1109@20 Expression expected.","TS1005@29 ';' expected."],"gram":[],"sem":["TS2304@27"],"emit":"\"use strict\";\ntypeof x;\n{ }\n"}
+{"id":"I7","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I8","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I9","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I10","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I11","parse":["TS1477@21 An instantiation expression cannot be followed by a property access."],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I12","parse":[],"gram":[],"sem":["TS2840@20"],"emit":"\"use strict\";\n"}
+{"id":"I13","parse":["TS1005@22 ',' expected.","TS1005@26 ';' expected."],"gram":[],"sem":["TS2304@20","TS2304@24"],"emit":"\"use strict\";\n | B;\n{ }\n"}
+{"id":"I14","parse":["TS1005@33 ',' expected."],"gram":[],"sem":["TS2499@33"],"emit":"\"use strict\";\n"}
+{"id":"I15","parse":[],"gram":[],"sem":["TS2503@19","TS2304@27"],"emit":"\"use strict\";\nclass C {\n}\n"}
+{"id":"I16","parse":[],"gram":[],"sem":["TS2500@19"],"emit":"\"use strict\";\nclass C {\n}\n"}
+{"id":"I17","parse":["TS1005@21 ',' expected.","TS1005@25 ';' expected."],"gram":[],"sem":["TS2304@19","TS2304@23"],"emit":"\"use strict\";\nclass C {\n}\n | B;\n{ }\n"}
+{"id":"I18","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I19","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I20","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I21","parse":["TS1109@31 Expression expected."],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I22","parse":[],"gram":[],"sem":["TS2503@20","TS2304@27","TS2304@29","TS2304@31","TS2304@36"],"emit":"\"use strict\";\n"}
+{"id":"I23","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I24","parse":["TS1005@30 ',' expected."],"gram":[],"sem":["TS2304@20","TS2304@22","TS2304@26","TS2304@28"],"emit":"\"use strict\";\n > {};\n"}
+{"id":"I25","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I26","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I27","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I28","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"export {};\n"}
+{"id":"I29","parse":["TS1109@20 Expression expected."],"gram":[],"sem":[],"emit":"\"use strict\";\nvoid {};\n"}
+{"id":"I30","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I31","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I32","parse":[],"gram":[],"sem":["TS2304@20","TS2304@22","TS2304@44","TS2304@57","TS2304@59","TS2503@63"],"emit":"\"use strict\";\nclass C extends K {\n}\n"}
+{"id":"I33","parse":[],"gram":[],"sem":["TS2503@20","TS2304@24"],"emit":"\"use strict\";\n"}
+{"id":"I34","parse":["TS1005@26 ',' expected."],"gram":[],"sem":["TS2304@20","TS2304@26"],"emit":"\"use strict\";\n"}
+{"id":"I35","parse":[],"gram":[],"sem":["TS2499@20"],"emit":"\"use strict\";\n"}
+{"id":"I36","parse":["TS1005@22 ',' expected.","TS1005@26 ';' expected."],"gram":[],"sem":["TS2304@20","TS2304@24"],"emit":"\"use strict\";\n & B;\n{ }\n"}
+{"id":"I37","parse":[],"gram":[],"sem":["TS2500@19"],"emit":"\"use strict\";\nclass C {\n}\n"}
+{"id":"I38","parse":[],"gram":[],"sem":["TS2500@19"],"emit":"\"use strict\";\nclass C {\n}\n"}
+{"id":"I39","parse":["TS1109@19 Expression expected.","TS1005@28 ';' expected."],"gram":[],"sem":["TS2304@26"],"emit":"\"use strict\";\nclass C {\n}\ntypeof x;\n{ }\n"}
+{"id":"I40","parse":[],"gram":[],"sem":["TS2503@20","TS2304@33"],"emit":"\"use strict\";\n"}
+{"id":"K1","parse":[],"gram":["TS1183@21"],"sem":["TS2307@30"],"emit":"\"use strict\";\n"}
+{"id":"K2","parse":[],"gram":["TS1183@22"],"sem":["TS2591@24"],"emit":"\"use strict\";\n"}
+{"id":"K3","parse":[],"gram":["TS1245@28"],"sem":["TS2307@41"],"emit":"\"use strict\";\nclass C {\n    m() { import(\"./nope3\"); }\n}\n"}
+{"id":"K4","parse":[],"gram":[],"sem":["TS2371@11","TS2307@22"],"emit":"\"use strict\";\nfunction f() { }\n"}
+{"id":"K5","parse":[],"gram":["TS1254@18"],"sem":["TS2307@25"],"emit":"\"use strict\";\n"}
+{"id":"K6","parse":[],"gram":["TS1254@32"],"sem":["TS2591@32"],"emit":"\"use strict\";\n"}
+{"id":"K7","parse":[],"gram":["TS1039@22"],"sem":["TS2307@29"],"emit":"\"use strict\";\n"}
+{"id":"K8","parse":[],"gram":["TS1039@22"],"sem":["TS2307@29"],"emit":"\"use strict\";\nclass C {\n}\n"}
+{"id":"K9","parse":[],"gram":[],"sem":["TS2371@19"],"emit":"export {};\n"}
+{"id":"K10","parse":[],"gram":[],"sem":["TS2371@19"],"emit":"\"use strict\";\n"}
+{"id":"K11","parse":[],"gram":[],"sem":["TS2371@19"],"emit":"export {};\n"}
+{"id":"K12","parse":[],"gram":[],"sem":["TS2307@20","TS2371@46"],"emit":"export {};\n"}
+{"id":"K13","parse":[],"gram":[],"sem":["TS2307@20","TS2371@38"],"emit":"import { foo } from \"./x\";\nfunction f() { }\n"}
+{"id":"K14","parse":[],"gram":[],"sem":["TS2307@20","TS2371@57"],"emit":"import { foo } from \"./x\";\nclass C {\n}\n"}
+{"id":"K15","parse":[],"gram":["TS1039@49"],"sem":["TS2307@20"],"emit":"class C {\n}\nexport {};\n"}
+{"id":"K16","parse":[],"gram":["TS1254@45"],"sem":["TS2307@20"],"emit":"export {};\n"}

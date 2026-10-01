@@ -1,0 +1,4 @@
+$ rustfmt --edition 2024 --check --config-path rustfmt.toml lint/lib.rs lint/code_frame.rs lint/diagnostic.rs lint/diagnosticwriter.rs lint/program.rs lint/scanner.rs lint/tspath.rs lint/tests.rs
+exit=0
+$ rustfmt --edition 2024 --check --config-path rustfmt.toml ast/lib.rs
+exit=0

@@ -1,0 +1,57 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+access.ts(2,14): error TS2551: Property 'alhpa' does not exist on type '{ alpha: number; beta?: { c: string; } | undefined; }'. Did you mean 'alpha'? [len=5]
+  RELATED access.ts(1,20): message TS2728: 'alpha' is declared here. [len=5]
+access.ts(3,14): error TS2339: Property 'gamma' does not exist on type '{ alpha: number; beta?: { c: string; } | undefined; }'. [len=5]
+access.ts(4,12): error TS18048: 'o.beta' is possibly 'undefined'. [len=6]
+access.ts(5,12): error TS18048: 'u' is possibly 'undefined'. [len=1]
+access.ts(6,12): error TS18047: 'nl' is possibly 'null'. [len=2]
+access.ts(7,12): error TS18046: 'un' is of type 'unknown'. [len=2]
+access.ts(8,23): error TS2339: Property 'x' does not exist on type 'number'. [len=1]
+access.ts(9,12): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type '{ alpha: number; beta?: { c: string; } | undefined; }'. [len=4]
+  CHAIN TS2339: Property '0' does not exist on type '{ alpha: number; beta?: { c: string; } | undefined; }'.
+access.ts(10,12): error TS2552: Cannot find name 'undefinedName'. Did you mean 'undefined'? [len=13]
+access.ts(12,37): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class. [len=4]
+access.ts(12,66): error TS2855: Class field 'prot' defined by the parent class is not accessible in the child class via super. [len=4]
+access.ts(14,3): error TS2341: Property 'priv' is private and only accessible within class 'C'. [len=4]
+access.ts(14,11): error TS2445: Property 'prot' is protected and only accessible within class 'C' and its subclasses. [len=4]
+access.ts(14,19): error TS2540: Cannot assign to 'ro' because it is a read-only property. [len=2]
+access.ts(14,29): error TS2576: Property 'st' does not exist on type 'C'. Did you mean to access the static member 'C.st' instead? [len=2]
+access.ts(14,41): error TS18013: Property '#hash' is not accessible outside class 'C' because it has a private identifier. [len=5]
+access.ts(15,24): error TS2683: 'this' implicitly has type 'any' because it does not have a type annotation. [len=4]
+  RELATED access.ts(15,10): message TS2738: An outer value of 'this' is shadowed by this container. [len=2]
+access.ts(16,12): error TS2304: Cannot find name 'arguments'. [len=9]
+access.ts(17,19): error TS2454: Variable 'late' is used before being assigned. [len=4]
+access.ts(18,16): error TS2540: Cannot assign to 'A' because it is a read-only property. [len=1]
+access.ts(18,25): error TS2339: Property 'B' does not exist on type 'typeof E'. [len=1]
+access.ts(19,39): error TS2339: Property 'w' does not exist on type 'typeof N'. [len=1]
+access.ts(19,42): error TS2631: Cannot assign to 'N' because it is a namespace. [len=1]
+access.ts(21,30): error TS2339: Property 'missing' does not exist on type 'string'. [len=7]
+access.ts(22,13): error TS2339: Property 'x' does not exist on type 'ImportMeta'. [len=1]
+access.ts(23,1): error TS17013: Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor. [len=10]
+SUGGESTION access.ts(2,7): suggestion TS6133: 'p1' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(3,7): suggestion TS6133: 'p2' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(4,7): suggestion TS6133: 'p3' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(5,7): suggestion TS6133: 'p4' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(6,7): suggestion TS6133: 'p5' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(7,7): suggestion TS6133: 'p6' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(8,7): suggestion TS6133: 'p7' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(9,7): suggestion TS6133: 'p8' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(10,7): suggestion TS6133: 'p9' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(12,7): suggestion TS6196: 'D' is declared but never used. [len=1]
+SUGGESTION access.ts(15,10): suggestion TS6133: 'ff' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(16,7): suggestion TS6133: 'q1' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(20,7): suggestion TS6133: 'q2' is declared but its value is never read. [len=2]
+SUGGESTION access.ts(21,7): suggestion TS6133: 'q3' is declared but its value is never read. [len=2]
+AFTER check
+STATE flowInvocationCount=46 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=1
+STATE flowNodeReachable=1 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=138 SymbolCount=133 SignatureCount=13

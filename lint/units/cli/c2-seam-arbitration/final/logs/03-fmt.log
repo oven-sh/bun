@@ -1,0 +1,17 @@
+Diff in /tmp/c2td/ws/lint/vector_tests.rs:119:
+             _ => {}
+         }
+     }
+-    assert_eq!(failed.len(), 0, "{} of {checked}: {:#?}", failed.len(), &failed[..failed.len().min(5)]);
++    assert_eq!(
++        failed.len(),
++        0,
++        "{} of {checked}: {:#?}",
++        failed.len(),
++        &failed[..failed.len().min(5)]
++    );
+     assert_eq!(checked, 256);
+ }
+ 
+fmt-lint-exit=1
+fmt-astlib-exit=0

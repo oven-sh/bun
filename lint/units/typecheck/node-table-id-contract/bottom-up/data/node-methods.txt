@@ -1,0 +1,75 @@
+core    AsNode (ast.go:192) -> none: a NodeId is the node
+core    Pos (ast.go:193) -> Ast::pos (ast/reader.rs)
+core    End (ast.go:194) -> Ast::end (ast/reader.rs)
+core    IterChildren (ast.go:195) -> Ast::iter_children (ast/reader.rs)
+core    Clone (ast.go:207) -> Factory::clone_node (ast/factory.rs)
+core    VisitEachChild (ast.go:208) -> DefInfo::children with VisitTag and Factory::update_node; the NodeVisitor itself is ported with ast/visitor.go
+core    Name (ast.go:209) -> Ast::name (ast_generated.rs, table NAME_SLOT)
+core    Modifiers (ast.go:210) -> Ast::modifiers (ast_generated.rs, table MODIFIERS_SLOT)
+core    FlowNodeData (ast.go:211) -> Ast::has_flow_node_data, Ast::flow_node, Ast::set_flow_node (ast/reader.rs)
+core    DeclarationData (ast.go:212) -> Ast::has_declaration_data, Ast::symbol, Ast::set_symbol (ast/reader.rs)
+core    ExportableData (ast.go:213) -> Ast::has_exportable_data, Ast::local_symbol, Ast::set_local_symbol (ast/reader.rs)
+core    LocalsContainerData (ast.go:214) -> Ast::has_locals_container_data, Ast::locals, Ast::next_container and their setters (ast/reader.rs)
+core    FunctionLikeData (ast.go:215) -> Ast::function_like_data (ast_generated.rs)
+core    ParameterList (ast.go:216) -> Ast::parameter_list (ast/reader.rs)
+core    Parameters (ast.go:217) -> Ast::parameters (ast/reader.rs)
+core    ClassLikeData (ast.go:218) -> Ast::class_like_data (ast_generated.rs)
+core    BodyData (ast.go:219) -> Ast::body_data, Ast::end_flow_node (ast_generated.rs, ast/reader.rs)
+core    SubtreeFacts (ast.go:220) -> not ported: subtree facts serve the transformers
+core    propagateSubtreeFacts (ast.go:221) -> not ported: subtree facts serve the transformers
+core    LiteralLikeData (ast.go:222) -> Ast::literal_like_data (ast_generated.rs)
+core    TemplateLiteralLikeData (ast.go:223) -> Ast::template_literal_like_data (ast_generated.rs)
+core    KindString (ast.go:226) -> Kind::name (kind_generated.rs)
+core    KindValue (ast.go:227) -> Kind as u16
+core    Decorators (ast.go:228) -> Ast::decorators (ast/reader.rs)
+core    AsMutable (ast.go:237) -> none: the setters are methods of FileBuilder; a node of an open store takes Ast::set_slot
+core    MutableNode.SetModifiers (ast.go:238) -> FileBuilder::set_modifiers
+core    Symbol (ast.go:240) -> Ast::symbol (ast/reader.rs)
+core    LocalSymbol (ast.go:248) -> Ast::local_symbol (ast/reader.rs)
+core    Locals (ast.go:256) -> Ast::locals (ast/reader.rs)
+core    Body (ast.go:264) -> Ast::body (ast/reader.rs)
+core    Text (ast.go:272) -> Ast::text (ast/reader.rs): the prototype returns the text slot of a node; MetaProperty and JsxNamespacedName, which build a string, are left to the port
+auto    Expression (ast.go:310) -> Ast::expression: 35 cases, panic becomes a fault
+auto    RawText (ast.go:386) -> Ast::raw_text: 3 cases, panic becomes a fault
+auto    MutableNode.SetExpression (ast.go:398) -> expression_slot, used by FileBuilder::set_expression; a node of an open store through Ast::set_slot
+auto    ArgumentList (ast.go:476) -> Ast::argument_list: 2 cases, panic becomes a fault
+auto    Arguments (ast.go:486) -> Ast::arguments: the nodes of argument_list
+auto    TypeArgumentList (ast.go:494) -> Ast::type_argument_list: 9 cases, panic becomes a fault
+auto    TypeArguments (ast.go:518) -> Ast::type_arguments: the nodes of type_argument_list
+auto    TypeParameterList (ast.go:526) -> Ast::type_parameter_list: 5 cases, panic becomes a fault
+auto    TypeParameters (ast.go:547) -> Ast::type_parameters: the nodes of type_parameter_list
+auto    MemberList (ast.go:555) -> Ast::member_list: 6 cases, panic becomes a fault
+auto    Members (ast.go:573) -> Ast::members: the nodes of member_list
+auto    StatementList (ast.go:581) -> Ast::statement_list: 4 cases, panic becomes a fault
+auto    Statements (ast.go:595) -> Ast::statements: the nodes of statement_list
+auto    CanHaveStatements (ast.go:603) -> Ast::can_have_statements: 1 cases
+core    ModifierFlags (ast.go:612) -> Ast::modifier_flags (ast/reader.rs)
+core    ModifierNodes (ast.go:620) -> Ast::modifier_nodes (ast/reader.rs)
+auto    Type (ast.go:628) -> Ast::type_node: 25 cases
+auto    MutableNode.SetType (ast.go:688) -> type_node_slot, used by FileBuilder::set_type_node; a node of an open store through Ast::set_slot; the FunctionLikeData branch of the default case is in the setter itself
+auto    Initializer (ast.go:750) -> Ast::initializer: 10 cases, panic becomes a fault
+auto    MutableNode.SetInitializer (ast.go:776) -> initializer_slot, used by FileBuilder::set_initializer; a node of an open store through Ast::set_slot
+auto    TagName (ast.go:804) -> Ast::tag_name: 24 cases, panic becomes a fault
+auto    PropertyName (ast.go:858) -> Ast::property_name: 3 cases
+core    PropertyNameOrName (ast.go:870) -> Ast::property_name_or_name (ast/reader.rs)
+core    IsTypeOnly (ast.go:878) -> Ast::is_type_only (ast/reader.rs): one case compares a kind
+auto    CommentList (ast.go:895) -> Ast::comment_list: 22 cases, panic becomes a fault
+auto    Comments (ast.go:945) -> Ast::comments: the nodes of comment_list
+auto    Label (ast.go:953) -> Ast::label: 3 cases, panic becomes a fault
+auto    Attributes (ast.go:965) -> Ast::attributes: 2 cases, panic becomes a fault
+auto    Children (ast.go:975) -> Ast::children: 2 cases, panic becomes a fault
+auto    ModuleSpecifier (ast.go:985) -> Ast::module_specifier: 3 cases, panic becomes a fault
+auto    ImportClause (ast.go:997) -> Ast::import_clause: 2 cases, panic becomes a fault
+auto    Statement (ast.go:1007) -> Ast::statement: 6 cases, panic becomes a fault
+auto    PropertyList (ast.go:1025) -> Ast::property_list: 2 cases, panic becomes a fault
+auto    Properties (ast.go:1035) -> Ast::properties: the nodes of property_list
+auto    ElementList (ast.go:1043) -> Ast::element_list: 5 cases, panic becomes a fault
+auto    Elements (ast.go:1059) -> Ast::elements: the nodes of element_list
+auto    PostfixToken (ast.go:1067) -> Ast::postfix_token: 9 cases
+auto    QuestionToken (ast.go:1091) -> Ast::question_token: 4 cases
+auto    QuestionDotToken (ast.go:1109) -> Ast::question_dot_token: 4 cases, panic becomes a fault
+auto    TypeExpression (ast.go:1123) -> Ast::type_expression: 7 cases, panic becomes a fault
+auto    ClassName (ast.go:1143) -> Ast::class_name: 2 cases, panic becomes a fault
+core    Contains (ast.go:1155) -> Ast::contains (ast/reader.rs)
+core    AsFlowSwitchClauseData (ast.go:1171) -> Ast::as_flow_switch_clause_data (ast_generated.rs)
+core    AsFlowReduceLabelData (ast.go:1175) -> Ast::as_flow_reduce_label_data (ast_generated.rs)

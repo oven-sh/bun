@@ -1,0 +1,221 @@
+file /misc2.js scriptKind=1 variant=1 dts=false textLen=596
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=180 identifiers=55 text=66 reparsedClones=18
+jsDiagnostic [126,138) TS8005 cat=1 "'implements' clauses can only be used in TypeScript files."
+root KindSourceFile [0,596) f=0x10000
+  .Statements: list [0,564) n=9
+    - KindVariableStatement [0,12) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [0,11) f=0x10002
+        .Declarations: list [5,11) n=1
+          - KindVariableDeclaration [5,11) f=0x10000
+            .Initializer: KindNumericLiteral [9,11) f=0x10000 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [5,7) f=0x10000 Text="p"
+    - KindVariableStatement [12,94) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [12,93) f=0x10002
+        .Declarations: list [18,93) n=1
+          - KindVariableDeclaration [18,93) f=0x10000
+            .Initializer: KindObjectLiteralExpression [22,93) f=0x10000 MultiLine
+              .Properties: list [24,91) n=2
+                - KindShorthandPropertyAssignment [24,52) f=0x210000
+                  .Type: KindNumberKeyword [38,44) f=0x410008
+                  .name: KindIdentifier [24,52) f=0x10000 Text="p"
+                  .jsdoc: KindJSDoc [24,48) f=0x410000
+                    .Comment: list [27,31) n=0
+                    .Tags: list [31,46) n=1
+                      - KindJSDocTypeTag [31,46) f=0x410000
+                        .TagName: KindIdentifier [32,36) f=0x410000 Text="type"
+                        .TypeExpression: KindJSDocTypeExpression [37,45) f=0x410000
+                          .Type: KindNumberKeyword [38,44) f=0x410000
+                - KindShorthandPropertyAssignment [53,90) f=0x210000
+                  .EqualsToken: KindEqualsToken [86,88) f=0x10000
+                  .ObjectAssignmentInitializer: KindSatisfiesExpression [88,90) f=0x10000
+                    .Expression: KindNumericLiteral [88,90) f=0x10000 Text="2" TokenFlags=0x0
+                    .Type: KindNumberKeyword [72,78) f=0x410008
+                  .name: KindIdentifier [53,86) f=0x10000 Text="s"
+                  .jsdoc: KindJSDoc [53,82) f=0x410000
+                    .Comment: list [56,60) n=0
+                    .Tags: list [60,80) n=1
+                      - KindJSDocSatisfiesTag [60,80) f=0x410000
+                        .TagName: KindIdentifier [61,70) f=0x410000 Text="satisfies"
+                        .TypeExpression: KindJSDocTypeExpression [71,79) f=0x410000
+                          .Type: KindNumberKeyword [72,78) f=0x410000
+            .name: KindIdentifier [18,20) f=0x10000 Text="o"
+    - KindClassDeclaration [94,141) f=0x210000
+      .HeritageClauses: list [125,138) n=1
+        - KindHeritageClause [125,138) f=0x10000 Token=KindImplementsKeyword
+          .Types: list [136,138) n=2
+            - KindTypeReference [136,138) f=0x10000
+              .TypeName: KindIdentifier [136,138) f=0x10000 Text="I"
+            - KindExpressionWithTypeArguments [112,113) f=0x410008
+              .Expression: KindIdentifier [112,113) f=0x410000 Text="J"
+      .Members: list [140,140) n=0
+      .name: KindIdentifier [123,125) f=0x10000 Text="A"
+      .jsdoc: KindJSDoc [94,117) f=0x410000
+        .Comment: list [95,99) n=0
+        .Tags: list [99,114) n=1
+          - KindJSDocImplementsTag [99,114) f=0x410000
+            .ClassName: KindExpressionWithTypeArguments [112,113) f=0x410000
+              .Expression: KindIdentifier [112,113) f=0x410000 Text="J"
+            .TagName: KindIdentifier [100,110) f=0x410000 Text="implements"
+    - KindClassDeclaration [141,197) f=0x210000
+      .HeritageClauses: list [181,194) n=1
+        - KindHeritageClause [181,194) f=0x10000 Token=KindExtendsKeyword
+          .Types: list [189,194) n=1
+            - KindExpressionWithTypeArguments [189,194) f=0x10000
+              .Expression: KindIdentifier [189,194) f=0x10000 Text="Base"
+              .TypeArguments: list [162,168) n=1
+                - KindStringKeyword [162,168) f=0x410008
+      .Members: list [196,196) n=0
+      .name: KindIdentifier [179,181) f=0x10000 Text="B"
+      .jsdoc: KindJSDoc [141,173) f=0x410000
+        .Comment: list [142,146) n=0
+        .Tags: list [146,170) n=1
+          - KindJSDocAugmentsTag [146,170) f=0x410000
+            .ClassName: KindExpressionWithTypeArguments [157,169) f=0x410000
+              .Expression: KindIdentifier [157,161) f=0x410000 Text="Base"
+              .TypeArguments: list [162,168) n=1
+                - KindStringKeyword [162,168) f=0x410000
+            .TagName: KindIdentifier [147,155) f=0x410000 Text="augments"
+    - KindFunctionDeclaration [206,214) f=0x10008
+      .Parameters: list [218,239) n=1
+        - KindParameter [218,239) f=0x10008
+          .Type: KindStringKeyword [226,232) f=0x410008
+          .name: KindIdentifier [234,235) f=0x410008 Text="a"
+      .Type: KindStringKeyword [249,255) f=0x410008
+      .name: KindIdentifier [366,369) f=0x10008 Text="ov"
+    - KindFunctionDeclaration [269,277) f=0x10008
+      .Parameters: list [281,302) n=1
+        - KindParameter [281,302) f=0x10008
+          .Type: KindNumberKeyword [289,295) f=0x410008
+          .name: KindIdentifier [297,298) f=0x410008 Text="a"
+      .Type: KindNumberKeyword [312,318) f=0x410008
+      .name: KindIdentifier [366,369) f=0x10008 Text="ov"
+    - KindFunctionDeclaration [197,386) f=0x210000
+      .Body: KindBlock [372,386) f=0x10000
+        .Statements: list [374,384) n=1
+          - KindReturnStatement [374,384) f=0x10000
+            .Expression: KindIdentifier [381,383) f=0x10000 Text="a"
+      .Parameters: list [370,371) n=1
+        - KindParameter [370,371) f=0x10000
+          .Type: KindUnionType [336,351) f=0x410008
+            .Types: list [336,351) n=2
+              - KindStringKeyword [336,342) f=0x410000
+              - KindNumberKeyword [344,351) f=0x410000
+          .name: KindIdentifier [370,371) f=0x10000 Text="a"
+      .name: KindIdentifier [366,369) f=0x10000 Text="ov"
+      .jsdoc: KindJSDoc [197,260) f=0x410000
+        .Comment: list [198,205) n=0
+        .Tags: list [205,258) n=1
+          - KindJSDocOverloadTag [205,258) f=0x410000
+            .TagName: KindIdentifier [206,214) f=0x410000 Text="overload"
+            .TypeExpression: KindJSDocSignature [205,258) f=0x410000
+              .Parameters: list [218,239) n=1
+                - KindJSDocParameterTag [218,239) f=0x410000
+                  .TagName: KindIdentifier [219,224) f=0x410000 Text="param"
+                  .TypeExpression: KindJSDocTypeExpression [225,233) f=0x410000
+                    .Type: KindStringKeyword [226,232) f=0x410000
+                  .name: KindIdentifier [234,235) f=0x410000 Text="a"
+              .Type: KindJSDocReturnTag [239,258) f=0x410000
+                .TagName: KindIdentifier [240,247) f=0x410000 Text="returns"
+                .TypeExpression: KindJSDocTypeExpression [248,256) f=0x410000
+                  .Type: KindStringKeyword [249,255) f=0x410000
+      .jsdoc: KindJSDoc [260,323) f=0x410000
+        .Comment: list [261,268) n=0
+        .Tags: list [268,321) n=1
+          - KindJSDocOverloadTag [268,321) f=0x410000
+            .TagName: KindIdentifier [269,277) f=0x410000 Text="overload"
+            .TypeExpression: KindJSDocSignature [268,321) f=0x410000
+              .Parameters: list [281,302) n=1
+                - KindJSDocParameterTag [281,302) f=0x410000
+                  .TagName: KindIdentifier [282,287) f=0x410000 Text="param"
+                  .TypeExpression: KindJSDocTypeExpression [288,296) f=0x410000
+                    .Type: KindNumberKeyword [289,295) f=0x410000
+                  .name: KindIdentifier [297,298) f=0x410000 Text="a"
+              .Type: KindJSDocReturnTag [302,321) f=0x410000
+                .TagName: KindIdentifier [303,310) f=0x410000 Text="returns"
+                .TypeExpression: KindJSDocTypeExpression [311,319) f=0x410000
+                  .Type: KindNumberKeyword [312,318) f=0x410000
+      .jsdoc: KindJSDoc [323,357) f=0x410000
+        .Comment: list [324,328) n=0
+        .Tags: list [328,355) n=1
+          - KindJSDocParameterTag [328,355) f=0x410000
+            .TagName: KindIdentifier [329,334) f=0x410000 Text="param"
+            .TypeExpression: KindJSDocTypeExpression [335,352) f=0x410000
+              .Type: KindUnionType [336,351) f=0x410000
+                .Types: list [336,351) n=2
+                  - KindStringKeyword [336,342) f=0x410000
+                  - KindNumberKeyword [344,351) f=0x410000
+            .name: KindIdentifier [353,354) f=0x410000 Text="a"
+    - KindClassDeclaration [386,564) f=0x10000
+      .Members: list [396,562) n=4
+        - KindConstructor [409,417) f=0x10008
+          .Parameters: list [423,444) n=1
+            - KindParameter [423,444) f=0x10008
+              .Type: KindStringKeyword [431,437) f=0x410008
+              .name: KindIdentifier [439,440) f=0x410008 Text="a"
+        - KindConstructor [396,466) f=0x210000
+          .Body: KindBlock [463,466) f=0x10000
+            .Statements: list [465,465) n=0
+          .Parameters: list [461,462) n=1
+            - KindParameter [461,462) f=0x10000
+              .name: KindIdentifier [461,462) f=0x10000 Text="a"
+          .jsdoc: KindJSDoc [396,446) f=0x410000
+            .Comment: list [399,408) n=0
+            .Tags: list [408,444) n=1
+              - KindJSDocOverloadTag [408,444) f=0x410000
+                .TagName: KindIdentifier [409,417) f=0x410000 Text="overload"
+                .TypeExpression: KindJSDocSignature [408,444) f=0x410000
+                  .Parameters: list [423,444) n=1
+                    - KindJSDocParameterTag [423,444) f=0x410000
+                      .TagName: KindIdentifier [424,429) f=0x410000 Text="param"
+                      .TypeExpression: KindJSDocTypeExpression [430,438) f=0x410000
+                        .Type: KindStringKeyword [431,437) f=0x410000
+                      .name: KindIdentifier [439,440) f=0x410000 Text="a"
+        - KindMethodDeclaration [479,487) f=0x10008
+          .Parameters: list [493,517) n=1
+            - KindParameter [493,517) f=0x10008
+              .Type: KindBooleanKeyword [501,508) f=0x410008
+              .name: KindIdentifier [510,511) f=0x410008 Text="a"
+          .Type: KindBooleanKeyword [527,534) f=0x410008
+          .name: KindIdentifier [466,545) f=0x10008 Text="m"
+        - KindMethodDeclaration [466,562) f=0x210000
+          .Body: KindBlock [548,562) f=0x10000
+            .Statements: list [550,560) n=1
+              - KindReturnStatement [550,560) f=0x10000
+                .Expression: KindIdentifier [557,559) f=0x10000 Text="a"
+          .Parameters: list [546,547) n=1
+            - KindParameter [546,547) f=0x10000
+              .name: KindIdentifier [546,547) f=0x10000 Text="a"
+          .name: KindIdentifier [466,545) f=0x10000 Text="m"
+          .jsdoc: KindJSDoc [466,541) f=0x410000
+            .Comment: list [469,478) n=0
+            .Tags: list [478,539) n=1
+              - KindJSDocOverloadTag [478,539) f=0x410000
+                .TagName: KindIdentifier [479,487) f=0x410000 Text="overload"
+                .TypeExpression: KindJSDocSignature [478,539) f=0x410000
+                  .Parameters: list [493,517) n=1
+                    - KindJSDocParameterTag [493,517) f=0x410000
+                      .TagName: KindIdentifier [494,499) f=0x410000 Text="param"
+                      .TypeExpression: KindJSDocTypeExpression [500,509) f=0x410000
+                        .Type: KindBooleanKeyword [501,508) f=0x410000
+                      .name: KindIdentifier [510,511) f=0x410000 Text="a"
+                  .Type: KindJSDocReturnTag [517,539) f=0x410000
+                    .TagName: KindIdentifier [518,525) f=0x410000 Text="returns"
+                    .TypeExpression: KindJSDocTypeExpression [526,535) f=0x410000
+                      .Type: KindBooleanKeyword [527,534) f=0x410000
+      .name: KindIdentifier [392,394) f=0x10000 Text="C"
+    - KindJSTypeAliasDeclaration [569,592) f=0x210008
+      .Type: KindNumberKeyword [579,585) f=0x410008
+      .name: KindIdentifier [587,592) f=0x410008 Text="AtEnd"
+      .jsdoc: KindJSDoc [564,595) f=0x410000 parent=KindEndOfFile[564,596)
+        .Comment: list [565,569) n=0
+        .Tags: list [569,592) n=1
+          - KindJSDocTypedefTag [569,592) f=0x410000
+            .TagName: KindIdentifier [570,577) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [578,586) f=0x410000
+              .Type: KindNumberKeyword [579,585) f=0x410000
+            .name: KindIdentifier [587,592) f=0x410000 Text="AtEnd"
+  .EndOfFileToken: KindEndOfFile [564,596) f=0x210000
+    .jsdoc: KindJSDoc [564,595) f=0x410000 SHARED

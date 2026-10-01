@@ -1,0 +1,482 @@
+{
+	"valid": [
+		{
+			"code": "var x = NaN;"
+		},
+		{
+			"code": "isNaN(NaN) === true;"
+		},
+		{
+			"code": "isNaN(123) !== true;"
+		},
+		{
+			"code": "Number.isNaN(NaN) === true;"
+		},
+		{
+			"code": "Number.isNaN(123) !== true;"
+		},
+		{
+			"code": "foo(NaN + 1);"
+		},
+		{
+			"code": "foo(1 + NaN);"
+		},
+		{
+			"code": "foo(NaN - 1)"
+		},
+		{
+			"code": "foo(1 - NaN)"
+		},
+		{
+			"code": "foo(NaN * 2)"
+		},
+		{
+			"code": "foo(2 * NaN)"
+		},
+		{
+			"code": "foo(NaN / 2)"
+		},
+		{
+			"code": "foo(2 / NaN)"
+		},
+		{
+			"code": "var x; if (x = NaN) { }"
+		},
+		{
+			"code": "var x = Number.NaN;"
+		},
+		{
+			"code": "isNaN(Number.NaN) === true;"
+		},
+		{
+			"code": "Number.isNaN(Number.NaN) === true;"
+		},
+		{
+			"code": "foo(Number.NaN + 1);"
+		},
+		{
+			"code": "foo(1 + Number.NaN);"
+		},
+		{
+			"code": "foo(Number.NaN - 1)"
+		},
+		{
+			"code": "foo(1 - Number.NaN)"
+		},
+		{
+			"code": "foo(Number.NaN * 2)"
+		},
+		{
+			"code": "foo(2 * Number.NaN)"
+		},
+		{
+			"code": "foo(Number.NaN / 2)"
+		},
+		{
+			"code": "foo(2 / Number.NaN)"
+		},
+		{
+			"code": "var x; if (x = Number.NaN) { }"
+		},
+		{
+			"code": "x === Number[NaN];"
+		},
+		{
+			"code": "x === (NaN, 1)"
+		},
+		{
+			"code": "x === (doStuff(), NaN, 1)"
+		},
+		{
+			"code": "x === (doStuff(), Number.NaN, 1)"
+		},
+		{
+			"code": "switch(foo) {}"
+		},
+		{
+			"code": "switch(foo) { case bar: NaN; }"
+		},
+		{
+			"code": "switch(foo) { default: NaN; }"
+		},
+		{
+			"code": "switch(Nan) {}"
+		},
+		{
+			"code": "switch('NaN') { default: break; }"
+		},
+		{
+			"code": "switch(foo(NaN)) {}"
+		},
+		{
+			"code": "switch(foo.NaN) {}"
+		},
+		{
+			"code": "switch(foo) { case Nan: break }"
+		},
+		{
+			"code": "switch(foo) { case 'NaN': break }"
+		},
+		{
+			"code": "switch(foo) { case foo(NaN): break }"
+		},
+		{
+			"code": "switch(foo) { case foo.NaN: break }"
+		},
+		{
+			"code": "switch(foo) { case bar: break; case 1: break; default: break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: Number.NaN; }"
+		},
+		{
+			"code": "switch(foo) { default: Number.NaN; }"
+		},
+		{
+			"code": "switch(Number.Nan) {}"
+		},
+		{
+			"code": "switch('Number.NaN') { default: break; }"
+		},
+		{
+			"code": "switch(foo(Number.NaN)) {}"
+		},
+		{
+			"code": "switch(foo.Number.NaN) {}"
+		},
+		{
+			"code": "switch(foo) { case Number.Nan: break }"
+		},
+		{
+			"code": "switch(foo) { case 'Number.NaN': break }"
+		},
+		{
+			"code": "switch(foo) { case foo(Number.NaN): break }"
+		},
+		{
+			"code": "switch(foo) { case foo.Number.NaN: break }"
+		},
+		{
+			"code": "switch((NaN, doStuff(), 1)) {}"
+		},
+		{
+			"code": "switch((Number.NaN, doStuff(), 1)) {}"
+		},
+		{
+			"code": "foo.indexOf(NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(NaN)"
+		},
+		{
+			"code": "foo.indexOf(Number.NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(Number.NaN)"
+		},
+		{
+			"code": "foo.indexOf(NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(NaN)"
+		},
+		{
+			"code": "foo.indexOf(NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(NaN)"
+		},
+		{
+			"code": "foo.indexOf(Number.NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(Number.NaN)"
+		},
+		{
+			"code": "foo.indexOf(Number.NaN)"
+		},
+		{
+			"code": "foo.lastIndexOf(Number.NaN)"
+		},
+		{
+			"code": "let NaN; if (x === NaN) {}"
+		},
+		{
+			"code": "let Number; if (x === Number.NaN) {}"
+		},
+		{
+			"code": "function f(NaN) { return x === NaN; }"
+		},
+		{
+			"code": "function f(Number) { return x === Number.NaN; }"
+		},
+		{
+			"code": "if (x === NaN) {}",
+			"languageOptions": {
+				"globals": {
+					"NaN": "off"
+				}
+			}
+		},
+		{
+			"code": "if (x === Number.NaN) {}",
+			"languageOptions": {
+				"globals": {
+					"Number": "off"
+				}
+			}
+		},
+		{
+			"code": "let NaN; switch (foo) { case NaN: break; }"
+		},
+		{
+			"code": "let Number; switch (foo) { case Number.NaN: break; }"
+		},
+		{
+			"code": "let NaN; switch (NaN) { case a: break; }"
+		},
+		{
+			"code": "let Number; switch (Number.NaN) { case a: break; }"
+		},
+		{
+			"code": "let Number; if (x === Number?.NaN) {}"
+		},
+		{
+			"code": "function f(Number) { return x === Number?.NaN; }"
+		},
+		{
+			"code": "let Number; switch (foo) { case Number?.NaN: break; }"
+		},
+		{
+			"code": "let Number; switch (Number?.NaN) { case a: break; }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "123 == NaN;"
+		},
+		{
+			"code": "123 === NaN;"
+		},
+		{
+			"code": "NaN === \"abc\";"
+		},
+		{
+			"code": "NaN == \"abc\";"
+		},
+		{
+			"code": "123 != NaN;"
+		},
+		{
+			"code": "123 !== NaN;"
+		},
+		{
+			"code": "NaN !== \"abc\";"
+		},
+		{
+			"code": "NaN != \"abc\";"
+		},
+		{
+			"code": "NaN < \"abc\";"
+		},
+		{
+			"code": "\"abc\" < NaN;"
+		},
+		{
+			"code": "NaN > \"abc\";"
+		},
+		{
+			"code": "\"abc\" > NaN;"
+		},
+		{
+			"code": "NaN <= \"abc\";"
+		},
+		{
+			"code": "\"abc\" <= NaN;"
+		},
+		{
+			"code": "NaN >= \"abc\";"
+		},
+		{
+			"code": "\"abc\" >= NaN;"
+		},
+		{
+			"code": "123 == Number.NaN;"
+		},
+		{
+			"code": "123 === Number.NaN;"
+		},
+		{
+			"code": "Number.NaN === \"abc\";"
+		},
+		{
+			"code": "Number.NaN == \"abc\";"
+		},
+		{
+			"code": "123 != Number.NaN;"
+		},
+		{
+			"code": "123 !== Number.NaN;"
+		},
+		{
+			"code": "Number.NaN !== \"abc\";"
+		},
+		{
+			"code": "Number.NaN != \"abc\";"
+		},
+		{
+			"code": "Number.NaN < \"abc\";"
+		},
+		{
+			"code": "\"abc\" < Number.NaN;"
+		},
+		{
+			"code": "Number.NaN > \"abc\";"
+		},
+		{
+			"code": "\"abc\" > Number.NaN;"
+		},
+		{
+			"code": "Number.NaN <= \"abc\";"
+		},
+		{
+			"code": "\"abc\" <= Number.NaN;"
+		},
+		{
+			"code": "Number.NaN >= \"abc\";"
+		},
+		{
+			"code": "\"abc\" >= Number.NaN;"
+		},
+		{
+			"code": "x === Number?.NaN;",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "x !== Number?.NaN;",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "x === Number['NaN'];"
+		},
+		{
+			"code": "/* just\n                adding */ x /* some */ === /* comments */ NaN; // here"
+		},
+		{
+			"code": "(1, 2) === NaN;"
+		},
+		{
+			"code": "x === (doStuff(), NaN);"
+		},
+		{
+			"code": "x === (doStuff(), Number.NaN);"
+		},
+		{
+			"code": "x == (doStuff(), NaN);"
+		},
+		{
+			"code": "x == (doStuff(), Number.NaN);"
+		},
+		{
+			"code": "switch(NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(foo) { case NaN: break; }"
+		},
+		{
+			"code": "switch(NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(foo) { case NaN: break; }"
+		},
+		{
+			"code": "switch(NaN) {}"
+		},
+		{
+			"code": "switch(NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(NaN) { default: break; }"
+		},
+		{
+			"code": "switch(NaN) { case foo: break; default: break; }"
+		},
+		{
+			"code": "switch(foo) { case NaN: }"
+		},
+		{
+			"code": "switch(foo) { case NaN: break; }"
+		},
+		{
+			"code": "switch(foo) { case (NaN): break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: break; case NaN: break; default: break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: case NaN: default: break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: break; case NaN: break; case baz: break; case NaN: break; }"
+		},
+		{
+			"code": "switch(NaN) { case NaN: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(foo) { case Number.NaN: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(foo) { case Number.NaN: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) {}"
+		},
+		{
+			"code": "switch(Number.NaN) { case foo: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) { default: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) { case foo: break; default: break; }"
+		},
+		{
+			"code": "switch(foo) { case Number.NaN: }"
+		},
+		{
+			"code": "switch(foo) { case Number.NaN: break; }"
+		},
+		{
+			"code": "switch(foo) { case (Number.NaN): break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: break; case Number.NaN: break; default: break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: case Number.NaN: default: break; }"
+		},
+		{
+			"code": "switch(foo) { case bar: break; case NaN: break; case baz: break; case Number.NaN: break; }"
+		},
+		{
+			"code": "switch(Number.NaN) { case Number.NaN: break; }"
+		},
+		{
+			"code": "switch((doStuff(), NaN)) {}"
+		},
+		{
+			"code": "switch((doStuff(), Number.NaN)) {}"
+		}
+	],
+	"skipped": 81
+}

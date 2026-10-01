@@ -1,0 +1,102 @@
+where	function	upstream	port
+relater.go:77-85	DiagnosticAndArguments, ErrorOutputContainer	declared and never used	not ported
+relater.go:87	ErrorReporter	the only reporter ever passed is r.reportError (2641, 2695, 4590), else nil	Option<RelaterId>
+relater.go:89-96	RecursionId	`any` holding *Node, *Symbol or *Type, compared with ==	enum RecursionId {Node, Symbol, Type} with PartialEq
+relater.go:98-115	Relation	the map is made by the first set, size is len	Map that is nil until the first set
+relater.go:169-203	c.isTypeRelatedTo	the cache is read only when both types are objects, with IntersectionStateNone, on the pair before normalization (fresh literal to regular only)	as written
+relater.go:180,2640,2694	comparable relation	`a && b && simple(target, source) || simple(source, target)`: the reverse check runs first	keep the operand order
+relater.go:205-279	c.isSimpleTypeRelatedTo	literal values are compared as `any == any`	LiteralValue equality with the number rule of Go (NaN differs from NaN)
+relater.go:238	c.isSimpleTypeRelatedTo	source.symbol.Name of a type with the Enum flag: a nil symbol stops upstream	guarded read
+relater.go:281-337	c.isEnumTypeRelatedTo	the key of enumRelation is the pair of lazily assigned symbol ids; a cached failure is computed again when a reporter is present; 282-283 evaluate getParentOfSymbol eagerly; values compared as `any`; core.OrElse takes the first non-nil `any`	get_symbol_id for the key, the rest as written
+relater.go:369	c.checkTypeRelatedToEx	relationCount = (16000000 - size) / 8, signed and truncating	isize
+relater.go:371-381	c.checkTypeRelatedToEx	on overflow the cache entry uses the original pair and IntersectionStateNone; errorNode falls back to c.currentNode, which can be nil	NewDiagnosticForNode of a nil node has no file and an empty range
+relater.go:384-393	c.checkTypeRelatedToEx	a second checkTypeRelatedTo runs while the relater r is still in use and then appends to r.relatedInfo	the pool hands out another relater
+relater.go:400-412	createDiagnosticChainFromErrorChain	recursion by chain length; messages 2202 to 2205 are skipped at every level; the tail carries the node and the related information; every level above is ast.NewDiagnosticChain, which copies file, range and related information of the level below	as written
+relater.go:438-472	c.elaborateError	`fallthrough` from AsExpression (const assertion only) into the unwrapping case; BinaryExpression only for = and ,	match with a guard
+relater.go:485,585,664	elaboration	diags[0] relies on one diagnostic for a failed check	guarded read, internal fault when empty
+relater.go:526,563	c.elaborateArrayLiteral, c.checkExpressionForMutableLocationWithContextualType	expressions are checked again under a pushed contextual type	stand-ins until the expression layer lands
+relater.go:766-795	c.isDeeplyNestedType	the stack already holds the type that was just pushed; only occurrences with an id not below the previous occurrence count	type ids are creation order
+relater.go:820-832	getRecursionIdentityTarget	reads t.checker and calls getModifiersTypeFromMappedType; self recursion over object types of indexed accesses	free function with the checker as parameter, stack check
+relater.go:1020	excludeProperties	slices.Clip makes the following append copy	copy of the prefix
+relater.go:1085-1090	c.isDiscriminantProperty	writes CheckFlags of a synthetic property of a union	only symbols that the checker made are written
+relater.go:1111-1130	c.getKeyPropertyName, c.getConstituentTypeForKeyType	empty name is not computed, InternalSymbolNameMissing is no key property; unknownType in the map marks a duplicate key	as written
+relater.go:1134,1193	c.computeKeyPropertyNameAndMap, c.mapTypesByKeyProperty	limits: 10 constituents, 10 object constituents, count >= 10 and count*2 >= len	as written
+relater.go:1199-1203	Discriminator	interface with two implementers: TypeDiscriminator and ObjectLiteralDiscriminator (checker.go 30836)	trait object
+relater.go:1336,1397,1403,1429	c.getVariancesWorker	nil is not computed, an empty non-nil slice is a circular type or one without type parameters; callers turn len 0 into TernaryUnknown	List that keeps nil apart from empty
+relater.go:1352-1355,1406-1409	c.getVariancesWorker	resolutionStart is saved and set to len(typeResolutions) while the variance stack is in use	as written
+relater.go:1371-1393	c.getVariancesWorker	c.reliabilityFlags saved, cleared and restored for every type parameter	as written
+relater.go:1378-1379	c.getVariancesWorker	both isTypeAssignableTo calls always run, sub to super first	no short circuit
+relater.go:1417	c.getVariancesWorker	compareSymbols over the variance stack picks the restart point	order of the utilities layer
+relater.go:1422-1425	c.getVariancesWorker	varianceStack is nil during the restarted computation	take and put back
+relater.go:1518	c.compareSignaturesRelated	core.Same on the two type parameter slices is identity of the backing array	List::same, copies of a signature must share the list
+relater.go:1526	c.compareSignaturesRelated	instantiateType is called for its effect on reliabilityFlags, the mapper can be nil	as written
+relater.go:1541,1604,1649	c.compareSignaturesRelated	`var related Ternary` is False until the conditional first comparison ran	as written
+relater.go:2338	c.getEffectiveConstraintOfIntersection	`constraints != nil` means that something was appended	SliceBuf that keeps nil apart from empty
+relater.go:2599-2619	c.getRelater, c.putRelater	LIFO pool; put clears all fields and keeps capacity; next of a relater in use is stale	relaters in an arena of the checker, RelaterId, same order of reuse
+relater.go:2776	r.hasExcessProperties	panic("No errorNode in hasExcessProperties")	internal fault, then the branch for a node that is not JSX without a suggestion
+relater.go:2784,2804	r.hasExcessProperties	r.errorNode is replaced and is not part of the saved error state	as written
+relater.go:2818	r.hasExcessProperties	`checkTypes != nil` means that the target was a union	List nil test
+relater.go:2976	r.eachTypeRelatedToType	len(sourceTypes) % len(strippedTypes)	the divisor is the length of a union
+relater.go:3100-3115	r.recursiveTypeRelatedTo	a cached failure that is not an overflow is compared again when errors are wanted; a cached entry adds its two report bits to c.reliabilityFlags	as written
+relater.go:3116-3119	r.recursiveTypeRelatedTo	relationCount <= 0 sets overflow, after that every call returns False	as written
+relater.go:3121-3132	r.recursiveTypeRelatedTo	a pair in the maybe set returns Maybe; a constrained key is tried again with ignoreConstraints	as written
+relater.go:3133	r.recursiveTypeRelatedTo	backstop: either stack has exactly 100 entries, tested before the push, returns Maybe without a cache entry	as written, == 100
+relater.go:3145,3151	r.recursiveTypeRelatedTo	isDeeplyNestedType with depth 3 only for a side that is not expanding yet	as written
+relater.go:3155-3170	r.recursiveTypeRelatedTo	reliabilityFlags saved and cleared, the flags of the comparison are stored with the result, the saved ones are or-ed back	as written
+relater.go:3165	r.recursiveTypeRelatedTo	defer of the tracer	not ported
+relater.go:3178-3197	r.recursiveTypeRelatedTo	True: every maybe key from maybeStart is stored Succeeded. Maybe with both stacks empty: the same. Unknown with both stacks empty: keys dropped, nothing stored. Maybe or Unknown deeper: keys stay. False: Failed stored for this key, the other keys dropped	as written
+relater.go:3219-3222	r.restoreErrorState	relatedInfo is restored as a slice header: saves nest, so it is a truncation	saved length, truncate
+relater.go:3298-3339	r.structuredTypeRelatedToWorker	the closure relateVariances writes result, varianceCheckFailed and originalErrorChain of the function around it	these locals in one record passed by &mut
+relater.go:3428,3867	r.structuredTypeRelatedToWorker	no variances gives TernaryUnknown	as written
+relater.go:3546,3567	r.structuredTypeRelatedToWorker	the result must be TernaryTrue, Maybe is not enough	== True
+relater.go:3575,3756	r.structuredTypeRelatedToWorker	a conditional type nested 10 deep on its stack gives Maybe	as written
+relater.go:3585-3586,3962	r.structuredTypeRelatedToWorker, r.typeArgumentsRelatedTo	isTypeAssignableTo and compareTypesIdentical start a comparison with another relater	pool
+relater.go:3614,3967,4010	relations	instantiateType with reportUnreliableMapper or reportUnmeasurableMapper only sets reliabilityFlags	as written
+relater.go:3768-3771	r.structuredTypeRelatedToWorker	an inference context gets r.isRelatedToWorker as comparer, and its mapper can be used after r went back to the pool	TypeComparer::Relater names the slot
+relater.go:3895	r.structuredTypeRelatedToWorker	`r.errorChain == saveErrorState.errorChain` is identity of the head of the chain	ErrorChainId equality
+relater.go:3907-3914	r.structuredTypeRelatedToWorker	after a failed variance check a structural success still ends as False and the chain is put back	as written
+relater.go:4044-4052	r.typeRelatedToDiscriminatedType	more than 25 combinations, or none, is False	as written
+relater.go:4056-4060	r.typeRelatedToDiscriminatedType	the zero Set allocates on Add and is passed by value	&Set
+relater.go:4233	r.propertiesRelatedTo	strconv.Itoa(sourcePosition) is the property name	decimal text
+relater.go:4512	r.signaturesRelatedTo	sourceSignatures[i] for every index of the target list	guarded read
+relater.go:4527-4545	r.signaturesRelatedTo	`continue outer` after restoring the error state; only the first source signature elaborates	labelled loop
+relater.go:4587-4590	r.signatureRelatedTo	a closure over r and intersectionState is passed together with r.reportError	TypeComparer::Relater {r, intersection_state} and Some(r)
+relater.go:4775	r.reportErrorResults	the constraint of the cloned type parameter is written after the clone	as written
+relater.go:4808	r.reportRelationError	r.errorChain = nil before the report	as written
+relater.go:4816	r.reportRelationError	sourceType == targetType compares the printed names	as written
+relater.go:4830-4858	r.reportRelationError	message identity: 1 comparison and a switch with 7 messages	MessageId equality
+relater.go:4863-4905	r.reportError	message identity: 2 comparisons and switches with 2, 4 and 3 messages; args[0] is rewritten; the chain drops two nodes per reduction; one self call	MessageId equality, owned arguments
+relater.go:4950	r.chainArgsMatch	`any != any`, nil is a wildcard	argument equality, Nil as wildcard
+relater.go:4958	getPropertyNameArg	arg.(string) stops upstream on another type	internal fault, empty text
+relater.go:4966-4971	isConversionOrInterfaceImplementationMessage	message identity: 6 comparisons	MessageId equality
+relater.go:375,1338,3159,3164,4045,5028-5044	tracer	tracing only, traceUnionsOrIntersectionsTooLarge has no other effect	not ported
+checker.go:27988-28023	c.getNormalizedType	loop to a fixed point, mutual recursion with getNormalizedUnionOrIntersectionType	loop, stack check
+checker.go:28214-28218	c.getSingleBaseForNonAugmentingSubtype	the flag IdenticalBaseTypeCalculated is set before the work: a re-entrant call and a call after an early return read cachedTypes and get nil	as written
+checker.go:28241	c.getSingleBaseForNonAugmentingSubtype	getTypeArguments(t)[:len(typeParameters)]	clamped slice
+inference.go:11-51	InferenceState	pooled upstream, used by one call of inferTypes	local record passed by &mut
+inference.go:66	c.inferFromTypes	couldContainTypeVariables is a field that holds the worker	method
+inference.go:73-76,295-311,855-863	inference	propagationType, priority, contravariant and bivariant are saved and restored around the calls	as written
+inference.go:110,114,142,252,265,279	c.inferFromTypes	method expressions as matchers and actions	fn pointers
+inference.go:188-212	c.inferFromTypes	a numerically lower priority clears both candidate lists and topLevel; equal priority appends unless present; inferencePriority is the signed minimum	InferencePriority with a signed order
+inference.go:336-367	c.invokeOnce	visited is keyed by the two type ids and holds Circularity while the action runs; depth 2 on both stacks stops with Circularity	Map<(TypeId, TypeId), InferencePriority>
+inference.go:391	c.inferFromMatchingTypes	slices.SortFunc with a comparator that calls getTypeArguments	the sort of the conventions, same sequence of comparator calls
+inference.go:597,601	c.inferToTemplateLiteralType	`&^=`	and-not
+inference.go:626-633	c.inferToTemplateLiteralType	jsnum.FromString	number parsing of the leaf packages
+inference.go:727-813	c.inferFromObjectTypes	element lists indexed by arity	guarded reads
+inference.go:952	c.inferToMappedType	core.OrElse(inferToMappedType(...), result): the call always runs	no short circuit
+inference.go:989	c.inferToMappedType	`info != c.enumNumberIndexInfo` is pointer identity	IndexInfoId equality
+inference.go:1006-1010	c.inferTypeForHomomorphicMappedType	a nil result is stored and computed again on the next call	lookup treats NIL as absent
+inference.go:1068-1069,1087	c.inferReverseMappedType	presence is tested with `ok`: a stored nil gives unknownType, the first call returned nil	Map::get_ok
+inference.go:1071-1086	c.inferReverseMappedType	two stacks and reverseExpandingFlags of the checker, depth 2	as written
+inference.go:1092	c.inferReverseMappedTypeWorker	constraint.AsIndexType()	cast that reads the nil part
+inference.go:1109-1142,1230-1248	reverse mapped members, literal key objects	new symbols, a new symbol table, Declarations shared with the source property	tables and symbols of the checker, insertion order
+inference.go:1252-1254	c.newInferenceContext	a nil comparer becomes c.compareTypesAssignable	TypeComparer::Assignable
+inference.go:1318-1322	c.getInferredType	errorType as type parameter is returned without caching	as written
+inference.go:1343-1347	c.getInferredType	closures call isTypeAssignableTo while candidate lists are iterated	iterate over copies
+inference.go:1374-1377,1399	c.getInferredType	inferredType is stored before the constraint is instantiated and again after the check	as written
+inference.go:1383,1389,1397	c.getInferredType	n.compareTypes	call of the stored TypeComparer
+inference.go:1446,1448,1537,1551	c.getCovariantInference, c.getCommonSupertype	core.SameMap and core.Same rely on slice identity	candidate lists frozen as List before the call
+inference.go:1625-1627	newInferenceInfo	priority MaxValue, topLevel true, impliedArity -1	as written
+inference.go:1671,1680	hasOverlappingInferences, c.mergeInferences	b[i] and source[i]	guarded reads
+inference.go:1681	c.mergeInferences	target[i] = source[i] replaces an element that an inference state over the same slice also reads	InferenceListId: the list is shared by handle
+mapper.go:312-326	InferenceTypeMapper.Map	fixing and not fixed: inferFromIntraExpressionSites, clearCachedInferences, isFixed = true; then getInferredType(n, i)	body lands with I-INFER and removes the stand-in of the mapper layer

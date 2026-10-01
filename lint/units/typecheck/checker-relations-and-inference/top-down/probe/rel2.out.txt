@@ -1,0 +1,508 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #86[Object] -> #87[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=73560000005700000000000000 result=Failed size=1
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #86[Object] -> #87[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Checker.isWeakType
+T         Relater.traceUnionsOrIntersectionsTooLarge
+T         Relater.recursiveTypeRelatedTo
+T           Relation.get
+T           Checker.isDeeplyNestedType
+T           Checker.isDeeplyNestedType
+T           Relater.structuredTypeRelatedTo
+T             Relater.getErrorState
+T             Relater.structuredTypeRelatedToWorker
+T               Relater.getErrorState
+T               Relater.propertiesRelatedTo
+T                 Checker.getUnmatchedProperty
+T                   Checker.getUnmatchedPropertiesWorker
+T                 excludeProperties
+T                 Relater.propertyRelatedTo
+T                   Relater.isPropertySymbolTypeRelated
+T                     # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                       Relater.reportErrorResults
+T                         Relater.reportRelationError
+T                           Checker.getTypeNamesForErrorDisplay
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                           Relater.getChainMessage
+T                           chainDepth
+T                           # reportError TS2322 args=["string" "number"] chainDepth=0
+T                           Relater.reportError
+T                           # chain after reportError: TS2322["string" "number"]
+T                     # isRelatedToEx = False
+T                   chainDepth
+T                   # reportError TS2326 args=["x"] chainDepth=1
+T                   Relater.reportError
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                   # chain after reportError: TS2326["x"] <- TS2322["string" "number"]
+T           Relation.set
+T             # SET assignable key=73560000005700000000000000 result=Failed size=1
+T           Relater.resetMaybeStack
+T         Relater.reportErrorResults
+T           Relater.tryElaborateArrayLikeErrors
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.symbolValueDeclarationIsContextSensitive
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["{ x: string; }" "{ x: number; }"] chainDepth=2
+T             Relater.reportError
+T             # chain after reportError: TS2322["{ x: string; }" "{ x: number; }"] <- TS2326["x"] <- TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T           createDiagnosticChainFromErrorChain
+T             createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #95[Object] -> #88[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Relater.hasExcessProperties
+T               isExcessPropertyCheckTarget
+T               Checker.isTypeSubsetOf
+T               shouldCheckAsExcessProperty
+T               isIgnoredJsxProperty
+T               Checker.isKnownProperty
+T               shouldCheckAsExcessProperty
+T               isIgnoredJsxProperty
+T               Checker.isKnownProperty
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #15[Number] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                         # isRelatedToEx = True
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #94[Object] -> #89[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                           Relater.hasExcessProperties
+T                             isExcessPropertyCheckTarget
+T                             Checker.isTypeSubsetOf
+T                             shouldCheckAsExcessProperty
+T                             isIgnoredJsxProperty
+T                             Checker.isKnownProperty
+T                           Checker.isWeakType
+T                           Relater.traceUnionsOrIntersectionsTooLarge
+T                           Relater.recursiveTypeRelatedTo
+T                             Relation.get
+T                             Checker.isDeeplyNestedType
+T                             Checker.isDeeplyNestedType
+T                             Relater.structuredTypeRelatedTo
+T                               Relater.getErrorState
+T                               Relater.structuredTypeRelatedToWorker
+T                                 Relater.getErrorState
+T                                 Relater.propertiesRelatedTo
+T                                   Checker.getUnmatchedProperty
+T                                     Checker.getUnmatchedPropertiesWorker
+T                                   excludeProperties
+T                                   Relater.propertyRelatedTo
+T                                     Relater.isPropertySymbolTypeRelated
+T                                       # isRelatedToEx #15[Number] -> #14[String] recursionFlags=3 reportErrors=false intersectionState=0
+T                                       Relater.isRelatedToEx
+T                                         Checker.isSimpleTypeRelatedTo
+T                                       # isRelatedToEx = False
+T                             Relation.set
+T                               # SET assignable key=735e0000005900000000000000 result=Failed size=2
+T                             Relater.resetMaybeStack
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=735f0000005800000000000000 result=Failed size=3
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateObjectLiteral
+T         Checker.elaborateElement
+T           Checker.getBestMatchIndexedAccessTypeOrUndefined
+T           Checker.checkTypeRelatedTo
+T             Checker.checkTypeRelatedToEx
+T               Checker.getRelater
+T               Relation.size
+T               # isRelatedToEx #15[Number] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T               Relater.isRelatedToEx
+T               # isRelatedToEx = True
+T               Checker.putRelater
+T         Checker.elaborateElement
+T           Checker.getBestMatchIndexedAccessTypeOrUndefined
+T           Checker.checkTypeRelatedTo
+T             Checker.checkTypeRelatedToEx
+T               Checker.getRelater
+T               Relation.size
+T               # isRelatedToEx #94[Object] -> #89[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T               Relater.isRelatedToEx
+T                 Checker.isSimpleTypeRelatedTo
+T                 Relater.hasExcessProperties
+T                   isExcessPropertyCheckTarget
+T                   Checker.isTypeSubsetOf
+T                   shouldCheckAsExcessProperty
+T                   isIgnoredJsxProperty
+T                   Checker.isKnownProperty
+T                 Checker.isWeakType
+T                 Relater.traceUnionsOrIntersectionsTooLarge
+T                 Relater.recursiveTypeRelatedTo
+T                   Relation.get
+T               # isRelatedToEx = False
+T               Checker.putRelater
+T           Checker.elaborateError
+T             Checker.isOrHasGenericConditional
+T             Checker.elaborateDidYouMeanToCallOrConstruct
+T             Checker.elaborateDidYouMeanToCallOrConstruct
+T             Checker.elaborateObjectLiteral
+T               Checker.elaborateElement
+T                 Checker.getBestMatchIndexedAccessTypeOrUndefined
+T                 Checker.checkTypeRelatedTo
+T                   Checker.checkTypeRelatedToEx
+T                     Checker.getRelater
+T                     Relation.size
+T                     # isRelatedToEx #15[Number] -> #14[String] recursionFlags=3 reportErrors=false intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                     # isRelatedToEx = False
+T                     Checker.putRelater
+T                 Checker.elaborateError
+T                   Checker.isOrHasGenericConditional
+T                   Checker.elaborateDidYouMeanToCallOrConstruct
+T                   Checker.elaborateDidYouMeanToCallOrConstruct
+T                 Checker.checkExpressionForMutableLocationWithContextualType
+T                 Checker.checkTypeRelatedToEx
+T                   Checker.getRelater
+T                   Relation.size
+T                   # isRelatedToEx #15[Number] -> #14[String] recursionFlags=3 reportErrors=true intersectionState=0
+T                   Relater.isRelatedToEx
+T                     Checker.isSimpleTypeRelatedTo
+T                     Relater.reportErrorResults
+T                       Relater.reportRelationError
+T                         Checker.getTypeNamesForErrorDisplay
+T                           Checker.symbolValueDeclarationIsContextSensitive
+T                           Checker.symbolValueDeclarationIsContextSensitive
+T                         Relater.getChainMessage
+T                         chainDepth
+T                         # reportError TS2322 args=["number" "string"] chainDepth=0
+T                         Relater.reportError
+T                         # chain after reportError: TS2322["number" "string"]
+T                   # isRelatedToEx = False
+T                   createDiagnosticChainFromErrorChain
+T                     createDiagnosticChainFromErrorChain
+T                   Checker.reportDiagnostic
+T                   Checker.putRelater
+T                 Checker.reportDiagnostic
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #102[Object] -> #100[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                   Relater.signaturesRelatedTo
+T                     Relater.signatureRelatedTo
+T                       Checker.compareSignaturesRelated
+T                         Checker.isTopSignature
+T                         Checker.getParameterCount
+T                         Checker.hasEffectiveRestParameter
+T                         Checker.getMinArgumentCount
+T                           Checker.getMinArgumentCountEx
+T                             Checker.getTypeAtPosition
+T                               Checker.tryGetTypeAtPosition
+T                         Checker.getParameterCount
+T                         Checker.getNonArrayRestType
+T                           Checker.getEffectiveRestType
+T                         Checker.getNonArrayRestType
+T                           Checker.getEffectiveRestType
+T                         Checker.getThisTypeOfSignature
+T                         Checker.tryGetTypeAtPosition
+T                         Checker.tryGetTypeAtPosition
+T                         Checker.isResolvingReturnTypeOfSignature
+T                         Checker.isResolvingReturnTypeOfSignature
+T                         Checker.getTypePredicateOfSignature
+T                         # isRelatedToEx #101[Object] -> #99[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                           Checker.isWeakType
+T                           Relater.traceUnionsOrIntersectionsTooLarge
+T                           Relater.recursiveTypeRelatedTo
+T                             Relation.get
+T                             Checker.isDeeplyNestedType
+T                             Checker.isDeeplyNestedType
+T                             Relater.structuredTypeRelatedTo
+T                               Relater.getErrorState
+T                               Relater.structuredTypeRelatedToWorker
+T                                 Relater.getErrorState
+T                                 Relater.propertiesRelatedTo
+T                                   Checker.getUnmatchedProperty
+T                                     Checker.getUnmatchedPropertiesWorker
+T                                   excludeProperties
+T                                   Relater.propertyRelatedTo
+T                                     Relater.isPropertySymbolTypeRelated
+T                                       # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                                       Relater.isRelatedToEx
+T                                         Checker.isSimpleTypeRelatedTo
+T                                       # isRelatedToEx = False
+T                             Relation.set
+T                               # SET assignable key=73650000006300000000000000 result=Failed size=4
+T                             Relater.resetMaybeStack
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=73660000006400000000000000 result=Failed size=5
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T         Checker.checkTypeRelatedTo
+T           Checker.checkTypeRelatedToEx
+T             Checker.getRelater
+T             Relation.size
+T             # isRelatedToEx #101[Object] -> #100[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T             Relater.isRelatedToEx
+T               Checker.isSimpleTypeRelatedTo
+T               Checker.isWeakType
+T               Relater.traceUnionsOrIntersectionsTooLarge
+T               Relater.recursiveTypeRelatedTo
+T                 Relation.get
+T                 Checker.isDeeplyNestedType
+T                 Checker.isDeeplyNestedType
+T                 Relater.structuredTypeRelatedTo
+T                   Relater.getErrorState
+T                   Relater.structuredTypeRelatedToWorker
+T                     Relater.getErrorState
+T                     Relater.propertiesRelatedTo
+T                       Checker.getUnmatchedProperty
+T                         Checker.getUnmatchedPropertiesWorker
+T                       excludeProperties
+T                     Relater.signaturesRelatedTo
+T                       Relater.getErrorState
+T                 Relation.set
+T                   # SET assignable key=73650000006400000000000000 result=Failed size=6
+T                 Relater.resetMaybeStack
+T             # isRelatedToEx = False
+T             Checker.putRelater
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #102[Object] -> #100[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Checker.isWeakType
+T         Relater.traceUnionsOrIntersectionsTooLarge
+T         Relater.recursiveTypeRelatedTo
+T           Relation.get
+T           Checker.isDeeplyNestedType
+T           Checker.isDeeplyNestedType
+T           Relater.structuredTypeRelatedTo
+T             Relater.getErrorState
+T             Relater.structuredTypeRelatedToWorker
+T               Relater.getErrorState
+T               Relater.propertiesRelatedTo
+T                 Checker.getUnmatchedProperty
+T                   Checker.getUnmatchedPropertiesWorker
+T                 excludeProperties
+T               Relater.signaturesRelatedTo
+T                 Relater.signatureRelatedTo
+T                   Checker.compareSignaturesRelated
+T                     Checker.isTopSignature
+T                     Checker.getParameterCount
+T                     Checker.hasEffectiveRestParameter
+T                     Checker.getMinArgumentCount
+T                       Checker.getMinArgumentCountEx
+T                     Checker.getParameterCount
+T                     Checker.getNonArrayRestType
+T                       Checker.getEffectiveRestType
+T                     Checker.getNonArrayRestType
+T                       Checker.getEffectiveRestType
+T                     Checker.getThisTypeOfSignature
+T                     Checker.tryGetTypeAtPosition
+T                     Checker.tryGetTypeAtPosition
+T                     Checker.isResolvingReturnTypeOfSignature
+T                     Checker.isResolvingReturnTypeOfSignature
+T                     Checker.getTypePredicateOfSignature
+T                     # isRelatedToEx #101[Object] -> #99[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                       Checker.isWeakType
+T                       Relater.traceUnionsOrIntersectionsTooLarge
+T                       Relater.recursiveTypeRelatedTo
+T                         Relation.get
+T                         Checker.isDeeplyNestedType
+T                         Checker.isDeeplyNestedType
+T                         Relater.structuredTypeRelatedTo
+T                           Relater.getErrorState
+T                           Relater.structuredTypeRelatedToWorker
+T                             Relater.getErrorState
+T                             Relater.propertiesRelatedTo
+T                               Checker.getUnmatchedProperty
+T                                 Checker.getUnmatchedPropertiesWorker
+T                               excludeProperties
+T                               Relater.propertyRelatedTo
+T                                 Relater.isPropertySymbolTypeRelated
+T                                   # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T                                   Relater.isRelatedToEx
+T                                     Checker.isSimpleTypeRelatedTo
+T                                     Relater.reportErrorResults
+T                                       Relater.reportRelationError
+T                                         Checker.getTypeNamesForErrorDisplay
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                         Relater.getChainMessage
+T                                         chainDepth
+T                                         # reportError TS2322 args=["string" "number"] chainDepth=0
+T                                         Relater.reportError
+T                                         # chain after reportError: TS2322["string" "number"]
+T                                   # isRelatedToEx = False
+T                                 chainDepth
+T                                 # reportError TS2326 args=["q"] chainDepth=1
+T                                 Relater.reportError
+T                                   Relater.getChainMessage
+T                                   Relater.getChainMessage
+T                                   Relater.getChainMessage
+T                                 # chain after reportError: TS2326["q"] <- TS2322["string" "number"]
+T                         Relation.set
+T                           # SET assignable key=73650000006300000000000000 result=Failed size=6
+T                         Relater.resetMaybeStack
+T                       Relater.reportErrorResults
+T                         Relater.tryElaborateArrayLikeErrors
+T                         Relater.reportRelationError
+T                           Checker.getTypeNamesForErrorDisplay
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                           Relater.getChainMessage
+T                           chainDepth
+T                           # reportError TS2322 args=["{ q: string; }" "{ q: number; }"] chainDepth=2
+T                           Relater.reportError
+T                           # chain after reportError: TS2322["{ q: string; }" "{ q: number; }"] <- TS2326["q"] <- TS2322["string" "number"]
+T                     # isRelatedToEx = False
+T                     chainDepth
+T                     # reportError TS2202 args=["{ q: string; }" "{ q: number; }"] chainDepth=3
+T                     Relater.reportError
+T                     # chain after reportError: TS2202["{ q: string; }" "{ q: number; }"] <- TS2322["{ q: string; }" "{ q: number; }"] <- TS2326["q"] <- TS2322["string" "number"]
+T           Relation.set
+T             # SET assignable key=73660000006400000000000000 result=Failed size=6
+T           Relater.resetMaybeStack
+T         Relater.reportErrorResults
+T           Relater.tryElaborateArrayLikeErrors
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["(p: string) => { q: string; }" "(p: string) => { q: number; }"] chainDepth=4
+T             Relater.reportError
+T             # chain after reportError: TS2322["(p: string) => { q: string; }" "(p: string) => { q: number; }"] <- TS2202["{ q: string; }" "{ q: number; }"] <- TS2322["{ q: string; }" "{ q: number; }"] <- TS2326["q"] <- TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T           createDiagnosticChainFromErrorChain
+T             createDiagnosticChainFromErrorChain
+T               createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+rel2.ts(3,1): error TS2322: Type '{ x: string; }' is not assignable to type '{ x: number; }'.
+  Types of property 'x' are incompatible.
+    Type 'string' is not assignable to type 'number'.
+rel2.ts(5,27): error TS2322: Type 'number' is not assignable to type 'string'.
+  related: rel2.ts(4,31): message TS6500: The expected type comes from property 'z' which is declared here on type '{ z: string; }'
+rel2.ts(8,1): error TS2322: Type '(p: string) => { q: string; }' is not assignable to type '(p: string) => { q: number; }'.
+  Type '{ q: string; }' is not assignable to type '{ q: number; }'.
+    Types of property 'q' are incompatible.
+      Type 'string' is not assignable to type 'number'.
+SIZES after check: identity=0 assignable=6 comparable=0 subtype=0 strictSubtype=0 enum=0 types=102

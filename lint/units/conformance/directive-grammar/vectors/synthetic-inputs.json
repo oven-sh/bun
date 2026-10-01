@@ -1,0 +1,842 @@
+[
+{
+"name": "reference test",
+"fileName": "simpleTest.ts",
+"bytes": "Ly8gQHN0cmljdDogdHJ1ZQovLyBAbm9FbWl0OiB0cnVlCi8vIEBmaWxlbmFtZTogZmlyc3RGaWxlLnRzCmZ1bmN0aW9uIGZvbygpIHsgcmV0dXJuICJhIjsgfQovLyBub3JtYWwgY29tbWVudAovLyBAZmlsZW5hbWU6IHNlY29uZEZpbGUudHMKLy8gc29tZSBvdGhlciBjb21tZW50CmZ1bmN0aW9uIGJhcigpIHsgcmV0dXJuICJiIjsgfQ==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: NBSP between slashes and at-sign",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly/CoEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: VT between slashes and at-sign",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8LQHN0cmljdDogdHJ1ZQp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: FF and TAB are in the class",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8MCUBzdHJpY3QJOgx0cnVlCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: U+FEFF before at-sign",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly/vu79Ac3RyaWN0OiB0cnVlCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: U+2028 inside directive",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly/igKhAc3RyaWN0OiB0cnVlCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "ws: U+3000 before colon",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdOOAgDogdHJ1ZQp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: non-ascii letter in name",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmnDqWN0OiB0cnVlCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: long s and kelvin",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQMW/dHJpY3Q6IDEKLy8gQOKEqjogMgp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: digits and underscore",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQF9hMV9COiB2Cng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: dot ends the name",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGEuYjogYwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: upper case name is lowered",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQEZpbGVOYW1lOiBBLnRzCi8vIEBOb0VtaXQ6IFRSVUUKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "word: proto and constructor as names",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQF9fcHJvdG9fXzogcAovLyBAY29uc3RydWN0b3I6IGMKLy8gQHRvU3RyaW5nOiB0Cng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: lone CR before directive",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "eA0vLyBAZmlsZW5hbWU6IGEudHMKeQ==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: U+2028 before directive",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "eOKAqC8vIEBzdHJpY3Q6IHRydWUKeQ==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: U+2029 before directive",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "eOKAqS8vIEBzdHJpY3Q6IHRydWUKeQ==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: leading spaces",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "ICAvLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: four slashes",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8vLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: three slashes",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "anchor: directive after code on the line",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "dmFyIHg7IC8vIEBzdHJpY3Q6IHRydWUKeQ==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "span: value on the next line",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHRhcmdldDoKdmFyIHggPSAxOwo=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "span: value after CRLF and blank lines",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHRhcmdldDoNCg0KICBlczUgOw0KdmFyIHg7",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "span: at-sign on the next line",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8KQHN0cmljdDogdHJ1ZQp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "span: colon on the next line",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdAo6IHRydWUKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "span: directive swallowed by an empty one",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGE6Ci8vIEBiOiAxCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: one trailing semicolon trimmed in settings only",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGRlY2xhcmF0aW9uOiB0cnVlOwovLyBAc3RyaWN0OiB0cnVlIDsKLy8gQHg6IGE7OwovLyBAeTogOwp6",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: trailing comment kept",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdDogdHJ1ZSAvLyB3aHkKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: lone CR ends the value",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQG5vRW1pdDogdHJ1ZQ1yZXN0Ci8vIEBmaWxlbmFtZTogYS50cw1yZXN0Cng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: CR CR LF",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQG5vRW1pdDogdHJ1ZQ0NCngNDQp5",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: last occurrence wins",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHRhcmdldDogZXM1CngKLy8gQHRhcmdldDogZXMyMDE1Ci8vIEBUQVJHRVQ6IGVzbmV4dAp5",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: empty value",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdDoKCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: no colon",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdCB0cnVlCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "value: comma list with spaces",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHRhcmdldDogZXM1ICwgZXMyMDE1LCwgZXNuZXh0Cng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "trim: U+0085 is trimmed",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzwoUKLy8gQHN0cmljdDrChXRydWXChQp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "trim: U+FEFF is kept",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiDvu79hLnRz77u/Ci8vIEBzdHJpY3Q6IO+7v3RydWXvu78KeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "trim: NBSP and U+2003 and U+3000 are trimmed",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiDCoOKAg2EudHPjgIAKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "trim: U+200B and U+180E are kept",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiDigIthLnRz4aCOCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "trim: VT and FF are trimmed",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiALYS50cwwKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: simple",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGxpbms6IC9hIC0+IC9iCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: last arrow splits",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGxpbms6IGEgLT4gYiAtPiBjCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: upper case is an option",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQExpbms6IGEgLT4gYgp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: no arrow is an option",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGxpbms6IGEgYgp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: empty sides",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGxpbms6IC0+Ci8vIEBsaW5rOi0+eAp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: no spaces",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly9AbGluazphLT5iCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: later target wins",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGxpbms6IGEgLT4gcAovLyBAbGluazogYiAtPiBwCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: line is tried before options",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCngKLy8gQGxpbms6IC9hIC0+IC9iCnkKLy8gQGZpbGVuYW1lOiBiLnRzCno=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "link: arrow in a filename directive is not a link",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLT5iLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "symlink: bound to the current file",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiAvYS50cwovLyBAc3ltbGluazogL3gudHMsIC95LnRzLCwgCnZhciBhOwovLyBAZmlsZW5hbWU6IC9iLnRzCi8vIEBzeW1saW5rOiAveC50cwp2YXIgYjs=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "symlink: before any file is a global option",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN5bWxpbms6IC94LnRzCi8vIEBmaWxlbmFtZTogL2EudHMKdmFyIGE7",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "currentDirectory: last wins and no semicolon trim",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGN1cnJlbnREaXJlY3Rvcnk6IC9hOwovLyBAQ3VycmVudERpcmVjdG9yeTogL2I7Cng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "fourslash options are per file",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGVtaXRUaGlzRmlsZTogdHJ1ZQovLyBAZmlsZW5hbWU6IGEudHMKLy8gQG5vT3BlbjogMQp4Ci8vIEBmaWxlbmFtZTogYi50cwp5",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: no filename directive",
+"fileName": "/cases/compiler/dir/single.ts",
+"bytes": "dmFyIHg7Cg==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: no filename directive, backslash path",
+"fileName": "c:\\cases\\single.tsx",
+"bytes": "dmFyIHg7",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: leading blank lines vanish",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "CgoNCi8vIEBzdHJpY3Q6IHRydWUKCgp2YXIgeDsKCnZhciB5OwoK",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: whitespace-only line is content",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "CiAKCnZhciB4Ow==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: blank lines between directive and content",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCgoKdmFyIGE7CgovLyBAZmlsZW5hbWU6IGIudHMKCnZhciBiOwo=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: empty unit",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCi8vIEBmaWxlbmFtZTogYi50cwp2YXIgYjs=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: file ends with directive",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCnZhciBhOwovLyBAZmlsZW5hbWU6IGIudHM=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: empty file",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: only newline",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Cg==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: duplicate names stay",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCjEKLy8gQGZpbGVuYW1lOiBhLnRzCjI=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: filename value with spaces and comment",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiAgIG15IGZpbGUudHMgIC8vIG5vdGUgIAp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: empty filename then filename",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOgovLyBjCi8vIEBmaWxlbmFtZTogYi50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: empty filename with code then filename",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOgp2YXIgYTsKLy8gQGZpbGVuYW1lOiBiLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: empty filename at the end",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCngKLy8gQGZpbGVuYW1lOgp5",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: only an empty filename",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOgp5",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: lone CR stays in its line",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "dmFyIGEgPSBgeA15YDsNCnZhciBiOw==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: NUL byte",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCnZhciBhID0gJwAnOwo=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "units: astral and U+2028 content",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCnZhciBhID0gJ/CfmIDigKgnOwo=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: first tsconfig is taken out",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiAvYS50cwoxCi8vIEBmaWxlbmFtZTogL3RzY29uZmlnLmpzb24Ke30KLy8gQGZpbGVuYW1lOiAvc3ViL2pzY29uZmlnLmpzb24KeyB9Ci8vIEBmaWxlbmFtZTogL2IudHMKMg==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: case-insensitive base name, backslashes, trailing slash",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBjOlx4XFRTQ29uZmlnLkpTT05cCnt9Ci8vIEBmaWxlbmFtZTogL2IudHMKMg==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: jsconfig only",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBqc2NvbmZpZy5qc29uCnt9",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: not a config name",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiB0c2NvbmZpZy5iYXNlLmpzb24Ke30KLy8gQGZpbGVuYW1lOiAvYS90c2NvbmZpZy5qc29uLnRzCjE=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: dotted I lowers to i",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiAvVFNDT05GxLBHLkpTT04Ke30KLy8gQGZpbGVuYW1lOiAvYi50cwoy",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "config: url and unc roots",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQGZpbGVuYW1lOiBmaWxlOi8vL2M6L3RzY29uZmlnLmpzb24Ke30KLy8gQGZpbGVuYW1lOiAvL3NlcnZlci90c2NvbmZpZy5qc29uCjEKLy8gQGZpbGVuYW1lOiAvL3NlcnZlci9zaGFyZS9qc2NvbmZpZy5qc29uCjI=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: comments and blank lines only",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYSBjb21tZW50CgogIC8qIGJsb2NrCiBjb21tZW50ICovCQovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: code",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "dmFyIGVhcmx5OwovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: code after comment",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwovKiBkICovIHZhciBlYXJseTsKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: unterminated block comment",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "LyogbmV2ZXIgY2xvc2VkCi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: shebang",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "IyEvdXNyL2Jpbi9lbnYgbm9kZQovLyBjCi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: shebang not at start",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwojIS91c3IvYmluL2VudiBub2RlCi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict marker",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "PDw8PDw8PCBIRUFECi8vIGMKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict markers with bodies",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwo8PDw8PDw8IEhFQUQKdmFyIGE7Cj09PT09PT0KdmFyIGI7Cj4+Pj4+Pj4gb3RoZXIKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: bar conflict marker",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "fHx8fHx8fCBiYXNlCnZhciBhOwo9PT09PT09CnZhciBiOwo+Pj4+Pj4+IG90aGVyCi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict marker two bytes after a line break",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwogIDw8PDw8PDwgSEVBRAovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict marker after NBSP after a line break",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwrCoDw8PDw8PDwgSEVBRAovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict marker after two NBSP",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwrCoMKgPDw8PDw8PCBIRUFECi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: conflict marker after one space",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwogPDw8PDw8PCBIRUFECi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: six less-than signs",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "PDw8PDw8IEhFQUQKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: equals marker at the very end",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYwo9PT09PT09Ci8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: unicode white space",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "wqDigIPjgIDvu7/CheKAi+KAqOKAqS8vIGMKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: U+180E is not white space",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "4aCOLy8gYwovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: star is not trivia",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "LyoqIGRvYwogKi8KICogeAovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: lone slash",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "LwovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: comment with astral and U+2028",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8g8J+YgOKAqC8vIG1vcmUKLy8gQGZpbGVuYW1lOiBhLnRzCng=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: lone CR and CRLF",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gYw0vLyBkDQoNDQovLyBAZmlsZW5hbWU6IGEudHMKeA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "pre: option lines do not count as content",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "Ly8gQHN0cmljdDogdHJ1ZQovLyBAbGluazogYSAtPiBiCi8vIEBmaWxlbmFtZTogYS50cwp4",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-8 BOM",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "77u/Ly8gQHN0cmljdDogdHJ1ZQp2YXIgeDs=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: two utf-8 BOMs",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "77u/77u/Ly8gQHN0cmljdDogdHJ1ZQp2YXIgeDs=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//4vAC8AIABAAHMAdAByAGkAYwB0ADoAIAB0AHIAdQBlAA0ACgAvAC8AIABAAGYAaQBsAGUAbgBhAG0AZQA6ACAA6QAuAHQAcwANAAoAdgBhAHIAIAB4ACAAPQAgACcAPdgA3icAOwANAAoA",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 BE",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "/v8ALwAvACAAQABzAHQAcgBpAGMAdAA6ACAAdAByAHUAZQANAAoALwAvACAAQABmAGkAbABlAG4AYQBtAGUAOgAgAOkALgB0AHMADQAKAHYAYQByACAAeAAgAD0AIAAn2D3eAAAnADsADQAK",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE odd length",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//52AGEAcgAgAHgAOwBB",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE lone surrogates",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//5hAADYYgAA3GMAPdg=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE BOM only",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//4=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 BE BOM and one byte",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "/v9B",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE with inner BOM and NUL",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//7//nYAYQByACAAeAAgAD0AIAAnAAAAJwA7AA==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: utf-16 LE followed by utf-8 BOM bytes",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "//7vu78A",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: one byte 0xFF",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "/w==",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: two bytes of a utf-8 BOM",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "77s=",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "decode: only a utf-8 BOM",
+"fileName": "/cases/compiler/synthetic.ts",
+"bytes": "77u/",
+"allowImplicitFirstFile": false,
+"failOn": ""
+},
+{
+"name": "implicit: content before first filename",
+"fileName": "/fs/test.ts",
+"bytes": "Ci8vLy8gdmFyIGE7CgovLyBAZmlsZW5hbWU6IGIudHMKCi8vLy8gdmFyIGI7Cg==",
+"allowImplicitFirstFile": true,
+"failOn": ""
+},
+{
+"name": "implicit: empty first file is skipped",
+"fileName": "/fs/test.ts",
+"bytes": "Ly8gQHN0cmljdDogdHJ1ZQovLyBAZmlsZW5hbWU6IGIudHMKLy8vLyB2YXIgYjs=",
+"allowImplicitFirstFile": true,
+"failOn": ""
+},
+{
+"name": "implicit: no directive",
+"fileName": "/fs/test.ts",
+"bytes": "CgovLy8vIHZhciBhOw==",
+"allowImplicitFirstFile": true,
+"failOn": ""
+},
+{
+"name": "implicit: symlink binds to the implicit file",
+"fileName": "/fs/test.ts",
+"bytes": "Ly8gQHN5bWxpbms6IC9sLnRzCi8vLy8gdmFyIGE7",
+"allowImplicitFirstFile": true,
+"failOn": ""
+},
+{
+"name": "error: first of three units fails",
+"fileName": "/cases/compiler/synthetic.ts",
+"failOn": "a.ts",
+"allowImplicitFirstFile": false,
+"bytes": "Ly8gQHN0cmljdDogdHJ1ZQovLyBAZmlsZW5hbWU6IGEudHMKMQovLyBAZmlsZW5hbWU6IGIudHMKMgovLyBAbGluazogeCAtPiB5Ci8vIEBub0VtaXQ6IHRydWUKLy8gQGZpbGVuYW1lOiBjLnRzCjM="
+},
+{
+"name": "error: middle unit fails",
+"fileName": "/cases/compiler/synthetic.ts",
+"failOn": "b.ts",
+"allowImplicitFirstFile": false,
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCjEKLy8gQGZpbGVuYW1lOiBiLnRzCjIKLy8gQG5vRW1pdDogdHJ1ZQovLyBAZmlsZW5hbWU6IGMudHMKMwovLyBAY3VycmVudERpcmVjdG9yeTogL2xhdGU="
+},
+{
+"name": "error: last unit fails",
+"fileName": "/cases/compiler/synthetic.ts",
+"failOn": "c.ts",
+"allowImplicitFirstFile": false,
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCjEKLy8gQGZpbGVuYW1lOiBiLnRzCjIKLy8gQGZpbGVuYW1lOiBjLnRzCjM="
+},
+{
+"name": "error: single unit fails",
+"fileName": "/cases/compiler/synthetic.ts",
+"failOn": "synthetic.ts",
+"allowImplicitFirstFile": false,
+"bytes": "dmFyIHg7"
+},
+{
+"name": "error: implicit first file fails",
+"fileName": "/fs/t.ts",
+"failOn": "/fs/t.ts",
+"allowImplicitFirstFile": true,
+"bytes": "Ly8vLyBhCi8vIEBmaWxlbmFtZTogYi50cwovLy8vIGI="
+},
+{
+"name": "error: failing unit is followed by a panic candidate",
+"fileName": "/cases/compiler/synthetic.ts",
+"failOn": "a.ts",
+"allowImplicitFirstFile": false,
+"bytes": "Ly8gQGZpbGVuYW1lOiBhLnRzCjEKLy8gQGZpbGVuYW1lOgp2YXIgcTsKLy8gQGZpbGVuYW1lOiBjLnRzCjM="
+}
+]

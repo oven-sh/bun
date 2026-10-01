@@ -1,0 +1,722 @@
+types-dump v1
+mark after inline part of NewChecker (line 1117): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+mark start of initializeChecker: TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+mark after global merge and global augmentations (line 1349): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=154 mergedSymbols=0 diagnostics=0
+mark after special types (line 1376): TypeCount=85 SymbolCount=6 SignatureCount=4 globals=155 mergedSymbols=0 diagnostics=0
+mark end of initializeChecker: TypeCount=85 SymbolCount=6 SignatureCount=4 globals=155 mergedSymbols=0 diagnostics=0
+after NewChecker types=85 symbols=6 signatures=4
+== stage check
+check decl-only.ts diagnostics=1
+== fields
+F undefinedSymbol Y1
+F argumentsSymbol Y2
+F requireSymbol Y3
+F unknownSymbol Y4
+F globalThisSymbol Y5
+F anyType T1
+F autoType T2
+F wildcardType T3
+F blockedStringType T4
+F errorType T5
+F unresolvedType T6
+F nonInferrableAnyType T7
+F intrinsicMarkerType T8
+F unknownType T9
+F undefinedType T10
+F undefinedWideningType T10
+F missingType T11
+F undefinedOrMissingType T10
+F optionalType T12
+F nullType T13
+F nullWideningType T13
+F stringType T14
+F numberType T15
+F bigintType T16
+F regularFalseType T17
+F falseType T18
+F regularTrueType T19
+F trueType T20
+F booleanType T21
+F esSymbolType T22
+F voidType T23
+F neverType T24
+F silentNeverType T25
+F implicitNeverType T26
+F unreachableNeverType T27
+F nonPrimitiveType T28
+F stringOrNumberType T29
+F stringNumberSymbolType T30
+F numberOrBigIntType T31
+F templateConstraintType T33
+F numericStringType T32
+F uniqueLiteralType T34
+F emptyObjectType T35
+F emptyJsxObjectType T36
+F emptyFreshJsxObjectType T37
+F emptyTypeLiteralType T38
+F unknownEmptyObjectType T39
+F unknownUnionType T40
+F emptyGenericType T41
+F anyFunctionType T42
+F noConstraintType T43
+F circularConstraintType T44
+F resolvingDefaultType T45
+F markerSuperType T46
+F markerSubType T47
+F markerOtherType T48
+F markerSuperTypeForCheck T49
+F markerSubTypeForCheck T50
+F anySignature G1
+F unknownSignature G2
+F resolvingSignature G3
+F silentNeverSignature G4
+F globalObjectType T63
+F globalFunctionType T64
+F globalCallableFunctionType T65
+F globalNewableFunctionType T66
+F globalArrayType T67
+F globalReadonlyArrayType T68
+F globalStringType T69
+F globalNumberType T70
+F globalBooleanType T71
+F globalRegExpType T72
+F globalThisType T73
+F anyArrayType T74
+F autoArrayType T75
+F anyReadonlyArrayType T76
+F emptyStringType T51
+F zeroType T52
+F zeroBigIntType T53
+F typeofType T62
+== counts types=195 symbols=60 signatures=16 files=1
+== types
+T1 Any(0x1) IntrinsicType intrinsicName="any"
+T2 Any(0x1) of=0x40000 IntrinsicType intrinsicName="any"
+T3 Any(0x1) IntrinsicType intrinsicName="any"
+T4 Any(0x1) IntrinsicType intrinsicName="any"
+T5 Any(0x1) IntrinsicType intrinsicName="error"
+T6 Any(0x1) IntrinsicType intrinsicName="unresolved"
+T7 Any(0x1) of=0x10000 IntrinsicType intrinsicName="any"
+T8 Any(0x1) IntrinsicType intrinsicName="intrinsic"
+T9 Unknown(0x2) IntrinsicType intrinsicName="unknown"
+T10 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T11 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T12 Undefined(0x4) IntrinsicType intrinsicName="undefined"
+T13 Null(0x8) IntrinsicType intrinsicName="null"
+T14 String(0x20) IntrinsicType intrinsicName="string"
+T15 Number(0x40) IntrinsicType intrinsicName="number"
+T16 BigInt(0x80) IntrinsicType intrinsicName="bigint"
+T17 BooleanLiteral(0x2000) LiteralType value=false(bool) freshType=T18 regularType=T17
+T18 BooleanLiteral(0x2000) LiteralType value=false(bool) freshType=T18 regularType=T17
+T19 BooleanLiteral(0x2000) LiteralType value=true(bool) freshType=T20 regularType=T19
+T20 BooleanLiteral(0x2000) LiteralType value=true(bool) freshType=T20 regularType=T19
+T21 Boolean|Union(0x8000100) of=0x8000 UnionType types=[T17,T19]
+T22 ESSymbol(0x200) IntrinsicType intrinsicName="symbol"
+T23 Void(0x10) IntrinsicType intrinsicName="void"
+T24 Never(0x40000) IntrinsicType intrinsicName="never"
+T25 Never(0x40000) of=0x40000 IntrinsicType intrinsicName="never"
+T26 Never(0x40000) IntrinsicType intrinsicName="never"
+T27 Never(0x40000) IntrinsicType intrinsicName="never"
+T28 NonPrimitive(0x20000) IntrinsicType intrinsicName="object"
+T29 Union(0x8000000) of=0x8000 UnionType types=[T14,T15]
+T30 Union(0x8000000) of=0x4208000 UnionType types=[T14,T15,T22] keyPropertyName="\xfemissing"
+T31 Union(0x8000000) of=0x8000 UnionType types=[T15,T16]
+T32 TemplateLiteral(0x400000) TemplateLiteralType texts=["",""] types=[T15]
+T33 Union(0x8000000) of=0x4008000 UnionType types=[T10,T13,T14,T15,T16,T17,T19]
+T34 Never(0x40000) IntrinsicType intrinsicName="never"
+T35 Object(0x100000) of=0x200010 ObjectType
+T36 Object(0x100000) of=0x200010 ObjectType
+T37 Object(0x100000) of=0x200010 ObjectType
+T38 Object(0x100000) of=0x200010 ObjectType symbol=Y6
+T39 Object(0x100000) of=0x200010 ObjectType
+T40 Union(0x8000000) UnionType types=[T10,T13,T39]
+T41 Object(0x100000) of=0x200010 ObjectType
+T42 Object(0x100000) of=0x240010 ObjectType
+T43 Object(0x100000) of=0x200010 ObjectType
+T44 Object(0x100000) of=0x200010 ObjectType
+T45 Object(0x100000) of=0x200010 ObjectType
+T46 TypeParameter(0x80000) TypeParameter
+T47 TypeParameter(0x80000) TypeParameter constraint=T46
+T48 TypeParameter(0x80000) TypeParameter
+T49 TypeParameter(0x80000) TypeParameter
+T50 TypeParameter(0x80000) TypeParameter constraint=T49
+T51 StringLiteral(0x400) LiteralType value=""(string) regularType=T51
+T52 NumberLiteral(0x800) LiteralType value=0(jsnum.Number) regularType=T52
+T53 BigIntLiteral(0x1000) LiteralType value=0(jsnum.PseudoBigInt) regularType=T53
+T54 StringLiteral(0x400) LiteralType value="bigint"(string) regularType=T54
+T55 StringLiteral(0x400) LiteralType value="boolean"(string) regularType=T55
+T56 StringLiteral(0x400) LiteralType value="function"(string) regularType=T56
+T57 StringLiteral(0x400) LiteralType value="number"(string) regularType=T57
+T58 StringLiteral(0x400) LiteralType value="object"(string) regularType=T58
+T59 StringLiteral(0x400) LiteralType value="string"(string) regularType=T59
+T60 StringLiteral(0x400) LiteralType value="symbol"(string) regularType=T60
+T61 StringLiteral(0x400) LiteralType value="undefined"(string) regularType=T61
+T62 Union(0x8000000) of=0x8000 UnionType types=[T54,T55,T56,T57,T58,T59,T60,T61]
+T63 Object(0x100000) of=0x200002 InterfaceType symbol=$"Object"/0x41@InterfaceDeclaration[3290,4293)@lib.es5.d.ts members={"constructor":$"constructor"/0x4@PropertySignature[3312,3447)@lib.es5.d.ts "hasOwnProperty":$"hasOwnProperty"/0x2000@MethodSignature[3731,3908)@lib.es5.d.ts "isPrototypeOf":$"isPrototypeOf"/0x2000@MethodSignature[3908,4121)@lib.es5.d.ts "propertyIsEnumerable":$"propertyIsEnumerable"/0x2000@MethodSignature[4121,4290)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[3532,3640)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[3447,3532)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[3640,3731)@lib.es5.d.ts} properties=[$"constructor"/0x4@PropertySignature[3312,3447)@lib.es5.d.ts,$"toString"/0x2000@MethodSignature[3447,3532)@lib.es5.d.ts,$"toLocaleString"/0x2000@MethodSignature[3532,3640)@lib.es5.d.ts,$"valueOf"/0x2000@MethodSignature[3640,3731)@lib.es5.d.ts,$"hasOwnProperty"/0x2000@MethodSignature[3731,3908)@lib.es5.d.ts,$"isPrototypeOf"/0x2000@MethodSignature[3908,4121)@lib.es5.d.ts,$"propertyIsEnumerable"/0x2000@MethodSignature[4121,4290)@lib.es5.d.ts] baseTypesResolved=true declaredMembersResolved=true declaredMembers={"constructor":$"constructor"/0x4@PropertySignature[3312,3447)@lib.es5.d.ts "hasOwnProperty":$"hasOwnProperty"/0x2000@MethodSignature[3731,3908)@lib.es5.d.ts "isPrototypeOf":$"isPrototypeOf"/0x2000@MethodSignature[3908,4121)@lib.es5.d.ts "propertyIsEnumerable":$"propertyIsEnumerable"/0x2000@MethodSignature[4121,4290)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[3532,3640)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[3447,3532)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[3640,3731)@lib.es5.d.ts}
+T64 Object(0x100000) of=0x2 InterfaceType symbol=$"Function"/0x41@InterfaceDeclaration[9286,10750)@lib.es5.d.ts
+T65 Object(0x100000) of=0x2 InterfaceType symbol=$"CallableFunction"/0x40@InterfaceDeclaration[11491,13479)@lib.es5.d.ts
+T66 Object(0x100000) of=0x2 InterfaceType symbol=$"NewableFunction"/0x40@InterfaceDeclaration[13479,15413)@lib.es5.d.ts
+T67 Object(0x100000) of=0x6 InterfaceType symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts target=T67 instantiations=#5[T67,T74,T75,T86,T87] resolvedTypeArguments=[T77] allTypeParameters=[T77,T78] thisType=T78 baseTypesResolved=true declaredMembersResolved=true declaredMembers={"T":$"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts "\xfeindex":$"\xfeindex"/0x20000@IndexSignature[71193,71216)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[58946,59210)@lib.es5.d.ts "every":$"every"/0x2000@MethodSignature[63888,64548)@lib.es5.d.ts "filter":$"filter"/0x2000@MethodSignature[66872,67414)@lib.es5.d.ts "forEach":$"forEach"/0x2000@MethodSignature[65843,66331)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[63109,63478)@lib.es5.d.ts "join":$"join"/0x2000@MethodSignature[59480,59813)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[63478,63888)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[58132,58282)@lib.es5.d.ts "map":$"map"/0x2000@MethodSignature[66331,66872)@lib.es5.d.ts "pop":$"pop"/0x2000@MethodSignature[58553,58745)@lib.es5.d.ts "push":$"push"/0x2000@MethodSignature[58745,58946)@lib.es5.d.ts "reduce":$"reduce"/0x2000@MethodSignature[67940,68666)@lib.es5.d.ts "reduceRight":$"reduceRight"/0x2000@MethodSignature[69533,70290)@lib.es5.d.ts "reverse":$"reverse"/0x2000@MethodSignature[59813,59985)@lib.es5.d.ts "shift":$"shift"/0x2000@MethodSignature[59985,60180)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[60180,60826)@lib.es5.d.ts "some":$"some"/0x2000@MethodSignature[65188,65843)@lib.es5.d.ts "sort":$"sort"/0x2000@MethodSignature[60826,61401)@lib.es5.d.ts "splice":$"splice"/0x2000@MethodSignature[61401,62146)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[58378,58553)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[58282,58378)@lib.es5.d.ts "unshift":$"unshift"/0x2000@MethodSignature[62891,63109)@lib.es5.d.ts} declaredIndexInfos=[{keyType=T15 valueType=T77 declaration=IndexSignature[71193,71216)@lib.es5.d.ts}]
+T68 Object(0x100000) of=0x6 InterfaceType symbol=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts target=T68 instantiations=#2[T68,T76] resolvedTypeArguments=[T79] allTypeParameters=[T79,T80] thisType=T80 baseTypesResolved=true declaredMembersResolved=true declaredMembers={"T":$"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts "\xfeindex":$"\xfeindex"/0x20000@IndexSignature[57894,57926)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[48792,48960)@lib.es5.d.ts "every":$"every"/0x2000@MethodSignature[50463,51141)@lib.es5.d.ts "filter":$"filter"/0x2000@MethodSignature[53501,54052)@lib.es5.d.ts "forEach":$"forEach"/0x2000@MethodSignature[52454,52951)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[49748,50089)@lib.es5.d.ts "join":$"join"/0x2000@MethodSignature[49134,49451)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[50089,50463)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[48361,48521)@lib.es5.d.ts "map":$"map"/0x2000@MethodSignature[52951,53501)@lib.es5.d.ts "reduce":$"reduce"/0x2000@MethodSignature[54587,55322)@lib.es5.d.ts "reduceRight":$"reduceRight"/0x2000@MethodSignature[56207,56973)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[49451,49748)@lib.es5.d.ts "some":$"some"/0x2000@MethodSignature[51790,52454)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[48617,48792)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[48521,48617)@lib.es5.d.ts} declaredIndexInfos=[{keyType=T15 valueType=T79 isReadonly=true declaration=IndexSignature[57894,57926)@lib.es5.d.ts}]
+T69 Object(0x100000) of=0x200002 InterfaceType symbol=$"String"/0x41@InterfaceDeclaration[15513,21457)@lib.es5.d.ts members={"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[21413,21454)@lib.es5.d.ts "charAt":$"charAt"/0x2000@MethodSignature[15617,15791)@lib.es5.d.ts "charCodeAt":$"charCodeAt"/0x2000@MethodSignature[15791,16035)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[16035,16250)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[16250,16639)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[16639,16996)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[20779,20862)@lib.es5.d.ts "localeCompare":$"localeCompare"/0x2000@MethodSignature[16996,17190)@lib.es5.d.ts "match":$"match"/0x2000@MethodSignature[17190,17493)@lib.es5.d.ts "replace":$"replace"/0x2000@MethodSignature[17493,18052)@lib.es5.d.ts "search":$"search"/0x2000@MethodSignature[18382,18595)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[18595,19055)@lib.es5.d.ts "split":$"split"/0x2000@MethodSignature[19055,19512)@lib.es5.d.ts "substr":$"substr"/0x2000@MethodSignature[20862,21322)@lib.es5.d.ts "substring":$"substring"/0x2000@MethodSignature[19512,20039)@lib.es5.d.ts "toLocaleLowerCase":$"toLocaleLowerCase"/0x2000@MethodSignature[20146,20329)@lib.es5.d.ts "toLocaleUpperCase":$"toLocaleUpperCase"/0x2000@MethodSignature[20436,20653)@lib.es5.d.ts "toLowerCase":$"toLowerCase"/0x2000@MethodSignature[20039,20146)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[15535,15617)@lib.es5.d.ts "toUpperCase":$"toUpperCase"/0x2000@MethodSignature[20329,20436)@lib.es5.d.ts "trim":$"trim"/0x2000@MethodSignature[20653,20779)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[21322,21413)@lib.es5.d.ts} properties=[$"toString"/0x2000@MethodSignature[15535,15617)@lib.es5.d.ts,$"charAt"/0x2000@MethodSignature[15617,15791)@lib.es5.d.ts,$"charCodeAt"/0x2000@MethodSignature[15791,16035)@lib.es5.d.ts,$"concat"/0x2000@MethodSignature[16035,16250)@lib.es5.d.ts,$"indexOf"/0x2000@MethodSignature[16250,16639)@lib.es5.d.ts,$"lastIndexOf"/0x2000@MethodSignature[16639,16996)@lib.es5.d.ts,$"localeCompare"/0x2000@MethodSignature[16996,17190)@lib.es5.d.ts,$"match"/0x2000@MethodSignature[17190,17493)@lib.es5.d.ts,$"replace"/0x2000@MethodSignature[17493,18052)@lib.es5.d.ts,$"search"/0x2000@MethodSignature[18382,18595)@lib.es5.d.ts,$"slice"/0x2000@MethodSignature[18595,19055)@lib.es5.d.ts,$"split"/0x2000@MethodSignature[19055,19512)@lib.es5.d.ts,$"substring"/0x2000@MethodSignature[19512,20039)@lib.es5.d.ts,$"toLowerCase"/0x2000@MethodSignature[20039,20146)@lib.es5.d.ts,$"toLocaleLowerCase"/0x2000@MethodSignature[20146,20329)@lib.es5.d.ts,$"toUpperCase"/0x2000@MethodSignature[20329,20436)@lib.es5.d.ts,$"toLocaleUpperCase"/0x2000@MethodSignature[20436,20653)@lib.es5.d.ts,$"trim"/0x2000@MethodSignature[20653,20779)@lib.es5.d.ts,$"length"/0x4@PropertySignature[20779,20862)@lib.es5.d.ts,$"substr"/0x2000@MethodSignature[20862,21322)@lib.es5.d.ts,$"valueOf"/0x2000@MethodSignature[21322,21413)@lib.es5.d.ts] indexInfos=[{keyType=T15 valueType=T14 isReadonly=true declaration=IndexSignature[21413,21454)@lib.es5.d.ts}] baseTypesResolved=true declaredMembersResolved=true declaredMembers={"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[21413,21454)@lib.es5.d.ts "charAt":$"charAt"/0x2000@MethodSignature[15617,15791)@lib.es5.d.ts "charCodeAt":$"charCodeAt"/0x2000@MethodSignature[15791,16035)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[16035,16250)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[16250,16639)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[16639,16996)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[20779,20862)@lib.es5.d.ts "localeCompare":$"localeCompare"/0x2000@MethodSignature[16996,17190)@lib.es5.d.ts "match":$"match"/0x2000@MethodSignature[17190,17493)@lib.es5.d.ts "replace":$"replace"/0x2000@MethodSignature[17493,18052)@lib.es5.d.ts "search":$"search"/0x2000@MethodSignature[18382,18595)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[18595,19055)@lib.es5.d.ts "split":$"split"/0x2000@MethodSignature[19055,19512)@lib.es5.d.ts "substr":$"substr"/0x2000@MethodSignature[20862,21322)@lib.es5.d.ts "substring":$"substring"/0x2000@MethodSignature[19512,20039)@lib.es5.d.ts "toLocaleLowerCase":$"toLocaleLowerCase"/0x2000@MethodSignature[20146,20329)@lib.es5.d.ts "toLocaleUpperCase":$"toLocaleUpperCase"/0x2000@MethodSignature[20436,20653)@lib.es5.d.ts "toLowerCase":$"toLowerCase"/0x2000@MethodSignature[20039,20146)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[15535,15617)@lib.es5.d.ts "toUpperCase":$"toUpperCase"/0x2000@MethodSignature[20329,20436)@lib.es5.d.ts "trim":$"trim"/0x2000@MethodSignature[20653,20779)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[21322,21413)@lib.es5.d.ts} declaredIndexInfos=[{keyType=T15 valueType=T14 isReadonly=true declaration=IndexSignature[21413,21454)@lib.es5.d.ts}]
+T70 Object(0x100000) of=0x200002 InterfaceType symbol=$"Number"/0x41@InterfaceDeclaration[22095,23260)@lib.es5.d.ts members={"toExponential":$"toExponential"/0x2000@MethodSignature[22598,22866)@lib.es5.d.ts "toFixed":$"toFixed"/0x2000@MethodSignature[22346,22598)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[220157,220785)@lib.es5.d.ts "toPrecision":$"toPrecision"/0x2000@MethodSignature[22866,23166)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[22117,22346)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[23166,23257)@lib.es5.d.ts} properties=[$"toString"/0x2000@MethodSignature[22117,22346)@lib.es5.d.ts,$"toFixed"/0x2000@MethodSignature[22346,22598)@lib.es5.d.ts,$"toExponential"/0x2000@MethodSignature[22598,22866)@lib.es5.d.ts,$"toPrecision"/0x2000@MethodSignature[22866,23166)@lib.es5.d.ts,$"valueOf"/0x2000@MethodSignature[23166,23257)@lib.es5.d.ts,$"toLocaleString"/0x2000@MethodSignature[220157,220785)@lib.es5.d.ts] baseTypesResolved=true declaredMembersResolved=true declaredMembers={"toExponential":$"toExponential"/0x2000@MethodSignature[22598,22866)@lib.es5.d.ts "toFixed":$"toFixed"/0x2000@MethodSignature[22346,22598)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[220157,220785)@lib.es5.d.ts "toPrecision":$"toPrecision"/0x2000@MethodSignature[22866,23166)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[22117,22346)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[23166,23257)@lib.es5.d.ts}
+T71 Object(0x100000) of=0x2 InterfaceType symbol=$"Boolean"/0x41@InterfaceDeclaration[21801,21917)@lib.es5.d.ts
+T72 Object(0x100000) of=0x6 InterfaceType symbol=$"RegExp"/0x41@InterfaceDeclaration[40902,42363)@lib.es5.d.ts target=T72 instantiations=#1[T72] allTypeParameters=[T81] thisType=T81
+T73 Object(0x100000) of=0x6 InterfaceType symbol=$"ThisType"/0x40@InterfaceDeclaration[76786,76862)@lib.es5.d.ts target=T73 instantiations=#1[T73] resolvedTypeArguments=[T82] allTypeParameters=[T82,T83] thisType=T83
+T74 Object(0x100000) of=0x4 TypeReference symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts target=T67 resolvedTypeArguments=[T1]
+T75 Object(0x100000) of=0x40004 TypeReference symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts target=T67 resolvedTypeArguments=[T2]
+T76 Object(0x100000) of=0x8200004 TypeReference symbol=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts members={"concat":Y7 "every":Y8 "filter":Y9 "forEach":Y10 "indexOf":Y11 "join":Y12 "lastIndexOf":Y13 "length":Y14 "map":Y15 "reduce":Y16 "reduceRight":Y17 "slice":Y18 "some":Y19 "toLocaleString":Y20 "toString":Y21} properties=[Y14,Y21,Y20,Y7,Y12,Y18,Y11,Y13,Y8,Y19,Y10,Y15,Y9,Y16,Y17] indexInfos=[{keyType=T15 valueType=T1 isReadonly=true declaration=IndexSignature[57894,57926)@lib.es5.d.ts}] target=T68 resolvedTypeArguments=[T1]
+T77 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts
+T78 TypeParameter(0x80000) TypeParameter symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts constraint=T67 isThisType=true
+T79 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts
+T80 TypeParameter(0x80000) TypeParameter symbol=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts constraint=T68 isThisType=true
+T81 TypeParameter(0x80000) TypeParameter symbol=$"RegExp"/0x41@InterfaceDeclaration[40902,42363)@lib.es5.d.ts constraint=T72 isThisType=true
+T82 TypeParameter(0x80000) TypeParameter symbol=$"T"/0x40000@TypeParameter[76857,76858)@lib.es5.d.ts
+T83 TypeParameter(0x80000) TypeParameter symbol=$"ThisType"/0x40@InterfaceDeclaration[76786,76862)@lib.es5.d.ts constraint=T73 isThisType=true
+T84 Object(0x100000) of=0x2 InterfaceType symbol=$"IArguments"/0x40@InterfaceDeclaration[15413,15513)@lib.es5.d.ts
+T85 Object(0x100000) of=0x10 ObjectType symbol=Y5
+T86 Object(0x100000) of=0x48200004 TypeReference symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts members={"concat":Y22 "every":Y23 "filter":Y24 "forEach":Y25 "indexOf":Y26 "join":Y27 "lastIndexOf":Y28 "length":Y29 "map":Y30 "pop":Y31 "push":Y32 "reduce":Y33 "reduceRight":Y34 "reverse":Y35 "shift":Y36 "slice":Y37 "some":Y38 "sort":Y39 "splice":Y40 "toLocaleString":Y41 "toString":Y42 "unshift":Y43} properties=[Y29,Y42,Y41,Y31,Y32,Y22,Y27,Y35,Y36,Y37,Y39,Y40,Y43,Y26,Y28,Y23,Y38,Y25,Y30,Y24,Y33,Y34] indexInfos=[{keyType=T15 valueType=T15 declaration=IndexSignature[71193,71216)@lib.es5.d.ts}] target=T67 resolvedTypeArguments=[T15]
+T87 Object(0x100000) of=0x40000004 TypeReference symbol=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts target=T67 resolvedTypeArguments=[T113]
+T88 Conditional(0x4000000) of=0x180000 ConditionalType alias={symbol=$"Cond"/0x80000@TypeAliasDeclaration[767,839)@decl-only.ts typeArguments=[T138]} root={node=ConditionalType[782,838)@decl-only.ts checkType=T138 extendsType=T14 isDistributive=true outerTypeParameters=[T138] instantiations=#2[T88,T128] alias={symbol=$"Cond"/0x80000@TypeAliasDeclaration[767,839)@decl-only.ts typeArguments=[T138]}} checkType=T138 extendsType=T14
+T89 Conditional(0x4000000) ConditionalType root={node=ConditionalType[807,838)@decl-only.ts checkType=T138 extendsType=T15 isDistributive=true outerTypeParameters=[T138] instantiations=#1[T89]} checkType=T138 extendsType=T15
+T90 Object(0x100000) of=0x10 ObjectType symbol=$"\xfetype"/0x800@ConstructorType[1059,1085)@decl-only.ts alias={symbol=$"Ctor"/0x80000@TypeAliasDeclaration[1047,1086)@decl-only.ts}
+T91 Object(0x100000) of=0x10 ObjectType symbol=$"\xfetype"/0x800@FunctionType[150,162)@decl-only.ts
+T92 IndexedAccess(0x2000000) IndexedAccessType objectType=T133 indexType=T134
+T93 IndexedAccess(0x2000000) IndexedAccessType objectType=T103 indexType=T139
+T94 Intersection(0x10000000) IntersectionType alias={symbol=$"Inter"/0x80000@TypeAliasDeclaration[937,977)@decl-only.ts} types=[T121,T115]
+T95 NumberLiteral(0x800) LiteralType value=1(jsnum.Number) freshType=T157 regularType=T95
+T96 StringLiteral(0x400) LiteralType value="a"(string) freshType=T158 regularType=T96
+T97 StringLiteral(0x400) LiteralType value="x"(string) freshType=T159 regularType=T97
+T98 StringLiteral(0x400) LiteralType value="value"(string) freshType=T160 regularType=T98
+T99 StringLiteral(0x400) LiteralType value="s"(string) freshType=T161 regularType=T99
+T100 StringLiteral(0x400) LiteralType value="n"(string) freshType=T162 regularType=T100
+T101 StringLiteral(0x400) LiteralType value="ab"(string) freshType=T163 regularType=T101
+T102 Object(0x100000) of=0x180020 MappedType symbol=$"\xfetype"/0x800@MappedType[856,891)@decl-only.ts alias={symbol=$"Mapped"/0x80000@TypeAliasDeclaration[839,892)@decl-only.ts typeArguments=[T103]} instantiations=#2[T102,T129] declaration=MappedType[856,891)@decl-only.ts typeParameter=T139 constraintType=T119
+T103 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"T"/0x40000@TypeParameter[852,853)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T104 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T105 Union(0x8000000) of=0x8000 UnionType types=[T10,T15]
+T106 TemplateLiteral(0x400000) TemplateLiteralType texts=["data-",""] types=[T14]
+T107 TemplateLiteral(0x400000) TemplateLiteralType texts=["id-",""] types=[T15]
+T108 TypeParameter(0x80000) TypeParameter symbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts resolvedBaseConstraint=T153 constraint=T153 isThisType=true
+T109 Object(0x100000) of=0x180004 TypeReference alias={symbol=$"Pair"/0x80000@TypeAliasDeclaration[596,626)@decl-only.ts typeArguments=[T110,T111]} target=T164 instantiations=#2[T109,T126] node=TupleType[618,625)@decl-only.ts
+T110 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"A"/0x40000@TypeParameter[607,608)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T111 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"B"/0x40000@TypeParameter[609,615)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T110
+T112 Object(0x100000) of=0x4 TypeReference alias={symbol=$"Named"/0x80000@TypeAliasDeclaration[626,693)@decl-only.ts} target=T165 node=TupleType[639,692)@decl-only.ts
+T113 Object(0x100000) of=0x200010 ObjectType symbol=$"\xfetype"/0x800@TypeLiteral[1097,1132)@decl-only.ts alias={symbol=$"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts} members={"items":$"items"/0x4@PropertySignature[1117,1130)@decl-only.ts "next":$"next"/0x4@PropertySignature[1099,1117)@decl-only.ts} properties=[$"next"/0x4@PropertySignature[1099,1117)@decl-only.ts,$"items"/0x4@PropertySignature[1117,1130)@decl-only.ts]
+T114 Object(0x100000) of=0x200010 ObjectType symbol=$"\xfetype"/0x800@TypeLiteral[1209,1218)@decl-only.ts members={"id":$"id"/0x4@PropertySignature[1210,1216)@decl-only.ts} properties=[$"id"/0x4@PropertySignature[1210,1216)@decl-only.ts]
+T115 Object(0x100000) of=0x200010 ObjectType symbol=$"\xfetype"/0x800@TypeLiteral[958,976)@decl-only.ts members={"extra":$"extra"/0x4@PropertySignature[960,974)@decl-only.ts} properties=[$"extra"/0x4@PropertySignature[960,974)@decl-only.ts]
+T116 Object(0x100000) of=0x200010 ObjectType symbol=$"\xfetype"/0x800@TypeLiteral[987,1046)@decl-only.ts alias={symbol=$"Fn"/0x80000@TypeAliasDeclaration[977,1047)@decl-only.ts} members={"\xfecall":$"\xfecall"/0x20000@CallSignature[989,1010)@decl-only.ts} signatures=[G7,G5] callSignatureCount=2
+T117 Index(0x200000) IndexType resolvedBaseConstraint=T30 target=T133
+T118 Union(0x8000000) UnionType types=[T166,T97,T167,T168,T106] origin=T169
+T119 Index(0x200000) IndexType resolvedBaseConstraint=T30 target=T103
+T120 Object(0x100000) of=0x280005 InterfaceType symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts members={"legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts} properties=[$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts,$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts,$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts] target=T120 instantiations=#4[T120,T187,T189,T190] allTypeParameters=[T170] thisType=T170 baseTypesResolved=true declaredMembersResolved=true resolvedBaseConstructorType=T10 declaredMembers={"\xfeconstructor":$"\xfeconstructor"/0x4000@Constructor[315,342)@decl-only.ts "legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts}
+T121 Object(0x100000) of=0x280002 InterfaceType symbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts members={"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[61,95)@decl-only.ts "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts} properties=[$"x"/0x4@PropertySignature[17,28)@decl-only.ts,$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts,$"z"/0x4@PropertySignature[40,61)@decl-only.ts,$"w"/0x4@PropertySignature[219,230)@decl-only.ts] indexInfos=[{keyType=T106 valueType=T9 declaration=IndexSignature[61,95)@decl-only.ts}] baseTypesResolved=true declaredMembersResolved=true declaredMembers={"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[61,95)@decl-only.ts "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts} declaredIndexInfos=[{keyType=T106 valueType=T9 declaration=IndexSignature[61,95)@decl-only.ts}]
+T122 Object(0x100000) of=0x40000004 TypeReference symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts target=T135 resolvedTypeArguments=[T15]
+T123 Object(0x100000) of=0x40000004 TypeReference symbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts target=T153 resolvedTypeArguments=[T114]
+T124 NumberLiteral|EnumLiteral(0x8800) LiteralType symbol=$"Green"/0x8@EnumMember[533,543)@decl-only.ts value=4(jsnum.Number) freshType=T154 regularType=T124
+T125 EnumLiteral|Union(0x8008000) of=0x8000 UnionType symbol=$"Flag"/0x80@EnumDeclaration[551,596)@decl-only.ts alias={symbol=$"Flag"/0x80@EnumDeclaration[551,596)@decl-only.ts} types=[T171,T172] regularType=T125
+T126 Object(0x100000) of=0x80004 TypeReference alias={symbol=$"Pair"/0x80000@TypeAliasDeclaration[596,626)@decl-only.ts typeArguments=[T14,T14]} target=T164 mapper=Array{sources=[T110,T111] targets=[T14,T14]} node=TupleType[618,625)@decl-only.ts
+T127 Union(0x8000000) of=0x8000 UnionType alias={symbol=$"Lookup"/0x80000@TypeAliasDeclaration[718,767)@decl-only.ts} types=[T14,T15]
+T128 Union(0x8000000) of=0x8000 UnionType types=[T100,T99]
+T129 Object(0x100000) of=0x80060 MappedType symbol=$"\xfetype"/0x800@MappedType[856,891)@decl-only.ts alias={symbol=$"Mapped"/0x80000@TypeAliasDeclaration[839,892)@decl-only.ts typeArguments=[T121]} target=T102 mapper=Composite{c=&Checker m1=Simple{source=T139 target=T173} m2=Merged{m1=Simple{source=T103 target=T121} m2=Simple{source=T103 target=T121}}} declaration=MappedType[856,891)@decl-only.ts typeParameter=T173
+T130 Union(0x8000000) UnionType alias={symbol=$"Tpl"/0x80000@TypeAliasDeclaration[892,937)@decl-only.ts} types=[T140,T107]
+T131 TypeParameter(0x80000) TypeParameter symbol=$"U"/0x40000@TypeParameter[145,146)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T132 Object(0x100000) of=0x40000004 TypeReference symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts target=T135 resolvedTypeArguments=[T131]
+T133 TypeParameter(0x80000) TypeParameter symbol=$"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T134 TypeParameter(0x80000) TypeParameter symbol=$"U"/0x40000@TypeParameter[1704,1722)@decl-only.ts resolvedBaseConstraint=T30 constraint=T117 resolvedDefaultType=T43
+T135 Object(0x100000) of=0x200006 InterfaceType symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts members={"map":Y44 "value":Y45 "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts} properties=[Y45,Y44,$"x"/0x4@PropertySignature[17,28)@decl-only.ts,$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts,$"z"/0x4@PropertySignature[40,61)@decl-only.ts,$"w"/0x4@PropertySignature[219,230)@decl-only.ts] signatures=[G12,G13] callSignatureCount=1 indexInfos=[{keyType=T106 valueType=T9 declaration=IndexSignature[61,95)@decl-only.ts}] target=T135 instantiations=#5[T122,T132,T135,T137,T191] resolvedTypeArguments=[T104] allTypeParameters=[T104,T174] thisType=T174 baseTypesResolved=true declaredMembersResolved=true resolvedBaseTypes=[T121] declaredMembers={"T":$"T"/0x40000@TypeParameter[112,113)@decl-only.ts "\xfecall":$"\xfecall"/0x20000@CallSignature[192,199)@decl-only.ts "\xfenew":$"\xfenew"/0x20000@ConstructSignature[172,192)@decl-only.ts "map":$"map"/0x2000@MethodSignature[140,172)@decl-only.ts "value":$"value"/0x4@PropertySignature[130,140)@decl-only.ts} declaredCallSignatures=[G6] declaredConstructSignatures=[G8]
+T136 TypeParameter(0x80000) TypeParameter symbol=$"T"/0x40000@TypeParameter[392,413)@decl-only.ts resolvedBaseConstraint=T28 constraint=T28 resolvedDefaultType=T38
+T137 Object(0x100000) of=0x40200004 TypeReference symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts members={"map":Y46 "value":Y47 "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts} properties=[Y47,Y46,$"x"/0x4@PropertySignature[17,28)@decl-only.ts,$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts,$"z"/0x4@PropertySignature[40,61)@decl-only.ts,$"w"/0x4@PropertySignature[219,230)@decl-only.ts] signatures=[G14,G15] callSignatureCount=1 indexInfos=[{keyType=T106 valueType=T9 declaration=IndexSignature[61,95)@decl-only.ts}] target=T135 resolvedTypeArguments=[T14]
+T138 TypeParameter(0x80000) of=0x180000 TypeParameter symbol=$"T"/0x40000@TypeParameter[778,779)@decl-only.ts resolvedBaseConstraint=T43 constraint=T43 resolvedDefaultType=T43
+T139 TypeParameter(0x80000) TypeParameter symbol=$"P"/0x40000@TypeParameter[869,881)@decl-only.ts resolvedBaseConstraint=T30 constraint=T119 resolvedDefaultType=T43
+T140 StringLiteral(0x400) LiteralType value="AB"(string) regularType=T140
+T141 Union(0x8000000) UnionType types=[T13,T113]
+T142 Union(0x8000000) of=0x8000 UnionType types=[T96,T95,T19]
+T143 Object(0x100000) of=0x200010 ObjectType symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts members={"count":$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts "prototype":$"prototype"/0x400004@-} properties=[$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts,$"prototype"/0x400004@-] signatures=[G9]
+T144 Object(0x100000) of=0x200010 ObjectType symbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts members={"count":$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts "prototype":$"prototype"/0x400004@-} properties=[$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts,$"prototype"/0x400004@-] signatures=[G16]
+T145 Union(0x8000000) of=0x8000 UnionType types=[T10,T17,T19]
+T146 Object(0x100000) of=0x180010 ObjectType symbol=$"map"/0x2000@MethodSignature[140,172)@decl-only.ts instantiations=#1[T146]
+T147 Union(0x8000000) of=0x8000 UnionType types=[T10,T14]
+T148 TypeParameter(0x80000) TypeParameter symbol=$"S"/0x40000@TypeParameter[76317,76333)@lib.es5.d.ts resolvedBaseConstraint=T14 constraint=T14
+T149 StringLiteral|EnumLiteral(0x8400) LiteralType symbol=$"A"/0x8@EnumMember[577,585)@decl-only.ts value="a"(string) freshType=T149 regularType=T171
+T150 StringLiteral|EnumLiteral(0x8400) LiteralType symbol=$"B"/0x8@EnumMember[586,594)@decl-only.ts value="b"(string) freshType=T150 regularType=T172
+T151 Enum(0x10000) LiteralType symbol=$"Blue"/0x8@EnumMember[544,549)@decl-only.ts freshType=T151 regularType=T175
+T152 EnumLiteral|Union(0x8008000) of=0x8000 UnionType symbol=$"Color"/0x100@EnumDeclaration[507,551)@decl-only.ts alias={symbol=$"Color"/0x100@EnumDeclaration[507,551)@decl-only.ts} types=[T176,T124,T175]
+T153 Object(0x100000) of=0x200005 InterfaceType symbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts members={"fetch":Y48 "legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts "tag":Y49 "w":Y50 "x":Y51 "z":Y52} properties=[Y51,Y52,Y50,Y49,Y48,$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts,$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts,$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts] target=T153 instantiations=#3[T123,T153,T192] resolvedTypeArguments=[T136] allTypeParameters=[T136,T108] thisType=T108 baseTypesResolved=true declaredMembersResolved=true resolvedBaseConstructorType=T143 resolvedBaseTypes=[T120] declaredMembers={"T":$"T"/0x40000@TypeParameter[392,413)@decl-only.ts "fetch":$"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts "tag":$"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts "w":$"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts "x":$"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts "z":$"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts}
+T154 NumberLiteral|EnumLiteral(0x8800) LiteralType symbol=$"Green"/0x8@EnumMember[533,543)@decl-only.ts value=4(jsnum.Number) freshType=T154 regularType=T124
+T155 Enum(0x10000) LiteralType symbol=$"Red"/0x8@EnumMember[528,532)@decl-only.ts freshType=T155 regularType=T176
+T156 Object(0x100000) of=0x200002 InterfaceType symbol=$"Symbol"/0x40@InterfaceDeclaration[2771,2970)@lib.es5.d.ts members={"toString":$"toString"/0x2000@MethodSignature[2793,2876)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[2876,2967)@lib.es5.d.ts} properties=[$"toString"/0x2000@MethodSignature[2793,2876)@lib.es5.d.ts,$"valueOf"/0x2000@MethodSignature[2876,2967)@lib.es5.d.ts] baseTypesResolved=true declaredMembersResolved=true declaredMembers={"toString":$"toString"/0x2000@MethodSignature[2793,2876)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[2876,2967)@lib.es5.d.ts}
+T157 NumberLiteral(0x800) LiteralType value=1(jsnum.Number) freshType=T157 regularType=T95
+T158 StringLiteral(0x400) LiteralType value="a"(string) freshType=T158 regularType=T96
+T159 StringLiteral(0x400) LiteralType value="x"(string) freshType=T159 regularType=T97
+T160 StringLiteral(0x400) LiteralType value="value"(string) freshType=T160 regularType=T98
+T161 StringLiteral(0x400) LiteralType value="s"(string) freshType=T161 regularType=T99
+T162 StringLiteral(0x400) LiteralType value="n"(string) freshType=T162 regularType=T100
+T163 StringLiteral(0x400) LiteralType value="ab"(string) freshType=T163 regularType=T101
+T164 Object(0x100000) of=0xc TupleType target=T164 instantiations=#1[T164] resolvedTypeArguments=[T177,T178] allTypeParameters=[T177,T178,T179] thisType=T179 declaredMembersResolved=true declaredMembers={"0":Y53 "1":Y54 "length":Y55} elementInfos=[{flags=0x1},{flags=0x1}] minLength=2 fixedLength=2 combinedFlags=0x1
+T165 Object(0x100000) of=0xc TupleType target=T165 instantiations=#1[T165] resolvedTypeArguments=[T180,T181,T182] allTypeParameters=[T180,T181,T182,T183] thisType=T183 declaredMembersResolved=true declaredMembers={"0":Y56 "1":Y57 "length":Y58} elementInfos=[{flags=0x1 labeledDeclaration=NamedTupleMember[641,654)@decl-only.ts},{flags=0x2 labeledDeclaration=NamedTupleMember[655,671)@decl-only.ts},{flags=0x4 labeledDeclaration=NamedTupleMember[672,691)@decl-only.ts}] minLength=1 fixedLength=2 combinedFlags=0x7
+T166 StringLiteral(0x400) LiteralType value="w"(string) regularType=T166
+T167 StringLiteral(0x400) LiteralType value="y"(string) regularType=T167
+T168 StringLiteral(0x400) LiteralType value="z"(string) regularType=T168
+T169 Index(0x200000) IndexType target=T121
+T170 TypeParameter(0x80000) TypeParameter symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts constraint=T120 isThisType=true
+T171 StringLiteral|EnumLiteral(0x8400) LiteralType symbol=$"A"/0x8@EnumMember[577,585)@decl-only.ts value="a"(string) freshType=T149 regularType=T171
+T172 StringLiteral|EnumLiteral(0x8400) LiteralType symbol=$"B"/0x8@EnumMember[586,594)@decl-only.ts value="b"(string) freshType=T150 regularType=T172
+T173 TypeParameter(0x80000) TypeParameter symbol=$"P"/0x40000@TypeParameter[869,881)@decl-only.ts target=T139 mapper=Composite{c=&Checker m1=Simple{source=T139 target=T173} m2=Merged{m1=Simple{source=T103 target=T121} m2=Simple{source=T103 target=T121}}}
+T174 TypeParameter(0x80000) TypeParameter symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts constraint=T135 isThisType=true
+T175 Enum(0x10000) LiteralType symbol=$"Blue"/0x8@EnumMember[544,549)@decl-only.ts freshType=T151 regularType=T175
+T176 Enum(0x10000) LiteralType symbol=$"Red"/0x8@EnumMember[528,532)@decl-only.ts freshType=T155 regularType=T176
+T177 TypeParameter(0x80000) TypeParameter
+T178 TypeParameter(0x80000) TypeParameter
+T179 TypeParameter(0x80000) TypeParameter constraint=T164 isThisType=true
+T180 TypeParameter(0x80000) TypeParameter
+T181 TypeParameter(0x80000) TypeParameter
+T182 TypeParameter(0x80000) TypeParameter
+T183 TypeParameter(0x80000) TypeParameter constraint=T165 isThisType=true
+T184 NumberLiteral(0x800) LiteralType value=2(jsnum.Number) regularType=T184
+T185 NumberLiteral(0x800) LiteralType value=4(jsnum.Number) freshType=T186 regularType=T185
+T186 NumberLiteral(0x800) LiteralType value=4(jsnum.Number) freshType=T186 regularType=T185
+T187 Object(0x100000) of=0x200004 TypeReference symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts members={"legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts} properties=[$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts,$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts,$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts] target=T120 resolvedTypeArguments=[T153]
+T188 Object(0x100000) of=0x200010 ObjectType symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts members={"count":$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts "prototype":$"prototype"/0x400004@-} properties=[$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts,$"prototype"/0x400004@-]
+T189 Object(0x100000) of=0x4 TypeReference symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts target=T120 resolvedTypeArguments=[T170]
+T190 Object(0x100000) of=0x8200004 TypeReference symbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts members={"legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts} properties=[$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts,$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts,$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts] target=T120 resolvedTypeArguments=[T108]
+T191 Object(0x100000) of=0x8200004 TypeReference symbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts members={"T":$"T"/0x40000@TypeParameter[112,113)@decl-only.ts "\xfecall":$"\xfecall"/0x20000@CallSignature[192,199)@decl-only.ts "\xfenew":$"\xfenew"/0x20000@ConstructSignature[172,192)@decl-only.ts "map":$"map"/0x2000@MethodSignature[140,172)@decl-only.ts "value":$"value"/0x4@PropertySignature[130,140)@decl-only.ts "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts} properties=[$"value"/0x4@PropertySignature[130,140)@decl-only.ts,$"map"/0x2000@MethodSignature[140,172)@decl-only.ts,$"x"/0x4@PropertySignature[17,28)@decl-only.ts,$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts,$"z"/0x4@PropertySignature[40,61)@decl-only.ts,$"w"/0x4@PropertySignature[219,230)@decl-only.ts] signatures=[G6,G8] callSignatureCount=1 indexInfos=[{keyType=T106 valueType=T9 declaration=IndexSignature[61,95)@decl-only.ts}] target=T135 resolvedTypeArguments=[T104,T174]
+T192 Object(0x100000) of=0x8200004 TypeReference symbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts members={"T":$"T"/0x40000@TypeParameter[392,413)@decl-only.ts "fetch":$"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts "legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts "tag":$"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts "w":$"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts "x":$"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts "z":$"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts} properties=[$"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts,$"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts,$"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts,$"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts,$"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts,$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts,$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts,$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts] target=T153 resolvedTypeArguments=[T136,T108]
+T193 StringLiteral(0x400) LiteralType value="b"(string) freshType=T194 regularType=T193
+T194 StringLiteral(0x400) LiteralType value="b"(string) freshType=T194 regularType=T193
+T195 StringLiteral(0x400) LiteralType value="map"(string) regularType=T195
+== signatures
+G1 resolvedMinArgumentCount=-1 resolvedReturnType=T1
+G2 resolvedMinArgumentCount=-1 resolvedReturnType=T5
+G3 resolvedMinArgumentCount=-1 resolvedReturnType=T1
+G4 resolvedMinArgumentCount=-1 resolvedReturnType=T25
+G5 flags=0x1 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=CallSignature[1010,1044)@decl-only.ts parameters=[$"a"/0x1@Parameter[1012,1021)@decl-only.ts,$"b"/0x1@Parameter[1022,1037)@decl-only.ts]
+G6 resolvedMinArgumentCount=-1 declaration=CallSignature[192,199)@decl-only.ts
+G7 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=CallSignature[989,1010)@decl-only.ts parameters=[$"a"/0x1@Parameter[991,1000)@decl-only.ts]
+G8 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=ConstructSignature[172,192)@decl-only.ts parameters=[$"v"/0x1@Parameter[178,182)@decl-only.ts]
+G9 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=Constructor[315,342)@decl-only.ts parameters=[$"name"/0x1@Parameter[328,340)@decl-only.ts]
+G10 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=FunctionDeclaration[1746,1795)@decl-only.ts parameters=[$"x"/0x1@Parameter[1770,1780)@decl-only.ts] resolvedTypePredicate={kind=1 parameterName="x" t=T14}
+G11 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=FunctionDeclaration[1795,1844)@decl-only.ts parameters=[$"x"/0x1@Parameter[1821,1831)@decl-only.ts] resolvedTypePredicate={kind=3 parameterName="x"}
+G12 resolvedMinArgumentCount=-1 declaration=CallSignature[192,199)@decl-only.ts target=G6 mapper=Array{sources=[T104,T174] targets=[T104,T135]}
+G13 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=ConstructSignature[172,192)@decl-only.ts parameters=[Y59] target=G8 mapper=Array{sources=[T104,T174] targets=[T104,T135]}
+G14 resolvedMinArgumentCount=-1 declaration=CallSignature[192,199)@decl-only.ts target=G6 mapper=Array{sources=[T104,T174] targets=[T14,T137]}
+G15 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=ConstructSignature[172,192)@decl-only.ts parameters=[Y60] target=G8 mapper=Array{sources=[T104,T174] targets=[T14,T137]}
+G16 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=Constructor[315,342)@decl-only.ts typeParameters=[T136] parameters=[$"name"/0x1@Parameter[328,340)@decl-only.ts] resolvedReturnType=T153
+== symbols
+Y1 Flags=0x2000004 Name="undefined"
+Y2 Flags=0x2000004 Name="arguments"
+Y3 Flags=0x2000004 Name="require"
+Y4 Flags=0x2000004 Name="unknown"
+Y5 Flags=0x2000600 CheckFlags=0x8 Name="globalThis" Exports={"Animal":$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts "Array":$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts "ArrayBuffer":$"ArrayBuffer"/0x41@InterfaceDeclaration[77061,77600)@lib.es5.d.ts "ArrayBufferConstructor":$"ArrayBufferConstructor"/0x40@InterfaceDeclaration[77835,78005)@lib.es5.d.ts "ArrayBufferLike":$"ArrayBufferLike"/0x80000@TypeAliasDeclaration[77769,77835)@lib.es5.d.ts "ArrayBufferTypes":$"ArrayBufferTypes"/0x40@InterfaceDeclaration[77600,77769)@lib.es5.d.ts "ArrayBufferView":$"ArrayBufferView"/0x40@InterfaceDeclaration[78055,78449)@lib.es5.d.ts "ArrayConstructor":$"ArrayConstructor"/0x40@InterfaceDeclaration[71219,71540)@lib.es5.d.ts "ArrayLike":$"ArrayLike"/0x40@InterfaceDeclaration[74323,74444)@lib.es5.d.ts "Awaited":$"Awaited"/0x80000@TypeAliasDeclaration[73600,74323)@lib.es5.d.ts "Boolean":$"Boolean"/0x41@InterfaceDeclaration[21801,21917)@lib.es5.d.ts "BooleanConstructor":$"BooleanConstructor"/0x40@InterfaceDeclaration[21917,22051)@lib.es5.d.ts "Box":$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts "CallableFunction":$"CallableFunction"/0x40@InterfaceDeclaration[11491,13479)@lib.es5.d.ts "Capitalize":$"Capitalize"/0x80000@TypeAliasDeclaration[76451,76575)@lib.es5.d.ts "Color":$"Color"/0x100@EnumDeclaration[507,551)@decl-only.ts "ConcatArray":$"ConcatArray"/0x40@InterfaceDeclaration[57929,58108)@lib.es5.d.ts "Cond":$"Cond"/0x80000@TypeAliasDeclaration[767,839)@decl-only.ts "ConstructorParameters":$"ConstructorParameters"/0x80000@TypeAliasDeclaration[75671,75889)@lib.es5.d.ts "Ctor":$"Ctor"/0x80000@TypeAliasDeclaration[1047,1086)@decl-only.ts "DataView":$"DataView"/0x41@InterfaceDeclaration[78449,84926)@lib.es5.d.ts "DataViewConstructor":$"DataViewConstructor"/0x40@InterfaceDeclaration[84926,85184)@lib.es5.d.ts "Date":$"Date"/0x41@InterfaceDeclaration[29583,37645)@lib.es5.d.ts "DateConstructor":$"DateConstructor"/0x40@InterfaceDeclaration[37645,40109)@lib.es5.d.ts "Dog":$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts "Error":$"Error"/0x41@InterfaceDeclaration[44366,44452)@lib.es5.d.ts "ErrorConstructor":$"ErrorConstructor"/0x40@InterfaceDeclaration[44452,44587)@lib.es5.d.ts "EvalError":$"EvalError"/0x41@InterfaceDeclaration[44627,44669)@lib.es5.d.ts "EvalErrorConstructor":$"EvalErrorConstructor"/0x40@InterfaceDeclaration[44669,44845)@lib.es5.d.ts "Exclude":$"Exclude"/0x80000@TypeAliasDeclaration[75038,75153)@lib.es5.d.ts "Extract":$"Extract"/0x80000@TypeAliasDeclaration[75153,75268)@lib.es5.d.ts "Flag":$"Flag"/0x80@EnumDeclaration[551,596)@decl-only.ts "Float32Array":$"Float32Array"/0x41@InterfaceDeclaration[184942,197644)@lib.es5.d.ts "Float32ArrayConstructor":$"Float32ArrayConstructor"/0x40@InterfaceDeclaration[197644,199141)@lib.es5.d.ts "Float64Array":$"Float64Array"/0x41@InterfaceDeclaration[199193,211895)@lib.es5.d.ts "Float64ArrayConstructor":$"Float64ArrayConstructor"/0x40@InterfaceDeclaration[211895,213392)@lib.es5.d.ts "Fn":$"Fn"/0x80000@TypeAliasDeclaration[977,1047)@decl-only.ts "Function":$"Function"/0x41@InterfaceDeclaration[9286,10750)@lib.es5.d.ts "FunctionConstructor":$"FunctionConstructor"/0x40@InterfaceDeclaration[10750,11011)@lib.es5.d.ts "IArguments":$"IArguments"/0x40@InterfaceDeclaration[15413,15513)@lib.es5.d.ts "ImportAssertions":$"ImportAssertions"/0x40@InterfaceDeclaration[25122,25297)@lib.es5.d.ts "ImportAttributes":$"ImportAttributes"/0x40@InterfaceDeclaration[25297,25454)@lib.es5.d.ts "ImportCallOptions":$"ImportCallOptions"/0x40@InterfaceDeclaration[24819,25122)@lib.es5.d.ts "ImportMeta":$"ImportMeta"/0x40@InterfaceDeclaration[24617,24819)@lib.es5.d.ts "Infinity":$"Infinity"/0x1@VariableDeclaration[203,220)@lib.es5.d.ts "InstanceType":$"InstanceType"/0x80000@TypeAliasDeclaration[76046,76243)@lib.es5.d.ts "Int16Array":$"Int16Array"/0x41@InterfaceDeclaration[128012,140709)@lib.es5.d.ts "Int16ArrayConstructor":$"Int16ArrayConstructor"/0x40@InterfaceDeclaration[140709,142186)@lib.es5.d.ts "Int32Array":$"Int32Array"/0x41@InterfaceDeclaration[156478,169175)@lib.es5.d.ts "Int32ArrayConstructor":$"Int32ArrayConstructor"/0x40@InterfaceDeclaration[169175,170652)@lib.es5.d.ts "Int8Array":$"Int8Array"/0x41@InterfaceDeclaration[85228,97913)@lib.es5.d.ts "Int8ArrayConstructor":$"Int8ArrayConstructor"/0x40@InterfaceDeclaration[97913,99380)@lib.es5.d.ts "Inter":$"Inter"/0x80000@TypeAliasDeclaration[937,977)@decl-only.ts "Intl":$"Intl"/0x200@ModuleDeclaration[213444,219275)@lib.es5.d.ts "JSON":$"JSON"/0x41@InterfaceDeclaration[46272,48035)@lib.es5.d.ts "Keys":$"Keys"/0x80000@TypeAliasDeclaration[693,718)@decl-only.ts "Lookup":$"Lookup"/0x80000@TypeAliasDeclaration[718,767)@decl-only.ts "Lowercase":$"Lowercase"/0x80000@TypeAliasDeclaration[76347,76451)@lib.es5.d.ts "Mapped":$"Mapped"/0x80000@TypeAliasDeclaration[839,892)@decl-only.ts "Math":$"Math"/0x41@InterfaceDeclaration[25454,29469)@lib.es5.d.ts "NaN":$"NaN"/0x1@VariableDeclaration[177,189)@lib.es5.d.ts "Named":$"Named"/0x80000@TypeAliasDeclaration[626,693)@decl-only.ts "NewableFunction":$"NewableFunction"/0x40@InterfaceDeclaration[13479,15413)@lib.es5.d.ts "NoInfer":$"NoInfer"/0x80000@TypeAliasDeclaration[76701,76786)@lib.es5.d.ts "NonNullable":$"NonNullable"/0x80000@TypeAliasDeclaration[75421,75502)@lib.es5.d.ts "Number":$"Number"/0x41@InterfaceDeclaration[22095,23260)@lib.es5.d.ts "NumberConstructor":$"NumberConstructor"/0x40@InterfaceDeclaration[23260,24354)@lib.es5.d.ts "Object":$"Object"/0x41@InterfaceDeclaration[3290,4293)@lib.es5.d.ts "ObjectConstructor":$"ObjectConstructor"/0x40@InterfaceDeclaration[4293,9173)@lib.es5.d.ts "Omit":$"Omit"/0x80000@TypeAliasDeclaration[75268,75421)@lib.es5.d.ts "OmitThisParameter":$"OmitThisParameter"/0x80000@TypeAliasDeclaration[11287,11491)@lib.es5.d.ts "Pair":$"Pair"/0x80000@TypeAliasDeclaration[596,626)@decl-only.ts "Parameters":$"Parameters"/0x80000@TypeAliasDeclaration[75502,75671)@lib.es5.d.ts "Partial":$"Partial"/0x80000@TypeAliasDeclaration[74444,74547)@lib.es5.d.ts "Pick":$"Pick"/0x80000@TypeAliasDeclaration[74764,74905)@lib.es5.d.ts "Point":$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts "Promise":$"Promise"/0x40@InterfaceDeclaration[72557,73600)@lib.es5.d.ts "PromiseConstructorLike":$"PromiseConstructorLike"/0x80000@TypeAliasDeclaration[71773,71939)@lib.es5.d.ts "PromiseLike":$"PromiseLike"/0x40@InterfaceDeclaration[71939,72557)@lib.es5.d.ts "PropertyDescriptor":$"PropertyDescriptor"/0x40@InterfaceDeclaration[3026,3205)@lib.es5.d.ts "PropertyDescriptorMap":$"PropertyDescriptorMap"/0x40@InterfaceDeclaration[3205,3290)@lib.es5.d.ts "PropertyKey":$"PropertyKey"/0x80000@TypeAliasDeclaration[2970,3026)@lib.es5.d.ts "RangeError":$"RangeError"/0x41@InterfaceDeclaration[44893,44936)@lib.es5.d.ts "RangeErrorConstructor":$"RangeErrorConstructor"/0x40@InterfaceDeclaration[44936,45116)@lib.es5.d.ts "Readonly":$"Readonly"/0x80000@TypeAliasDeclaration[74652,74764)@lib.es5.d.ts "ReadonlyArray":$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts "Rec":$"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts "Record":$"Record"/0x80000@TypeAliasDeclaration[74905,75038)@lib.es5.d.ts "ReferenceError":$"ReferenceError"/0x41@InterfaceDeclaration[45166,45213)@lib.es5.d.ts "ReferenceErrorConstructor":$"ReferenceErrorConstructor"/0x40@InterfaceDeclaration[45213,45409)@lib.es5.d.ts "RegExp":$"RegExp"/0x41@InterfaceDeclaration[40902,42363)@lib.es5.d.ts "RegExpConstructor":$"RegExpConstructor"/0x40@InterfaceDeclaration[42363,44324)@lib.es5.d.ts "RegExpExecArray":$"RegExpExecArray"/0x40@InterfaceDeclaration[40526,40902)@lib.es5.d.ts "RegExpMatchArray":$"RegExpMatchArray"/0x40@InterfaceDeclaration[40147,40526)@lib.es5.d.ts "Required":$"Required"/0x80000@TypeAliasDeclaration[74547,74652)@lib.es5.d.ts "ReturnType":$"ReturnType"/0x80000@TypeAliasDeclaration[75889,76046)@lib.es5.d.ts "String":$"String"/0x41@InterfaceDeclaration[15513,21457)@lib.es5.d.ts "StringConstructor":$"StringConstructor"/0x40@InterfaceDeclaration[21457,21633)@lib.es5.d.ts "Symbol":$"Symbol"/0x40@InterfaceDeclaration[2771,2970)@lib.es5.d.ts "SyntaxError":$"SyntaxError"/0x41@InterfaceDeclaration[45467,45511)@lib.es5.d.ts "SyntaxErrorConstructor":$"SyntaxErrorConstructor"/0x40@InterfaceDeclaration[45511,45695)@lib.es5.d.ts "TemplateStringsArray":$"TemplateStringsArray"/0x40@InterfaceDeclaration[24510,24617)@lib.es5.d.ts "ThisParameterType":$"ThisParameterType"/0x80000@TypeAliasDeclaration[11057,11287)@lib.es5.d.ts "ThisType":$"ThisType"/0x40@InterfaceDeclaration[76786,76862)@lib.es5.d.ts "Tpl":$"Tpl"/0x80000@TypeAliasDeclaration[892,937)@decl-only.ts "TypeError":$"TypeError"/0x41@InterfaceDeclaration[45747,45789)@lib.es5.d.ts "TypeErrorConstructor":$"TypeErrorConstructor"/0x40@InterfaceDeclaration[45789,45965)@lib.es5.d.ts "TypedPropertyDescriptor":$"TypedPropertyDescriptor"/0x40@InterfaceDeclaration[71580,71773)@lib.es5.d.ts "URIError":$"URIError"/0x41@InterfaceDeclaration[46013,46054)@lib.es5.d.ts "URIErrorConstructor":$"URIErrorConstructor"/0x40@InterfaceDeclaration[46054,46226)@lib.es5.d.ts "Uint16Array":$"Uint16Array"/0x41@InterfaceDeclaration[142234,154941)@lib.es5.d.ts "Uint16ArrayConstructor":$"Uint16ArrayConstructor"/0x40@InterfaceDeclaration[154941,156428)@lib.es5.d.ts "Uint32Array":$"Uint32Array"/0x41@InterfaceDeclaration[170700,183405)@lib.es5.d.ts "Uint32ArrayConstructor":$"Uint32ArrayConstructor"/0x40@InterfaceDeclaration[183405,184892)@lib.es5.d.ts "Uint8Array":$"Uint8Array"/0x41@InterfaceDeclaration[99426,112126)@lib.es5.d.ts "Uint8ArrayConstructor":$"Uint8ArrayConstructor"/0x40@InterfaceDeclaration[112126,113603)@lib.es5.d.ts "Uint8ClampedArray":$"Uint8ClampedArray"/0x41@InterfaceDeclaration[113651,126403)@lib.es5.d.ts "Uint8ClampedArrayConstructor":$"Uint8ClampedArrayConstructor"/0x40@InterfaceDeclaration[126403,127950)@lib.es5.d.ts "Uncapitalize":$"Uncapitalize"/0x80000@TypeAliasDeclaration[76575,76701)@lib.es5.d.ts "Uppercase":$"Uppercase"/0x80000@TypeAliasDeclaration[76243,76347)@lib.es5.d.ts "WeakKey":$"WeakKey"/0x80000@TypeAliasDeclaration[77009,77061)@lib.es5.d.ts "WeakKeyTypes":$"WeakKeyTypes"/0x40@InterfaceDeclaration[76862,77009)@lib.es5.d.ts "asserts":$"asserts"/0x10@FunctionDeclaration[1795,1844)@decl-only.ts "b":$"b"/0x2@VariableDeclaration[1171,1186)@decl-only.ts "c":$"c"/0x2@VariableDeclaration[1234,1249)@decl-only.ts "cond":$"cond"/0x2@VariableDeclaration[1403,1430)@decl-only.ts "ctor":$"ctor"/0x2@VariableDeclaration[1556,1567)@decl-only.ts "d":$"d"/0x2@VariableDeclaration[1201,1219)@decl-only.ts "decodeURI":$"decodeURI"/0x10@FunctionDeclaration[1324,1532)@lib.es5.d.ts "decodeURIComponent":$"decodeURIComponent"/0x10@FunctionDeclaration[1532,1792)@lib.es5.d.ts "encodeURI":$"encodeURI"/0x10@FunctionDeclaration[1792,1979)@lib.es5.d.ts "encodeURIComponent":$"encodeURIComponent"/0x10@FunctionDeclaration[1979,2238)@lib.es5.d.ts "escape":$"escape"/0x10@FunctionDeclaration[2238,2499)@lib.es5.d.ts "eval":$"eval"/0x10@FunctionDeclaration[221,385)@lib.es5.d.ts "f":$"f"/0x2@VariableDeclaration[1264,1272)@decl-only.ts "fn":$"fn"/0x2@VariableDeclaration[1534,1541)@decl-only.ts "generic":$"generic"/0x10@FunctionDeclaration[1676,1746)@decl-only.ts "globalThis":Y5 "guard":$"guard"/0x10@FunctionDeclaration[1746,1795)@decl-only.ts "inter":$"inter"/0x2@VariableDeclaration[1506,1519)@decl-only.ts "isFinite":$"isFinite"/0x10@FunctionDeclaration[1170,1324)@lib.es5.d.ts "isNaN":$"isNaN"/0x10@FunctionDeclaration[972,1170)@lib.es5.d.ts "keys":$"keys"/0x2@VariableDeclaration[1349,1360)@decl-only.ts "look":$"look"/0x2@VariableDeclaration[1375,1388)@decl-only.ts "mapped":$"mapped"/0x2@VariableDeclaration[1445,1467)@decl-only.ts "named":$"named"/0x2@VariableDeclaration[1321,1334)@decl-only.ts "over":$"over"/0x10@FunctionDeclaration[1592,1634)@decl-only.ts "p":$"p"/0x2@VariableDeclaration[1147,1156)@decl-only.ts "pair":$"pair"/0x2@VariableDeclaration[1287,1306)@decl-only.ts "parseFloat":$"parseFloat"/0x10@FunctionDeclaration[790,972)@lib.es5.d.ts "parseInt":$"parseInt"/0x10@FunctionDeclaration[385,790)@lib.es5.d.ts "rec":$"rec"/0x2@VariableDeclaration[1582,1591)@decl-only.ts "tpl":$"tpl"/0x2@VariableDeclaration[1482,1491)@decl-only.ts "undefined":Y1 "unescape":$"unescape"/0x10@FunctionDeclaration[2499,2771)@lib.es5.d.ts}
+Y6 Flags=0x2000800 Name="\xfetype"
+Y7 Flags=0x2002000 CheckFlags=0x1 Name="concat" Declarations=[MethodSignature[48792,48960)@lib.es5.d.ts,MethodSignature[48960,49134)@lib.es5.d.ts] ValueDeclaration=MethodSignature[48792,48960)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y8 Flags=0x2002000 CheckFlags=0x1 Name="every" Declarations=[MethodSignature[50463,51141)@lib.es5.d.ts,MethodSignature[51141,51790)@lib.es5.d.ts] ValueDeclaration=MethodSignature[50463,51141)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y9 Flags=0x2002000 CheckFlags=0x1 Name="filter" Declarations=[MethodSignature[53501,54052)@lib.es5.d.ts,MethodSignature[54052,54587)@lib.es5.d.ts] ValueDeclaration=MethodSignature[53501,54052)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y10 Flags=0x2002000 CheckFlags=0x1 Name="forEach" Declarations=[MethodSignature[52454,52951)@lib.es5.d.ts] ValueDeclaration=MethodSignature[52454,52951)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y11 Flags=0x2002000 CheckFlags=0x1 Name="indexOf" Declarations=[MethodSignature[49748,50089)@lib.es5.d.ts] ValueDeclaration=MethodSignature[49748,50089)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y12 Flags=0x2002000 CheckFlags=0x1 Name="join" Declarations=[MethodSignature[49134,49451)@lib.es5.d.ts] ValueDeclaration=MethodSignature[49134,49451)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y13 Flags=0x2002000 CheckFlags=0x1 Name="lastIndexOf" Declarations=[MethodSignature[50089,50463)@lib.es5.d.ts] ValueDeclaration=MethodSignature[50089,50463)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y14 Flags=0x2000004 CheckFlags=0x1 Name="length" Declarations=[PropertySignature[48361,48521)@lib.es5.d.ts] ValueDeclaration=PropertySignature[48361,48521)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y15 Flags=0x2002000 CheckFlags=0x1 Name="map" Declarations=[MethodSignature[52951,53501)@lib.es5.d.ts] ValueDeclaration=MethodSignature[52951,53501)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y16 Flags=0x2002000 CheckFlags=0x1 Name="reduce" Declarations=[MethodSignature[54587,55322)@lib.es5.d.ts,MethodSignature[55322,55452)@lib.es5.d.ts,MethodSignature[55452,56207)@lib.es5.d.ts] ValueDeclaration=MethodSignature[54587,55322)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y17 Flags=0x2002000 CheckFlags=0x1 Name="reduceRight" Declarations=[MethodSignature[56207,56973)@lib.es5.d.ts,MethodSignature[56973,57108)@lib.es5.d.ts,MethodSignature[57108,57894)@lib.es5.d.ts] ValueDeclaration=MethodSignature[56207,56973)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y18 Flags=0x2002000 CheckFlags=0x1 Name="slice" Declarations=[MethodSignature[49451,49748)@lib.es5.d.ts] ValueDeclaration=MethodSignature[49451,49748)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y19 Flags=0x2002000 CheckFlags=0x1 Name="some" Declarations=[MethodSignature[51790,52454)@lib.es5.d.ts] ValueDeclaration=MethodSignature[51790,52454)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y20 Flags=0x2002000 CheckFlags=0x1 Name="toLocaleString" Declarations=[MethodSignature[48617,48792)@lib.es5.d.ts] ValueDeclaration=MethodSignature[48617,48792)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y21 Flags=0x2002000 CheckFlags=0x1 Name="toString" Declarations=[MethodSignature[48521,48617)@lib.es5.d.ts] ValueDeclaration=MethodSignature[48521,48617)@lib.es5.d.ts Parent=$"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts
+Y22 Flags=0x2002000 CheckFlags=0x1 Name="concat" Declarations=[MethodSignature[58946,59210)@lib.es5.d.ts,MethodSignature[59210,59480)@lib.es5.d.ts] ValueDeclaration=MethodSignature[58946,59210)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y23 Flags=0x2002000 CheckFlags=0x1 Name="every" Declarations=[MethodSignature[63888,64548)@lib.es5.d.ts,MethodSignature[64548,65188)@lib.es5.d.ts] ValueDeclaration=MethodSignature[63888,64548)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y24 Flags=0x2002000 CheckFlags=0x1 Name="filter" Declarations=[MethodSignature[66872,67414)@lib.es5.d.ts,MethodSignature[67414,67940)@lib.es5.d.ts] ValueDeclaration=MethodSignature[66872,67414)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y25 Flags=0x2002000 CheckFlags=0x1 Name="forEach" Declarations=[MethodSignature[65843,66331)@lib.es5.d.ts] ValueDeclaration=MethodSignature[65843,66331)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y26 Flags=0x2002000 CheckFlags=0x1 Name="indexOf" Declarations=[MethodSignature[63109,63478)@lib.es5.d.ts] ValueDeclaration=MethodSignature[63109,63478)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y27 Flags=0x2002000 CheckFlags=0x1 Name="join" Declarations=[MethodSignature[59480,59813)@lib.es5.d.ts] ValueDeclaration=MethodSignature[59480,59813)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y28 Flags=0x2002000 CheckFlags=0x1 Name="lastIndexOf" Declarations=[MethodSignature[63478,63888)@lib.es5.d.ts] ValueDeclaration=MethodSignature[63478,63888)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y29 Flags=0x2000004 CheckFlags=0x1 Name="length" Declarations=[PropertySignature[58132,58282)@lib.es5.d.ts] ValueDeclaration=PropertySignature[58132,58282)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y30 Flags=0x2002000 CheckFlags=0x1 Name="map" Declarations=[MethodSignature[66331,66872)@lib.es5.d.ts] ValueDeclaration=MethodSignature[66331,66872)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y31 Flags=0x2002000 CheckFlags=0x1 Name="pop" Declarations=[MethodSignature[58553,58745)@lib.es5.d.ts] ValueDeclaration=MethodSignature[58553,58745)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y32 Flags=0x2002000 CheckFlags=0x1 Name="push" Declarations=[MethodSignature[58745,58946)@lib.es5.d.ts] ValueDeclaration=MethodSignature[58745,58946)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y33 Flags=0x2002000 CheckFlags=0x1 Name="reduce" Declarations=[MethodSignature[67940,68666)@lib.es5.d.ts,MethodSignature[68666,68787)@lib.es5.d.ts,MethodSignature[68787,69533)@lib.es5.d.ts] ValueDeclaration=MethodSignature[67940,68666)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y34 Flags=0x2002000 CheckFlags=0x1 Name="reduceRight" Declarations=[MethodSignature[69533,70290)@lib.es5.d.ts,MethodSignature[70290,70416)@lib.es5.d.ts,MethodSignature[70416,71193)@lib.es5.d.ts] ValueDeclaration=MethodSignature[69533,70290)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y35 Flags=0x2002000 CheckFlags=0x1 Name="reverse" Declarations=[MethodSignature[59813,59985)@lib.es5.d.ts] ValueDeclaration=MethodSignature[59813,59985)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y36 Flags=0x2002000 CheckFlags=0x1 Name="shift" Declarations=[MethodSignature[59985,60180)@lib.es5.d.ts] ValueDeclaration=MethodSignature[59985,60180)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y37 Flags=0x2002000 CheckFlags=0x1 Name="slice" Declarations=[MethodSignature[60180,60826)@lib.es5.d.ts] ValueDeclaration=MethodSignature[60180,60826)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y38 Flags=0x2002000 CheckFlags=0x1 Name="some" Declarations=[MethodSignature[65188,65843)@lib.es5.d.ts] ValueDeclaration=MethodSignature[65188,65843)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y39 Flags=0x2002000 CheckFlags=0x1 Name="sort" Declarations=[MethodSignature[60826,61401)@lib.es5.d.ts] ValueDeclaration=MethodSignature[60826,61401)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y40 Flags=0x2002000 CheckFlags=0x1 Name="splice" Declarations=[MethodSignature[61401,62146)@lib.es5.d.ts,MethodSignature[62146,62891)@lib.es5.d.ts] ValueDeclaration=MethodSignature[61401,62146)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y41 Flags=0x2002000 CheckFlags=0x1 Name="toLocaleString" Declarations=[MethodSignature[58378,58553)@lib.es5.d.ts] ValueDeclaration=MethodSignature[58378,58553)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y42 Flags=0x2002000 CheckFlags=0x1 Name="toString" Declarations=[MethodSignature[58282,58378)@lib.es5.d.ts] ValueDeclaration=MethodSignature[58282,58378)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y43 Flags=0x2002000 CheckFlags=0x1 Name="unshift" Declarations=[MethodSignature[62891,63109)@lib.es5.d.ts] ValueDeclaration=MethodSignature[62891,63109)@lib.es5.d.ts Parent=$"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts
+Y44 Flags=0x2002000 CheckFlags=0x1 Name="map" Declarations=[MethodSignature[140,172)@decl-only.ts] ValueDeclaration=MethodSignature[140,172)@decl-only.ts Parent=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+Y45 Flags=0x2000004 CheckFlags=0x1 Name="value" Declarations=[PropertySignature[130,140)@decl-only.ts] ValueDeclaration=PropertySignature[130,140)@decl-only.ts Parent=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+Y46 Flags=0x2002000 CheckFlags=0x1 Name="map" Declarations=[MethodSignature[140,172)@decl-only.ts] ValueDeclaration=MethodSignature[140,172)@decl-only.ts Parent=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+Y47 Flags=0x2000004 CheckFlags=0x1 Name="value" Declarations=[PropertySignature[130,140)@decl-only.ts] ValueDeclaration=PropertySignature[130,140)@decl-only.ts Parent=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+Y48 Flags=0x2002000 CheckFlags=0x1 Name="fetch" Declarations=[MethodDeclaration[490,505)@decl-only.ts] ValueDeclaration=MethodDeclaration[490,505)@decl-only.ts Parent=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+Y49 Flags=0x2000004 CheckFlags=0x1 Name="tag" Declarations=[PropertyDeclaration[482,490)@decl-only.ts] ValueDeclaration=PropertyDeclaration[482,490)@decl-only.ts Parent=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+Y50 Flags=0x2000004 CheckFlags=0x1 Name="w" Declarations=[PropertyDeclaration[471,482)@decl-only.ts] ValueDeclaration=PropertyDeclaration[471,482)@decl-only.ts Parent=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+Y51 Flags=0x2000004 CheckFlags=0x1 Name="x" Declarations=[PropertyDeclaration[448,459)@decl-only.ts] ValueDeclaration=PropertyDeclaration[448,459)@decl-only.ts Parent=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+Y52 Flags=0x2000004 CheckFlags=0x1 Name="z" Declarations=[PropertyDeclaration[459,471)@decl-only.ts] ValueDeclaration=PropertyDeclaration[459,471)@decl-only.ts Parent=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+Y53 Flags=0x2000004 Name="0"
+Y54 Flags=0x2000004 Name="1"
+Y55 Flags=0x2000004 Name="length"
+Y56 Flags=0x2000004 Name="0"
+Y57 Flags=0x3000004 Name="1"
+Y58 Flags=0x2000004 Name="length"
+Y59 Flags=0x2000001 CheckFlags=0x1 Name="v" Declarations=[Parameter[178,182)@decl-only.ts] ValueDeclaration=Parameter[178,182)@decl-only.ts
+Y60 Flags=0x2000001 CheckFlags=0x1 Name="v" Declarations=[Parameter[178,182)@decl-only.ts] ValueDeclaration=Parameter[178,182)@decl-only.ts
+== links
+L nodeLinks EnumDeclaration[507,551)@decl-only.ts flags=0x400
+L nodeLinks EnumDeclaration[551,596)@decl-only.ts flags=0x400
+L signatureLinks CallSignature[1010,1044)@decl-only.ts resolvedSignature=G5
+L signatureLinks CallSignature[192,199)@decl-only.ts resolvedSignature=G6
+L signatureLinks CallSignature[989,1010)@decl-only.ts resolvedSignature=G7
+L signatureLinks ConstructSignature[172,192)@decl-only.ts resolvedSignature=G8
+L signatureLinks Constructor[315,342)@decl-only.ts resolvedSignature=G9
+L signatureLinks FunctionDeclaration[1746,1795)@decl-only.ts resolvedSignature=G10
+L signatureLinks FunctionDeclaration[1795,1844)@decl-only.ts resolvedSignature=G11
+L symbolNodeLinks Identifier[422,429)@decl-only.ts resolvedSymbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts
+L symbolNodeLinks TypeReference[1078,1085)@decl-only.ts resolvedSymbol=$"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts
+L symbolNodeLinks TypeReference[1105,1109)@decl-only.ts resolvedSymbol=$"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts
+L symbolNodeLinks TypeReference[1124,1128)@decl-only.ts resolvedSymbol=$"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts
+L symbolNodeLinks TypeReference[1150,1156)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[1174,1186)@decl-only.ts resolvedSymbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+L symbolNodeLinks TypeReference[1204,1219)@decl-only.ts resolvedSymbol=$"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts
+L symbolNodeLinks TypeReference[122,128)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[1237,1249)@decl-only.ts resolvedSymbol=$"Green"/0x8@EnumMember[533,543)@decl-only.ts
+L symbolNodeLinks TypeReference[1267,1272)@decl-only.ts resolvedSymbol=$"Flag"/0x80@EnumDeclaration[551,596)@decl-only.ts
+L symbolNodeLinks TypeReference[1293,1306)@decl-only.ts resolvedSymbol=$"Pair"/0x80000@TypeAliasDeclaration[596,626)@decl-only.ts
+L symbolNodeLinks TypeReference[1328,1334)@decl-only.ts resolvedSymbol=$"Named"/0x80000@TypeAliasDeclaration[626,693)@decl-only.ts
+L symbolNodeLinks TypeReference[1355,1360)@decl-only.ts resolvedSymbol=$"Keys"/0x80000@TypeAliasDeclaration[693,718)@decl-only.ts
+L symbolNodeLinks TypeReference[137,139)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts
+L symbolNodeLinks TypeReference[1381,1388)@decl-only.ts resolvedSymbol=$"Lookup"/0x80000@TypeAliasDeclaration[718,767)@decl-only.ts
+L symbolNodeLinks TypeReference[1409,1430)@decl-only.ts resolvedSymbol=$"Cond"/0x80000@TypeAliasDeclaration[767,839)@decl-only.ts
+L symbolNodeLinks TypeReference[1453,1467)@decl-only.ts resolvedSymbol=$"Mapped"/0x80000@TypeAliasDeclaration[839,892)@decl-only.ts
+L symbolNodeLinks TypeReference[1461,1466)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[1487,1491)@decl-only.ts resolvedSymbol=$"Tpl"/0x80000@TypeAliasDeclaration[892,937)@decl-only.ts
+L symbolNodeLinks TypeReference[1513,1519)@decl-only.ts resolvedSymbol=$"Inter"/0x80000@TypeAliasDeclaration[937,977)@decl-only.ts
+L symbolNodeLinks TypeReference[1538,1541)@decl-only.ts resolvedSymbol=$"Fn"/0x80000@TypeAliasDeclaration[977,1047)@decl-only.ts
+L symbolNodeLinks TypeReference[154,156)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts
+L symbolNodeLinks TypeReference[1562,1567)@decl-only.ts resolvedSymbol=$"Ctor"/0x80000@TypeAliasDeclaration[1047,1086)@decl-only.ts
+L symbolNodeLinks TypeReference[1587,1591)@decl-only.ts resolvedSymbol=$"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts
+L symbolNodeLinks TypeReference[160,162)@decl-only.ts resolvedSymbol=$"U"/0x40000@TypeParameter[145,146)@decl-only.ts
+L symbolNodeLinks TypeReference[164,171)@decl-only.ts resolvedSymbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+L symbolNodeLinks TypeReference[169,170)@decl-only.ts resolvedSymbol=$"U"/0x40000@TypeParameter[145,146)@decl-only.ts
+L symbolNodeLinks TypeReference[1720,1722)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts
+L symbolNodeLinks TypeReference[1728,1730)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts
+L symbolNodeLinks TypeReference[1736,1738)@decl-only.ts resolvedSymbol=$"U"/0x40000@TypeParameter[1704,1722)@decl-only.ts
+L symbolNodeLinks TypeReference[1740,1742)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts
+L symbolNodeLinks TypeReference[1743,1744)@decl-only.ts resolvedSymbol=$"U"/0x40000@TypeParameter[1704,1722)@decl-only.ts
+L symbolNodeLinks TypeReference[180,182)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts
+L symbolNodeLinks TypeReference[184,191)@decl-only.ts resolvedSymbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+L symbolNodeLinks TypeReference[189,190)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts
+L symbolNodeLinks TypeReference[196,198)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[112,113)@decl-only.ts
+L symbolNodeLinks TypeReference[440,446)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[487,489)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[392,413)@decl-only.ts
+L symbolNodeLinks TypeReference[57923,57925)@lib.es5.d.ts resolvedSymbol=$"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts
+L symbolNodeLinks TypeReference[613,615)@decl-only.ts resolvedSymbol=$"A"/0x40000@TypeParameter[607,608)@decl-only.ts
+L symbolNodeLinks TypeReference[620,621)@decl-only.ts resolvedSymbol=$"A"/0x40000@TypeParameter[607,608)@decl-only.ts
+L symbolNodeLinks TypeReference[622,624)@decl-only.ts resolvedSymbol=$"B"/0x40000@TypeParameter[609,615)@decl-only.ts
+L symbolNodeLinks TypeReference[711,717)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[71213,71215)@lib.es5.d.ts resolvedSymbol=$"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts
+L symbolNodeLinks TypeReference[732,738)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L symbolNodeLinks TypeReference[745,757)@decl-only.ts resolvedSymbol=$"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts
+L symbolNodeLinks TypeReference[782,784)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[778,779)@decl-only.ts
+L symbolNodeLinks TypeReference[807,809)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[778,779)@decl-only.ts
+L symbolNodeLinks TypeReference[879,881)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[852,853)@decl-only.ts
+L symbolNodeLinks TypeReference[884,886)@decl-only.ts resolvedSymbol=$"T"/0x40000@TypeParameter[852,853)@decl-only.ts
+L symbolNodeLinks TypeReference[887,888)@decl-only.ts resolvedSymbol=$"P"/0x40000@TypeParameter[869,881)@decl-only.ts
+L symbolNodeLinks TypeReference[920,936)@decl-only.ts resolvedSymbol=$"Uppercase"/0x80000@TypeAliasDeclaration[76243,76347)@lib.es5.d.ts
+L symbolNodeLinks TypeReference[950,956)@decl-only.ts resolvedSymbol=$"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts
+L typeNodeLinks ArrayType[1028,1037)@decl-only.ts resolvedType=T86
+L typeNodeLinks ArrayType[1124,1130)@decl-only.ts resolvedType=T87
+L typeNodeLinks ConditionalType[782,838)@decl-only.ts resolvedType=T88
+L typeNodeLinks ConditionalType[807,838)@decl-only.ts resolvedType=T89
+L typeNodeLinks ConstructorType[1059,1085)@decl-only.ts resolvedType=T90
+L typeNodeLinks FunctionType[150,162)@decl-only.ts resolvedType=T91
+L typeNodeLinks IndexedAccessType[1740,1745)@decl-only.ts resolvedType=T92
+L typeNodeLinks IndexedAccessType[732,743)@decl-only.ts resolvedType=T15
+L typeNodeLinks IndexedAccessType[745,766)@decl-only.ts resolvedType=T14
+L typeNodeLinks IndexedAccessType[884,889)@decl-only.ts resolvedType=T93
+L typeNodeLinks IntersectionType[950,976)@decl-only.ts resolvedType=T94
+L typeNodeLinks LiteralType[1214,1216)@decl-only.ts resolvedType=T95
+L typeNodeLinks LiteralType[1415,1418)@decl-only.ts resolvedType=T96
+L typeNodeLinks LiteralType[1420,1422)@decl-only.ts resolvedType=T95
+L typeNodeLinks LiteralType[1424,1429)@decl-only.ts resolvedType=T19
+L typeNodeLinks LiteralType[739,742)@decl-only.ts resolvedType=T97
+L typeNodeLinks LiteralType[758,765)@decl-only.ts resolvedType=T98
+L typeNodeLinks LiteralType[801,805)@decl-only.ts resolvedType=T99
+L typeNodeLinks LiteralType[826,830)@decl-only.ts resolvedType=T100
+L typeNodeLinks LiteralType[931,935)@decl-only.ts resolvedType=T101
+L typeNodeLinks MappedType[856,891)@decl-only.ts resolvedType=T102 outerTypeParameters=[T103]
+L typeNodeLinks MethodSignature[140,172)@decl-only.ts outerTypeParameters=[T104]
+L typeNodeLinks NamedTupleMember[641,654)@decl-only.ts resolvedType=T14
+L typeNodeLinks NamedTupleMember[655,671)@decl-only.ts resolvedType=T105
+L typeNodeLinks NamedTupleMember[672,691)@decl-only.ts resolvedType=T21
+L typeNodeLinks TemplateLiteralType[67,84)@decl-only.ts resolvedType=T106
+L typeNodeLinks TemplateLiteralType[903,918)@decl-only.ts resolvedType=T107
+L typeNodeLinks ThisType[499,504)@decl-only.ts resolvedType=T108
+L typeNodeLinks TupleType[618,625)@decl-only.ts resolvedType=T109 outerTypeParameters=[T110,T111]
+L typeNodeLinks TupleType[639,692)@decl-only.ts resolvedType=T112
+L typeNodeLinks TypeLiteral[1097,1132)@decl-only.ts resolvedType=T113
+L typeNodeLinks TypeLiteral[1209,1218)@decl-only.ts resolvedType=T114
+L typeNodeLinks TypeLiteral[410,413)@decl-only.ts resolvedType=T38
+L typeNodeLinks TypeLiteral[958,976)@decl-only.ts resolvedType=T115
+L typeNodeLinks TypeLiteral[987,1046)@decl-only.ts resolvedType=T116
+L typeNodeLinks TypeOperator[1714,1722)@decl-only.ts resolvedType=T117
+L typeNodeLinks TypeOperator[705,717)@decl-only.ts resolvedType=T118
+L typeNodeLinks TypeOperator[873,881)@decl-only.ts resolvedType=T119
+L typeNodeLinks TypeReference[1078,1085)@decl-only.ts resolvedType=T120
+L typeNodeLinks TypeReference[1105,1109)@decl-only.ts resolvedType=T113
+L typeNodeLinks TypeReference[1124,1128)@decl-only.ts resolvedType=T113
+L typeNodeLinks TypeReference[1150,1156)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[1174,1186)@decl-only.ts resolvedType=T122
+L typeNodeLinks TypeReference[1204,1219)@decl-only.ts resolvedType=T123
+L typeNodeLinks TypeReference[122,128)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[1237,1249)@decl-only.ts resolvedType=T124
+L typeNodeLinks TypeReference[1267,1272)@decl-only.ts resolvedType=T125
+L typeNodeLinks TypeReference[1293,1306)@decl-only.ts resolvedType=T126
+L typeNodeLinks TypeReference[1328,1334)@decl-only.ts resolvedType=T112
+L typeNodeLinks TypeReference[1355,1360)@decl-only.ts resolvedType=T118
+L typeNodeLinks TypeReference[137,139)@decl-only.ts resolvedType=T104
+L typeNodeLinks TypeReference[1381,1388)@decl-only.ts resolvedType=T127
+L typeNodeLinks TypeReference[1409,1430)@decl-only.ts resolvedType=T128
+L typeNodeLinks TypeReference[1453,1467)@decl-only.ts resolvedType=T129
+L typeNodeLinks TypeReference[1461,1466)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[1487,1491)@decl-only.ts resolvedType=T130
+L typeNodeLinks TypeReference[1513,1519)@decl-only.ts resolvedType=T94
+L typeNodeLinks TypeReference[1538,1541)@decl-only.ts resolvedType=T116
+L typeNodeLinks TypeReference[154,156)@decl-only.ts resolvedType=T104
+L typeNodeLinks TypeReference[1562,1567)@decl-only.ts resolvedType=T90
+L typeNodeLinks TypeReference[1587,1591)@decl-only.ts resolvedType=T113
+L typeNodeLinks TypeReference[160,162)@decl-only.ts resolvedType=T131
+L typeNodeLinks TypeReference[164,171)@decl-only.ts resolvedType=T132
+L typeNodeLinks TypeReference[169,170)@decl-only.ts resolvedType=T131
+L typeNodeLinks TypeReference[1720,1722)@decl-only.ts resolvedType=T133
+L typeNodeLinks TypeReference[1728,1730)@decl-only.ts resolvedType=T133
+L typeNodeLinks TypeReference[1736,1738)@decl-only.ts resolvedType=T134
+L typeNodeLinks TypeReference[1740,1742)@decl-only.ts resolvedType=T133
+L typeNodeLinks TypeReference[1743,1744)@decl-only.ts resolvedType=T134
+L typeNodeLinks TypeReference[180,182)@decl-only.ts resolvedType=T104
+L typeNodeLinks TypeReference[184,191)@decl-only.ts resolvedType=T135
+L typeNodeLinks TypeReference[189,190)@decl-only.ts resolvedType=T104
+L typeNodeLinks TypeReference[196,198)@decl-only.ts resolvedType=T104
+L typeNodeLinks TypeReference[440,446)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[487,489)@decl-only.ts resolvedType=T136
+L typeNodeLinks TypeReference[57923,57925)@lib.es5.d.ts resolvedType=T79
+L typeNodeLinks TypeReference[613,615)@decl-only.ts resolvedType=T110
+L typeNodeLinks TypeReference[620,621)@decl-only.ts resolvedType=T110
+L typeNodeLinks TypeReference[622,624)@decl-only.ts resolvedType=T111
+L typeNodeLinks TypeReference[711,717)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[71213,71215)@lib.es5.d.ts resolvedType=T77
+L typeNodeLinks TypeReference[732,738)@decl-only.ts resolvedType=T121
+L typeNodeLinks TypeReference[745,757)@decl-only.ts resolvedType=T137
+L typeNodeLinks TypeReference[782,784)@decl-only.ts resolvedType=T138
+L typeNodeLinks TypeReference[807,809)@decl-only.ts resolvedType=T138
+L typeNodeLinks TypeReference[879,881)@decl-only.ts resolvedType=T103
+L typeNodeLinks TypeReference[884,886)@decl-only.ts resolvedType=T103
+L typeNodeLinks TypeReference[887,888)@decl-only.ts resolvedType=T139
+L typeNodeLinks TypeReference[920,936)@decl-only.ts resolvedType=T140
+L typeNodeLinks TypeReference[950,956)@decl-only.ts resolvedType=T121
+L typeNodeLinks UnionType[1105,1116)@decl-only.ts resolvedType=T141
+L typeNodeLinks UnionType[1415,1429)@decl-only.ts resolvedType=T142
+L typeNodeLinks UnionType[732,766)@decl-only.ts resolvedType=T127
+L typeNodeLinks UnionType[903,936)@decl-only.ts resolvedType=T130
+L enumMemberLinks EnumMember[533,543)@decl-only.ts value={Value=4(jsnum.Number)}
+L enumMemberLinks EnumMember[577,585)@decl-only.ts value={Value="a"(string) IsSyntacticallyString=true}
+L enumMemberLinks EnumMember[586,594)@decl-only.ts value={Value="b"(string) IsSyntacticallyString=true}
+L symbolReferenceLinks $"A"/0x40000@TypeParameter[607,608)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"B"/0x40000@TypeParameter[609,615)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"P"/0x40000@TypeParameter[869,881)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[112,113)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[392,413)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[778,779)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"T"/0x40000@TypeParameter[852,853)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"U"/0x40000@TypeParameter[145,146)@decl-only.ts referenceKinds=0xc09e8
+L symbolReferenceLinks $"U"/0x40000@TypeParameter[1704,1722)@decl-only.ts referenceKinds=0xc09e8
+L valueSymbolLinks $"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts resolvedType=T143 functionOrConstructorChecked=true
+L valueSymbolLinks $"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts resolvedType=T144 functionOrConstructorChecked=true
+L valueSymbolLinks $"\xfeconstructor"/0x4000@Constructor[315,342)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"a"/0x1@Parameter[1012,1021)@decl-only.ts resolvedType=T14
+L valueSymbolLinks $"a"/0x1@Parameter[1615,1624)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"a"/0x1@Parameter[1657,1666)@decl-only.ts resolvedType=T14
+L valueSymbolLinks $"a"/0x1@Parameter[991,1000)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"asserts"/0x10@FunctionDeclaration[1795,1844)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"b"/0x1@Parameter[1022,1037)@decl-only.ts resolvedType=T86
+L valueSymbolLinks $"b"/0x2@VariableDeclaration[1171,1186)@decl-only.ts resolvedType=T122
+L valueSymbolLinks $"c"/0x2@VariableDeclaration[1234,1249)@decl-only.ts resolvedType=T124
+L valueSymbolLinks $"cond"/0x2@VariableDeclaration[1403,1430)@decl-only.ts resolvedType=T128
+L valueSymbolLinks $"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"ctor"/0x2@VariableDeclaration[1556,1567)@decl-only.ts resolvedType=T90
+L valueSymbolLinks $"d"/0x2@VariableDeclaration[1201,1219)@decl-only.ts resolvedType=T123
+L valueSymbolLinks $"extra"/0x4@PropertySignature[960,974)@decl-only.ts resolvedType=T22
+L valueSymbolLinks $"f"/0x1@Parameter[148,162)@decl-only.ts resolvedType=T91
+L valueSymbolLinks $"f"/0x2@VariableDeclaration[1264,1272)@decl-only.ts resolvedType=T125
+L valueSymbolLinks $"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"fn"/0x2@VariableDeclaration[1534,1541)@decl-only.ts resolvedType=T116
+L valueSymbolLinks $"generic"/0x10@FunctionDeclaration[1676,1746)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"guard"/0x10@FunctionDeclaration[1746,1795)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"id"/0x4@PropertySignature[1210,1216)@decl-only.ts resolvedType=T95
+L valueSymbolLinks $"inter"/0x2@VariableDeclaration[1506,1519)@decl-only.ts resolvedType=T94
+L valueSymbolLinks $"items"/0x4@PropertySignature[1117,1130)@decl-only.ts resolvedType=T87
+L valueSymbolLinks $"key"/0x1@Parameter[1731,1738)@decl-only.ts resolvedType=T134
+L valueSymbolLinks $"key"/0x1@Parameter[63,84)@decl-only.ts resolvedType=T106
+L valueSymbolLinks $"keys"/0x2@VariableDeclaration[1349,1360)@decl-only.ts resolvedType=T118
+L valueSymbolLinks $"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"look"/0x2@VariableDeclaration[1375,1388)@decl-only.ts resolvedType=T127
+L valueSymbolLinks $"loud"/0x1@Parameter[349,363)@decl-only.ts resolvedType=T145
+L valueSymbolLinks $"map"/0x2000@MethodSignature[140,172)@decl-only.ts resolvedType=T146 functionOrConstructorChecked=true
+L valueSymbolLinks $"mapped"/0x2@VariableDeclaration[1445,1467)@decl-only.ts resolvedType=T129
+L valueSymbolLinks $"name"/0x1@Parameter[328,340)@decl-only.ts resolvedType=T14
+L valueSymbolLinks $"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts resolvedType=T14
+L valueSymbolLinks $"named"/0x2@VariableDeclaration[1321,1334)@decl-only.ts resolvedType=T112
+L valueSymbolLinks $"next"/0x4@PropertySignature[1099,1117)@decl-only.ts resolvedType=T141
+L valueSymbolLinks $"obj"/0x1@Parameter[1724,1730)@decl-only.ts resolvedType=T133
+L valueSymbolLinks $"over"/0x10@FunctionDeclaration[1592,1634)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"p"/0x2@VariableDeclaration[1147,1156)@decl-only.ts resolvedType=T121
+L valueSymbolLinks $"pair"/0x2@VariableDeclaration[1287,1306)@decl-only.ts resolvedType=T126
+L valueSymbolLinks $"rec"/0x2@VariableDeclaration[1582,1591)@decl-only.ts resolvedType=T113
+L valueSymbolLinks $"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts functionOrConstructorChecked=true
+L valueSymbolLinks $"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts resolvedType=T136
+L valueSymbolLinks $"tpl"/0x2@VariableDeclaration[1482,1491)@decl-only.ts resolvedType=T130
+L valueSymbolLinks $"v"/0x1@Parameter[178,182)@decl-only.ts resolvedType=T104
+L valueSymbolLinks $"value"/0x4@PropertySignature[130,140)@decl-only.ts resolvedType=T104
+L valueSymbolLinks $"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts resolvedType=T16
+L valueSymbolLinks $"w"/0x4@PropertySignature[219,230)@decl-only.ts resolvedType=T16
+L valueSymbolLinks $"x"/0x1@Parameter[152,156)@decl-only.ts resolvedType=T104
+L valueSymbolLinks $"x"/0x1@Parameter[1770,1780)@decl-only.ts resolvedType=T9
+L valueSymbolLinks $"x"/0x1@Parameter[1821,1831)@decl-only.ts resolvedType=T9
+L valueSymbolLinks $"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"x"/0x4@PropertySignature[17,28)@decl-only.ts resolvedType=T15
+L valueSymbolLinks $"y"/0x1000004@PropertySignature[28,40)@decl-only.ts resolvedType=T147
+L valueSymbolLinks $"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts resolvedType=T21
+L valueSymbolLinks $"z"/0x4@PropertySignature[40,61)@decl-only.ts resolvedType=T21
+L valueSymbolLinks Y1 resolvedType=T10
+L valueSymbolLinks Y10 target=$"forEach"/0x2000@MethodSignature[52454,52951)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y11 target=$"indexOf"/0x2000@MethodSignature[49748,50089)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y12 target=$"join"/0x2000@MethodSignature[49134,49451)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y13 target=$"lastIndexOf"/0x2000@MethodSignature[50089,50463)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y14 target=$"length"/0x4@PropertySignature[48361,48521)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y15 target=$"map"/0x2000@MethodSignature[52951,53501)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y16 target=$"reduce"/0x2000@MethodSignature[54587,55322)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y17 target=$"reduceRight"/0x2000@MethodSignature[56207,56973)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y18 target=$"slice"/0x2000@MethodSignature[49451,49748)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y19 target=$"some"/0x2000@MethodSignature[51790,52454)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y2 resolvedType=T84
+L valueSymbolLinks Y20 target=$"toLocaleString"/0x2000@MethodSignature[48617,48792)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y21 target=$"toString"/0x2000@MethodSignature[48521,48617)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y22 target=$"concat"/0x2000@MethodSignature[58946,59210)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y23 target=$"every"/0x2000@MethodSignature[63888,64548)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y24 target=$"filter"/0x2000@MethodSignature[66872,67414)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y25 target=$"forEach"/0x2000@MethodSignature[65843,66331)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y26 target=$"indexOf"/0x2000@MethodSignature[63109,63478)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y27 target=$"join"/0x2000@MethodSignature[59480,59813)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y28 target=$"lastIndexOf"/0x2000@MethodSignature[63478,63888)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y29 target=$"length"/0x4@PropertySignature[58132,58282)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y30 target=$"map"/0x2000@MethodSignature[66331,66872)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y31 target=$"pop"/0x2000@MethodSignature[58553,58745)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y32 target=$"push"/0x2000@MethodSignature[58745,58946)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y33 target=$"reduce"/0x2000@MethodSignature[67940,68666)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y34 target=$"reduceRight"/0x2000@MethodSignature[69533,70290)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y35 target=$"reverse"/0x2000@MethodSignature[59813,59985)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y36 target=$"shift"/0x2000@MethodSignature[59985,60180)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y37 target=$"slice"/0x2000@MethodSignature[60180,60826)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y38 target=$"some"/0x2000@MethodSignature[65188,65843)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y39 target=$"sort"/0x2000@MethodSignature[60826,61401)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y4 resolvedType=T5
+L valueSymbolLinks Y40 target=$"splice"/0x2000@MethodSignature[61401,62146)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y41 target=$"toLocaleString"/0x2000@MethodSignature[58378,58553)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y42 target=$"toString"/0x2000@MethodSignature[58282,58378)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y43 target=$"unshift"/0x2000@MethodSignature[62891,63109)@lib.es5.d.ts mapper=Array{sources=[T77,T78] targets=[T15,T86]}
+L valueSymbolLinks Y44 resolvedType=T146 target=$"map"/0x2000@MethodSignature[140,172)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T104,T135]}
+L valueSymbolLinks Y45 resolvedType=T104 target=$"value"/0x4@PropertySignature[130,140)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T104,T135]}
+L valueSymbolLinks Y46 target=$"map"/0x2000@MethodSignature[140,172)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T14,T137]}
+L valueSymbolLinks Y47 resolvedType=T14 target=$"value"/0x4@PropertySignature[130,140)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T14,T137]}
+L valueSymbolLinks Y48 target=$"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts mapper=Array{sources=[T136,T108] targets=[T136,T153]}
+L valueSymbolLinks Y49 target=$"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts mapper=Array{sources=[T136,T108] targets=[T136,T153]}
+L valueSymbolLinks Y5 resolvedType=T85
+L valueSymbolLinks Y50 target=$"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts mapper=Array{sources=[T136,T108] targets=[T136,T153]}
+L valueSymbolLinks Y51 target=$"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts mapper=Array{sources=[T136,T108] targets=[T136,T153]}
+L valueSymbolLinks Y52 target=$"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts mapper=Array{sources=[T136,T108] targets=[T136,T153]}
+L valueSymbolLinks Y53 resolvedType=T177
+L valueSymbolLinks Y54 resolvedType=T178
+L valueSymbolLinks Y55 resolvedType=T184
+L valueSymbolLinks Y56 resolvedType=T180
+L valueSymbolLinks Y57 resolvedType=T181
+L valueSymbolLinks Y58 resolvedType=T15
+L valueSymbolLinks Y59 target=$"v"/0x1@Parameter[178,182)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T104,T135]}
+L valueSymbolLinks Y60 target=$"v"/0x1@Parameter[178,182)@decl-only.ts mapper=Array{sources=[T104,T174] targets=[T14,T137]}
+L valueSymbolLinks Y7 target=$"concat"/0x2000@MethodSignature[48792,48960)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y8 target=$"every"/0x2000@MethodSignature[50463,51141)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L valueSymbolLinks Y9 target=$"filter"/0x2000@MethodSignature[53501,54052)@lib.es5.d.ts mapper=Array{sources=[T79,T80] targets=[T1,T76]}
+L membersAndExportsLinks $"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts [{"count":$"count"/0x4@PropertyDeclaration[269,291)@decl-only.ts "prototype":$"prototype"/0x400004@-},{"\xfeconstructor":$"\xfeconstructor"/0x4000@Constructor[315,342)@decl-only.ts "legs":$"legs"/0x4@PropertyDeclaration[291,315)@decl-only.ts "name":$"name"/0x4@PropertyDeclaration[255,269)@decl-only.ts "speak":$"speak"/0x2000@MethodDeclaration[342,371)@decl-only.ts}]
+L membersAndExportsLinks $"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts [-,{"T":$"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts "\xfeindex":$"\xfeindex"/0x20000@IndexSignature[71193,71216)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[58946,59210)@lib.es5.d.ts "every":$"every"/0x2000@MethodSignature[63888,64548)@lib.es5.d.ts "filter":$"filter"/0x2000@MethodSignature[66872,67414)@lib.es5.d.ts "forEach":$"forEach"/0x2000@MethodSignature[65843,66331)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[63109,63478)@lib.es5.d.ts "join":$"join"/0x2000@MethodSignature[59480,59813)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[63478,63888)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[58132,58282)@lib.es5.d.ts "map":$"map"/0x2000@MethodSignature[66331,66872)@lib.es5.d.ts "pop":$"pop"/0x2000@MethodSignature[58553,58745)@lib.es5.d.ts "push":$"push"/0x2000@MethodSignature[58745,58946)@lib.es5.d.ts "reduce":$"reduce"/0x2000@MethodSignature[67940,68666)@lib.es5.d.ts "reduceRight":$"reduceRight"/0x2000@MethodSignature[69533,70290)@lib.es5.d.ts "reverse":$"reverse"/0x2000@MethodSignature[59813,59985)@lib.es5.d.ts "shift":$"shift"/0x2000@MethodSignature[59985,60180)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[60180,60826)@lib.es5.d.ts "some":$"some"/0x2000@MethodSignature[65188,65843)@lib.es5.d.ts "sort":$"sort"/0x2000@MethodSignature[60826,61401)@lib.es5.d.ts "splice":$"splice"/0x2000@MethodSignature[61401,62146)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[58378,58553)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[58282,58378)@lib.es5.d.ts "unshift":$"unshift"/0x2000@MethodSignature[62891,63109)@lib.es5.d.ts}]
+L membersAndExportsLinks $"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts [-,{"T":$"T"/0x40000@TypeParameter[112,113)@decl-only.ts "\xfecall":$"\xfecall"/0x20000@CallSignature[192,199)@decl-only.ts "\xfenew":$"\xfenew"/0x20000@ConstructSignature[172,192)@decl-only.ts "map":$"map"/0x2000@MethodSignature[140,172)@decl-only.ts "value":$"value"/0x4@PropertySignature[130,140)@decl-only.ts}]
+L membersAndExportsLinks $"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts [{"prototype":$"prototype"/0x400004@-},{"T":$"T"/0x40000@TypeParameter[392,413)@decl-only.ts "fetch":$"fetch"/0x2000@MethodDeclaration[490,505)@decl-only.ts "tag":$"tag"/0x4@PropertyDeclaration[482,490)@decl-only.ts "w":$"w"/0x4@PropertyDeclaration[471,482)@decl-only.ts "x":$"x"/0x4@PropertyDeclaration[448,459)@decl-only.ts "z":$"z"/0x4@PropertyDeclaration[459,471)@decl-only.ts}]
+L membersAndExportsLinks $"Number"/0x41@InterfaceDeclaration[22095,23260)@lib.es5.d.ts [-,{"toExponential":$"toExponential"/0x2000@MethodSignature[22598,22866)@lib.es5.d.ts "toFixed":$"toFixed"/0x2000@MethodSignature[22346,22598)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[220157,220785)@lib.es5.d.ts "toPrecision":$"toPrecision"/0x2000@MethodSignature[22866,23166)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[22117,22346)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[23166,23257)@lib.es5.d.ts}]
+L membersAndExportsLinks $"Object"/0x41@InterfaceDeclaration[3290,4293)@lib.es5.d.ts [-,{"constructor":$"constructor"/0x4@PropertySignature[3312,3447)@lib.es5.d.ts "hasOwnProperty":$"hasOwnProperty"/0x2000@MethodSignature[3731,3908)@lib.es5.d.ts "isPrototypeOf":$"isPrototypeOf"/0x2000@MethodSignature[3908,4121)@lib.es5.d.ts "propertyIsEnumerable":$"propertyIsEnumerable"/0x2000@MethodSignature[4121,4290)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[3532,3640)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[3447,3532)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[3640,3731)@lib.es5.d.ts}]
+L membersAndExportsLinks $"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts [-,{"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[61,95)@decl-only.ts "w":$"w"/0x4@PropertySignature[219,230)@decl-only.ts "x":$"x"/0x4@PropertySignature[17,28)@decl-only.ts "y":$"y"/0x1000004@PropertySignature[28,40)@decl-only.ts "z":$"z"/0x4@PropertySignature[40,61)@decl-only.ts}]
+L membersAndExportsLinks $"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts [-,{"T":$"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts "\xfeindex":$"\xfeindex"/0x20000@IndexSignature[57894,57926)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[48792,48960)@lib.es5.d.ts "every":$"every"/0x2000@MethodSignature[50463,51141)@lib.es5.d.ts "filter":$"filter"/0x2000@MethodSignature[53501,54052)@lib.es5.d.ts "forEach":$"forEach"/0x2000@MethodSignature[52454,52951)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[49748,50089)@lib.es5.d.ts "join":$"join"/0x2000@MethodSignature[49134,49451)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[50089,50463)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[48361,48521)@lib.es5.d.ts "map":$"map"/0x2000@MethodSignature[52951,53501)@lib.es5.d.ts "reduce":$"reduce"/0x2000@MethodSignature[54587,55322)@lib.es5.d.ts "reduceRight":$"reduceRight"/0x2000@MethodSignature[56207,56973)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[49451,49748)@lib.es5.d.ts "some":$"some"/0x2000@MethodSignature[51790,52454)@lib.es5.d.ts "toLocaleString":$"toLocaleString"/0x2000@MethodSignature[48617,48792)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[48521,48617)@lib.es5.d.ts}]
+L membersAndExportsLinks $"String"/0x41@InterfaceDeclaration[15513,21457)@lib.es5.d.ts [-,{"\xfeindex":$"\xfeindex"/0x20000@IndexSignature[21413,21454)@lib.es5.d.ts "charAt":$"charAt"/0x2000@MethodSignature[15617,15791)@lib.es5.d.ts "charCodeAt":$"charCodeAt"/0x2000@MethodSignature[15791,16035)@lib.es5.d.ts "concat":$"concat"/0x2000@MethodSignature[16035,16250)@lib.es5.d.ts "indexOf":$"indexOf"/0x2000@MethodSignature[16250,16639)@lib.es5.d.ts "lastIndexOf":$"lastIndexOf"/0x2000@MethodSignature[16639,16996)@lib.es5.d.ts "length":$"length"/0x4@PropertySignature[20779,20862)@lib.es5.d.ts "localeCompare":$"localeCompare"/0x2000@MethodSignature[16996,17190)@lib.es5.d.ts "match":$"match"/0x2000@MethodSignature[17190,17493)@lib.es5.d.ts "replace":$"replace"/0x2000@MethodSignature[17493,18052)@lib.es5.d.ts "search":$"search"/0x2000@MethodSignature[18382,18595)@lib.es5.d.ts "slice":$"slice"/0x2000@MethodSignature[18595,19055)@lib.es5.d.ts "split":$"split"/0x2000@MethodSignature[19055,19512)@lib.es5.d.ts "substr":$"substr"/0x2000@MethodSignature[20862,21322)@lib.es5.d.ts "substring":$"substring"/0x2000@MethodSignature[19512,20039)@lib.es5.d.ts "toLocaleLowerCase":$"toLocaleLowerCase"/0x2000@MethodSignature[20146,20329)@lib.es5.d.ts "toLocaleUpperCase":$"toLocaleUpperCase"/0x2000@MethodSignature[20436,20653)@lib.es5.d.ts "toLowerCase":$"toLowerCase"/0x2000@MethodSignature[20039,20146)@lib.es5.d.ts "toString":$"toString"/0x2000@MethodSignature[15535,15617)@lib.es5.d.ts "toUpperCase":$"toUpperCase"/0x2000@MethodSignature[20329,20436)@lib.es5.d.ts "trim":$"trim"/0x2000@MethodSignature[20653,20779)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[21322,21413)@lib.es5.d.ts}]
+L membersAndExportsLinks $"Symbol"/0x40@InterfaceDeclaration[2771,2970)@lib.es5.d.ts [-,{"toString":$"toString"/0x2000@MethodSignature[2793,2876)@lib.es5.d.ts "valueOf":$"valueOf"/0x2000@MethodSignature[2876,2967)@lib.es5.d.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@ConstructorType[1059,1085)@decl-only.ts [-,{"\xfenew":$"\xfenew"/0x20000@ConstructorType[1059,1085)@decl-only.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@FunctionType[150,162)@decl-only.ts [-,{"\xfecall":$"\xfecall"/0x20000@FunctionType[150,162)@decl-only.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@TypeLiteral[1097,1132)@decl-only.ts [-,{"items":$"items"/0x4@PropertySignature[1117,1130)@decl-only.ts "next":$"next"/0x4@PropertySignature[1099,1117)@decl-only.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@TypeLiteral[1209,1218)@decl-only.ts [-,{"id":$"id"/0x4@PropertySignature[1210,1216)@decl-only.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@TypeLiteral[958,976)@decl-only.ts [-,{"extra":$"extra"/0x4@PropertySignature[960,974)@decl-only.ts}]
+L membersAndExportsLinks $"\xfetype"/0x800@TypeLiteral[987,1046)@decl-only.ts [-,{"\xfecall":$"\xfecall"/0x20000@CallSignature[989,1010)@decl-only.ts}]
+L typeAliasLinks $"Cond"/0x80000@TypeAliasDeclaration[767,839)@decl-only.ts declaredType=T88 typeParameters=[T138] instantiations=#2[T88,T128]
+L typeAliasLinks $"Ctor"/0x80000@TypeAliasDeclaration[1047,1086)@decl-only.ts declaredType=T90
+L typeAliasLinks $"Fn"/0x80000@TypeAliasDeclaration[977,1047)@decl-only.ts declaredType=T116
+L typeAliasLinks $"Inter"/0x80000@TypeAliasDeclaration[937,977)@decl-only.ts declaredType=T94
+L typeAliasLinks $"Keys"/0x80000@TypeAliasDeclaration[693,718)@decl-only.ts declaredType=T118
+L typeAliasLinks $"Lookup"/0x80000@TypeAliasDeclaration[718,767)@decl-only.ts declaredType=T127
+L typeAliasLinks $"Mapped"/0x80000@TypeAliasDeclaration[839,892)@decl-only.ts declaredType=T102 typeParameters=[T103] instantiations=#2[T102,T129]
+L typeAliasLinks $"Named"/0x80000@TypeAliasDeclaration[626,693)@decl-only.ts declaredType=T112
+L typeAliasLinks $"Pair"/0x80000@TypeAliasDeclaration[596,626)@decl-only.ts declaredType=T109 typeParameters=[T110,T111] instantiations=#2[T109,T126]
+L typeAliasLinks $"Rec"/0x80000@TypeAliasDeclaration[1086,1133)@decl-only.ts declaredType=T113
+L typeAliasLinks $"Tpl"/0x80000@TypeAliasDeclaration[892,937)@decl-only.ts declaredType=T130
+L typeAliasLinks $"Uppercase"/0x80000@TypeAliasDeclaration[76243,76347)@lib.es5.d.ts declaredType=T8 typeParameters=[T148] instantiations=#1[T8]
+L declaredTypeLinks $"A"/0x40000@TypeParameter[607,608)@decl-only.ts declaredType=T110
+L declaredTypeLinks $"A"/0x8@EnumMember[577,585)@decl-only.ts declaredType=T149
+L declaredTypeLinks $"Animal"/0x20@ClassDeclaration[232,373)@decl-only.ts declaredType=T120 indexSignaturesChecked=true
+L declaredTypeLinks $"Array"/0x41@InterfaceDeclaration[58108,71219)@lib.es5.d.ts declaredType=T67
+L declaredTypeLinks $"B"/0x40000@TypeParameter[609,615)@decl-only.ts declaredType=T111
+L declaredTypeLinks $"B"/0x8@EnumMember[586,594)@decl-only.ts declaredType=T150
+L declaredTypeLinks $"Blue"/0x8@EnumMember[544,549)@decl-only.ts declaredType=T151
+L declaredTypeLinks $"Boolean"/0x41@InterfaceDeclaration[21801,21917)@lib.es5.d.ts declaredType=T71
+L declaredTypeLinks $"Box"/0x40@InterfaceDeclaration[97,201)@decl-only.ts declaredType=T135 interfaceChecked=true indexSignaturesChecked=true
+L declaredTypeLinks $"CallableFunction"/0x40@InterfaceDeclaration[11491,13479)@lib.es5.d.ts declaredType=T65
+L declaredTypeLinks $"Color"/0x100@EnumDeclaration[507,551)@decl-only.ts declaredType=T152 enumChecked=true
+L declaredTypeLinks $"Dog"/0x20@ClassDeclaration[373,507)@decl-only.ts declaredType=T153 indexSignaturesChecked=true
+L declaredTypeLinks $"Flag"/0x80@EnumDeclaration[551,596)@decl-only.ts declaredType=T125 enumChecked=true
+L declaredTypeLinks $"Function"/0x41@InterfaceDeclaration[9286,10750)@lib.es5.d.ts declaredType=T64
+L declaredTypeLinks $"Green"/0x8@EnumMember[533,543)@decl-only.ts declaredType=T154
+L declaredTypeLinks $"IArguments"/0x40@InterfaceDeclaration[15413,15513)@lib.es5.d.ts declaredType=T84
+L declaredTypeLinks $"NewableFunction"/0x40@InterfaceDeclaration[13479,15413)@lib.es5.d.ts declaredType=T66
+L declaredTypeLinks $"Number"/0x41@InterfaceDeclaration[22095,23260)@lib.es5.d.ts declaredType=T70
+L declaredTypeLinks $"Object"/0x41@InterfaceDeclaration[3290,4293)@lib.es5.d.ts declaredType=T63
+L declaredTypeLinks $"P"/0x40000@TypeParameter[869,881)@decl-only.ts declaredType=T139
+L declaredTypeLinks $"Point"/0x40@InterfaceDeclaration[0,97)@decl-only.ts declaredType=T121 interfaceChecked=true indexSignaturesChecked=true typeParametersChecked=true
+L declaredTypeLinks $"ReadonlyArray"/0x40@InterfaceDeclaration[48207,57929)@lib.es5.d.ts declaredType=T68
+L declaredTypeLinks $"Red"/0x8@EnumMember[528,532)@decl-only.ts declaredType=T155
+L declaredTypeLinks $"RegExp"/0x41@InterfaceDeclaration[40902,42363)@lib.es5.d.ts declaredType=T72
+L declaredTypeLinks $"S"/0x40000@TypeParameter[76317,76333)@lib.es5.d.ts declaredType=T148
+L declaredTypeLinks $"String"/0x41@InterfaceDeclaration[15513,21457)@lib.es5.d.ts declaredType=T69
+L declaredTypeLinks $"Symbol"/0x40@InterfaceDeclaration[2771,2970)@lib.es5.d.ts declaredType=T156
+L declaredTypeLinks $"T"/0x40000@TypeParameter[112,113)@decl-only.ts declaredType=T104
+L declaredTypeLinks $"T"/0x40000@TypeParameter[1702,1703)@decl-only.ts declaredType=T133
+L declaredTypeLinks $"T"/0x40000@TypeParameter[392,413)@decl-only.ts declaredType=T136
+L declaredTypeLinks $"T"/0x40000@TypeParameter[48357,48358)@lib.es5.d.ts declaredType=T79
+L declaredTypeLinks $"T"/0x40000@TypeParameter[58128,58129)@lib.es5.d.ts declaredType=T77
+L declaredTypeLinks $"T"/0x40000@TypeParameter[76857,76858)@lib.es5.d.ts declaredType=T82
+L declaredTypeLinks $"T"/0x40000@TypeParameter[778,779)@decl-only.ts declaredType=T138
+L declaredTypeLinks $"T"/0x40000@TypeParameter[852,853)@decl-only.ts declaredType=T103
+L declaredTypeLinks $"ThisType"/0x40@InterfaceDeclaration[76786,76862)@lib.es5.d.ts declaredType=T73
+L declaredTypeLinks $"U"/0x40000@TypeParameter[145,146)@decl-only.ts declaredType=T131
+L declaredTypeLinks $"U"/0x40000@TypeParameter[1704,1722)@decl-only.ts declaredType=T134
+L sourceFileLinks SourceFile[0,1845)@decl-only.ts typeChecked=true identifierCheckNodes=[InterfaceDeclaration[0,97)@decl-only.ts,FunctionType[150,162)@decl-only.ts,MethodSignature[140,172)@decl-only.ts,ConstructSignature[172,192)@decl-only.ts,CallSignature[192,199)@decl-only.ts,InterfaceDeclaration[97,201)@decl-only.ts,InterfaceDeclaration[201,232)@decl-only.ts,Constructor[315,342)@decl-only.ts,MethodDeclaration[342,371)@decl-only.ts,ClassDeclaration[232,373)@decl-only.ts,MethodDeclaration[490,505)@decl-only.ts,ClassDeclaration[373,507)@decl-only.ts,TypeAliasDeclaration[596,626)@decl-only.ts,TypeAliasDeclaration[626,693)@decl-only.ts,TypeAliasDeclaration[693,718)@decl-only.ts,TypeAliasDeclaration[718,767)@decl-only.ts,TypeAliasDeclaration[767,839)@decl-only.ts,TypeAliasDeclaration[839,892)@decl-only.ts,TypeAliasDeclaration[892,937)@decl-only.ts,TypeAliasDeclaration[937,977)@decl-only.ts,CallSignature[989,1010)@decl-only.ts,CallSignature[1010,1044)@decl-only.ts,TypeAliasDeclaration[977,1047)@decl-only.ts,ConstructorType[1059,1085)@decl-only.ts,TypeAliasDeclaration[1047,1086)@decl-only.ts,TypeAliasDeclaration[1086,1133)@decl-only.ts,FunctionDeclaration[1592,1634)@decl-only.ts,FunctionDeclaration[1634,1676)@decl-only.ts,FunctionDeclaration[1676,1746)@decl-only.ts,FunctionDeclaration[1746,1795)@decl-only.ts,FunctionDeclaration[1795,1844)@decl-only.ts]
+== diagnostics
+D decl-only.ts [388,391) TS2420 cat=1 chain=1 related=0
+D.chain TS2329

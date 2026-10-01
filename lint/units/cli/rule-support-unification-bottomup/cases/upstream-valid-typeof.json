@@ -1,0 +1,136 @@
+{
+	"valid": [
+		{
+			"code": "typeof foo === 'string'"
+		},
+		{
+			"code": "typeof foo === 'object'"
+		},
+		{
+			"code": "typeof foo === 'function'"
+		},
+		{
+			"code": "typeof foo === 'undefined'"
+		},
+		{
+			"code": "typeof foo === 'boolean'"
+		},
+		{
+			"code": "typeof foo === 'number'"
+		},
+		{
+			"code": "typeof foo === 'bigint'"
+		},
+		{
+			"code": "'string' === typeof foo"
+		},
+		{
+			"code": "'object' === typeof foo"
+		},
+		{
+			"code": "'function' === typeof foo"
+		},
+		{
+			"code": "'undefined' === typeof foo"
+		},
+		{
+			"code": "'boolean' === typeof foo"
+		},
+		{
+			"code": "'number' === typeof foo"
+		},
+		{
+			"code": "typeof foo === typeof bar"
+		},
+		{
+			"code": "typeof foo === baz"
+		},
+		{
+			"code": "typeof foo !== someType"
+		},
+		{
+			"code": "typeof bar != someType"
+		},
+		{
+			"code": "someType === typeof bar"
+		},
+		{
+			"code": "someType == typeof bar"
+		},
+		{
+			"code": "typeof foo == 'string'"
+		},
+		{
+			"code": "typeof(foo) === 'string'"
+		},
+		{
+			"code": "typeof(foo) !== 'string'"
+		},
+		{
+			"code": "typeof(foo) == 'string'"
+		},
+		{
+			"code": "typeof(foo) != 'string'"
+		},
+		{
+			"code": "var oddUse = typeof foo + 'thing'"
+		},
+		{
+			"code": "function f(undefined) { typeof x === undefined }"
+		},
+		{
+			"code": "typeof foo === `str${somethingElse}`",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "typeof foo === 'strnig'"
+		},
+		{
+			"code": "'strnig' === typeof foo"
+		},
+		{
+			"code": "if (typeof bar === 'umdefined') {}"
+		},
+		{
+			"code": "typeof foo !== 'strnig'"
+		},
+		{
+			"code": "'strnig' !== typeof foo"
+		},
+		{
+			"code": "if (typeof bar !== 'umdefined') {}"
+		},
+		{
+			"code": "typeof foo != 'strnig'"
+		},
+		{
+			"code": "'strnig' != typeof foo"
+		},
+		{
+			"code": "if (typeof bar != 'umdefined') {}"
+		},
+		{
+			"code": "typeof foo == 'strnig'"
+		},
+		{
+			"code": "'strnig' == typeof foo"
+		},
+		{
+			"code": "if (typeof bar == 'umdefined') {}"
+		},
+		{
+			"code": "if (typeof bar === `umdefined`) {}",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "if (typeof bar !== undefined) {}"
+		}
+	],
+	"skipped": 13
+}

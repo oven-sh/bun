@@ -1,0 +1,10 @@
+bun test v1.4.3 (367d939d9)
+
+test/bundler/bundler_decorator_metadata.test.ts:
+(pass) bundler > decorator_metadata/TypeSerialization [2103.65ms]
+(pass) bundler > decorator_metadata/ImportIdentifiers [1332.10ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [7.24s]

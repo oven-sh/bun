@@ -1,0 +1,53 @@
+top level: await operand (module)            tsc: parses         bun: ok          
+top level: await operand (script)            tsc: parses         bun: ok          
+top level: computed key await                tsc: parses         bun: ok          
+function: await operand                      tsc: parses         bun: PARSE-PASS  ERR "await" can only be used inside an "async" function
+async function: await operand                tsc: parses         bun: ok          
+async function: await as a name              tsc: parses         bun: PARSE-PASS  ERR Unexpected )
+function: yield operand                      tsc: parses         bun: PARSE-PASS  ERR Cannot use "yield" outside a generator function
+generator: yield operand                     tsc: parses         bun: ok          
+generator: computed key yield                tsc: parses         bun: ok          
+top level: new.target                        tsc: parses         bun: ok          
+top level: super.x                           tsc: parses         bun: PARSE-PASS  ERR Unexpected "super"
+class field: super.x                         tsc: parses         bun: ok          
+class field: this.#x                         tsc: parses         bun: ok          
+top level: this.#x                           tsc: parses         bun: PARSE-PASS  ERR Expected identifier but found "#x"
+top level: arguments                         tsc: parses         bun: ok          
+strict function with a with statement        tsc: parses         bun: ok          
+sloppy function with a with statement        tsc: parses         bun: ok          
+body: redeclared let                         tsc: parses         bun: PARSE-PASS  ERR "a" has already been declared
+body: await operand                          tsc: parses         bun: PARSE-PASS  ERR "await" can only be used inside an "async" function
+body: yield operand                          tsc: parses         bun: PARSE-PASS  ERR Cannot use "yield" outside a generator function
+body: super.x                                tsc: parses         bun: ok          
+body: new.target                             tsc: parses         bun: ok          
+body: import declaration                     tsc: parses         bun: PARSE-PASS  ERR Unexpected a
+body: export declaration                     tsc: parses         bun: PARSE-PASS  ERR Unexpected export
+body: label                                  tsc: parses         bun: ok          
+body: break without loop                     tsc: parses         bun: visit-pass  ERR Cannot use "break" here
+body: using                                  tsc: parses         bun: ok          
+body: type, interface, enum, namespace       tsc: parses         bun: PARSE-PASS  ERR Expected ";" but found "N"
+body: jsx                                    tsc: parses         bun: ok          
+unary operand: delete x                      tsc: parses         bun: ok          
+unary operand: super.x                       tsc: parses         bun: PARSE-PASS  ERR Unexpected "super"
+unary operand: decorated class               tsc: parses         bun: ok          
+unary operand: private in                    tsc: parses         bun: PARSE-PASS  ERR Unexpected #p
+heritage: class expression                   tsc: parses         bun: ok          
+heritage: a.#b                               tsc: parses         bun: PARSE-PASS  ERR Expected identifier but found "#b"
+heritage: import.meta                        tsc: parses         bun: ok          
+heritage: tagged template                    tsc: parses         bun: ok          
+heritage: optional chain                     tsc: parses         bun: ok          
+heritage: new Foo                            tsc: parses         bun: ok          
+decorator: call then member                  tsc: parses         bun: ok          
+decorator: optional chain                    tsc: parses         bun: ok          
+decorator: parenthesized arrow               tsc: parses         bun: ok          
+computed key: comma                          tsc: parses         bun: PARSE-PASS  ERR Expected "]" but found ","
+computed key: assignment                     tsc: parses         bun: ok          
+computed key: arrow                          tsc: parses         bun: ok          
+computed key: regex                          tsc: parses         bun: ok          
+import attribute value: call                 tsc: parses         bun: ok          
+initializer: duplicate parameter names       tsc: parses         bun: visit-pass  ERR "b" cannot be bound multiple times in the same parameter list
+initializer: strict mode duplicate           tsc: parses         bun: visit-pass  ERR "b" cannot be bound multiple times in the same parameter list
+initializer: let let                         tsc: parses         bun: PARSE-PASS  ERR Cannot use "let" as an identifier here
+initializer: invalid assignment target       tsc: parses         bun: visit-pass  ERR Invalid assignment target
+initializer: legacy octal in strict          tsc: PARSE TS1121   bun: ok          
+initializer: return outside a function       tsc: parses         bun: ok          

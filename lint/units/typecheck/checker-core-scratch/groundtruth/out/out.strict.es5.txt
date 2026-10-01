@@ -1,0 +1,182 @@
+MARK after inline part of NewChecker (line 1117): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK start of initializeChecker: TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK after global merge and global augmentations (line 1349): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=134 mergedSymbols=0 diagnostics=0
+MARK after special types (line 1376): TypeCount=85 SymbolCount=6 SignatureCount=4 globals=135 mergedSymbols=0 diagnostics=0
+MARK end of initializeChecker: TypeCount=85 SymbolCount=6 SignatureCount=4 globals=135 mergedSymbols=0 diagnostics=0
+MARK after NewChecker returned: TypeCount=85 SymbolCount=6 SignatureCount=4 globals=135 mergedSymbols=0 diagnostics=0
+TYPE 1 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="any"
+TYPE 2 flags=Any(0x1) objectFlags=0x40000 data=IntrinsicType name="any"
+TYPE 3 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="any"
+TYPE 4 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="any"
+TYPE 5 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="error"
+TYPE 6 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="unresolved"
+TYPE 7 flags=Any(0x1) objectFlags=0x10000 data=IntrinsicType name="any"
+TYPE 8 flags=Any(0x1) objectFlags=0x0 data=IntrinsicType name="intrinsic"
+TYPE 9 flags=Unknown(0x2) objectFlags=0x0 data=IntrinsicType name="unknown"
+TYPE 10 flags=Undefined(0x4) objectFlags=0x0 data=IntrinsicType name="undefined"
+TYPE 11 flags=Undefined(0x4) objectFlags=0x0 data=IntrinsicType name="undefined"
+TYPE 12 flags=Undefined(0x4) objectFlags=0x0 data=IntrinsicType name="undefined"
+TYPE 13 flags=Null(0x8) objectFlags=0x0 data=IntrinsicType name="null"
+TYPE 14 flags=String(0x20) objectFlags=0x0 data=IntrinsicType name="string"
+TYPE 15 flags=Number(0x40) objectFlags=0x0 data=IntrinsicType name="number"
+TYPE 16 flags=BigInt(0x80) objectFlags=0x0 data=IntrinsicType name="bigint"
+TYPE 17 flags=BooleanLiteral(0x2000) objectFlags=0x0 data=LiteralType value=false(bool) fresh=18 regular=17
+TYPE 18 flags=BooleanLiteral(0x2000) objectFlags=0x0 data=LiteralType value=false(bool) fresh=18 regular=17
+TYPE 19 flags=BooleanLiteral(0x2000) objectFlags=0x0 data=LiteralType value=true(bool) fresh=20 regular=19
+TYPE 20 flags=BooleanLiteral(0x2000) objectFlags=0x0 data=LiteralType value=true(bool) fresh=20 regular=19
+TYPE 21 flags=Boolean|Union(0x8000100) objectFlags=0x8000 data=UnionType types=[17,19]
+TYPE 22 flags=ESSymbol(0x200) objectFlags=0x0 data=IntrinsicType name="symbol"
+TYPE 23 flags=Void(0x10) objectFlags=0x0 data=IntrinsicType name="void"
+TYPE 24 flags=Never(0x40000) objectFlags=0x0 data=IntrinsicType name="never"
+TYPE 25 flags=Never(0x40000) objectFlags=0x40000 data=IntrinsicType name="never"
+TYPE 26 flags=Never(0x40000) objectFlags=0x0 data=IntrinsicType name="never"
+TYPE 27 flags=Never(0x40000) objectFlags=0x0 data=IntrinsicType name="never"
+TYPE 28 flags=NonPrimitive(0x20000) objectFlags=0x0 data=IntrinsicType name="object"
+TYPE 29 flags=Union(0x8000000) objectFlags=0x8000 data=UnionType types=[14,15]
+TYPE 30 flags=Union(0x8000000) objectFlags=0x8000 data=UnionType types=[14,15,22]
+TYPE 31 flags=Union(0x8000000) objectFlags=0x8000 data=UnionType types=[15,16]
+TYPE 32 flags=TemplateLiteral(0x400000) objectFlags=0x0 data=TemplateLiteralType texts=["" ""] types=[15]
+TYPE 33 flags=Union(0x8000000) objectFlags=0x8000 data=UnionType types=[10,13,14,15,16,17,19]
+TYPE 34 flags=Never(0x40000) objectFlags=0x0 data=IntrinsicType name="never"
+TYPE 35 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 36 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 37 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 38 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType symbol="\\xFEtype"
+TYPE 39 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 40 flags=Union(0x8000000) objectFlags=0x0 data=UnionType types=[10,13,39]
+TYPE 41 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 42 flags=Object(0x100000) objectFlags=0x240010 data=ObjectType
+TYPE 43 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 44 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 45 flags=Object(0x100000) objectFlags=0x200010 data=ObjectType
+TYPE 46 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0
+TYPE 47 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=46
+TYPE 48 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0
+TYPE 49 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0
+TYPE 50 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=49
+TYPE 51 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=(string) fresh=0 regular=51
+TYPE 52 flags=NumberLiteral(0x800) objectFlags=0x0 data=LiteralType value=0(jsnum.Number) fresh=0 regular=52
+TYPE 53 flags=BigIntLiteral(0x1000) objectFlags=0x0 data=LiteralType value=0(jsnum.PseudoBigInt) fresh=0 regular=53
+TYPE 54 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=bigint(string) fresh=0 regular=54
+TYPE 55 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=boolean(string) fresh=0 regular=55
+TYPE 56 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=function(string) fresh=0 regular=56
+TYPE 57 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=number(string) fresh=0 regular=57
+TYPE 58 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=object(string) fresh=0 regular=58
+TYPE 59 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=string(string) fresh=0 regular=59
+TYPE 60 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=symbol(string) fresh=0 regular=60
+TYPE 61 flags=StringLiteral(0x400) objectFlags=0x0 data=LiteralType value=undefined(string) fresh=0 regular=61
+TYPE 62 flags=Union(0x8000000) objectFlags=0x8000 data=UnionType types=[54,55,56,57,58,59,60,61]
+TYPE 63 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="IArguments"
+TYPE 64 flags=Object(0x100000) objectFlags=0x10 data=ObjectType symbol="globalThis"
+TYPE 65 flags=Object(0x100000) objectFlags=0x6 data=InterfaceType symbol="Array"
+TYPE 66 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0 symbol="T"
+TYPE 67 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=65 symbol="Array"
+TYPE 68 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="Object"
+TYPE 69 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="Function"
+TYPE 70 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="CallableFunction"
+TYPE 71 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="NewableFunction"
+TYPE 72 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="String"
+TYPE 73 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="Number"
+TYPE 74 flags=Object(0x100000) objectFlags=0x2 data=InterfaceType symbol="Boolean"
+TYPE 75 flags=Object(0x100000) objectFlags=0x6 data=InterfaceType symbol="RegExp"
+TYPE 76 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=75 symbol="RegExp"
+TYPE 77 flags=Object(0x100000) objectFlags=0x4 data=TypeReference symbol="Array"
+TYPE 78 flags=Object(0x100000) objectFlags=0x40004 data=TypeReference symbol="Array"
+TYPE 79 flags=Object(0x100000) objectFlags=0x6 data=InterfaceType symbol="ReadonlyArray"
+TYPE 80 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0 symbol="T"
+TYPE 81 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=79 symbol="ReadonlyArray"
+TYPE 82 flags=Object(0x100000) objectFlags=0x4 data=TypeReference symbol="ReadonlyArray"
+TYPE 83 flags=Object(0x100000) objectFlags=0x6 data=InterfaceType symbol="ThisType"
+TYPE 84 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=0 symbol="T"
+TYPE 85 flags=TypeParameter(0x80000) objectFlags=0x0 data=TypeParameter constraint=83 symbol="ThisType"
+FIELD varianceTypeParameter type=nil
+FIELD nanType type=nil
+FIELD undefinedSymbol symbol#1 name="undefined" flags=0x2000004 checkFlags=0x0
+FIELD argumentsSymbol symbol#2 name="arguments" flags=0x2000004 checkFlags=0x0
+FIELD requireSymbol symbol#3 name="require" flags=0x2000004 checkFlags=0x0
+FIELD unknownSymbol symbol#4 name="unknown" flags=0x2000004 checkFlags=0x0
+FIELD globalThisSymbol symbol#5 name="globalThis" flags=0x2000600 checkFlags=0x8
+FIELD anyType type=1
+FIELD autoType type=2
+FIELD wildcardType type=3
+FIELD blockedStringType type=4
+FIELD errorType type=5
+FIELD unresolvedType type=6
+FIELD nonInferrableAnyType type=7
+FIELD intrinsicMarkerType type=8
+FIELD unknownType type=9
+FIELD undefinedType type=10
+FIELD undefinedWideningType type=10
+FIELD missingType type=11
+FIELD undefinedOrMissingType type=10
+FIELD optionalType type=12
+FIELD nullType type=13
+FIELD nullWideningType type=13
+FIELD stringType type=14
+FIELD numberType type=15
+FIELD bigintType type=16
+FIELD regularFalseType type=17
+FIELD falseType type=18
+FIELD regularTrueType type=19
+FIELD trueType type=20
+FIELD booleanType type=21
+FIELD esSymbolType type=22
+FIELD voidType type=23
+FIELD neverType type=24
+FIELD silentNeverType type=25
+FIELD implicitNeverType type=26
+FIELD unreachableNeverType type=27
+FIELD nonPrimitiveType type=28
+FIELD stringOrNumberType type=29
+FIELD stringNumberSymbolType type=30
+FIELD numberOrBigIntType type=31
+FIELD templateConstraintType type=33
+FIELD numericStringType type=32
+FIELD uniqueLiteralType type=34
+FIELD emptyObjectType type=35
+FIELD emptyJsxObjectType type=36
+FIELD emptyFreshJsxObjectType type=37
+FIELD emptyTypeLiteralType type=38
+FIELD unknownEmptyObjectType type=39
+FIELD unknownUnionType type=40
+FIELD emptyGenericType type=41
+FIELD anyFunctionType type=42
+FIELD noConstraintType type=43
+FIELD circularConstraintType type=44
+FIELD resolvingDefaultType type=45
+FIELD markerSuperType type=46
+FIELD markerSubType type=47
+FIELD markerOtherType type=48
+FIELD markerSuperTypeForCheck type=49
+FIELD markerSubTypeForCheck type=50
+FIELD anySignature signature=1 returns=1
+FIELD unknownSignature signature=2 returns=5
+FIELD resolvingSignature signature=3 returns=1
+FIELD silentNeverSignature signature=4 returns=25
+FIELD globalObjectType type=68
+FIELD globalFunctionType type=69
+FIELD globalCallableFunctionType type=70
+FIELD globalNewableFunctionType type=71
+FIELD globalArrayType type=65
+FIELD globalReadonlyArrayType type=79
+FIELD globalStringType type=72
+FIELD globalNumberType type=73
+FIELD globalBooleanType type=74
+FIELD globalRegExpType type=75
+FIELD globalThisType type=83
+FIELD anyArrayType type=77
+FIELD autoArrayType type=78
+FIELD anyReadonlyArrayType type=82
+FIELD deferredGlobalImportMetaExpressionType type=nil
+FIELD emptyStringType type=51
+FIELD zeroType type=52
+FIELD zeroBigIntType type=53
+FIELD typeofType type=62
+SYMBOL #1 name="undefined" flags=0x2000004 checkFlags=0x0 decls=0
+SYMBOL #2 name="arguments" flags=0x2000004 checkFlags=0x0 decls=0
+SYMBOL #3 name="require" flags=0x2000004 checkFlags=0x0 decls=0
+SYMBOL #4 name="unknown" flags=0x2000004 checkFlags=0x0 decls=0
+SYMBOL #5 name="globalThis" flags=0x2000600 checkFlags=0x8 decls=0
+SYMBOL #6 name="\\xFEtype" flags=0x2000800 checkFlags=0x0 decls=0
+GLOBALS count=135 transient=2
+PROGRAMCALLS [BindSourceFiles=1 Options=1 SourceFiles=1]

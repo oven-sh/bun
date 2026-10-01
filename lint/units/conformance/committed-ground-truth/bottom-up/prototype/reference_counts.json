@@ -1,0 +1,89 @@
+{
+  "upstream": {
+    "typescript-go": "89d5d5b2849a0db0957065889ca58536fa6d2e4a",
+    "TypeScript": "5848bc5157b22ff7f4e3369f4645a514a433b15f"
+  },
+  "cases": {
+    "files": 12444,
+    "droppedByName": 45,
+    "emitNotCompared": 8
+  },
+  "instances": {
+    "sha256": "946746e7215cf5e652ed0e70912eab2939b5d44a473ef8b1b01eab4f9d9258d5",
+    "all": 14915,
+    "run": 12797,
+    "skipped": 2118,
+    "invalid": 0,
+    "E": 7027,
+    "C": 5770,
+    "compiler": {
+      "instances": 7235,
+      "run": 6282,
+      "skipped": 953,
+      "E": 3187,
+      "C": 3095
+    },
+    "conformance": {
+      "instances": 7680,
+      "run": 6515,
+      "skipped": 1165,
+      "E": 3840,
+      "C": 2675
+    },
+    "skippedBecause": {
+      "alwaysStrict=false is unsupported": 52,
+      "esModuleInterop=false is unsupported": 24,
+      "unsupported baseUrl": 31,
+      "unsupported module kind AMD": 321,
+      "unsupported module kind System": 222,
+      "unsupported module kind UMD": 57,
+      "unsupported module resolution kind 1": 57,
+      "unsupported module resolution kind 2": 23,
+      "unsupported outFile": 87,
+      "unsupported target ES5": 1244
+    },
+    "pretty": 14,
+    "accepted": 442,
+    "triaged": 2,
+    "postEmitOrder": 3
+  },
+  "oracle": {
+    "typescript-go": 674,
+    "typescript": 6353,
+    "expects-no-errors": 23,
+    "none": 5747
+  },
+  "corpus": {
+    "files": 22186,
+    "bytes": 32485872,
+    "sha256": "128b46333c8d44c4db861d96c0b62afcf90136c0ba0d4d118fdcd5a4c08fbaf7",
+    "typescriptBaselines": 9056,
+    "typescriptGoBaselines": {
+      "compiler": 276,
+      "conformance": 398
+    },
+    "expectsNoErrors": 23,
+    "accepted": 1163,
+    "triaged": 2
+  },
+  "options": {
+    "declared": 126,
+    "varying": 72
+  },
+  "go": {
+    "unicode": "15.0.0",
+    "tables": {
+      "lower": "f4944fbf8c952a5676c9b57b7707fa77b2238f620c41f6cce6f180532afe52f7",
+      "foldKey": "8e7f96552ab536d4798a1d4c42556f0a87d35e5504fae4b6d5a0c2e675f3a794",
+      "space": "a89899c10b58ccc51877a13b92829a8830ab650969d374befb90af6d216af998",
+      "white": "d9f07ef341888076a516332d458659c0072784cdfbcecdb187e8f1ae517b1bd5"
+    }
+  },
+  "suiteRun": {
+    "typescript-go": "89d5d5b2849a0db0957065889ca58536fa6d2e4a",
+    "go": "go1.26.8",
+    "subtests": 14915,
+    "sha256": "4b9c4781e3b1d5bd82af09239279bbdfde359e12a57527a1ebba6b643e4eb1be",
+    "skipReasonsSha256": "01b4741818d4f0ce453cf99f63d1664df8104b38bb6fc95541716f84062ad3d3"
+  }
+}

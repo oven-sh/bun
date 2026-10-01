@@ -1,0 +1,15 @@
+# HEAD e3566be889 dirty: []
+-rw-r--r-- 1 root root 12657744 Sep 29 16:41 build/release/rust-target/x86_64-unknown-linux-gnu/deps/libbun_js_parser-185fe25973f3a1f8.rlib
+-rw-r--r-- 1 root root  4488688 Sep 29 16:41 build/release/rust-target/x86_64-unknown-linux-gnu/deps/libbun_js_parser-185fe25973f3a1f8.rmeta
+build:release rc=0 572s
+[check] bun-profile 3 hardening properties (2ms)
+[check] bun-profile 11 debug sections (0ms)
+[27/27] check bun-profile link inputs for duplicate definitions
+[check] bun-profile 0 duplicate strong symbols (10.6s)
+[build] done
+62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552  build/release/bun
+96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc  build/release/bun-profile
+62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552  /workspace/notes/lint/units/parser/measure/base/bin/bun
+96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc  /workspace/notes/lint/units/parser/measure/base/bin/bun-profile
+bun-profile IDENTICAL to the base copy
+bun IDENTICAL to the base copy

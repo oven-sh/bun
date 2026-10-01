@@ -1,0 +1,5 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+recursive.ts(6,1): error TS2322: Type 'R3' is not assignable to type 'R1'.
+  Types of property 'v' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+SIZES after check: identity=0 assignable=9 comparable=0 subtype=0 strictSubtype=0 enum=0 types=115

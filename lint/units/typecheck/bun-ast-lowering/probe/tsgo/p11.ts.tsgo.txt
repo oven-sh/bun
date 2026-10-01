@@ -1,0 +1,129 @@
+file /p11.ts scriptKind=3 variant=0 dts=false textLen=196
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=150 identifiers=54 text=57 reparsedClones=0
+root KindSourceFile [0,196) f=0x0
+  .Statements: list [0,195) n=12
+    - KindExpressionStatement [0,10) f=0x0
+      .Expression: KindBinaryExpression [0,9) f=0x0
+        .Left: KindBinaryExpression [0,5) f=0x0
+          .Left: KindIdentifier [0,1) f=0x0 Text="a"
+          .OperatorToken: KindLessThanToken [1,3) f=0x0
+          .Right: KindIdentifier [3,5) f=0x0 Text="b"
+        .OperatorToken: KindGreaterThanToken [5,7) f=0x0
+        .Right: KindIdentifier [7,9) f=0x0 Text="c"
+    - KindExpressionStatement [10,23) f=0x0
+      .Expression: KindCallExpression [10,22) f=0x0
+        .Arguments: list [20,21) n=1
+          - KindIdentifier [20,21) f=0x0 Text="c"
+        .Expression: KindIdentifier [10,12) f=0x0 Text="a"
+        .TypeArguments: list [14,16) n=1
+          - KindTypeReference [14,16) f=0x0
+            .TypeName: KindIdentifier [14,16) f=0x0 Text="b"
+    - KindExpressionStatement [23,31) f=0x0
+      .Expression: KindBinaryExpression [23,30) f=0x0
+        .Left: KindIdentifier [23,25) f=0x0 Text="a"
+        .OperatorToken: KindQuestionQuestionToken [25,28) f=0x0
+        .Right: KindIdentifier [28,30) f=0x0 Text="b"
+    - KindExpressionStatement [31,44) f=0x0
+      .Expression: KindBinaryExpression [31,43) f=0x0
+        .Left: KindIdentifier [31,33) f=0x0 Text="a"
+        .OperatorToken: KindAsteriskAsteriskToken [33,36) f=0x0
+        .Right: KindBinaryExpression [36,43) f=0x0
+          .Left: KindIdentifier [36,38) f=0x0 Text="b"
+          .OperatorToken: KindAsteriskAsteriskToken [38,41) f=0x0
+          .Right: KindIdentifier [41,43) f=0x0 Text="c"
+    - KindExpressionStatement [44,55) f=0x0
+      .Expression: KindBinaryExpression [44,54) f=0x0
+        .Left: KindIdentifier [44,46) f=0x0 Text="a"
+        .OperatorToken: KindEqualsToken [46,48) f=0x0
+        .Right: KindBinaryExpression [48,54) f=0x0
+          .Left: KindIdentifier [48,50) f=0x0 Text="b"
+          .OperatorToken: KindEqualsToken [50,52) f=0x0
+          .Right: KindIdentifier [52,54) f=0x0 Text="c"
+    - KindExpressionStatement [55,74) f=0x0
+      .Expression: KindConditionalExpression [55,73) f=0x0
+        .ColonToken: KindColonToken [61,63) f=0x0
+        .Condition: KindIdentifier [55,57) f=0x0 Text="a"
+        .QuestionToken: KindQuestionToken [57,59) f=0x0
+        .WhenFalse: KindConditionalExpression [63,73) f=0x0
+          .ColonToken: KindColonToken [69,71) f=0x0
+          .Condition: KindIdentifier [63,65) f=0x0 Text="c"
+          .QuestionToken: KindQuestionToken [65,67) f=0x0
+          .WhenFalse: KindIdentifier [71,73) f=0x0 Text="e"
+          .WhenTrue: KindIdentifier [67,69) f=0x0 Text="d"
+        .WhenTrue: KindIdentifier [59,61) f=0x0 Text="b"
+    - KindExpressionStatement [74,121) f=0x0
+      .Expression: KindBinaryExpression [74,120) f=0x0
+        .Left: KindIdentifier [74,76) f=0x0 Text="a"
+        .OperatorToken: KindBarBarToken [76,79) f=0x0
+        .Right: KindBinaryExpression [79,120) f=0x0
+          .Left: KindIdentifier [79,81) f=0x0 Text="b"
+          .OperatorToken: KindAmpersandAmpersandToken [81,84) f=0x0
+          .Right: KindBinaryExpression [84,120) f=0x0
+            .Left: KindIdentifier [84,86) f=0x0 Text="c"
+            .OperatorToken: KindBarToken [86,88) f=0x0
+            .Right: KindBinaryExpression [88,120) f=0x0
+              .Left: KindIdentifier [88,90) f=0x0 Text="d"
+              .OperatorToken: KindCaretToken [90,92) f=0x0
+              .Right: KindBinaryExpression [92,120) f=0x0
+                .Left: KindIdentifier [92,94) f=0x0 Text="e"
+                .OperatorToken: KindAmpersandToken [94,96) f=0x0
+                .Right: KindBinaryExpression [96,120) f=0x0
+                  .Left: KindIdentifier [96,98) f=0x0 Text="f"
+                  .OperatorToken: KindEqualsEqualsToken [98,101) f=0x0
+                  .Right: KindBinaryExpression [101,120) f=0x0
+                    .Left: KindIdentifier [101,103) f=0x0 Text="g"
+                    .OperatorToken: KindLessThanToken [103,105) f=0x0
+                    .Right: KindBinaryExpression [105,120) f=0x0
+                      .Left: KindIdentifier [105,107) f=0x0 Text="h"
+                      .OperatorToken: KindLessThanLessThanToken [107,110) f=0x0
+                      .Right: KindBinaryExpression [110,120) f=0x0
+                        .Left: KindIdentifier [110,112) f=0x0 Text="i"
+                        .OperatorToken: KindPlusToken [112,114) f=0x0
+                        .Right: KindBinaryExpression [114,120) f=0x0
+                          .Left: KindIdentifier [114,116) f=0x0 Text="j"
+                          .OperatorToken: KindAsteriskToken [116,118) f=0x0
+                          .Right: KindIdentifier [118,120) f=0x0 Text="k"
+    - KindExpressionStatement [121,145) f=0x0
+      .Expression: KindBinaryExpression [121,144) f=0x0
+        .Left: KindBinaryExpression [121,128) f=0x0
+          .Left: KindIdentifier [121,123) f=0x0 Text="a"
+          .OperatorToken: KindInKeyword [123,126) f=0x0
+          .Right: KindIdentifier [126,128) f=0x0 Text="b"
+        .OperatorToken: KindCommaToken [128,129) f=0x0
+        .Right: KindBinaryExpression [129,144) f=0x0
+          .Left: KindIdentifier [129,131) f=0x0 Text="a"
+          .OperatorToken: KindInstanceOfKeyword [131,142) f=0x0
+          .Right: KindIdentifier [142,144) f=0x0 Text="b"
+    - KindExpressionStatement [145,168) f=0x0
+      .Expression: KindBinaryExpression [145,167) f=0x0
+        .Left: KindIdentifier [145,147) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [147,149) f=0x0
+        .Right: KindBinaryExpression [149,167) f=0x0
+          .Left: KindBinaryExpression [149,162) f=0x0
+            .Left: KindBinaryExpression [149,156) f=0x0
+              .Left: KindIdentifier [149,151) f=0x0 Text="a"
+              .OperatorToken: KindGreaterThanGreaterThanToken [151,154) f=0x0
+              .Right: KindIdentifier [154,156) f=0x0 Text="b"
+            .OperatorToken: KindGreaterThanGreaterThanGreaterThanToken [156,160) f=0x0
+            .Right: KindIdentifier [160,162) f=0x0 Text="c"
+          .OperatorToken: KindGreaterThanEqualsToken [162,165) f=0x0
+          .Right: KindIdentifier [165,167) f=0x0 Text="d"
+    - KindExpressionStatement [168,177) f=0x0
+      .Expression: KindBinaryExpression [168,176) f=0x0
+        .Left: KindIdentifier [168,170) f=0x0 Text="x"
+        .OperatorToken: KindGreaterThanGreaterThanEqualsToken [170,174) f=0x0
+        .Right: KindNumericLiteral [174,176) f=0x0 Text="1" TokenFlags=0x0
+    - KindExpressionStatement [177,187) f=0x0
+      .Expression: KindBinaryExpression [177,186) f=0x0
+        .Left: KindIdentifier [177,179) f=0x0 Text="x"
+        .OperatorToken: KindGreaterThanGreaterThanGreaterThanEqualsToken [179,184) f=0x0
+        .Right: KindNumericLiteral [184,186) f=0x0 Text="2" TokenFlags=0x0
+    - KindExpressionStatement [187,195) f=0x0
+      .Expression: KindBinaryExpression [187,194) f=0x0
+        .Left: KindIdentifier [187,189) f=0x0 Text="x"
+        .OperatorToken: KindGreaterThanEqualsToken [189,192) f=0x0
+        .Right: KindNumericLiteral [192,194) f=0x0 Text="3" TokenFlags=0x0
+  .EndOfFileToken: KindEndOfFile [195,196) f=0x0

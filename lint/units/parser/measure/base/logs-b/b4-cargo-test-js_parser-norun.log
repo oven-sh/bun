@@ -1,0 +1,78 @@
+   Compiling memchr v2.8.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling serde_core v1.0.228
+   Compiling zerocopy v0.8.48
+   Compiling serde v1.0.228
+   Compiling zerocopy-derive v0.8.48
+   Compiling zmij v1.0.21
+   Compiling autocfg v1.5.0
+   Compiling serde_derive v1.0.228
+   Compiling rayon-core v1.13.0
+   Compiling either v1.15.0
+   Compiling serde_json v1.0.149
+   Compiling cfg-if v1.0.4
+   Compiling regex-syntax v0.8.10
+   Compiling anstyle v1.0.14
+   Compiling ciborium-io v0.2.2
+   Compiling clap_lex v1.1.0
+   Compiling plotters-backend v0.3.7
+   Compiling itertools v0.10.5
+   Compiling num-traits v0.2.19
+   Compiling bstr v1.12.1
+   Compiling crossbeam-epoch v0.9.18
+   Compiling aho-corasick v1.1.4
+   Compiling clap_builder v4.6.0
+   Compiling crossbeam-deque v0.8.6
+   Compiling plotters-svg v0.3.7
+   Compiling cast v0.3.0
+   Compiling bun_highway v0.0.0 (/workspace/wt/parser/src/highway)
+   Compiling bun_wyhash v0.0.0 (/workspace/wt/parser/src/wyhash)
+   Compiling bun_hash v0.0.0 (/workspace/wt/parser/src/hash)
+   Compiling bun_alloc v0.0.0 (/workspace/wt/parser/src/bun_alloc)
+   Compiling same-file v1.0.6
+   Compiling rayon v1.12.0
+   Compiling regex-automata v0.4.14
+   Compiling walkdir v2.5.0
+   Compiling bun_core v0.0.0 (/workspace/wt/parser/src/bun_core)
+   Compiling plotters v0.3.7
+   Compiling clap v4.6.1
+   Compiling criterion-plot v0.5.0
+   Compiling is-terminal v0.4.17
+   Compiling oorandom v11.1.5
+   Compiling once_cell v1.21.4
+   Compiling anes v0.1.6
+   Compiling regex v1.12.3
+   Compiling tinytemplate v1.2.1
+   Compiling half v2.7.1
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling bun_ptr v0.0.0 (/workspace/wt/parser/src/ptr)
+   Compiling bun_errno v0.0.0 (/workspace/wt/parser/src/errno)
+   Compiling bun_safety v0.0.0 (/workspace/wt/parser/src/safety)
+   Compiling bun_boringssl_sys v0.0.0 (/workspace/wt/parser/src/boringssl_sys)
+   Compiling bun_zlib_sys v0.0.0 (/workspace/wt/parser/src/zlib_sys)
+   Compiling bun_base64 v0.0.0 (/workspace/wt/parser/src/base64)
+   Compiling criterion v0.5.1
+   Compiling bun_paths v0.0.0 (/workspace/wt/parser/src/paths)
+   Compiling bun_collections v0.0.0 (/workspace/wt/parser/src/collections)
+   Compiling bun_sys v0.0.0 (/workspace/wt/parser/src/sys)
+   Compiling bun_url v0.0.0 (/workspace/wt/parser/src/url)
+   Compiling bun_semver v0.0.0 (/workspace/wt/parser/src/semver)
+   Compiling bun_zlib v0.0.0 (/workspace/wt/parser/src/zlib)
+   Compiling bun_http_types v0.0.0 (/workspace/wt/parser/src/http_types)
+   Compiling bun_perf v0.0.0 (/workspace/wt/parser/src/perf)
+   Compiling bun_which v0.0.0 (/workspace/wt/parser/src/which)
+   Compiling bun_threading v0.0.0 (/workspace/wt/parser/src/threading)
+   Compiling bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+   Compiling bun_analytics v0.0.0 (/workspace/wt/parser/src/analytics)
+   Compiling bun_dotenv v0.0.0 (/workspace/wt/parser/src/dotenv)
+   Compiling bun_spawn_sys v0.0.0 (/workspace/wt/parser/src/spawn_sys)
+   Compiling bun_uws_sys v0.0.0 (/workspace/wt/parser/src/uws_sys)
+   Compiling bun_io v0.0.0 (/workspace/wt/parser/src/io)
+   Compiling bun_install_types v0.0.0 (/workspace/wt/parser/src/install_types)
+   Compiling bun_crash_handler v0.0.0 (/workspace/wt/parser/src/crash_handler)
+   Compiling bun_react_compiler v0.0.0 (/workspace/wt/parser/src/react_compiler)
+   Compiling bun_options_types v0.0.0 (/workspace/wt/parser/src/options_types)
+   Compiling bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 03s
+  Executable unittests lib.rs (target/debug/build/bun_js_parser/83a59f86a92ee8c1/out/bun_js_parser-83a59f86a92ee8c1)

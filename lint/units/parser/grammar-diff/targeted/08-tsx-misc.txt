@@ -1,0 +1,279 @@
+# JSX with type syntax, comments around type syntax, object type line breaks, misc statements
+const v = <div>{x as A}</div>;
+const v = <div>{x!}</div>;
+const v = <div>{x satisfies A}</div>;
+const v = <div a={x as A} />;
+const v = <div a={<A,>(b: A) => b} />;
+const v = <div>{(a: A): B => a}</div>;
+const v = <C<A> />;
+const v = <C<A> a="b" />;
+const v = <C<A>>x</C>;
+const v = <C<A, B> />;
+const v = <C<A<B>> />;
+const v = <C<A<B<C>>> />;
+const v = <a.b<C> />;
+const v = <a.b.c<D> e={f} />;
+const v = <C<> />;
+const v = <C<A>></C>;
+const v = <C <A> />;
+const v = <C⏎<A> />;
+const v = <C<A> {...b} />;
+const v = <C<'a'> />;
+const v = <C<{ a: A }> />;
+const v = <C<() => void> />;
+const v = <C<A[]> />;
+const v = <C<typeof a> />;
+const v = <div<A> />;
+const v = <a:b<C> />;
+const v = <a-b<C> />;
+const v = <></>;
+const v = <div />;
+const v = <div></div>;
+const v = <T,>(a: T) => <div>{a}</div>;
+const v = <T extends A>(a: T) => <div>{a}</div>;
+const v = <T extends A,>(a: T) => <div />;
+const v = <T, U>(a: T, b: U) => <div />;
+const v = <T = A>(a: T) => <div />;
+const v = <const T,>(a: T) => <div />;
+const v = <const T extends A>(a: T) => <div />;
+const v = <T>(a: T) => <div />;
+const v = <T>x</T>;
+const v = <T extends>x</T>;
+const v = <T extends="a">x</T>;
+const v = <T extends A>x</T>;
+const v = <T,>x</T>;
+const v = <const>x</const>;
+const v = <in>x</in>;
+const v = <out>x</out>;
+const v = async <T,>(a: T) => <div />;
+const v = <div>{/* c */}</div>;
+const v = <div /* c */ a="b" />;
+const v = <div // c⏎ a="b" />;
+const v = <div a="b" /* c */ />;
+const v = <div a=/* c */"b" />;
+const v = </* c */div />;
+const v = <div>{/* c */ x as A /* d */}</div>;
+function C(props: { a: A }) { return <div>{props.a}</div>; }
+function C<T>(props: P<T>): JSX.Element { return <D<T> {...props} />; }
+const C: React.FC<P> = ({ a }) => <div>{a}</div>;
+const C = ({ a }: P): JSX.Element => <div>{a}</div>;
+const C = (props: P) => a ? <div /> : <span />;
+const C = (props: P) => a ? (b): c => <div /> : <span />;
+class C extends React.Component<P, S> { render(): JSX.Element { return <div />; } }
+x = a < b ? <div /> : c > d;
+let a: A /* c */ = 1;
+let a /* c */ : A = 1;
+let a: /* c */ A = 1;
+let a: A // c⏎= 1;
+let a: A | /* c */ B;
+let a: A /* c */ | B;
+let a: A<B /* c */>;
+let a: A</* c */B>;
+let a: A<B> /* c */ = c;
+let a: { /* c */ };
+let a: { a: A /* c */ };
+let a: { a: A; /* c */ b: B };
+let a: { a: A // c⏎ b: B };
+let a: { // c⏎ a: A };
+let a: [/* c */];
+let a: [A /* c */, B];
+let a: (/* c */) => void;
+let a: (a: A /* c */) => void;
+let a: (a: A) /* c */ => void;
+let a: (a: A) => /* c */ void;
+let a: /* c */ (a: A) => void;
+let a: /** doc */ A;
+function f(/* c */ a: A /* d */): /* e */ B /* f */ {}
+function f(a /* c */ : A) {}
+function f(a: A, /* c */ b: B) {}
+function f<T /* c */>(a: T) {}
+function f</* c */T>(a: T) {}
+function f<T> /* c */ (a: T) {}
+function f(a?: /* c */ A) {}
+function f(a /* c */ ?: A) {}
+function f(a? /* c */ : A) {}
+class C { /* c */ a: A }
+class C { a /* c */ : A }
+class C { a: A /* c */ }
+class C { a: A; /* c */ }
+class C { public /* c */ a: A }
+class C { /* c */ public a: A }
+class C { a /* c */ ?: A }
+class C { a /* c */ !: A }
+class C { m(/* c */): void /* d */ {} }
+class C { m(): /* c */ void; m(): any {} }
+class C /* c */ <T> {}
+class C<T> /* c */ extends B<T> /* d */ implements A /* e */ {}
+class C implements /* c */ A {}
+class C implements A /* c */, B {}
+interface /* c */ I {}
+interface I /* c */ {}
+interface I { /* c */ }
+interface I /* c */ extends A {}
+interface I extends /* c */ A {}
+type /* c */ A = 1;
+type A /* c */ = 1;
+type A = /* c */ 1;
+type A = 1 /* c */;
+type A</* c */T> = T;
+type A<T /* c */ extends B> = T;
+type A<T extends /* c */ B> = T;
+declare /* c */ const a: A;
+declare /* c */ module 'm' {}
+declare module /* c */ 'm' {}
+declare module 'm' /* c */ {}
+namespace /* c */ N {}
+namespace N /* c */ {}
+namespace N /* c */ . M {}
+enum /* c */ E {}
+enum E /* c */ {}
+enum E { /* c */ A /* d */ = /* e */ 1 /* f */ }
+abstract /* c */ class C {}
+import /* c */ type { A } from 'a';
+import type /* c */ { A } from 'a';
+import { /* c */ type A } from 'a';
+import { type /* c */ A } from 'a';
+export /* c */ type { A };
+export type /* c */ { A };
+export { type /* c */ A };
+x /* c */ as A;
+x as /* c */ A;
+x as A /* c */;
+x /* c */ satisfies A;
+x /* c */ !;
+x! /* c */ .y;
+x /* c */ !.y;
+f /* c */ <A>(x);
+f</* c */A>(x);
+f<A /* c */>(x);
+f<A> /* c */ (x);
+(a /* c */ : A) => a;
+(a: A) /* c */ : B => a;
+(a: A): /* c */ B => a;
+(a: A): B /* c */ => a;
+<T /* c */>(a: T) => a;
+</* c */T>(a: T) => a;
+x = a ? (b) /* c */ : c => d : e;
+x = a ? (b): /* c */ c => d : e;
+/// <reference path="a" />
+/// <reference types="a" />
+/// <reference lib="a" />
+/// <reference no-default-lib="true" />
+/// <amd-module name="a" />
+/// <reference path="a" />⏎let a: A;
+// @ts-nocheck
+// @ts-check
+// @ts-nocheck⏎let a: A = 1;
+// @ts-ignore⏎let a: A = 1;
+// @ts-expect-error⏎let a: A = 1;
+/* @ts-nocheck */
+#!/usr/bin/env bun⏎let a: A;
+#!/usr/bin/env bun⏎// @ts-nocheck⏎/// <reference path="a" />⏎let a: A;
+type A = {⏎  a: A⏎  b: B⏎}
+type A = {⏎  a(): void⏎  b(): void⏎}
+type A = {⏎  a⏎  b⏎}
+type A = {⏎  a: A,⏎  b: B,⏎}
+type A = {⏎  get⏎  a(): A⏎}
+type A = {⏎  get a(): A⏎  set a(v: A)⏎}
+type A = {⏎  readonly⏎  a: A⏎}
+type A = {⏎  new⏎  (): A⏎}
+type A = {⏎  (): A⏎  new (): B⏎  [k: string]: C⏎  readonly d: D⏎  e?(): E⏎}
+type A =⏎  | B⏎  | C;
+type A =⏎  & B⏎  & C;
+type A = B extends C⏎  ? D⏎  : E;
+type A = B⏎type C = D
+type A = B⏎(c);
+type A = B⏎[c];
+type A = B⏎<c>(d);
+type A = typeof b⏎(c);
+type A = typeof b⏎[c];
+type A = () => void⏎(c);
+type A = B[]⏎[c];
+type A = B<C>⏎(d);
+type A = keyof B⏎[c];
+type A = 'a'⏎[c];
+type A = 1⏎[c];
+type A = { a: A }⏎[c];
+type A = [B]⏎[c];
+type A = (B)⏎[c];
+type A = this⏎[c];
+type A = import('a')⏎[c];
+type A = B.C⏎[c];
+type A = B.C⏎.d;
+type A = B⏎.c;
+type A = B⏎| C;
+type A = B |⏎C;
+type A = B⏎extends C ? D : E;
+type A = B extends C ? D : E⏎extends F ? G : H;
+type A = B⏎is C;
+type A = asserts⏎b;
+let a: A⏎(b);
+let a: A⏎[b];
+let a: A⏎<B>(c);
+let a: typeof b⏎(c);
+let a: typeof b⏎<C>(d);
+let a: () => void⏎(b);
+function f(): A⏎{}
+function f(): typeof a⏎{}
+function f(): A⏎<B>{}
+class C { a: A⏎(b) {} }
+class C { a: typeof b⏎(c) {} }
+if (a) type A = 1;
+if (a) interface I {}
+if (a) declare const b: B;
+if (a) namespace N {}
+if (a) enum E {}
+if (a) abstract class C {}
+while (a) type A = 1;
+for (;;) interface I {}
+label: type A = 1;
+label: interface I {}
+label: declare const a: A;
+label: namespace N {}
+label: enum E {}
+type: A;
+type: while (a) break type;
+declare: a;
+namespace: a;
+abstract: a;
+module: a;
+interface: a;
+{ type A = 1; }
+{ interface I {} }
+{ declare const a: A; }
+{ namespace N {} }
+{ enum E { A } }
+{ export type A = 1; }
+{ import type { A } from 'a'; }
+function f() { type A = 1; interface I {} declare const a: A; return a; }
+function f() { namespace N {} }
+function f() { enum E { A } return E; }
+function f() { export type A = 1; }
+function f() { declare function g(): void; }
+function f() { declare module 'm' {} }
+function f() { declare global {} }
+class C { m() { type A = 1; interface I {} enum E { A } } }
+() => { type A = 1; };
+a => { interface I {} };
+switch (a) { case 1: type A = 1; }
+switch (a) { default: interface I {} }
+try { type A = 1; } catch { interface I {} } finally { enum E {} }
+type A = 1; type A = 2;
+type A = 1; interface A {}
+type A = 1; let A = 2;
+type A = 1; class A {}
+interface A {} class A {}
+interface A {} let A;
+interface A {} function A() {}
+declare const a: A; let a = 1;
+declare function f(): void; function f() {}
+declare class C {} class C {}
+declare let a: A; declare let a: B;
+let a: A; declare let a: A;
+enum E {} class E {}
+enum E {} let E;
+namespace N {} class N {}
+namespace N {} let N;
+namespace N { export const a = 1 } let N;
+class N {} namespace N { export const a = 1 }
+function N() {} namespace N { export const a = 1 }

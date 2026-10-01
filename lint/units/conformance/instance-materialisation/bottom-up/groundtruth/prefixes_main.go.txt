@@ -1,0 +1,61 @@
+// Ground truth for removeTestPathPrefixes (tsbaseline/util.go:23-49, verbatim) and for the reference path pattern.
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"regexp"
+	"strings"
+)
+
+var (
+	testPathPrefixReplacer = strings.NewReplacer(
+		"/.ts/", "",
+		"/.lib/", "",
+		"/.src/", "",
+		"bundled:///libs/", "",
+		"file:///./ts/", "file:///",
+		"file:///./lib/", "file:///",
+		"file:///./src/", "file:///",
+	)
+	testPathTrailingReplacerTrailingSeparator = strings.NewReplacer(
+		"/.ts/", "/",
+		"/.lib/", "/",
+		"/.src/", "/",
+		"bundled:///libs/", "/",
+		"file:///./ts/", "file:///",
+		"file:///./lib/", "file:///",
+		"file:///./src/", "file:///",
+	)
+)
+
+func removeTestPathPrefixes(text string, retainTrailingDirectorySeparator bool) string {
+	if retainTrailingDirectorySeparator {
+		return testPathTrailingReplacerTrailingSeparator.Replace(text)
+	}
+	return testPathPrefixReplacer.Replace(text)
+}
+
+var referencesRegex = regexp.MustCompile(`reference\spath`)
+
+type out struct {
+	A []string `json:"a"`
+	B []string `json:"b"`
+	R []bool   `json:"r"`
+}
+
+func main() {
+	data, _ := os.ReadFile(os.Args[1])
+	var in []string
+	if err := json.Unmarshal(data, &in); err != nil {
+		panic(err)
+	}
+	var o out
+	for _, s := range in {
+		o.A = append(o.A, removeTestPathPrefixes(s, false))
+		o.B = append(o.B, removeTestPathPrefixes(s, true))
+		o.R = append(o.R, referencesRegex.MatchString(s))
+	}
+	b, _ := json.Marshal(o)
+	os.WriteFile(os.Args[2], b, 0o644)
+}

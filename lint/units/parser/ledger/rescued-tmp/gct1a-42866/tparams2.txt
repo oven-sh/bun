@@ -1,0 +1,64 @@
+# type parameter modifiers and line breaks
+type A<out\nT> = T
+type A<in\nT> = T
+class A<const\nT> {}
+type A<in out\nT> = T
+type A<out extends T> = T
+type A<out extends> = T
+type A<out in> = T
+type A<out const T> = T
+type A<out 'a'> = T
+type A<out [a]> = T
+type A<public\nT> = T
+type A<public T extends U = V> = T
+type A<public private T> = T
+type A<static static T> = T
+type A<in export T> = T
+type A<in default T> = T
+type A<readonly> = T
+type A<readonly, public> = T
+type A<public = T> = T
+type A<public extends T> = T
+type A<T extends !a> = T
+type A<T extends ~a, U> = T
+type A<T extends -a> = T
+type A<T extends +a> = T
+type A<T extends void> = T
+type A<T extends void 0> = T
+type A<T extends typeof a> = T
+type A<T extends delete a> = T
+type A<T extends await> = T
+type A<T extends yield> = T
+type A<T extends #a> = T
+type A<T extends @a> = T
+type A<T extends <U>a> = T
+type A<T extends !a = B> = T
+type A<T extends !() => 1> = T
+type A<T extends !function () { return 1 }> = T
+function f<T extends !a>() {}
+const f = <T extends !a>(x: T) => x
+let g: <T extends !a>() => void
+type A<T = !a> = T
+class A<T,> {}
+class A<T, U,> {}
+class A<,T> {}
+class A<T\n,\nU> {}
+class A<T extends U\n= V> {}
+class A<T\nextends U> {}
+class A\n<T> {}
+function f\n<T>() {}
+function f<T>\n() {}
+class C { m\n<T>() {} }
+const f = <T>\n(x: T) => x
+const f = <T,\n>(x: T) => x
+const f = <\nT>(x: T) => x
+const f = <T>(x: T)\n=> x
+const f = <public T>(x: T) => x
+const f = <readonly T>(x: T) => x
+const f = <static T>(x: T) => x
+const f = <out>(x) => x
+const f = <out, T>(x) => x
+const f = <out extends T>(x) => x
+const f = <const>(x) => x
+const f = <T extends U ? X : Y>(x) => x
+const f = async <public T>(x: T) => x

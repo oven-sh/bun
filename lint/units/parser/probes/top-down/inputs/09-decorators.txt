@@ -1,0 +1,1989 @@
+# Decorators.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== file position.001
+@d class C {}
+=== file position.002
+@d() class C {}
+=== file position.003
+@d @e class C {}
+=== file position.004
+@d
+class C {}
+=== file position.005
+@d
+@e
+class C {}
+=== file position.006
+@d abstract class C {}
+=== file position.007
+abstract @d class C {}
+=== file position.008
+@d declare class C {}
+=== file position.009
+declare @d class C {}
+=== file position.010
+@d export class C {}
+=== file position.011
+export @d class C {}
+=== file position.012
+@d export default class C {}
+=== file position.013
+export default @d class C {}
+=== file position.014
+@d export default class {}
+=== file position.015
+export default @d class {}
+=== file position.016
+@d export @e class C {}
+=== file position.017
+@d export default @e class C {}
+=== file position.018
+export @d default class C {}
+=== file position.019
+@d export abstract class C {}
+=== file position.020
+export @d abstract class C {}
+=== file position.021
+export abstract @d class C {}
+=== file position.022
+@d export default abstract class C {}
+=== file position.023
+export default @d abstract class C {}
+=== file position.024
+@d export declare class C {}
+=== file position.025
+export @d declare class C {}
+=== file position.026
+export declare @d class C {}
+=== file position.027
+var v = @d class {};
+=== file position.028
+var v = @d class C {};
+=== file position.029
+(@d class {});
+=== file position.030
+var v = @d @e class {};
+=== file position.031
+f(@d class {});
+=== file position.032
+var v = [@d class {}];
+=== file position.033
+var v = { a: @d class {} };
+=== file position.034
+var v = a ? @d class {} : b;
+=== file position.035
+var v = @d
+class {};
+=== file position.036
+export default (@d class {});
+=== file position.037
+var v = @d abstract class {};
+=== file position.038
+@d function f() {}
+=== file position.039
+@d async function f() {}
+=== file position.040
+@d var a = 1;
+=== file position.041
+@d let a = 1;
+=== file position.042
+@d const a = 1;
+=== file position.043
+@d interface I {}
+=== file position.044
+@d type X = A;
+=== file position.045
+@d enum E {}
+=== file position.046
+@d const enum E {}
+=== file position.047
+@d namespace N {}
+=== file position.048
+@d module M {}
+=== file position.049
+@d declare const a: A;
+=== file position.050
+@d import a from 'm';
+=== file position.051
+@d import 'm';
+=== file position.052
+@d export { a };
+=== file position.053
+@d export * from 'm';
+=== file position.054
+@d export default a;
+=== file position.055
+@d export default function f() {}
+=== file position.056
+@d export const a = 1;
+=== file position.057
+@d export function f() {}
+=== file position.058
+@d export = a;
+=== file position.059
+@d;
+=== file position.060
+@d
+=== file position.061
+@d a;
+=== file position.062
+@d a
+=== file position.063
+@d {}
+=== file position.064
+@d if (a) {}
+=== file position.065
+@d return;
+=== file position.066
+@d 1;
+=== file position.067
+@d
+
+=== file position.068
+@
+=== file position.069
+@;
+=== file position.070
+@ class C {}
+=== file position.071
+@@d class C {}
+=== file position.072
+@d @ class C {}
+=== file position.073
+class C { @d a }
+=== file position.074
+class C { @d a: A }
+=== file position.075
+class C { @d a = 1 }
+=== file position.076
+class C { @d a: A = 1 }
+=== file position.077
+class C { @d a?: A }
+=== file position.078
+class C { @d a!: A }
+=== file position.079
+class C { @d m() {} }
+=== file position.080
+class C { @d m(): void {} }
+=== file position.081
+class C { @d get a() { return 1 } }
+=== file position.082
+class C { @d set a(v) {} }
+=== file position.083
+class C { @d static a }
+=== file position.084
+class C { @d static m() {} }
+=== file position.085
+class C { static @d a }
+=== file position.086
+class C { static @d m() {} }
+=== file position.087
+class C { @d public a }
+=== file position.088
+class C { public @d a }
+=== file position.089
+class C { @d private a }
+=== file position.090
+class C { private @d a }
+=== file position.091
+class C { @d readonly a }
+=== file position.092
+class C { readonly @d a }
+=== file position.093
+class C { @d public static readonly a }
+=== file position.094
+class C { public static @d readonly a }
+=== file position.095
+class C { public @d static a }
+=== file position.096
+class C { @d public @e a }
+=== file position.097
+class C { @d async m() {} }
+=== file position.098
+class C { async @d m() {} }
+=== file position.099
+class C { @d *m() {} }
+=== file position.100
+class C { * @d m() {} }
+=== file position.101
+class C { @d async *m() {} }
+=== file position.102
+class C { get @d a() { return 1 } }
+=== file position.103
+class C { @d accessor a }
+=== file position.104
+class C { accessor @d a }
+=== file position.105
+class C { @d static accessor a }
+=== file position.106
+class C { static @d accessor a }
+=== file position.107
+class C { @d declare a: A }
+=== file position.108
+class C { declare @d a: A }
+=== file position.109
+class C { @d override a }
+=== file position.110
+class C { override @d a }
+=== file position.111
+abstract class C { @d abstract a }
+=== file position.112
+abstract class C { abstract @d a }
+=== file position.113
+abstract class C { @d abstract m(): void }
+=== file position.114
+abstract class C { @d abstract get a(): A }
+=== file position.115
+class C { @d constructor() {} }
+=== file position.116
+class C { @d constructor(); constructor(a?: any) {} }
+=== file position.117
+class C { @d [k: string]: A }
+=== file position.118
+class C { @d static {} }
+=== file position.119
+class C { @d; }
+=== file position.120
+class C { @d }
+=== file position.121
+class C { @d @e a }
+=== file position.122
+class C { @d
+a }
+=== file position.123
+class C { @d
+@e
+a }
+=== file position.124
+class C { @d() a }
+=== file position.125
+class C { @d()
+m() {} }
+=== file position.126
+class C { @d #a }
+=== file position.127
+class C { @d #m() {} }
+=== file position.128
+class C { @d static #a }
+=== file position.129
+class C { @d get #a() { return 1 } }
+=== file position.130
+class C { @d "a" }
+=== file position.131
+class C { @d "a"() {} }
+=== file position.132
+class C { @d 1 }
+=== file position.133
+class C { @d 1() {} }
+=== file position.134
+class C { @d [a] }
+=== file position.135
+class C { @d [a]() {} }
+=== file position.136
+class C { @d [a]: A = 1 }
+=== file position.137
+class C { @d m(): void; m(a?: any) {} }
+=== file position.138
+class C { m(): void; @d m(a?: any) {} }
+=== file position.139
+class C { @d m(): void; @d m(a?: any) {} }
+=== file position.140
+class C { @d m?() {} }
+=== file position.141
+class C { @d m<T>(a: T): T { return a } }
+=== file position.142
+class C { @d a @e b }
+=== file position.143
+class C { @d a; @e b }
+=== file position.144
+class C { a @d }
+=== file position.145
+class C { a @d b }
+=== file position.146
+class C { a: A @d b }
+=== file position.147
+class C { a = 1 @d b }
+=== file position.148
+class C { a = 1
+@d b }
+=== file position.149
+class C { a
+@d b }
+=== file position.150
+class C { m() {} @d n() {} }
+=== file position.151
+class C { @d in }
+=== file position.152
+class C { @d static }
+=== file position.153
+class C { @d async }
+=== file position.154
+class C { @d get }
+=== file position.155
+class C { @d accessor }
+=== file position.156
+class C { @d declare }
+=== file position.157
+class C { @d constructor }
+=== file position.158
+class C { @d new() {} }
+=== file position.159
+var v = class { @d a };
+=== file position.160
+var v = class { @d m() {} };
+=== file position.161
+declare class C { @d a: A }
+=== file position.162
+declare class C { @d m(): void }
+=== file position.163
+interface I { @d a: A }
+=== file position.164
+type X = { @d a: A };
+=== file position.165
+var v = { @d a: 1 };
+=== file position.166
+var v = { @d m() {} };
+=== file position.167
+enum E { @d A }
+=== file position.168
+class C { m(@d a) {} }
+=== file position.169
+class C { m(@d a: A) {} }
+=== file position.170
+class C { m(@d() a: A) {} }
+=== file position.171
+class C { m(@d @e a: A) {} }
+=== file position.172
+class C { m(@d a: A, @e b: B) {} }
+=== file position.173
+class C { m(a: A, @d b: B) {} }
+=== file position.174
+class C { m(@d ...a: A[]) {} }
+=== file position.175
+class C { m(@d { a }: A) {} }
+=== file position.176
+class C { m(@d [a]: A) {} }
+=== file position.177
+class C { m(@d a = 1) {} }
+=== file position.178
+class C { m(@d a?: A) {} }
+=== file position.179
+class C { m(@d this: C) {} }
+=== file position.180
+class C { m(@d
+a: A) {} }
+=== file position.181
+class C { m(a @d) {} }
+=== file position.182
+class C { m(...@d a) {} }
+=== file position.183
+class C { constructor(@d a: A) {} }
+=== file position.184
+class C { constructor(@d public a: A) {} }
+=== file position.185
+class C { constructor(public @d a: A) {} }
+=== file position.186
+class C { constructor(@d private readonly a: A) {} }
+=== file position.187
+class C { constructor(@d a: A, public b: B) {} }
+=== file position.188
+class C { static m(@d a: A) {} }
+=== file position.189
+class C { set a(@d v: A) {} }
+=== file position.190
+class C { get a(@d) { return 1 } }
+=== file position.191
+class C { #m(@d a: A) {} }
+=== file position.192
+class C { async m(@d a: A) {} }
+=== file position.193
+class C { *m(@d a: A) {} }
+=== file position.194
+class C { m(@d a: A): void; m(a: any) {} }
+=== file position.195
+class C { m(a: A): void; m(@d a: any) {} }
+=== file position.196
+class C { @d m(@e a: A) {} }
+=== file position.197
+@d class C { constructor(@e a: A) {} }
+=== file position.198
+@d class C { @e m(@f a: A) {} }
+=== file position.199
+var v = class { m(@d a: A) {} };
+=== file position.200
+declare class C { m(@d a: A): void }
+=== file position.201
+abstract class C { abstract m(@d a: A): void }
+=== file position.202
+function f(@d a) {}
+=== file position.203
+function f(@d a: A) {}
+=== file position.204
+var v = function (@d a) {};
+=== file position.205
+var v = (@d a) => 1;
+=== file position.206
+var v = (@d a: A) => 1;
+=== file position.207
+var v = async (@d a) => 1;
+=== file position.208
+var v = { m(@d a) {} };
+=== file position.209
+type X = (@d a: A) => void;
+=== file position.210
+type X = { m(@d a: A): void };
+=== file position.211
+interface I { m(@d a: A): void }
+=== file position.212
+declare function f(@d a: A): void;
+=== file position.213
+class C { m(@d a, @e b, @f c) {} }
+=== file position.214
+class C { m(@d a: A,) {} }
+=== file position.215
+class C { m(@d) {} }
+=== file position.216
+class C { m(@d,) {} }
+=== file position.217
+class C { m(@ a) {} }
+=== file expr.class.001
+@d class C {}
+=== file expr.class.002
+@d() class C {}
+=== file expr.class.003
+@d.e class C {}
+=== file expr.class.004
+@d.e() class C {}
+=== file expr.class.005
+@d.e.f class C {}
+=== file expr.class.006
+@d().e class C {}
+=== file expr.class.007
+@d()() class C {}
+=== file expr.class.008
+@d(a, b) class C {}
+=== file expr.class.009
+@d(...a) class C {}
+=== file expr.class.010
+@d({ a: 1 }) class C {}
+=== file expr.class.011
+@d(() => {}) class C {}
+=== file expr.class.012
+@d(a as A) class C {}
+=== file expr.class.013
+@d(<A>a) class C {}
+=== file expr.class.014
+@d<A>() class C {}
+=== file expr.class.015
+@d<A> class C {}
+=== file expr.class.016
+@d.e<A>() class C {}
+=== file expr.class.017
+@d<A, B>(c) class C {}
+=== file expr.class.018
+@d<A<B>>() class C {}
+=== file expr.class.019
+@d[e] class C {}
+=== file expr.class.020
+@d[0] class C {}
+=== file expr.class.021
+@d["e"] class C {}
+=== file expr.class.022
+@d.e[f] class C {}
+=== file expr.class.023
+@d`t` class C {}
+=== file expr.class.024
+@d.e`t` class C {}
+=== file expr.class.025
+@d<A>`t` class C {}
+=== file expr.class.026
+@(d) class C {}
+=== file expr.class.027
+@(d.e)() class C {}
+=== file expr.class.028
+@(d as any) class C {}
+=== file expr.class.029
+@(d as any)() class C {}
+=== file expr.class.030
+@(d!) class C {}
+=== file expr.class.031
+@(<A>d) class C {}
+=== file expr.class.032
+@(a, d) class C {}
+=== file expr.class.033
+@(d = 1) class C {}
+=== file expr.class.034
+@(a ? d : e) class C {}
+=== file expr.class.035
+@(d || e) class C {}
+=== file expr.class.036
+@(() => d) class C {}
+=== file expr.class.037
+@(function () {}) class C {}
+=== file expr.class.038
+@(class {}) class C {}
+=== file expr.class.039
+@(d)() class C {}
+=== file expr.class.040
+@(d).e class C {}
+=== file expr.class.041
+@(d)<A>() class C {}
+=== file expr.class.042
+@(await d) class C {}
+=== file expr.class.043
+@(yield d) class C {}
+=== file expr.class.044
+@d! class C {}
+=== file expr.class.045
+@d!.e class C {}
+=== file expr.class.046
+@d!() class C {}
+=== file expr.class.047
+@d.e! class C {}
+=== file expr.class.048
+@d!! class C {}
+=== file expr.class.049
+@d?.e class C {}
+=== file expr.class.050
+@d?.() class C {}
+=== file expr.class.051
+@d?.[e] class C {}
+=== file expr.class.052
+@d.e?.f class C {}
+=== file expr.class.053
+@d()?.e class C {}
+=== file expr.class.054
+@new D() class C {}
+=== file expr.class.055
+@new D class C {}
+=== file expr.class.056
+@new D.E() class C {}
+=== file expr.class.057
+@new (D)() class C {}
+=== file expr.class.058
+@class {} class C {}
+=== file expr.class.059
+@function () {} class C {}
+=== file expr.class.060
+@this class C {}
+=== file expr.class.061
+@this.d class C {}
+=== file expr.class.062
+@this.d() class C {}
+=== file expr.class.063
+@super.d class C {}
+=== file expr.class.064
+@super.d() class C {}
+=== file expr.class.065
+@await d class C {}
+=== file expr.class.066
+@yield class C {}
+=== file expr.class.067
+@yield d class C {}
+=== file expr.class.068
+@d.#e class C {}
+=== file expr.class.069
+@d.#e() class C {}
+=== file expr.class.070
+@#d class C {}
+=== file expr.class.071
+@d.e
+() class C {}
+=== file expr.class.072
+@d
+.e class C {}
+=== file expr.class.073
+@d
+() class C {}
+=== file expr.class.074
+@
+d class C {}
+=== file expr.class.075
+@ d class C {}
+=== file expr.class.076
+@d @e class C {}
+=== file expr.class.077
+@1 class C {}
+=== file expr.class.078
+@"s" class C {}
+=== file expr.class.079
+@`t` class C {}
+=== file expr.class.080
+@[d] class C {}
+=== file expr.class.081
+@{} class C {}
+=== file expr.class.082
+@{ d } class C {}
+=== file expr.class.083
+@-d class C {}
+=== file expr.class.084
+@+d class C {}
+=== file expr.class.085
+@!d class C {}
+=== file expr.class.086
+@typeof d class C {}
+=== file expr.class.087
+@void d class C {}
+=== file expr.class.088
+@delete d.e class C {}
+=== file expr.class.089
+@d + e class C {}
+=== file expr.class.090
+@d = 1 class C {}
+=== file expr.class.091
+@d as any class C {}
+=== file expr.class.092
+@d satisfies A class C {}
+=== file expr.class.093
+@d ? e : f class C {}
+=== file expr.class.094
+@d, e class C {}
+=== file expr.class.095
+@d => d class C {}
+=== file expr.class.096
+@() => d class C {}
+=== file expr.class.097
+@import.meta.d class C {}
+=== file expr.class.098
+@import.meta class C {}
+=== file expr.class.099
+@import('m') class C {}
+=== file expr.class.100
+@new.target class C {}
+=== file expr.class.101
+@async class C {}
+=== file expr.class.102
+@async() class C {}
+=== file expr.class.103
+@await class C {}
+=== file expr.class.104
+@await() class C {}
+=== file expr.class.105
+@of class C {}
+=== file expr.class.106
+@type class C {}
+=== file expr.class.107
+@declare class C {}
+=== file expr.class.108
+@abstract class C {}
+=== file expr.class.109
+@in class C {}
+=== file expr.class.110
+@get class C {}
+=== file expr.class.111
+@set class C {}
+=== file expr.class.112
+@static class C {}
+=== file expr.class.113
+@let class C {}
+=== file expr.class.114
+@yield() class C {}
+=== file expr.class.115
+@d.class class C {}
+=== file expr.class.116
+@d.default class C {}
+=== file expr.class.117
+@d.if class C {}
+=== file expr.class.118
+@d.new class C {}
+=== file expr.class.119
+@d.in class C {}
+=== file expr.class.120
+@class class C {}
+=== file expr.class.121
+@function class C {}
+=== file expr.class.122
+@new class C {}
+=== file expr.class.123
+@if class C {}
+=== file expr.class.124
+@default class C {}
+=== file expr.class.125
+@null class C {}
+=== file expr.class.126
+@true class C {}
+=== file expr.class.127
+@undefined class C {}
+=== file expr.class.128
+@arguments class C {}
+=== file expr.class.129
+@d.e.f.g() class C {}
+=== file expr.class.130
+@d().e().f() class C {}
+=== file expr.class.131
+@d<A>.e class C {}
+=== file expr.class.132
+@d<A>().e<B>() class C {}
+=== file expr.class.133
+@d(@e class {}) class C {}
+=== file expr.class.134
+@d(class { @e a }) class C {}
+=== file expr.member.001
+class C { @d m() {} }
+=== file expr.member.002
+class C { @d() m() {} }
+=== file expr.member.003
+class C { @d.e m() {} }
+=== file expr.member.004
+class C { @d.e() m() {} }
+=== file expr.member.005
+class C { @d.e.f m() {} }
+=== file expr.member.006
+class C { @d().e m() {} }
+=== file expr.member.007
+class C { @d()() m() {} }
+=== file expr.member.008
+class C { @d(a, b) m() {} }
+=== file expr.member.009
+class C { @d(...a) m() {} }
+=== file expr.member.010
+class C { @d({ a: 1 }) m() {} }
+=== file expr.member.011
+class C { @d(() => {}) m() {} }
+=== file expr.member.012
+class C { @d(a as A) m() {} }
+=== file expr.member.013
+class C { @d(<A>a) m() {} }
+=== file expr.member.014
+class C { @d<A>() m() {} }
+=== file expr.member.015
+class C { @d<A> m() {} }
+=== file expr.member.016
+class C { @d.e<A>() m() {} }
+=== file expr.member.017
+class C { @d<A, B>(c) m() {} }
+=== file expr.member.018
+class C { @d<A<B>>() m() {} }
+=== file expr.member.019
+class C { @d[e] m() {} }
+=== file expr.member.020
+class C { @d[0] m() {} }
+=== file expr.member.021
+class C { @d["e"] m() {} }
+=== file expr.member.022
+class C { @d.e[f] m() {} }
+=== file expr.member.023
+class C { @d`t` m() {} }
+=== file expr.member.024
+class C { @d.e`t` m() {} }
+=== file expr.member.025
+class C { @d<A>`t` m() {} }
+=== file expr.member.026
+class C { @(d) m() {} }
+=== file expr.member.027
+class C { @(d.e)() m() {} }
+=== file expr.member.028
+class C { @(d as any) m() {} }
+=== file expr.member.029
+class C { @(d as any)() m() {} }
+=== file expr.member.030
+class C { @(d!) m() {} }
+=== file expr.member.031
+class C { @(<A>d) m() {} }
+=== file expr.member.032
+class C { @(a, d) m() {} }
+=== file expr.member.033
+class C { @(d = 1) m() {} }
+=== file expr.member.034
+class C { @(a ? d : e) m() {} }
+=== file expr.member.035
+class C { @(d || e) m() {} }
+=== file expr.member.036
+class C { @(() => d) m() {} }
+=== file expr.member.037
+class C { @(function () {}) m() {} }
+=== file expr.member.038
+class C { @(class {}) m() {} }
+=== file expr.member.039
+class C { @(d)() m() {} }
+=== file expr.member.040
+class C { @(d).e m() {} }
+=== file expr.member.041
+class C { @(d)<A>() m() {} }
+=== file expr.member.042
+class C { @(await d) m() {} }
+=== file expr.member.043
+class C { @(yield d) m() {} }
+=== file expr.member.044
+class C { @d! m() {} }
+=== file expr.member.045
+class C { @d!.e m() {} }
+=== file expr.member.046
+class C { @d!() m() {} }
+=== file expr.member.047
+class C { @d.e! m() {} }
+=== file expr.member.048
+class C { @d!! m() {} }
+=== file expr.member.049
+class C { @d?.e m() {} }
+=== file expr.member.050
+class C { @d?.() m() {} }
+=== file expr.member.051
+class C { @d?.[e] m() {} }
+=== file expr.member.052
+class C { @d.e?.f m() {} }
+=== file expr.member.053
+class C { @d()?.e m() {} }
+=== file expr.member.054
+class C { @new D() m() {} }
+=== file expr.member.055
+class C { @new D m() {} }
+=== file expr.member.056
+class C { @new D.E() m() {} }
+=== file expr.member.057
+class C { @new (D)() m() {} }
+=== file expr.member.058
+class C { @class {} m() {} }
+=== file expr.member.059
+class C { @function () {} m() {} }
+=== file expr.member.060
+class C { @this m() {} }
+=== file expr.member.061
+class C { @this.d m() {} }
+=== file expr.member.062
+class C { @this.d() m() {} }
+=== file expr.member.063
+class C { @super.d m() {} }
+=== file expr.member.064
+class C { @super.d() m() {} }
+=== file expr.member.065
+class C { @await d m() {} }
+=== file expr.member.066
+class C { @yield m() {} }
+=== file expr.member.067
+class C { @yield d m() {} }
+=== file expr.member.068
+class C { @d.#e m() {} }
+=== file expr.member.069
+class C { @d.#e() m() {} }
+=== file expr.member.070
+class C { @#d m() {} }
+=== file expr.member.071
+class C { @d.e
+() m() {} }
+=== file expr.member.072
+class C { @d
+.e m() {} }
+=== file expr.member.073
+class C { @d
+() m() {} }
+=== file expr.member.074
+class C { @
+d m() {} }
+=== file expr.member.075
+class C { @ d m() {} }
+=== file expr.member.076
+class C { @d @e m() {} }
+=== file expr.member.077
+class C { @1 m() {} }
+=== file expr.member.078
+class C { @"s" m() {} }
+=== file expr.member.079
+class C { @`t` m() {} }
+=== file expr.member.080
+class C { @[d] m() {} }
+=== file expr.member.081
+class C { @{} m() {} }
+=== file expr.member.082
+class C { @{ d } m() {} }
+=== file expr.member.083
+class C { @-d m() {} }
+=== file expr.member.084
+class C { @+d m() {} }
+=== file expr.member.085
+class C { @!d m() {} }
+=== file expr.member.086
+class C { @typeof d m() {} }
+=== file expr.member.087
+class C { @void d m() {} }
+=== file expr.member.088
+class C { @delete d.e m() {} }
+=== file expr.member.089
+class C { @d + e m() {} }
+=== file expr.member.090
+class C { @d = 1 m() {} }
+=== file expr.member.091
+class C { @d as any m() {} }
+=== file expr.member.092
+class C { @d satisfies A m() {} }
+=== file expr.member.093
+class C { @d ? e : f m() {} }
+=== file expr.member.094
+class C { @d, e m() {} }
+=== file expr.member.095
+class C { @d => d m() {} }
+=== file expr.member.096
+class C { @() => d m() {} }
+=== file expr.member.097
+class C { @import.meta.d m() {} }
+=== file expr.member.098
+class C { @import.meta m() {} }
+=== file expr.member.099
+class C { @import('m') m() {} }
+=== file expr.member.100
+class C { @new.target m() {} }
+=== file expr.member.101
+class C { @async m() {} }
+=== file expr.member.102
+class C { @async() m() {} }
+=== file expr.member.103
+class C { @await m() {} }
+=== file expr.member.104
+class C { @await() m() {} }
+=== file expr.member.105
+class C { @of m() {} }
+=== file expr.member.106
+class C { @type m() {} }
+=== file expr.member.107
+class C { @declare m() {} }
+=== file expr.member.108
+class C { @abstract m() {} }
+=== file expr.member.109
+class C { @in m() {} }
+=== file expr.member.110
+class C { @get m() {} }
+=== file expr.member.111
+class C { @set m() {} }
+=== file expr.member.112
+class C { @static m() {} }
+=== file expr.member.113
+class C { @let m() {} }
+=== file expr.member.114
+class C { @yield() m() {} }
+=== file expr.member.115
+class C { @d.class m() {} }
+=== file expr.member.116
+class C { @d.default m() {} }
+=== file expr.member.117
+class C { @d.if m() {} }
+=== file expr.member.118
+class C { @d.new m() {} }
+=== file expr.member.119
+class C { @d.in m() {} }
+=== file expr.member.120
+class C { @class m() {} }
+=== file expr.member.121
+class C { @function m() {} }
+=== file expr.member.122
+class C { @new m() {} }
+=== file expr.member.123
+class C { @if m() {} }
+=== file expr.member.124
+class C { @default m() {} }
+=== file expr.member.125
+class C { @null m() {} }
+=== file expr.member.126
+class C { @true m() {} }
+=== file expr.member.127
+class C { @undefined m() {} }
+=== file expr.member.128
+class C { @arguments m() {} }
+=== file expr.member.129
+class C { @d.e.f.g() m() {} }
+=== file expr.member.130
+class C { @d().e().f() m() {} }
+=== file expr.member.131
+class C { @d<A>.e m() {} }
+=== file expr.member.132
+class C { @d<A>().e<B>() m() {} }
+=== file expr.member.133
+class C { @d(@e class {}) m() {} }
+=== file expr.member.134
+class C { @d(class { @e a }) m() {} }
+=== file expr.field.001
+class C { @d a }
+=== file expr.field.002
+class C { @d() a }
+=== file expr.field.003
+class C { @d.e a }
+=== file expr.field.004
+class C { @d.e() a }
+=== file expr.field.005
+class C { @d.e.f a }
+=== file expr.field.006
+class C { @d().e a }
+=== file expr.field.007
+class C { @d()() a }
+=== file expr.field.008
+class C { @d(a, b) a }
+=== file expr.field.009
+class C { @d(...a) a }
+=== file expr.field.010
+class C { @d({ a: 1 }) a }
+=== file expr.field.011
+class C { @d(() => {}) a }
+=== file expr.field.012
+class C { @d(a as A) a }
+=== file expr.field.013
+class C { @d(<A>a) a }
+=== file expr.field.014
+class C { @d<A>() a }
+=== file expr.field.015
+class C { @d<A> a }
+=== file expr.field.016
+class C { @d.e<A>() a }
+=== file expr.field.017
+class C { @d<A, B>(c) a }
+=== file expr.field.018
+class C { @d<A<B>>() a }
+=== file expr.field.019
+class C { @d[e] a }
+=== file expr.field.020
+class C { @d[0] a }
+=== file expr.field.021
+class C { @d["e"] a }
+=== file expr.field.022
+class C { @d.e[f] a }
+=== file expr.field.023
+class C { @d`t` a }
+=== file expr.field.024
+class C { @d.e`t` a }
+=== file expr.field.025
+class C { @d<A>`t` a }
+=== file expr.field.026
+class C { @(d) a }
+=== file expr.field.027
+class C { @(d.e)() a }
+=== file expr.field.028
+class C { @(d as any) a }
+=== file expr.field.029
+class C { @(d as any)() a }
+=== file expr.field.030
+class C { @(d!) a }
+=== file expr.field.031
+class C { @(<A>d) a }
+=== file expr.field.032
+class C { @(a, d) a }
+=== file expr.field.033
+class C { @(d = 1) a }
+=== file expr.field.034
+class C { @(a ? d : e) a }
+=== file expr.field.035
+class C { @(d || e) a }
+=== file expr.field.036
+class C { @(() => d) a }
+=== file expr.field.037
+class C { @(function () {}) a }
+=== file expr.field.038
+class C { @(class {}) a }
+=== file expr.field.039
+class C { @(d)() a }
+=== file expr.field.040
+class C { @(d).e a }
+=== file expr.field.041
+class C { @(d)<A>() a }
+=== file expr.field.042
+class C { @(await d) a }
+=== file expr.field.043
+class C { @(yield d) a }
+=== file expr.field.044
+class C { @d! a }
+=== file expr.field.045
+class C { @d!.e a }
+=== file expr.field.046
+class C { @d!() a }
+=== file expr.field.047
+class C { @d.e! a }
+=== file expr.field.048
+class C { @d!! a }
+=== file expr.field.049
+class C { @d?.e a }
+=== file expr.field.050
+class C { @d?.() a }
+=== file expr.field.051
+class C { @d?.[e] a }
+=== file expr.field.052
+class C { @d.e?.f a }
+=== file expr.field.053
+class C { @d()?.e a }
+=== file expr.field.054
+class C { @new D() a }
+=== file expr.field.055
+class C { @new D a }
+=== file expr.field.056
+class C { @new D.E() a }
+=== file expr.field.057
+class C { @new (D)() a }
+=== file expr.field.058
+class C { @class {} a }
+=== file expr.field.059
+class C { @function () {} a }
+=== file expr.field.060
+class C { @this a }
+=== file expr.field.061
+class C { @this.d a }
+=== file expr.field.062
+class C { @this.d() a }
+=== file expr.field.063
+class C { @super.d a }
+=== file expr.field.064
+class C { @super.d() a }
+=== file expr.field.065
+class C { @await d a }
+=== file expr.field.066
+class C { @yield a }
+=== file expr.field.067
+class C { @yield d a }
+=== file expr.field.068
+class C { @d.#e a }
+=== file expr.field.069
+class C { @d.#e() a }
+=== file expr.field.070
+class C { @#d a }
+=== file expr.field.071
+class C { @d.e
+() a }
+=== file expr.field.072
+class C { @d
+.e a }
+=== file expr.field.073
+class C { @d
+() a }
+=== file expr.field.074
+class C { @
+d a }
+=== file expr.field.075
+class C { @ d a }
+=== file expr.field.076
+class C { @d @e a }
+=== file expr.field.077
+class C { @1 a }
+=== file expr.field.078
+class C { @"s" a }
+=== file expr.field.079
+class C { @`t` a }
+=== file expr.field.080
+class C { @[d] a }
+=== file expr.field.081
+class C { @{} a }
+=== file expr.field.082
+class C { @{ d } a }
+=== file expr.field.083
+class C { @-d a }
+=== file expr.field.084
+class C { @+d a }
+=== file expr.field.085
+class C { @!d a }
+=== file expr.field.086
+class C { @typeof d a }
+=== file expr.field.087
+class C { @void d a }
+=== file expr.field.088
+class C { @delete d.e a }
+=== file expr.field.089
+class C { @d + e a }
+=== file expr.field.090
+class C { @d = 1 a }
+=== file expr.field.091
+class C { @d as any a }
+=== file expr.field.092
+class C { @d satisfies A a }
+=== file expr.field.093
+class C { @d ? e : f a }
+=== file expr.field.094
+class C { @d, e a }
+=== file expr.field.095
+class C { @d => d a }
+=== file expr.field.096
+class C { @() => d a }
+=== file expr.field.097
+class C { @import.meta.d a }
+=== file expr.field.098
+class C { @import.meta a }
+=== file expr.field.099
+class C { @import('m') a }
+=== file expr.field.100
+class C { @new.target a }
+=== file expr.field.101
+class C { @async a }
+=== file expr.field.102
+class C { @async() a }
+=== file expr.field.103
+class C { @await a }
+=== file expr.field.104
+class C { @await() a }
+=== file expr.field.105
+class C { @of a }
+=== file expr.field.106
+class C { @type a }
+=== file expr.field.107
+class C { @declare a }
+=== file expr.field.108
+class C { @abstract a }
+=== file expr.field.109
+class C { @in a }
+=== file expr.field.110
+class C { @get a }
+=== file expr.field.111
+class C { @set a }
+=== file expr.field.112
+class C { @static a }
+=== file expr.field.113
+class C { @let a }
+=== file expr.field.114
+class C { @yield() a }
+=== file expr.field.115
+class C { @d.class a }
+=== file expr.field.116
+class C { @d.default a }
+=== file expr.field.117
+class C { @d.if a }
+=== file expr.field.118
+class C { @d.new a }
+=== file expr.field.119
+class C { @d.in a }
+=== file expr.field.120
+class C { @class a }
+=== file expr.field.121
+class C { @function a }
+=== file expr.field.122
+class C { @new a }
+=== file expr.field.123
+class C { @if a }
+=== file expr.field.124
+class C { @default a }
+=== file expr.field.125
+class C { @null a }
+=== file expr.field.126
+class C { @true a }
+=== file expr.field.127
+class C { @undefined a }
+=== file expr.field.128
+class C { @arguments a }
+=== file expr.field.129
+class C { @d.e.f.g() a }
+=== file expr.field.130
+class C { @d().e().f() a }
+=== file expr.field.131
+class C { @d<A>.e a }
+=== file expr.field.132
+class C { @d<A>().e<B>() a }
+=== file expr.field.133
+class C { @d(@e class {}) a }
+=== file expr.field.134
+class C { @d(class { @e a }) a }
+=== file expr.param.001
+class C { m(@d a) {} }
+=== file expr.param.002
+class C { m(@d() a) {} }
+=== file expr.param.003
+class C { m(@d.e a) {} }
+=== file expr.param.004
+class C { m(@d.e() a) {} }
+=== file expr.param.005
+class C { m(@d.e.f a) {} }
+=== file expr.param.006
+class C { m(@d().e a) {} }
+=== file expr.param.007
+class C { m(@d()() a) {} }
+=== file expr.param.008
+class C { m(@d(a, b) a) {} }
+=== file expr.param.009
+class C { m(@d(...a) a) {} }
+=== file expr.param.010
+class C { m(@d({ a: 1 }) a) {} }
+=== file expr.param.011
+class C { m(@d(() => {}) a) {} }
+=== file expr.param.012
+class C { m(@d(a as A) a) {} }
+=== file expr.param.013
+class C { m(@d(<A>a) a) {} }
+=== file expr.param.014
+class C { m(@d<A>() a) {} }
+=== file expr.param.015
+class C { m(@d<A> a) {} }
+=== file expr.param.016
+class C { m(@d.e<A>() a) {} }
+=== file expr.param.017
+class C { m(@d<A, B>(c) a) {} }
+=== file expr.param.018
+class C { m(@d<A<B>>() a) {} }
+=== file expr.param.019
+class C { m(@d[e] a) {} }
+=== file expr.param.020
+class C { m(@d[0] a) {} }
+=== file expr.param.021
+class C { m(@d["e"] a) {} }
+=== file expr.param.022
+class C { m(@d.e[f] a) {} }
+=== file expr.param.023
+class C { m(@d`t` a) {} }
+=== file expr.param.024
+class C { m(@d.e`t` a) {} }
+=== file expr.param.025
+class C { m(@d<A>`t` a) {} }
+=== file expr.param.026
+class C { m(@(d) a) {} }
+=== file expr.param.027
+class C { m(@(d.e)() a) {} }
+=== file expr.param.028
+class C { m(@(d as any) a) {} }
+=== file expr.param.029
+class C { m(@(d as any)() a) {} }
+=== file expr.param.030
+class C { m(@(d!) a) {} }
+=== file expr.param.031
+class C { m(@(<A>d) a) {} }
+=== file expr.param.032
+class C { m(@(a, d) a) {} }
+=== file expr.param.033
+class C { m(@(d = 1) a) {} }
+=== file expr.param.034
+class C { m(@(a ? d : e) a) {} }
+=== file expr.param.035
+class C { m(@(d || e) a) {} }
+=== file expr.param.036
+class C { m(@(() => d) a) {} }
+=== file expr.param.037
+class C { m(@(function () {}) a) {} }
+=== file expr.param.038
+class C { m(@(class {}) a) {} }
+=== file expr.param.039
+class C { m(@(d)() a) {} }
+=== file expr.param.040
+class C { m(@(d).e a) {} }
+=== file expr.param.041
+class C { m(@(d)<A>() a) {} }
+=== file expr.param.042
+class C { m(@(await d) a) {} }
+=== file expr.param.043
+class C { m(@(yield d) a) {} }
+=== file expr.param.044
+class C { m(@d! a) {} }
+=== file expr.param.045
+class C { m(@d!.e a) {} }
+=== file expr.param.046
+class C { m(@d!() a) {} }
+=== file expr.param.047
+class C { m(@d.e! a) {} }
+=== file expr.param.048
+class C { m(@d!! a) {} }
+=== file expr.param.049
+class C { m(@d?.e a) {} }
+=== file expr.param.050
+class C { m(@d?.() a) {} }
+=== file expr.param.051
+class C { m(@d?.[e] a) {} }
+=== file expr.param.052
+class C { m(@d.e?.f a) {} }
+=== file expr.param.053
+class C { m(@d()?.e a) {} }
+=== file expr.param.054
+class C { m(@new D() a) {} }
+=== file expr.param.055
+class C { m(@new D a) {} }
+=== file expr.param.056
+class C { m(@new D.E() a) {} }
+=== file expr.param.057
+class C { m(@new (D)() a) {} }
+=== file expr.param.058
+class C { m(@class {} a) {} }
+=== file expr.param.059
+class C { m(@function () {} a) {} }
+=== file expr.param.060
+class C { m(@this a) {} }
+=== file expr.param.061
+class C { m(@this.d a) {} }
+=== file expr.param.062
+class C { m(@this.d() a) {} }
+=== file expr.param.063
+class C { m(@super.d a) {} }
+=== file expr.param.064
+class C { m(@super.d() a) {} }
+=== file expr.param.065
+class C { m(@await d a) {} }
+=== file expr.param.066
+class C { m(@yield a) {} }
+=== file expr.param.067
+class C { m(@yield d a) {} }
+=== file expr.param.068
+class C { m(@d.#e a) {} }
+=== file expr.param.069
+class C { m(@d.#e() a) {} }
+=== file expr.param.070
+class C { m(@#d a) {} }
+=== file expr.param.071
+class C { m(@d.e
+() a) {} }
+=== file expr.param.072
+class C { m(@d
+.e a) {} }
+=== file expr.param.073
+class C { m(@d
+() a) {} }
+=== file expr.param.074
+class C { m(@
+d a) {} }
+=== file expr.param.075
+class C { m(@ d a) {} }
+=== file expr.param.076
+class C { m(@d @e a) {} }
+=== file expr.param.077
+class C { m(@1 a) {} }
+=== file expr.param.078
+class C { m(@"s" a) {} }
+=== file expr.param.079
+class C { m(@`t` a) {} }
+=== file expr.param.080
+class C { m(@[d] a) {} }
+=== file expr.param.081
+class C { m(@{} a) {} }
+=== file expr.param.082
+class C { m(@{ d } a) {} }
+=== file expr.param.083
+class C { m(@-d a) {} }
+=== file expr.param.084
+class C { m(@+d a) {} }
+=== file expr.param.085
+class C { m(@!d a) {} }
+=== file expr.param.086
+class C { m(@typeof d a) {} }
+=== file expr.param.087
+class C { m(@void d a) {} }
+=== file expr.param.088
+class C { m(@delete d.e a) {} }
+=== file expr.param.089
+class C { m(@d + e a) {} }
+=== file expr.param.090
+class C { m(@d = 1 a) {} }
+=== file expr.param.091
+class C { m(@d as any a) {} }
+=== file expr.param.092
+class C { m(@d satisfies A a) {} }
+=== file expr.param.093
+class C { m(@d ? e : f a) {} }
+=== file expr.param.094
+class C { m(@d, e a) {} }
+=== file expr.param.095
+class C { m(@d => d a) {} }
+=== file expr.param.096
+class C { m(@() => d a) {} }
+=== file expr.param.097
+class C { m(@import.meta.d a) {} }
+=== file expr.param.098
+class C { m(@import.meta a) {} }
+=== file expr.param.099
+class C { m(@import('m') a) {} }
+=== file expr.param.100
+class C { m(@new.target a) {} }
+=== file expr.param.101
+class C { m(@async a) {} }
+=== file expr.param.102
+class C { m(@async() a) {} }
+=== file expr.param.103
+class C { m(@await a) {} }
+=== file expr.param.104
+class C { m(@await() a) {} }
+=== file expr.param.105
+class C { m(@of a) {} }
+=== file expr.param.106
+class C { m(@type a) {} }
+=== file expr.param.107
+class C { m(@declare a) {} }
+=== file expr.param.108
+class C { m(@abstract a) {} }
+=== file expr.param.109
+class C { m(@in a) {} }
+=== file expr.param.110
+class C { m(@get a) {} }
+=== file expr.param.111
+class C { m(@set a) {} }
+=== file expr.param.112
+class C { m(@static a) {} }
+=== file expr.param.113
+class C { m(@let a) {} }
+=== file expr.param.114
+class C { m(@yield() a) {} }
+=== file expr.param.115
+class C { m(@d.class a) {} }
+=== file expr.param.116
+class C { m(@d.default a) {} }
+=== file expr.param.117
+class C { m(@d.if a) {} }
+=== file expr.param.118
+class C { m(@d.new a) {} }
+=== file expr.param.119
+class C { m(@d.in a) {} }
+=== file expr.param.120
+class C { m(@class a) {} }
+=== file expr.param.121
+class C { m(@function a) {} }
+=== file expr.param.122
+class C { m(@new a) {} }
+=== file expr.param.123
+class C { m(@if a) {} }
+=== file expr.param.124
+class C { m(@default a) {} }
+=== file expr.param.125
+class C { m(@null a) {} }
+=== file expr.param.126
+class C { m(@true a) {} }
+=== file expr.param.127
+class C { m(@undefined a) {} }
+=== file expr.param.128
+class C { m(@arguments a) {} }
+=== file expr.param.129
+class C { m(@d.e.f.g() a) {} }
+=== file expr.param.130
+class C { m(@d().e().f() a) {} }
+=== file expr.param.131
+class C { m(@d<A>.e a) {} }
+=== file expr.param.132
+class C { m(@d<A>().e<B>() a) {} }
+=== file expr.param.133
+class C { m(@d(@e class {}) a) {} }
+=== file expr.param.134
+class C { m(@d(class { @e a }) a) {} }
+=== meta meta.001
+class K { @d p; }
+=== meta meta.002
+class K { @d p = 1; }
+=== meta meta.003
+class K { @d p = "s"; }
+=== meta meta.004
+class K { @d p: string; }
+=== meta meta.005
+class K { @d p?: string; }
+=== meta meta.006
+class K { @d p!: string; }
+=== meta meta.007
+class K { @d p: string = a; }
+=== meta meta.008
+class K { @d static p: string; }
+=== meta meta.009
+class K { @d readonly p: string; }
+=== meta meta.010
+class K { @d private p: string; }
+=== meta meta.011
+class K { @d declare p: string; }
+=== meta meta.012
+class K { @d accessor p: string; }
+=== meta meta.013
+class K { @d "p": string; }
+=== meta meta.014
+class K { @d 1: string; }
+=== meta meta.015
+class K { @d [p]: string; }
+=== meta meta.016
+class K { @d #p: string; }
+=== meta meta.017
+class K { @d p: string; @d q: number; }
+=== meta meta.018
+class K { p: string; @d q: number; }
+=== meta meta.019
+class K { @d p: string; q: number; }
+=== meta meta.020
+class K { @d m() {} }
+=== meta meta.021
+class K { @d m(): void {} }
+=== meta meta.022
+class K { @d m(): string { return a } }
+=== meta meta.023
+class K { @d async m() {} }
+=== meta meta.024
+class K { @d async m(): Promise<void> {} }
+=== meta meta.025
+class K { @d async m(): Promise<string> { return a } }
+=== meta meta.026
+class K { @d async m(): PromiseLike<string> { return a } }
+=== meta meta.027
+class K { @d async m(): string { return a } }
+=== meta meta.028
+class K { @d *m() {} }
+=== meta meta.029
+class K { @d *m(): Generator<A> {} }
+=== meta meta.030
+class K { @d async *m() {} }
+=== meta meta.031
+class K { @d static m(a: A): B { return a } }
+=== meta meta.032
+class K { @d m(a: A, b: B, c: C): D { return a } }
+=== meta meta.033
+class K { @d m(a) {} }
+=== meta meta.034
+class K { @d m(a, b: B) {} }
+=== meta meta.035
+class K { @d m(a?: A) {} }
+=== meta meta.036
+class K { @d m(a: A = b) {} }
+=== meta meta.037
+class K { @d m(a = 1) {} }
+=== meta meta.038
+class K { @d m(a = "s") {} }
+=== meta meta.039
+class K { @d m(...a: A[]) {} }
+=== meta meta.040
+class K { @d m(...a) {} }
+=== meta meta.041
+class K { @d m(a: A, ...b: B[]) {} }
+=== meta meta.042
+class K { @d m({ a }: A) {} }
+=== meta meta.043
+class K { @d m([a]: A[]) {} }
+=== meta meta.044
+class K { @d m({ a }) {} }
+=== meta meta.045
+class K { @d m({ a }: A = b) {} }
+=== meta meta.046
+class K { @d m(this: K) {} }
+=== meta meta.047
+class K { @d m(this: K, a: A) {} }
+=== meta meta.048
+class K { @d m(this: K, a: A, b: B): C { return a } }
+=== meta meta.049
+class K { @d m<T>(a: T): T { return a } }
+=== meta meta.050
+class K { @d m<T extends A>(a: T): T[] { return a } }
+=== meta meta.051
+class K<T> { @d p: T; }
+=== meta meta.052
+class K<T> { @d m(a: T): T { return a } }
+=== meta meta.053
+class K<T> { @d p: T[]; @d q: K<T>; }
+=== meta meta.054
+class K { @d m(a: A): void; m(a: any) {} }
+=== meta meta.055
+class K { m(a: A): void; @d m(a: any) {} }
+=== meta meta.056
+class K { @d m?(a: A) {} }
+=== meta meta.057
+class K { @d 'm'(a: A): B { return a } }
+=== meta meta.058
+class K { @d [m](a: A): B { return a } }
+=== meta meta.059
+class K { @d #m(a: A): B { return a } }
+=== meta meta.060
+class K { @d get p(): string { return a } }
+=== meta meta.061
+class K { @d get p() { return a } }
+=== meta meta.062
+class K { @d set p(v: string) {} }
+=== meta meta.063
+class K { @d set p(v) {} }
+=== meta meta.064
+class K { @d get p(): string { return a } set p(v: string) {} }
+=== meta meta.065
+class K { get p(): string { return a } @d set p(v: string) {} }
+=== meta meta.066
+class K { @d get p(): string { return a } @e set p(v: number) {} }
+=== meta meta.067
+class K { @d set p(v: number) {} get p(): string { return a } }
+=== meta meta.068
+class K { @d static get p(): A { return a } }
+=== meta meta.069
+class K { @d get p(): A | null { return a } }
+=== meta meta.070
+class K { m(@d a: A) {} }
+=== meta meta.071
+class K { m(@d a: A): B { return a } }
+=== meta meta.072
+class K { m(a: A, @d b: B) {} }
+=== meta meta.073
+class K { m(a: A, @d b: B): C { return a } }
+=== meta meta.074
+class K { m(a: A, b: B, @d c: C): D { return a } }
+=== meta meta.075
+class K { m(@d a: A, b: B) {} }
+=== meta meta.076
+class K { m(@d a: A, b: B): C { return a } }
+=== meta meta.077
+class K { m(@d a, b: B) {} }
+=== meta meta.078
+class K { m(@d a: A, @e b: B) {} }
+=== meta meta.079
+class K { m(@d ...a: A[]) {} }
+=== meta meta.080
+class K { m(a: A, @d ...b: B[]) {} }
+=== meta meta.081
+class K { m(@d a?: A) {} }
+=== meta meta.082
+class K { m(@d a: A = b) {} }
+=== meta meta.083
+class K { m(@d { a }: A) {} }
+=== meta meta.084
+class K { m(this: K, @d a: A) {} }
+=== meta meta.085
+class K { m(this: K, a: A, @d b: B): C { return a } }
+=== meta meta.086
+class K { async m(@d a: A) {} }
+=== meta meta.087
+class K { async m(a: A, @d b: B): Promise<C> { return a } }
+=== meta meta.088
+class K { static m(a: A, @d b: B): C { return a } }
+=== meta meta.089
+class K { @d m(a: A, @e b: B): C { return a } }
+=== meta meta.090
+class K { m(a: A, @d b: B) {} n(c: C) {} }
+=== meta meta.091
+class K { m(a: A, @d b: B) {} n(c: C): D { return c } @e o(f: F): G { return f } }
+=== meta meta.092
+class K { m(@d a: A) {} n(c: C, @e d: D): E { return c } }
+=== meta meta.093
+class K { n(c: C): D { return c } m(a: A, @d b: B): E { return a } }
+=== meta meta.094
+class K { m(a: A, @d b: B) {} }
+class L { n(c: C): D { return c } }
+=== meta meta.095
+class K { m(a: A, @d b: B) {} }
+function f(c: C): D { return c }
+class L { @e n(g: G): H { return g } }
+=== meta meta.096
+class K { m(@d a: A) { function f(b: B): C { return b } } }
+=== meta meta.097
+class K { m(@d a: A) { class L { n(b: B): C { return b } } } }
+=== meta meta.098
+class K { m(@d a: A) { return class { n(b: B, @e c: C): D { return b } } } }
+=== meta meta.099
+class K { @d m(a: A = function (b: B): C { return b }) {} }
+=== meta meta.100
+class K { @d m(a: (b: B) => C, d: D) {} }
+=== meta meta.101
+class K { @d m(a = (b: B): C => b, d: D) {} }
+=== meta meta.102
+class K { @d m(a: A) { var v = (b: B): C => b } }
+=== meta meta.103
+class K { constructor(a: A) {} }
+=== meta meta.104
+@d class K { constructor(a: A) {} }
+=== meta meta.105
+@d class K { constructor(a: A, b: B, c?: C, ...e: E[]) {} }
+=== meta meta.106
+@d class K {}
+=== meta meta.107
+@d class K extends L {}
+=== meta meta.108
+@d class K extends L { constructor(a: A) { super() } }
+=== meta meta.109
+@d class K { constructor(); constructor(a: A); constructor(a?: any) {} }
+=== meta meta.110
+@d class K { constructor(public a: A, private b: B, readonly c: C) {} }
+=== meta meta.111
+@d class K { constructor(@e a: A) {} }
+=== meta meta.112
+class K { constructor(@d a: A) {} }
+=== meta meta.113
+class K { constructor(a: A, @d b: B) {} }
+=== meta meta.114
+class K { constructor(@d a: A, b: B) {} }
+=== meta meta.115
+class K { constructor(@d public a: A, public b: B) {} }
+=== meta meta.116
+class K { constructor(a: A, @d public b: B) {} }
+=== meta meta.117
+@d class K { constructor(a: A) {} @e m(b: B): C { return b } @f p: D; }
+=== meta meta.118
+@d class K { static s: A; static m(a: A) {} constructor(b: B) {} }
+=== meta meta.119
+@d class K<T> { constructor(a: T, b: K<T>) {} }
+=== meta meta.120
+@d abstract class K { constructor(a: A) {} abstract m(b: B): C; }
+=== meta meta.121
+abstract class K { @d abstract p: A; }
+=== meta meta.122
+abstract class K { @d abstract m(a: A): B; }
+=== meta meta.123
+var v = @d class { constructor(a: A) {} };
+=== meta meta.124
+var v = class { @d p: A; };
+=== meta meta.125
+var v = class { m(a: A, @d b: B): C { return a } };
+=== meta meta.126
+export @d class K { constructor(a: A) {} }
+=== meta meta.127
+@d export class K { constructor(a: A) {} }
+=== meta meta.128
+export default @d class { constructor(a: A) {} }
+=== meta meta.129
+@d export default class K { constructor(a: A) {} }
+=== meta meta.130
+export default class { @d p: A; }
+=== meta meta.131
+class A {}
+class K { @d p: A; }
+=== meta meta.132
+class K { @d p: A; }
+class A {}
+=== meta meta.133
+class K { @d p: K; }
+=== meta meta.134
+class K { @d m(a: K): K { return a } }
+=== meta meta.135
+interface I {}
+class K { @d p: I; }
+=== meta meta.136
+class K { @d p: I; }
+interface I {}
+=== meta meta.137
+type X = string;
+class K { @d p: X; }
+=== meta meta.138
+class K { @d p: X; }
+type X = string;
+=== meta meta.139
+type X<T> = T[];
+class K { @d p: X<A>; }
+=== meta meta.140
+enum E { A }
+class K { @d p: E; }
+=== meta meta.141
+enum E { A }
+class K { @d p: E.A; }
+=== meta meta.142
+enum E { A = "a" }
+class K { @d p: E; }
+=== meta meta.143
+const enum E { A }
+class K { @d p: E; }
+=== meta meta.144
+declare enum E { A }
+class K { @d p: E; }
+=== meta meta.145
+declare const enum E { A }
+class K { @d p: E; }
+=== meta meta.146
+namespace N { export class A {} }
+class K { @d p: N.A; }
+=== meta meta.147
+namespace N { export interface I {} }
+class K { @d p: N.I; }
+=== meta meta.148
+namespace N { export type X = A }
+class K { @d p: N.X; }
+=== meta meta.149
+declare namespace N { class A {} }
+class K { @d p: N.A; }
+=== meta meta.150
+namespace N { export namespace M { export class A {} } }
+class K { @d p: N.M.A; }
+=== meta meta.151
+declare class A {}
+class K { @d p: A; }
+=== meta meta.152
+declare const A: any;
+class K { @d p: A; }
+=== meta meta.153
+declare function A(): void;
+class K { @d p: A; }
+=== meta meta.154
+function A() {}
+class K { @d p: A; }
+=== meta meta.155
+const A = class {};
+class K { @d p: A; }
+=== meta meta.156
+let A: any;
+class K { @d p: typeof A; }
+=== meta meta.157
+import A from "m";
+class K { @d p: A; }
+=== meta meta.158
+import { A } from "m";
+class K { @d p: A; }
+=== meta meta.159
+import { B as A } from "m";
+class K { @d p: A; }
+=== meta meta.160
+import * as N from "m";
+class K { @d p: N.A; }
+=== meta meta.161
+import * as N from "m";
+class K { @d p: N.A.B; }
+=== meta meta.162
+import N from "m";
+class K { @d p: N.A; }
+=== meta meta.163
+import type A from "m";
+class K { @d p: A; }
+=== meta meta.164
+import type { A } from "m";
+class K { @d p: A; }
+=== meta meta.165
+import { type A } from "m";
+class K { @d p: A; }
+=== meta meta.166
+import type * as N from "m";
+class K { @d p: N.A; }
+=== meta meta.167
+import A = require("m");
+class K { @d p: A; }
+=== meta meta.168
+import A = require("m");
+class K { @d p: A.B; }
+=== meta meta.169
+import A = N.B;
+class K { @d p: A; }
+=== meta meta.170
+import { A } from "m";
+class K { @d p: A; @d q: A[]; @d m(a: A): A { return a } }
+=== meta meta.171
+import { A, B } from "m";
+class K { @d p: A | B; }
+=== meta meta.172
+import { A } from "m";
+class K { @d p: A | null; }
+=== meta meta.173
+import { A } from "m";
+class K { @d p: A<string>; }
+=== meta meta.174
+import { A } from "m";
+class K { @d p: typeof A; }
+=== meta meta.175
+import { A } from "m";
+export class K { constructor(@d a: A) {} }
+=== meta meta.176
+import { A } from "m";
+@d export class K { constructor(a: A, b: import("n").B) {} }
+=== meta meta.177
+function f<T>() { class K { @d p: T; } }
+=== meta meta.178
+function f() { class A {} class K { @d p: A; } }
+=== meta meta.179
+function f() { class K { @d p: A; } class A {} }
+=== meta meta.180
+function f(A) { class K { @d p: A; } }
+=== meta meta.181
+namespace N { export class A {} export class K { @d p: A; } }
+=== meta meta.182
+namespace N { class A {} export class K { @d p: A; } }
+=== meta meta.183
+namespace N { export class K { @d p: M.A; } }
+=== meta meta.184
+{ class A {} class K { @d p: A; } }
+=== meta meta.185
+class K { @d p: Object; }
+=== meta meta.186
+class K { @d p: Function; }
+=== meta meta.187
+class K { @d p: String; }
+=== meta meta.188
+class K { @d p: Number; }
+=== meta meta.189
+class K { @d p: Boolean; }
+=== meta meta.190
+class K { @d p: Symbol; }
+=== meta meta.191
+class K { @d p: BigInt; }
+=== meta meta.192
+class K { @d p: Array<A>; }
+=== meta meta.193
+class K { @d p: ReadonlyArray<A>; }
+=== meta meta.194
+class K { @d p: Promise<A>; }
+=== meta meta.195
+class K { @d p: Date; }
+=== meta meta.196
+class K { @d p: Map<A, B>; }
+=== meta meta.197
+class K { @d p: Record<string, A>; }
+=== meta meta.198
+class K { @d p: Partial<A>; }
+=== meta meta.199
+class K { @d p: globalThis.Date; }
+=== meta meta.200
+class K { @d p: Uppercase<A>; }
+=== meta meta.201
+class K { @d p: undefined; @d q: null; @d r: void; @d s: never; @d t: unknown; @d u: any; }
+=== meta meta.202
+class K { @d m(a: undefined, b: null, c: void, e: never, f: unknown, g: any) {} }
+=== meta meta.203
+class K { @d m(): undefined { return a } @d n(): null { return a } @d o(): never { throw a } @d q(): unknown { return a } @d r(): any { return a } }

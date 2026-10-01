@@ -1,0 +1,80 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /empty.ts
+SINCE type=64 signature=4
+DRIVE tuple
+TUPLE string[] T35
+TUPLE string[] again T35
+TUPLE readonly number[] T35
+TUPLE [string, number] T70
+TUPLE [string, number] again T70
+TUPLE [string, number?] T78
+TUPLE readonly [string, ...number[]] T83
+TUPLE [...string[], number] T88
+TUPLE [] T89
+TUPLE [[string, number]] T94
+TUPLE [string, number][] T35
+STATE
+COUNTS TypeCount=94 SymbolCount=18 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=18 mergedSymbols=0 globals=2
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=94 SymbolCount=18 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=94
+RESOLUTIONSTACK 0 []
+TYPE 65 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 66 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 67 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=nil regular=T67
+TYPE 68 flags=0x100000 objectFlags=0xc data=Tuple target=T68 inst=[T68 T70] targs=[T65 T66] tparams=[T65 T66 T69] outer=0 this=T69 dmembers={"0":Y1 "1":Y2 "length":Y3} dcalls=nil dctors=nil dindex=nil elements=[1 1] minLength=2 fixedLength=2 combinedFlags=1 readonly=false
+TYPE 69 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T68 isThisType
+TYPE 70 flags=0x100000 objectFlags=0x4 data=TypeReference target=T68 targs=[T14 T15]
+TYPE 71 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 72 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 73 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=nil regular=T73
+TYPE 74 flags=0x8000000 objectFlags=0x8000 data=Union types=[T73 T67]
+TYPE 75 flags=0x100000 objectFlags=0xc data=Tuple target=T75 inst=[T75 T78] targs=[T71 T72] tparams=[T71 T72 T76] outer=0 this=T76 dmembers={"0":Y4 "1":Y5 "length":Y6} dcalls=nil dctors=nil dindex=nil elements=[1 2] minLength=1 fixedLength=2 combinedFlags=3 readonly=false
+TYPE 76 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T75 isThisType
+TYPE 77 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T15]
+TYPE 78 flags=0x100000 objectFlags=0x4 data=TypeReference target=T75 targs=[T14 T77]
+TYPE 79 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 80 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 81 flags=0x100000 objectFlags=0xc data=Tuple target=T81 inst=[T81 T83] targs=[T79 T80] tparams=[T79 T80 T82] outer=0 this=T82 dmembers={"0":Y7 "length":Y8} dcalls=nil dctors=nil dindex=nil elements=[1 4] minLength=1 fixedLength=1 combinedFlags=5 readonly=true
+TYPE 82 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T81 isThisType
+TYPE 83 flags=0x100000 objectFlags=0x4 data=TypeReference target=T81 targs=[T14 T15]
+TYPE 84 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 85 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 86 flags=0x100000 objectFlags=0xc data=Tuple target=T86 inst=[T86 T88] targs=[T84 T85] tparams=[T84 T85 T87] outer=0 this=T87 dmembers={"length":Y9} dcalls=nil dctors=nil dindex=nil elements=[4 1] minLength=1 fixedLength=0 combinedFlags=5 readonly=false
+TYPE 87 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T86 isThisType
+TYPE 88 flags=0x100000 objectFlags=0x4 data=TypeReference target=T86 targs=[T14 T15]
+TYPE 89 flags=0x100000 objectFlags=0xc data=Tuple target=T89 inst=[T89] targs=[] tparams=[T90] outer=0 this=T90 dmembers={"length":Y10} dcalls=nil dctors=nil dindex=nil elements=[] minLength=0 fixedLength=0 combinedFlags=0 readonly=false
+TYPE 90 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T89 isThisType
+TYPE 91 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 92 flags=0x100000 objectFlags=0xc data=Tuple target=T92 inst=[T92 T94] targs=[T91] tparams=[T91 T93] outer=0 this=T93 dmembers={"0":Y11 "length":Y12} dcalls=nil dctors=nil dindex=nil elements=[1] minLength=1 fixedLength=1 combinedFlags=1 readonly=false
+TYPE 93 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T92 isThisType
+TYPE 94 flags=0x100000 objectFlags=0x4 data=TypeReference target=T92 targs=[T70]
+GLOBALS count=2 transient=2
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+SYMBOL Y1 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y2 name="1" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y3 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y4 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y5 name="1" flags=0x3000004 checkFlags=0x0 declarations=[]
+SYMBOL Y6 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y7 name="0" flags=0x2000004 checkFlags=0x8 declarations=[]
+SYMBOL Y8 name="length" flags=0x2000004 checkFlags=0x8 declarations=[]
+SYMBOL Y9 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y10 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y11 name="0" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y12 name="length" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOLS named=12 unnamed=6

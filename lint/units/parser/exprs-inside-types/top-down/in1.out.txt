@@ -1,0 +1,226 @@
+
+## A computed property name in object type / interface
+valid / bun ok           | type A = { [Symbol.iterator](): void }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [k]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { ["x"]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [1]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [`x`]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [a.b.c]?: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { readonly [a.b]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [a + b]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "+" | Unexpected b
+P-ok/C-err / bun REJ     | type A = { [f()]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "(" | Unexpected )
+P-ok/C-err / bun REJ     | type A = { [a ? b : c]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "?" | Unexpected b
+valid / bun ok           | type A = { [-1]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [-a]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected number but found "a"
+valid / bun REJ          | type A = { [+1]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: Unexpected + | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { [!a]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Unexpected ! | Expected "]" but found "a"
+P-ok/C-err / bun REJ     | type A = { [a, b]: 1 }
+    tsc parse=[] check=[TS1096@12]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "," | Unexpected b
+P-ok/C-err / bun REJ     | type A = { [function(){}]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Unexpected function | Unexpected {
+P-ok/C-err / bun REJ     | type A = { [class {}]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Unexpected class | Unexpected {
+P-ok/C-err / bun ok      | type A = { [() => 1]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [a => a]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "=>" | Unexpected a
+P-ok/C-err / bun REJ     | type A = { [async () => { await 1 }]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11,TS2697@12]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "(" | Unexpected )
+P-ok/C-err / bun REJ     | type A = { [new X]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "(" but found "X" | Unexpected ]
+P-ok/C-err / bun REJ     | type A = { [new X()]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "(" but found "X" | Unexpected )
+P-ok/C-err / bun ok      | type A = { [a!]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [a as any]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "as" | Unexpected any
+P-ok/C-err / bun REJ     | type A = { [<any>a]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "(" but found "a" | Unexpected ]
+P-ok/C-err / bun ok      | type A = { [(a)]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [(a, b)]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "," | Expected "]" but found "b"
+P-ok/C-err / bun REJ     | type A = { [a < b]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Expected ">" but found "]"
+P-ok/C-err / bun REJ     | type A = { [a<b>(c)]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "(" | Unexpected c
+P-ok/C-err / bun REJ     | type A = { [a = 1]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "=" | Unexpected 1
+P-ok/C-err / bun ok      | type A = { [yield]: 1 }
+    tsc parse=[] check=[TS1212@12]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [await x]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "x" | Unexpected ]
+P-ok/C-err / bun REJ     | type A = { [import.meta.url]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: export {};
+    bun: Expected "(" but found "." | Expected string but found "meta"
+P-ok/C-err / bun ok      | type A = { [import("x")]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2711@12]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { [`a${b}`]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [`a${b + c}`]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: Expected "}" but found "+"
+P-ok/C-err / bun REJ     | type A = { [void 0]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "0" | Unexpected ]
+P-ok/C-err / bun ok      | type A = { [typeof a]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [typeof a === "b"]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "===" | Unexpected "b"
+P-ok/C-err / bun ok      | type A = { [this.x]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | type A = { [super.x]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2466@12]
+    tsc emit: "use strict";
+    bun: Unexpected super | Unexpected .
+P-ok/C-err / bun REJ     | type A = { [/re/]: 1 }
+    tsc parse=[] check=[TS1170@11,TS2464@11]
+    tsc emit: "use strict";
+    bun: Unexpected / | Unexpected re
+valid / bun ok           | type A = { [a in b]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { [a.b in c]: 1 }
+    tsc parse=[] check=[TS7061@11]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun ok           | type A = { [A[]]: 1 }
+    tsc parse=[TS1011@14] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { [A | B]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-rej / bun ok           | type A = { [keyof T]: 1 }
+    tsc parse=[TS1005@18,TS1128@19,TS1128@20,TS1128@24] check=[]
+    tsc emit: "use strict"; T; 1;
+    bun: 
+P-rej / bun ok           | type A = { [x extends y ? 1 : 2]: 1 }
+    tsc parse=[TS1005@14,TS1005@26,TS1005@31,TS1131@32] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { [{a: 1}.a]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun ok      | type A = { [[a][0]]: 1 }
+    tsc parse=[] check=[TS1170@11]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { get [a.b](): 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [a.b]<T>(x: T): 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+P-ok/C-err / bun REJ     | interface I { [Symbol.iterator](): void; [a + b]: 1 }
+    tsc parse=[] check=[TS1169@41]
+    tsc emit: "use strict";
+    bun: Expected "]" but found "+" | Unexpected b
+valid / bun ok           | type A = { [a\n.b]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [K in keyof T]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 
+valid / bun ok           | type A = { [k: string]: 1 }
+    tsc parse=[] check=[]
+    tsc emit: "use strict";
+    bun: 

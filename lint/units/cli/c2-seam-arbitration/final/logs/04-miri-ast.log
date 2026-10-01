@@ -1,0 +1,47 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling bstr v1.12.1
+   Compiling rustversion v1.0.22
+   Compiling hashbrown v0.15.5
+   Compiling paste v1.0.15
+   Compiling rustix v0.38.44
+   Compiling bun_wyhash v0.0.0 (/workspace/wt/cli/src/wyhash)
+   Compiling bun_highway v0.0.0 (/workspace/wt/cli/src/highway)
+   Compiling bun_hash v0.0.0 (/workspace/wt/cli/src/hash)
+   Compiling bun_alloc v0.0.0 (/workspace/wt/cli/src/bun_alloc)
+   Compiling syn v2.0.117
+   Compiling const_format_proc_macros v0.2.34
+   Compiling const_format v0.2.36
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_core_macros v0.0.0 (/workspace/wt/cli/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/workspace/wt/cli/src/dispatch)
+   Compiling enum-map-derive v0.17.0
+   Compiling darling_macro v0.21.3
+   Compiling enum-map v2.7.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+   Compiling strum v0.26.3
+   Compiling bun_libuv_sys v0.0.0 (/workspace/wt/cli/src/libuv_sys)
+   Compiling thiserror v2.0.18
+   Compiling bun_core v0.0.0 (/workspace/wt/cli/src/bun_core)
+   Compiling enumset v1.1.10
+   Compiling bun_errno v0.0.0 (/workspace/wt/cli/src/errno)
+   Compiling bun_ptr v0.0.0 (/workspace/wt/cli/src/ptr)
+   Compiling bun_collections v0.0.0 (/workspace/wt/cli/src/collections)
+   Compiling bun_paths v0.0.0 (/workspace/wt/cli/src/paths)
+   Compiling bun_sys v0.0.0 (/workspace/wt/cli/src/sys)
+   Compiling bun_perf v0.0.0 (/workspace/wt/cli/src/perf)
+   Compiling bun_ast v0.0.0 (/tmp/c2td/ws/ast)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.83s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/bun_ast/b7e9899776cf005d/out/bun_ast-b7e9899776cf005d)
+
+running 3 tests
+test msg_code_tests::coded_error_keeps_its_code ... ok
+test msg_code_tests::coded_error_without_a_position ... ok
+test msg_code_tests::other_messages_have_no_code ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.60s
+
+miri-ast-exit=0

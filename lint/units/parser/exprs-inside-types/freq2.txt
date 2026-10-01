@@ -1,0 +1,34 @@
+## ts-tests-cases: 19199 files, 22.69 MB, 1012 with parse diagnostics
+       74  accessor in type member (all)
+        4  accessor in type member with body   e.g. accessorBodyInTypeContext.ts:15
+        1  binding element with initializer in a signature parameter   e.g. defaultValueInFunctionTypes.ts:2
+        6  computed key in binding pattern of a signature parameter   e.g. renamingDestructuredPropertyInFunctionType.ts:36
+      122  computed name in type member: dotted-name   e.g. asyncYieldStarContextualType.ts:6
+      117  computed name in type member: identifier   e.g. circularlyConstrainedMappedTypeContainingConditionalNoInfiniteInstantiationDepth.ts:24
+        8  computed name in type member: numeric-literal   e.g. literalsInComputedProperties1.ts:17
+        9  computed name in type member: other:BinaryExpression   e.g. indexSignatureWithInitializer.ts:4
+        2  computed name in type member: other:CallExpression   e.g. computedPropertyNames35_ES5.ts:5
+        2  computed name in type member: other:ConditionalExpression   e.g. declarationComputedPropertyNames.ts:36
+        2  computed name in type member: other:ParenthesizedExpression   e.g. declarationComputedPropertyNames.ts:35
+        2  computed name in type member: other:PropertyAccessExpression   e.g. declarationComputedPropertyNames.ts:31
+       17  computed name in type member: string-literal   e.g. declarationEmitComputedPropertyName1.ts:26
+      156  import type (all)
+       71  import type with attributes   e.g. importTypeAssertionDeprecation.ts:11
+    16783  property signature (all)
+        3  property signature with initializer   e.g. errorOnInitializerInInterfaceProperty.ts:3
+    12534  signature parameter (all)
+      109  signature parameter with binding pattern   e.g. contextualComputedNonBindablePropertyType.ts:18
+       15  signature parameter with initializer   e.g. defaultArgsInOverloads.ts:21
+       33  signature parameter with modifier   e.g. ParameterList13.ts:3
+     1653  type heritage entry (all)
+        1  type heritage entry that is not an entity name: other:CallExpression   e.g. interfaceMayNotBeExtendedWitACall.ts:4
+        1  type heritage entry that is not an entity name: other:ParenthesizedExpression   e.g. declarationEmitInterfaceWithNonEntityNameExpressionHeritage.ts:5
+    14203  type parameter (all)
+## bun-test-dir: 3005 files, 31.90 MB, 3 with parse diagnostics
+        9  computed name in type member: dotted-name   e.g. sourcemap.test.ts:77
+        1  computed name in type member: string-literal   e.g. expect-extend.types.d.ts:18
+      213  import type (all)
+     4816  property signature (all)
+     1231  signature parameter (all)
+       36  type heritage entry (all)
+      386  type parameter (all)

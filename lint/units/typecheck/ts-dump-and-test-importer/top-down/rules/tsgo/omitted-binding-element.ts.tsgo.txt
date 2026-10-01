@@ -1,0 +1,77 @@
+file /omitted-binding-element.ts scriptKind=3 variant=0 dts=false textLen=136
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=58 identifiers=10 text=17 reparsedClones=0
+root KindSourceFile [0,136) f=0x0
+  .Statements: list [0,135) n=4
+    - KindVariableStatement [0,32) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,31) f=0x2
+        .Declarations: list [5,31) n=1
+          - KindVariableDeclaration [5,31) f=0x0
+            .Initializer: KindArrayLiteralExpression [18,31) f=0x0
+              .Elements: list [20,30) n=4
+                - KindNumericLiteral [20,21) f=0x0 Text="1" TokenFlags=0x0
+                - KindNumericLiteral [22,24) f=0x0 Text="2" TokenFlags=0x0
+                - KindNumericLiteral [25,27) f=0x0 Text="3" TokenFlags=0x0
+                - KindNumericLiteral [28,30) f=0x0 Text="4" TokenFlags=0x0
+            .name: KindArrayBindingPattern [5,16) f=0x0
+              .Elements: list [7,15) n=4
+                - KindBindingElement [7,7) f=0x0
+                - KindBindingElement [8,10) f=0x0
+                  .name: KindIdentifier [8,10) f=0x0 Text="a"
+                - KindBindingElement [11,11) f=0x0
+                - KindBindingElement [13,15) f=0x0
+                  .name: KindIdentifier [13,15) f=0x0 Text="b"
+    - KindVariableStatement [32,58) f=0x0
+      .DeclarationList: KindVariableDeclarationList [32,57) f=0x2
+        .Declarations: list [38,57) n=1
+          - KindVariableDeclaration [38,57) f=0x0
+            .Initializer: KindArrayLiteralExpression [54,57) f=0x0
+              .Elements: list [56,56) n=0
+            .name: KindArrayBindingPattern [38,52) f=0x0
+              .Elements: list [40,51) n=2
+                - KindBindingElement [40,45) f=0x0
+                  .Initializer: KindNumericLiteral [43,45) f=0x0 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [40,41) f=0x0 Text="c"
+                - KindBindingElement [46,51) f=0x0
+                  .DotDotDotToken: KindDotDotDotToken [46,50) f=0x0
+                  .name: KindIdentifier [50,51) f=0x0 Text="d"
+    - KindFunctionDeclaration [58,111) f=0x0
+      .Body: KindBlock [108,111) f=0x0
+        .Statements: list [110,110) n=0
+      .Parameters: list [70,107) n=2
+        - KindParameter [70,85) f=0x0
+          .Type: KindArrayType [76,85) f=0x0
+            .ElementType: KindNumberKeyword [76,83) f=0x0
+          .name: KindArrayBindingPattern [70,75) f=0x0
+            .Elements: list [71,74) n=2
+              - KindBindingElement [71,71) f=0x0
+              - KindBindingElement [72,74) f=0x0
+                .name: KindIdentifier [72,74) f=0x0 Text="x"
+        - KindParameter [86,107) f=0x0
+          .Type: KindAnyKeyword [103,107) f=0x0
+          .name: KindObjectBindingPattern [86,102) f=0x0
+            .Elements: list [88,100) n=2
+              - KindBindingElement [88,90) f=0x0
+                .name: KindIdentifier [88,90) f=0x0 Text="y"
+              - KindBindingElement [91,100) f=0x0
+                .PropertyName: KindIdentifier [91,93) f=0x0 Text="z"
+                .name: KindArrayBindingPattern [94,100) f=0x0
+                  .Elements: list [96,99) n=2
+                    - KindBindingElement [96,96) f=0x0
+                    - KindBindingElement [97,99) f=0x0
+                      .name: KindIdentifier [97,99) f=0x0 Text="w"
+      .name: KindIdentifier [67,69) f=0x0 Text="f"
+    - KindVariableStatement [111,135) f=0x0
+      .DeclarationList: KindVariableDeclarationList [111,134) f=0x2
+        .Declarations: list [117,134) n=1
+          - KindVariableDeclaration [117,134) f=0x0
+            .Initializer: KindArrayLiteralExpression [123,134) f=0x0
+              .Elements: list [125,133) n=4
+                - KindOmittedExpression [125,125) f=0x0
+                - KindNumericLiteral [126,128) f=0x0 Text="1" TokenFlags=0x0
+                - KindOmittedExpression [129,129) f=0x0
+                - KindNumericLiteral [131,133) f=0x0 Text="2" TokenFlags=0x0
+            .name: KindIdentifier [117,121) f=0x0 Text="arr"
+  .EndOfFileToken: KindEndOfFile [135,136) f=0x0

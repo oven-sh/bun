@@ -1,0 +1,14 @@
+import d, { a, I, NS, OnlyType } from "./lib1";
+import * as all from "./lib2";
+import { renamed, own, star, TypeI, missing } from "./lib2";
+import { a as a3, I as I3 } from "./lib3";
+import type { a as ta } from "./lib1";
+import eq = require("./eq");
+import leaf = eq.Mid.leaf;
+import L = eq.Mid.L;
+import bad = eq.Mid.nope;
+import { x } from "./cyc1";
+import nomod from "./does-not-exist";
+import { aa } from "./lib1";
+import nodef from "./lib2";
+export { a as reexported, NS };

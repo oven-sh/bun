@@ -1,0 +1,166 @@
+#[derive(Clone, Default)]
+pub enum Metadata {
+    #[default]
+    MNone,
+
+    MNever,
+    MUnknown,
+    MAny,
+    MVoid,
+    MNull,
+    MUndefined,
+    MFunction,
+    MArray,
+    MBoolean,
+    MString,
+    MObject,
+    MNumber,
+    MBigint,
+    MSymbol,
+    MPromise,
+    MIdentifier(Ref),
+    // A heap `Vec` is used here because `Metadata` is lifetime-free.
+    // Decorator metadata is rare and the lists are tiny.
+    MDot(Vec<Ref>),
+}
+
+impl Metadata {
+    pub const DEFAULT: Self = Metadata::MNone;
+
+    // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
+    // translated from:
+    // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
+
+    /// Return the final union type if possible, or return None to continue merging.
+    ///
+    /// If the current type is MNever, MNull, or MUndefined assign the current type
+    /// to MNone and return None to ensure it's always replaced by the next type.
+    /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
+    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
+        let current = self;
+        match current {
+            Metadata::MIdentifier(r) => {
+                if load_name(*r) == b"Object" {
+                    return Some(Metadata::MObject);
+                }
+                None
+            }
+
+            Metadata::MUnknown | Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
+
+            Metadata::MNever | Metadata::MNull | Metadata::MUndefined => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            _ => None,
+        }
+    }
+
+    pub fn merge_union(&mut self, left: Self) {
+        let result = self;
+        if !matches!(left, Metadata::MNone) {
+            if core::mem::discriminant(result) != core::mem::discriminant(&left) {
+                *result = match result {
+                    Metadata::MNever | Metadata::MUndefined | Metadata::MNull => left,
+
+                    _ => Metadata::MObject,
+                };
+            } else {
+                // Reshaped for borrowck — copy Ref out before reassigning *result
+                if let Metadata::MIdentifier(r) = result {
+                    let r = *r;
+                    if let Metadata::MIdentifier(l) = left {
+                        if !r.eql(l) {
+                            *result = Metadata::MObject;
+                        }
+                    }
+                }
+            }
+        } else {
+            // always take the next value if left is MNone
+        }
+    }
+
+    /// Return the final intersection type if possible, or return None to continue merging.
+    ///
+    /// If the current type is MUnknown, MNull, or MUndefined assign the current type
+    /// to MNone and return None to ensure it's always replaced by the next type.
+    pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(
+        &mut self,
+        load_name: F,
+    ) -> Option<Self> {
+        let current = self;
+        match current {
+            Metadata::MIdentifier(r) => {
+                if load_name(*r) == b"Object" {
+                    return Some(Metadata::MObject);
+                }
+                None
+            }
+
+            // ensure MNever is the final type
+            Metadata::MNever => Some(Metadata::MNever),
+
+            Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
+
+            Metadata::MUnknown | Metadata::MNull | Metadata::MUndefined => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            _ => None,
+        }
+    }
+
+    pub fn merge_intersection(&mut self, left: Self) {
+        let result = self;
+        if !matches!(left, Metadata::MNone) {
+            if core::mem::discriminant(result) != core::mem::discriminant(&left) {
+                *result = match result {
+                    Metadata::MUnknown | Metadata::MUndefined | Metadata::MNull => left,
+
+                    // ensure MNever is the final type
+                    Metadata::MNever => Metadata::MNever,
+
+                    _ => Metadata::MObject,
+                };
+            } else {
+                // Reshaped for borrowck — copy Ref out before reassigning *result
+                if let Metadata::MIdentifier(r) = result {
+                    let r = *r;
+                    if let Metadata::MIdentifier(l) = left {
+                        if !r.eql(l) {
+                            *result = Metadata::MObject;
+                        }
+                    }
+                }
+            }
+        } else {
+            // make sure intersection of only MUnknown serializes to "undefined"
+            // instead of "Object"
+            if matches!(result, Metadata::MUnknown) {
+                *result = Metadata::MUndefined;
+            }
+        }
+    }
+
+    /// A union, an intersection or a conditional type that is read to its end is a keyword no longer: tsc compares what it serializes to.
+    pub fn finish_combined(&mut self) {
+        if matches!(
+            self,
+            Metadata::MNever | Metadata::MNull | Metadata::MUndefined
+        ) {
+            *self = Metadata::MVoid;
+        } else if matches!(self, Metadata::MAny | Metadata::MUnknown) {
+            *self = Metadata::MObject;
+        }
+    }
+
+    /// A type reference in a branch of a conditional type: tsc serializes one that it cannot resolve as `Object`, and none is resolved here.
+    pub fn finish_reference_in_branch(&mut self) {
+        if matches!(self, Metadata::MIdentifier(_) | Metadata::MDot(_)) {
+            *self = Metadata::MObject;
+        }
+    }
+}

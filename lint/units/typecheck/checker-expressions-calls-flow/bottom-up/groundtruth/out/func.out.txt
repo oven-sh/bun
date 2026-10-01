@@ -1,0 +1,28 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+func.ts(3,20): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+func.ts(4,13): error TS7006: Parameter 'x' implicitly has an 'any' type. [len=1]
+func.ts(7,7): error TS2322: Type 'string | number' is not assignable to type 'boolean'. [len=2]
+  CHAIN TS2322: Type 'string' is not assignable to type 'boolean'.
+func.ts(9,7): error TS2322: Type 'Promise<number>' is not assignable to type 'number'. [len=2]
+func.ts(10,28): error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation. [len=5]
+func.ts(11,7): error TS2322: Type 'Generator<"a" | 1, boolean, unknown>' is not assignable to type 'number'. [len=2]
+func.ts(14,16): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value. [len=6]
+func.ts(15,26): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+func.ts(16,7): error TS7023: 'f10' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions. [len=3]
+func.ts(18,18): error TS2373: Parameter 'a' cannot reference identifier 'b12' declared after it. [len=3]
+func.ts(20,57): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=3]
+SUGGESTION func.ts(3,20): suggestion TS6133: 'a' is declared but its value is never read. [len=1]
+SUGGESTION func.ts(10,24): suggestion TS6133: 'x' is declared but its value is never read. [len=1]
+AFTER check
+STATE flowInvocationCount=31 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=3
+STATE flowNodeReachable=4 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=160 SymbolCount=142 SignatureCount=23

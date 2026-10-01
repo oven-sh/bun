@@ -1,0 +1,8 @@
+deco: class C { accessor a = 1 }
+deco: class C { @d accessor a = 1 }
+deco: @d class C { accessor a = 1 }
+deco: class C { @d m() {} accessor a = 1 }
+deco: class C { static accessor a = 1 }
+deco: export default class { accessor a = 1 }
+deco: export const v = class { accessor a = 1 }
+class C { accessor a = 1 }

@@ -1,0 +1,38 @@
+file /import-attributes.ts scriptKind=3 variant=0 dts=false textLen=155
+externalModuleIndicator KindImportDeclaration[0,42)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=26 identifiers=5 text=12 reparsedClones=0
+import KindStringLiteral[13,19) "./a"
+import KindStringLiteral[56,62) "./b"
+import KindStringLiteral[102,107) "./c"
+root KindSourceFile [0,155) f=0x80000
+  .Statements: list [0,154) n=3
+    - KindImportDeclaration [0,42) f=0x0
+      .Attributes: KindImportAttributes [19,41) f=0x0 Token=KindWithKeyword
+        .Attributes: list [26,39) n=1
+          - KindImportAttribute [26,39) f=0x0
+            .Value: KindStringLiteral [32,39) f=0x0 Text="json" TokenFlags=0x0
+            .name: KindIdentifier [26,31) f=0x0 Text="type"
+      .ImportClause: KindImportClause [6,8) f=0x0 PhaseModifier=KindUnknown
+        .name: KindIdentifier [6,8) f=0x0 Text="a"
+      .ModuleSpecifier: KindStringLiteral [13,19) f=0x0 Text="./a" TokenFlags=0x0
+    - KindExportDeclaration [42,85) f=0x0
+      .Attributes: KindImportAttributes [62,84) f=0x2000 Token=KindWithKeyword
+        .Attributes: list [69,82) n=1
+          - KindImportAttribute [69,82) f=0x2000
+            .Value: KindStringLiteral [75,82) f=0x2000 Text="json" TokenFlags=0x0
+            .name: KindIdentifier [69,74) f=0x2000 Text="type"
+      .ModuleSpecifier: KindStringLiteral [56,62) f=0x2000 Text="./b" TokenFlags=0x0
+    - KindTypeAliasDeclaration [85,154) f=0x0
+      .Type: KindImportType [94,153) f=0x0
+        .Argument: KindLiteralType [102,107) f=0x0
+          .Literal: KindStringLiteral [102,107) f=0x0 Text="./c" TokenFlags=0x0
+        .Attributes: KindImportAttributes [116,148) f=0x0 Token=KindWithKeyword
+          .Attributes: list [118,146) n=1
+            - KindImportAttribute [118,146) f=0x0
+              .Value: KindStringLiteral [137,146) f=0x0 Text="import" TokenFlags=0x0
+              .name: KindStringLiteral [118,136) f=0x0 Text="resolution-mode" TokenFlags=0x0
+        .Qualifier: KindIdentifier [152,153) f=0x0 Text="X"
+      .name: KindIdentifier [90,92) f=0x0 Text="T"
+  .EndOfFileToken: KindEndOfFile [154,155) f=0x0

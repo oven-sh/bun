@@ -1,0 +1,27 @@
+== checker and parser: 16
+1003	Identifier_expected	checker checker.go:5472	other jsdoc.go:467,jsdoc.go:801,jsdoc.go:973,jsdoc.go:975,jsdoc.go:1022,jsdoc.go:1140	TypeScript parser.ts sites 11, reference parser sites 18
+1005	X_0_expected	checker grammarchecks.go:1293,grammarchecks.go:1355,grammarchecks.go:1434,grammarchecks.go:1827	other parser.go:759,parser.go:811,parser.go:970,parser.go:979,parser.go:1016,parser.go:1031	TypeScript parser.ts sites 16, reference parser sites 15
+1110	Type_expected	checker checker.go:2615	other parser.go:806,parser.go:2947	TypeScript parser.ts sites 2, reference parser sites 2
+1136	Property_assignment_expected	checker checker.go:12730	other parser.go:272,parser.go:790	TypeScript parser.ts sites 1, reference parser sites 2
+1142	Line_break_not_permitted_here	checker checker.go:4237	other parser.go:2145	TypeScript parser.ts sites 1, reference parser sites 1
+1206	Decorators_are_not_valid_here	checker grammarchecks.go:246,grammarchecks.go:257,grammarchecks.go:439,grammarchecks.go:647	other parser.go:6720,parser.go:6735	TypeScript parser.ts sites 0, reference parser sites 2
+1228	A_type_predicate_is_only_allowed_in_return_type_position_for_functions_and_methods	checker checker.go:3070	other parser.go:2087	TypeScript parser.ts sites 1, reference parser sites 1
+1433	Neither_decorators_nor_modifiers_may_be_applied_to_this_parameters	checker grammarchecks.go:222	other parser.go:3384	TypeScript parser.ts sites 1, reference parser sites 1
+1453	X_resolution_mode_should_be_either_require_or_import	checker checker.go:3363	other parser.go:6703	TypeScript parser.ts sites 1, reference parser sites 1
+1486	Decorator_used_before_export_here	checker grammarchecks.go:268	other parser.go:6754	TypeScript parser.ts sites 0, reference parser sites 1
+2427	Interface_name_cannot_be_0	checker checker.go:5075	other parser.go:2084	TypeScript parser.ts sites 1, reference parser sites 1
+2457	Type_alias_name_cannot_be_0	checker checker.go:6969	other parser.go:2093	TypeScript parser.ts sites 1, reference parser sites 1
+2657	JSX_expressions_must_have_one_parent_element	checker checker.go:12629	other parser.go:4863	TypeScript parser.ts sites 1, reference parser sites 1
+2880	Import_assertions_have_been_replaced_by_import_attributes_Use_with_instead_of_assert	checker checker.go:8386	other parser.go:2548,parser.go:2615,parser.go:3089	TypeScript parser.ts sites 0, reference parser sites 3
+8038	Decorators_may_not_appear_after_export_or_export_default_if_they_also_appear_before_export	checker grammarchecks.go:267	other parser.go:6749	TypeScript parser.ts sites 0, reference parser sites 1
+18016	Private_identifiers_are_not_allowed_outside_class_bodies	checker checker.go:2726,checker.go:2821,checker.go:11381,grammarchecks.go:103,grammarchecks.go:1045	other parser.go:5910	TypeScript parser.ts sites 1, reference parser sites 1
+== checker and scanner: 2
+1005	X_0_expected	checker grammarchecks.go:1293,grammarchecks.go:1355,grammarchecks.go:1434,grammarchecks.go:1827	other regexp.go:326,regexp.go:754,regexp.go:756,regexp.go:1064
+1369	Did_you_mean_0	checker checker.go:12940	other regexp.go:933,regexp.go:947,regexp.go:966,regexp.go:1089
+== checker and binder: 6
+1184	Modifiers_cannot_appear_here	checker grammarchecks.go:576,grammarchecks.go:1423	other binder.go:822
+1369	Did_you_mean_0	checker checker.go:12940	other binder.go:257
+2300	Duplicate_identifier_0	checker checker.go:3176,checker.go:7105,checker.go:14311,checker.go:16143,checker.go:16145,grammarchecks.go:1119	other binder.go:217,binder.go:965
+2451	Cannot_redeclare_block_scoped_variable_0	checker checker.go:14309	other binder.go:215
+2567	Enum_declarations_can_only_merge_with_namespace_or_other_enum_declarations	checker checker.go:14307	other binder.go:221
+6204	X_and_here	checker checker.go:14344,checker.go:15027,grammarchecks.go:746	other binder.go:271

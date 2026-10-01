@@ -1,0 +1,106 @@
+layer	where	function	statements	executed	blocks never run by corpus diagnostics (first line-last line)
+D-DRIVER	checker.go:2202-2236	c.checkSourceFile	24	22	2206-2208 2232-2234
+D-DRIVER	checker.go:2238-2245	c.checkSourceElements	4	3	2240-2241
+D-DRIVER	checker.go:2498-2507	c.checkDeferredNodes	6	5	2501-2502
+D-DRIVER	checker.go:2509-2545	c.checkDeferredNode	19	18	2510-2512
+D-TYPENODE	checker.go:2611-2633	c.checkTypeParameter	16	15	2614-2616
+D-TYPENODE	checker.go:2635-2656	c.checkTypeParameterDeferred	16	15	2644-2646
+D-TYPENODE	checker.go:3041-3061	c.getDeprecatedSuggestionNode	11	7	3046-3047 3048-3049 3050-3051 3056-3058
+D-TYPENODE	checker.go:3063-3105	c.checkTypePredicate	27	26	3075-3077
+D-TYPENODE	checker.go:3119-3136	c.checkIfTypePredicateVariableIsDeclaredInBindingPattern	11	9	3122-3123 3135-3135
+D-TYPENODE	checker.go:3340-3371	c.getResolutionModeOverride	21	20	3358-3360
+D-VAR	checker.go:5871-5877	c.checkVariableDeclaration	4	3	5872-5874
+D-VAR	checker.go:6051-6110	c.checkVarDeclaredNamesNotShadowed	18	17	6086-6087
+D-STMT	checker.go:3919-3953	c.isSymbolUsedInConditionBody	23	21	3936-3938 3944-3946
+D-CLASS	checker.go:4286-4299	c.checkClassDeclaration	9	8	4290-4292
+D-CLASS	checker.go:4404-4428	c.checkJSDocAugmentsTagMatchesExtends	16	15	4410-4411
+D-CLASS	checker.go:4573-4727	c.checkKindsOfPropertyMemberOverrides	76	71	4597-4598 4601-4602 4678-4681 4720-4722
+D-CLASS	checker.go:4935-4970	c.checkIndexConstraintForIndexSignature	22	21	4938-4940
+D-ENUMNS	checker.go:5148-5197	c.checkEnumDeclaration	27	26	5172-5174
+D-IMPEXP	checker.go:6826-6952	c.checkAliasSymbol	72	71	6948-6950
+D-IMPEXP	checker.go:7051-7090	c.getDeclarationSpaces	22	19	7062-7063 7076-7076 7089-7089
+U-ALIASMARK	checker.go:28312-28477	c.markLinkedReferences	85	11	28328-28329 28336-28337 28337-28340 28341-28341 28341-28343 28344-28344 28344-28352 28352-28354 28355-28361 28361-28363 28364-28364 28364-28370 28370-28372 28378-28378 28378-28383 28383-28385 28390-28390 28390-28391 28391-28393 28394-28394 28394-28396 28398-28398 28398-28400 28400-28402 28406-28407 28407-28409 28409-28411 28417-28419 28419-28420 28420-28422 28422-28424 28424-28426 28427-28427 28427-28429 28431-28432 28435-28435 28435-28437 28437-28438 28438-28440 28441-28441 28443-28444 28446-28446 28446-28449 28450-28450 28450-28453 28454-28454 28454-28455 28455-28458 28459-28459 28461-28461 28461-28464 28465-28465 28465-28467 28468-28468 28468-28470 28472-28473 28474-28475
+U-ALIASMARK	checker.go:28494-28513	shouldMarkIdentifierAliasReferenced	11	9	28502-28504 28507-28509
+U-ALIASMARK	checker.go:28520-28528	c.markIdentifierAliasReferenced	5	4	28521-28523
+U-ALIASMARK	checker.go:28530-28600	c.markPropertyAliasReferenced	40	22	28531-28533 28563-28565 28571-28573 28573-28575 28575-28577 28578-28579 28579-28581 28582-28584 28584-28586 28586-28588 28589-28589 28589-28590 28590-28592 28593-28595
+U-ALIASMARK	checker.go:28602-28613	isPartOfImportEqualsModuleReference	7	3	28607-28607 28607-28608 28608-28610 28612-28612
+U-ALIASMARK	checker.go:28677-28697	c.markExportSpecifierAliasReferenced	12	11	28680-28682 28684-28686
+U-ALIASMARK	checker.go:28809-28855	c.markDecoratorAliasReferenced	28	27	28814-28816
+U-ALIASMARK	checker.go:28872-28891	c.getEntityNameForDecoratorMetadata	10	7	28877-28878 28883-28884 28885-28886
+U-ALIASMARK	checker.go:28893-28923	c.getEntityNameForDecoratorMetadataFromTypeList	14	13	28896-28897
+U-ALIASMARK	checker.go:28925-28942	c.markAliasReferenced	7	6	28926-28928
+U-ALIASMARK	checker.go:28947-28966	c.markAliasSymbolAsReferenced	10	9	28952-28953
+U-ALIASMARK	checker.go:28980-29013	c.markEntityNameOrEntityExpressionAsReference	17	16	28981-28983
+D-UNUSED	checker.go:7136-7161	c.checkUnusedIdentifiers	11	10	7157-7158
+D-UNUSED	checker.go:7194-7203	c.unusedIsError	4	3	7200-7201
+D-UNUSED	checker.go:7205-7228	c.checkUnusedClassMembers	11	10	7224-7225
+D-UNUSED	checker.go:7311-7336	c.isUnreferencedVariableDeclaration	14	13	7313-7315
+D-ITER	checker.go:6196-6301	c.getIteratedTypeOrElementType	62	48	6242-6246 6246-6248 6249-6249 6249-6251 6260-6262 6278-6279 6279-6281 6282-6282 6287-6289 6289-6291 6292-6292 6292-6294 6295-6295
+D-ITER	checker.go:6314-6325	c.getIterationTypesOfGeneratorFunctionReturnType	8	7	6315-6317
+D-ITER	checker.go:6377-6445	c.getIterationTypesOfIterableWorker	44	42	6405-6406 6406-6408
+D-ITER	checker.go:6498-6508	IterationTypes.getType	5	4	6507-6507
+D-ITER	checker.go:6526-6540	c.getAsyncFromSyncIterationTypes	5	4	6528-6530
+D-ITER	checker.go:6631-6732	c.getIterationTypesOfMethod	63	62	6716-6718
+D-ITER	checker.go:6739-6770	c.getIterationTypesOfIteratorResult	17	15	6745-6747 6748-6750
+D-ITER	checker.go:6804-6816	c.getIterationDiagnosticDetails	8	5	6806-6808 6809-6811 6815-6815
+D-ITER	checker.go:6818-6824	isES2015OrLaterIterable	3	2	6820-6821
+E-AWAIT	checker.go:29049-29122	c.getPromisedTypeOfPromiseEx	46	41	29075-29077 29083-29085 29103-29105 29109-29111 29114-29116
+E-AWAIT	checker.go:31393-31505	c.getAwaitedTypeNoAliasEx	44	40	31408-31409 31409-31411 31412-31412 31472-31474
+D-DECOR	checker.go:6112-6149	c.checkDecorators	24	23	6119-6121
+D-DECOR	checker.go:6151-6183	c.checkDecorator	21	19	6161-6163 6179-6180
+E-DECOR	checker.go:8833-8864	c.resolveDecorator	24	22	8834-8836 8860-8862
+E-DECOR	checker.go:8876-8888	c.getDiagnosticHeadMessageForDecoratorResolution	6	5	8887-8887
+E-DECOR	checker.go:9283-9302	c.getLegacyDecoratorArgumentCount	10	9	9301-9301
+E-DECOR	checker.go:29924-29930	c.getContextualTypeForDecorator	4	3	29929-29929
+E-DECOR	checker.go:30265-30276	c.getEffectiveDecoratorArguments	8	7	30275-30275
+E-DECOR	checker.go:30285-30350	c.getLegacyDecoratorCallSignature	44	40	30298-30299 30301-30302 30323-30324 30346-30348
+E-DECOR	checker.go:30352-30528	c.getESDecoratorCallSignature	45	42	30445-30446 30486-30487 30524-30526
+E-DECOR	checker.go:30575-30601	c.newClassMemberDecoratorContextTypeForNode	16	15	30596-30597
+E-DECOR	checker.go:30659-30672	c.getClassElementPropertyKeyType	8	7	30671-30671
+D-HELPERS	checker.go:28746-28794	c.getHelperNames	24	13	28761-28762 28763-28764 28765-28766 28767-28768 28775-28776 28781-28782 28783-28784 28785-28786 28787-28788 28789-28790 28791-28792
+E-COLLIDE	checker.go:10573-10587	c.checkCollisionWithGlobalObjectInGeneratedCode	7	6	10578-10580
+E-COLLIDE	checker.go:10589-10615	c.needCollisionCheckForIdentifier	13	11	10595-10597 10610-10613
+E-COLLIDE	checker.go:10648-10662	c.checkCollisionWithGlobalPromiseInGeneratedCode	7	6	10653-10655
+G-GRAMMAR	grammarchecks.go:47-56	c.grammarErrorOnNodeSkippedOnNoEmit	7	6	55-55
+G-GRAMMAR	grammarchecks.go:58-67	getIdentifierFromEntityNameExpression	4	3	64-65
+G-GRAMMAR	grammarchecks.go:100-118	c.checkGrammarPrivateIdentifierExpression	10	9	112-114
+G-GRAMMAR	grammarchecks.go:214-569	c.checkGrammarModifiers	253	241	256-258 262-263 271-271 318-320 345-347 360-362 362-364 409-411 432-434 434-436 446-448 468-470
+G-GRAMMAR	grammarchecks.go:587-640	c.findFirstIllegalModifier	14	12	630-632 636-637
+G-GRAMMAR	grammarchecks.go:796-838	c.checkGrammarIndexSignatureParameters	27	26	822-824
+G-GRAMMAR	grammarchecks.go:866-883	c.checkGrammarHeritageClause	10	9	878-880
+G-GRAMMAR	grammarchecks.go:892-933	c.checkGrammarClassDeclarationHeritageClauses	22	21	917-918
+G-GRAMMAR	grammarchecks.go:935-959	c.checkGrammarInterfaceDeclaration	12	11	949-950
+G-GRAMMAR	grammarchecks.go:974-988	c.checkGrammarForGenerator	8	7	976-977
+G-GRAMMAR	grammarchecks.go:998-1136	c.checkGrammarObjectLiteralExpression	71	70	1104-1105
+G-GRAMMAR	grammarchecks.go:1162-1172	c.checkGrammarJsxName	5	4	1163-1165
+G-GRAMMAR	grammarchecks.go:1289-1339	c.checkGrammarAccessor	31	30	1323-1324
+G-GRAMMAR	grammarchecks.go:1351-1389	c.checkGrammarTypeOperatorNode	23	22	1364-1366
+G-GRAMMAR	grammarchecks.go:1391-1407	c.checkGrammarForInvalidDynamicName	9	8	1396-1398
+G-GRAMMAR	grammarchecks.go:1772-1794	c.checkGrammarForDisallowedBlockScopedVariableStatement	12	11	1786-1787
+G-GRAMMAR	grammarchecks.go:1864-1923	c.checkGrammarProperty	35	32	1883-1885 1891-1893 1894-1896
+G-GRAMMAR	grammarchecks.go:1925-1958	c.checkAmbientInitializer	21	20	1941-1942
+G-GRAMMAR	grammarchecks.go:1965-1976	isInitializerBigIntLiteralExpression	6	4	1970-1973
+X-JSX	jsx.go:160-168	c.checkJsxPreconditions	4	3	165-167
+X-JSX	jsx.go:205-213	c.getContextualTypeForJsxExpression	4	3	212-212
+X-JSX	jsx.go:242-264	c.getContextualTypeForChildJsxExpression	15	14	252-254
+X-JSX	jsx.go:376-391	c.generateJsxChildren	9	8	383-385
+X-JSX	jsx.go:393-418	c.getElaborationElementForJsxChild	9	8	417-417
+X-JSX	jsx.go:420-483	c.elaborateIterableOrArrayLikeTargetElementwise	45	40	445-446 449-450 465-468 474-477
+X-JSX	jsx.go:500-543	c.getJSXFragmentType	30	29	517-519
+X-JSX	jsx.go:545-585	c.resolveJsxOpeningLikeElement	29	28	577-579
+X-JSX	jsx.go:591-701	c.checkApplicableSignatureForJsxCallLikeElement	72	70	620-622 644-646
+X-JSX	jsx.go:710-867	c.createJsxAttributesTypeFromAttributesProperty	105	103	784-786 801-803
+X-JSX	jsx.go:942-987	c.getJsxPropsTypeFromClassType	29	28	977-979
+X-JSX	jsx.go:989-1016	c.getJsxPropsTypeForSignatureFromMember	15	5	990-997 997-999 999-1001 1002-1003 1003-1005 1006-1006 1008-1008
+X-JSX	jsx.go:1030-1048	c.instantiateAliasOrInterfaceWithDefaults	12	10	1043-1046
+X-JSX	jsx.go:1057-1063	c.getJsxElementTypeSymbol	3	2	1062-1062
+X-JSX	jsx.go:1114-1133	c.getStaticTypeOfReferencedJsxConstructor	14	9	1124-1126 1126-1128 1129-1130
+X-JSX	jsx.go:1135-1155	c.getIntrinsicAttributesTypeFromStringLiteralType	11	10	1148-1150
+X-JSX	jsx.go:1214-1255	c.getIntrinsicTagSymbol	30	28	1216-1218 1223-1224
+X-JSX	jsx.go:1257-1263	c.getJsxStatelessElementTypeAt	4	3	1259-1261
+X-JSX	jsx.go:1414-1433	c.getJsxFragmentFactoryEntity	13	10	1419-1421 1423-1426
+D-JSDOC	checker.go:2562-2585	c.resolveJSDocMemberName	15	14	2577-2579
+D-JSDOC	jsdoc.go:9-84	c.checkUnmatchedJSDocParameters	41	39	42-44 48-50
+T-JSDECL	checker.go:18173-18224	c.getWidenedTypeForAssignmentDeclaration	32	30	18178-18179 18183-18184
+T-JSDECL	checker.go:18226-18250	c.getAssignmentDeclarationInitializerType	15	14	18249-18249
+T-JSDECL	checker.go:18301-18344	c.isConstructorDeclaredThisProperty	30	27	18307-18308 18315-18317

@@ -1,0 +1,403 @@
+A1c	typeSig	"[a, , b]"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected , @4	tsc: parses
+A1c	memberSig	"[a, , b]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: parses
+A1c	declSig	"...a,"	[declareMethod,declareCtor]	bun: Expected ")" but found "," @4	tsc: parses
+A1c	declSig	"...a: A[],"	[declareMethod,declareCtor]	bun: Expected ")" but found "," @9	tsc: parses
+A1c	arrowSig	"{ await }"	[arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]	bun: Cannot use "await" here @2	tsc: parses
+A1c	arrowSig	"[await]"	[arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected ] @6	tsc: parses
+A1c	arrowSig	"{ a: await }"	[arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected } @11	tsc: parses
+A1c	arrowSig	"await"	[arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected ) @5	tsc: parses
+A1c	arrowSig	"await: A"	[arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected : @5	tsc: parses
+A1s	typeSig	"a = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a: A = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: parses also TS2371
+A1s	typeSig	"a = 1, b = 2"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = b"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = () => 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = {}"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = (1, 2)"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = b = c"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a: A = b as A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: parses also TS2371
+A1s	typeSig	"a = <A>b"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a = b!"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	typeSig	"a: (b: B) => C = d"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: parses also TS2371
+A1s	typeSig	"{ a = 1 }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @4	tsc: parses also TS2371
+A1s	typeSig	"{ a = 1 }: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @4	tsc: parses also TS2371
+A1s	typeSig	"{ a: b = 1 }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @7	tsc: parses also TS2842
+A1s	typeSig	"[a = 1]"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected "]" but found "=" @3	tsc: parses also TS2371
+A1s	typeSig	"[a = 1]: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected "]" but found "=" @3	tsc: parses also TS2371
+A1s	typeSig	"{ [k]: v }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ";" but found "=>" @12	tsc: parses also TS2842
+A1s	typeSig	"{ [k]: v = 1 }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @9	tsc: parses also TS2842
+A1s	typeSig	"{ a } = {}"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @6	tsc: parses also TS2371
+A1s	typeSig	"[a] = []"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @4	tsc: parses also TS2371
+A1s	typeSig	"{ a }: A = {}"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @5	tsc: parses also TS2371
+A1s	typeSig	"{ 1n: a }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected 1n @2	tsc: parses also TS2842
+A1s	typeSig	"{ a = b as A }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @4	tsc: parses also TS2371
+A1s	typeSig	"{ a: b = <A>c }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @7	tsc: parses also TS2842
+A1s	typeSig	"public a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	typeSig	"private a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	typeSig	"protected a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	typeSig	"readonly a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @10	tsc: parses also TS2369
+A1s	typeSig	"override a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	typeSig	"public readonly a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	typeSig	"private override readonly a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "override" @8	tsc: parses also TS2369
+A1s	typeSig	"public a"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	typeSig	"public a?"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	typeSig	"public a?: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	typeSig	"public a = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369 TS2371
+A1s	typeSig	"public a: A = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369 TS2371
+A1s	typeSig	"readonly a = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @11	tsc: parses also TS2369 TS2371
+A1s	typeSig	"readonly = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected = @9	tsc: parses also TS2371
+A1s	typeSig	"public readonly"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	typeSig	"readonly readonly"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected ) @17	tsc: parses also TS2369
+A1s	typeSig	"public a\n: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	typeSig	"public async"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "async" @7	tsc: parses also TS2369
+A1s	typeSig	"public a, private b, protected c, readonly d"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"a = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a: A = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @5	tsc: parses also TS2371
+A1s	memberSig	"a = 1, b = 2"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = b"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = () => 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = {}"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = (1, 2)"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = b = c"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a: A = b as A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @5	tsc: parses also TS2371
+A1s	memberSig	"a = <A>b"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a = b!"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @2	tsc: parses also TS2371
+A1s	memberSig	"a: (b: B) => C = d"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @15	tsc: parses also TS2371
+A1s	memberSig	"{ a = 1 }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "}" but found "=" @4	tsc: parses also TS2371
+A1s	memberSig	"{ a = 1 }: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "}" but found "=" @4	tsc: parses also TS2371
+A1s	memberSig	"{ a: b = 1 }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "}" but found "=" @7	tsc: parses also TS2842
+A1s	memberSig	"[a = 1]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "]" but found "=" @3	tsc: parses also TS2371
+A1s	memberSig	"[a = 1]: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "]" but found "=" @3	tsc: parses also TS2371
+A1s	memberSig	"{ [k]: v }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Unexpected [ @2	tsc: parses also TS2842
+A1s	memberSig	"{ [k]: v = 1 }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Unexpected [ @2	tsc: parses also TS2842
+A1s	memberSig	"{ a } = {}"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @6	tsc: parses also TS2371
+A1s	memberSig	"[a] = []"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @4	tsc: parses also TS2371
+A1s	memberSig	"{ a }: A = {}"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @9	tsc: parses also TS2371
+A1s	memberSig	"{ 1n: a }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Unexpected 1n @2	tsc: parses also TS2842
+A1s	memberSig	"{ a = b as A }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "}" but found "=" @4	tsc: parses also TS2371
+A1s	memberSig	"{ a: b = <A>c }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected "}" but found "=" @7	tsc: parses also TS2842
+A1s	memberSig	"public a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"private a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	memberSig	"protected a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	memberSig	"readonly a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	memberSig	"override a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	memberSig	"public readonly a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	memberSig	"private override readonly a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "override" @8	tsc: parses also TS2369
+A1s	memberSig	"public a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"public a?"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"public a?: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"public a = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369 TS2371
+A1s	memberSig	"public a: A = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369 TS2371
+A1s	memberSig	"readonly a = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369 TS2371
+A1s	memberSig	"readonly = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @9	tsc: parses also TS2371
+A1s	memberSig	"public readonly"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	memberSig	"readonly readonly"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "readonly" @9	tsc: parses also TS2369
+A1s	memberSig	"public a\n: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	memberSig	"public async"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "async" @7	tsc: parses also TS2369
+A1s	memberSig	"public a, private b, protected c, readonly d"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"[...a, b]"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Unexpected "," after rest pattern @5	tsc: parses also TS2462
+A1s	declSig	"{ ...a, b }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Unexpected "," after rest pattern @6	tsc: parses also TS2462
+A1s	declSig	"public a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"private a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	declSig	"protected a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	declSig	"readonly a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	declSig	"override a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	declSig	"public readonly a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	declSig	"private override readonly a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "override" @8	tsc: parses also TS2369
+A1s	declSig	"public a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public a?"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public a?: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public a = 1"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public a: A = 1"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"readonly a = 1"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	declSig	"public readonly"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	declSig	"readonly readonly"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "readonly" @9	tsc: parses also TS2369
+A1s	declSig	"public a\n: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public async"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "async" @7	tsc: parses also TS2369
+A1s	declSig	"public a, private b, protected c, readonly d"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	declSig	"public public"	[declareFn,declareMethod]	bun: Expected ")" but found "public" @7	tsc: parses also TS2369
+A1s	declSig	"public static"	[declareFn,declareMethod]	bun: Expected ")" but found "static" @7	tsc: parses also TS2369
+A1s	declSig	"@d public a: A"	[method,setter]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	declSig	"@d readonly a: A"	[method,setter]	bun: Expected ")" but found "a" @12	tsc: parses also TS2369
+A1s	declSig	"this"	[setter]	bun: Setter p must have exactly 1 argument (there are 0) @-1	tsc: parses also TS2784
+A1s	declSig	"this: A"	[setter]	bun: Setter p must have exactly 1 argument (there are 0) @-1	tsc: parses also TS2784
+A1s	declSig	"this: this"	[setter]	bun: Setter p must have exactly 1 argument (there are 0) @-1	tsc: parses also TS2784
+A1s	declSig	"this: typeof this"	[setter]	bun: Setter p must have exactly 1 argument (there are 0) @-1	tsc: parses also TS2784
+A1s	arrowSig	"[...a, b]"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected trailing comma after rest element @5	tsc: parses also TS2462
+A1s	arrowSig	"{ ...a, b }"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected trailing comma after rest element @6	tsc: parses also TS2462
+A1s	arrowSig	"this"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"this: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"this: A, a: B"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"this, a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"a, this: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @3	tsc: parses also TS2680 TS2730
+A1s	arrowSig	"this: this"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"this: typeof this"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @0	tsc: parses also TS2730
+A1s	arrowSig	"public a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"private a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @8	tsc: parses also TS2369
+A1s	arrowSig	"protected a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @10	tsc: parses also TS2369
+A1s	arrowSig	"readonly a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	arrowSig	"override a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	arrowSig	"public readonly a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	arrowSig	"private override readonly a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "override" @8	tsc: parses also TS2369
+A1s	arrowSig	"public a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"public a?"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"public a?: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"public a = 1"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"public a: A = 1"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"readonly a = 1"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @9	tsc: parses also TS2369
+A1s	arrowSig	"public readonly"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "readonly" @7	tsc: parses also TS2369
+A1s	arrowSig	"readonly readonly"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "readonly" @9	tsc: parses also TS2369
+A1s	arrowSig	"public a\n: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A1s	arrowSig	"public async"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "async" @7	tsc: parses also TS2369
+A1s	arrowSig	"public a, private b, protected c, readonly d"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: parses also TS2369
+A2	typeSig	"...a = []"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected ... @0	tsc: TS1048 @3+1 A rest parameter cannot have an initializer. also TS2371
+A2	typeSig	"...a: A[] = []"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected ... @0	tsc: TS1048 @3+1 A rest parameter cannot have an initializer. also TS2371
+A2	typeSig	"a?: A = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "?" @1	tsc: TS1015 @0+1 Parameter cannot have question mark and initializer. also TS2371
+A2	typeSig	"a? = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "?" @1	tsc: TS1015 @0+1 Parameter cannot have question mark and initializer. also TS2371
+A2	typeSig	"readonly public a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @16	tsc: TS1029 @9+6 'public' modifier must precede 'readonly' modifier. also TS2369
+A2	typeSig	"static a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	typeSig	"declare a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @8	tsc: TS1090 @0+7 'declare' modifier cannot appear on a parameter.
+A2	typeSig	"abstract a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	typeSig	"async a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @6	tsc: TS1090 @0+5 'async' modifier cannot appear on a parameter.
+A2	typeSig	"export a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected export @0	tsc: TS1090 @0+6 'export' modifier cannot appear on a parameter.
+A2	typeSig	"in a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Unexpected in @0	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	typeSig	"out a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	typeSig	"accessor a: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "a" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	typeSig	"public = 1"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "=" @7	tsc: TS1212 @0+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2371
+A2	typeSig	"public public"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "public" @7	tsc: TS1212 @7+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2369
+A2	typeSig	"public public a"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "public" @7	tsc: TS1028 @7+6 Accessibility modifier already seen. also TS2369
+A2	typeSig	"readonly readonly a"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ";" but found "=>" @21	tsc: TS1030 @9+8 'readonly' modifier already seen. also TS2369
+A2	typeSig	"public private a"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "private" @7	tsc: TS1028 @7+7 Accessibility modifier already seen. also TS2369
+A2	typeSig	"public { a }: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+15 A parameter property may not be declared using a binding pattern. also TS2369
+A2	typeSig	"public [a]: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @10	tsc: TS1187 @0+13 A parameter property may not be declared using a binding pattern. also TS2369
+A2	typeSig	"public { a }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	typeSig	"readonly { a }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ";" but found "=>" @16	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern. also TS2369
+A2	typeSig	"readonly [a]"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ";" but found "=>" @14	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	typeSig	"public static"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "static" @7	tsc: TS1212 @7+6 Identifier expected. 'static' is a reserved word in strict mode. also TS2369
+A2	typeSig	"static static"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found "static" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	typeSig	"a: asserts a"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: TS1228 @3+9 A type predicate is only allowed in return type position for functions and methods.
+A2	typeSig	"a: ?A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: TS17020 @3+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	typeSig	"a: A?"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: TS17019 @3+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	typeSig	"a: *"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: Expected ")" but found ":" @1	tsc: TS8020 @3+1 JSDoc types can only be used inside documentation comments.
+A2	typeSig	"public ...a: A[]"	[ctorType,abstractCtorType,genericFnType]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+16 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	typeSig	"readonly ...a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected ... @9	tsc: TS1317 @0+13 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	typeSig	"@d a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d a: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d() a: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d @e a: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d public a: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	typeSig	"@d readonly a: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	typeSig	"@d ...a: A[]"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d { a }: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d [a]: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d a = 1"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2371
+A2	typeSig	"@d a?: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@a.b.c a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@a.b() a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@(a) a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@a<T>() a"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	typeSig	"@d\na: A"	[ctorType,abstractCtorType,genericFnType]	bun: Unexpected @ @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"...a = []"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @5	tsc: TS1048 @3+1 A rest parameter cannot have an initializer. also TS2371
+A2	memberSig	"...a: A[] = []"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @10	tsc: TS1048 @3+1 A rest parameter cannot have an initializer. also TS2371
+A2	memberSig	"a?: A = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @6	tsc: TS1015 @0+1 Parameter cannot have question mark and initializer. also TS2371
+A2	memberSig	"a? = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @3	tsc: TS1015 @0+1 Parameter cannot have question mark and initializer. also TS2371
+A2	memberSig	"readonly public a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'readonly' modifier. also TS2369
+A2	memberSig	"static a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	memberSig	"declare a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @8	tsc: TS1090 @0+7 'declare' modifier cannot appear on a parameter.
+A2	memberSig	"abstract a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	memberSig	"async a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @6	tsc: TS1090 @0+5 'async' modifier cannot appear on a parameter.
+A2	memberSig	"export a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1090 @0+6 'export' modifier cannot appear on a parameter.
+A2	memberSig	"in a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	memberSig	"out a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	memberSig	"accessor a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	memberSig	"public = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "=" @7	tsc: TS1212 @0+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2371
+A2	memberSig	"public public"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "public" @7	tsc: TS1212 @7+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2369
+A2	memberSig	"public public a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "public" @7	tsc: TS1028 @7+6 Accessibility modifier already seen. also TS2369
+A2	memberSig	"readonly readonly a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "readonly" @9	tsc: TS1030 @9+8 'readonly' modifier already seen. also TS2369
+A2	memberSig	"public private a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "private" @7	tsc: TS1028 @7+7 Accessibility modifier already seen. also TS2369
+A2	memberSig	"public ...a: A[]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+16 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	memberSig	"public { a }: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+15 A parameter property may not be declared using a binding pattern. also TS2369
+A2	memberSig	"public [a]: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "[" @7	tsc: TS1187 @0+13 A parameter property may not be declared using a binding pattern. also TS2369
+A2	memberSig	"public { a }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	memberSig	"readonly { a }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "{" @9	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern. also TS2369
+A2	memberSig	"readonly [a]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "[" @9	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	memberSig	"readonly ...a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "..." @9	tsc: TS1317 @0+13 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	memberSig	"public static"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "static" @7	tsc: TS1212 @7+6 Identifier expected. 'static' is a reserved word in strict mode. also TS2369
+A2	memberSig	"static static"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "static" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	memberSig	"@d a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d() a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d @e a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d public a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	memberSig	"@d readonly a: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	memberSig	"@d ...a: A[]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d { a }: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d [a]: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d a = 1"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here. also TS2371
+A2	memberSig	"@d a?: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@a.b.c a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@a.b() a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@(a) a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@a<T>() a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"@d\na: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Backtrack @-12	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	memberSig	"a: asserts a"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "a" @11	tsc: TS1228 @3+9 A type predicate is only allowed in return type position for functions and methods.
+A2	memberSig	"a: ?A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Unexpected ? @3	tsc: TS17020 @3+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	memberSig	"a: A?"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Expected ")" but found "?" @4	tsc: TS17019 @3+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	memberSig	"a: *"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: Unexpected * @3	tsc: TS8020 @3+1 JSDoc types can only be used inside documentation comments.
+A2	declSig	"...a: A[], b: B"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "," @9	tsc: TS1014 @0+3 A rest parameter must be last in a parameter list.
+A2	declSig	"...a = []"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "=" @5	tsc: TS1048 @3+1 A rest parameter cannot have an initializer.
+A2	declSig	"...a: A[] = []"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "=" @10	tsc: TS1048 @3+1 A rest parameter cannot have an initializer.
+A2	declSig	"...a,"	[fnDecl,fnExpr,overload,method,methodOverload,abstractMethod,ctor,ctorOverload,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "," @4	tsc: TS1013 @4+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	declSig	"...a: A[],"	[fnDecl,fnExpr,overload,method,methodOverload,abstractMethod,ctor,ctorOverload,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "," @9	tsc: TS1013 @9+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	declSig	"readonly public a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'readonly' modifier. also TS2369
+A2	declSig	"static a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	declSig	"declare a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @8	tsc: TS1090 @0+7 'declare' modifier cannot appear on a parameter.
+A2	declSig	"abstract a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	declSig	"async a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @6	tsc: TS1090 @0+5 'async' modifier cannot appear on a parameter.
+A2	declSig	"export a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected identifier but found "export" @0	tsc: TS1090 @0+6 'export' modifier cannot appear on a parameter.
+A2	declSig	"in a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected identifier but found "in" @0	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	declSig	"out a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	declSig	"accessor a: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	declSig	"public public"	[fnDecl,fnExpr,overload,method,methodOverload,abstractMethod,ctor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "public" @7	tsc: TS1212 @7+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2369
+A2	declSig	"public public a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "public" @7	tsc: TS1028 @7+6 Accessibility modifier already seen. also TS2369
+A2	declSig	"readonly readonly a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "readonly" @9	tsc: TS1030 @9+8 'readonly' modifier already seen. also TS2369
+A2	declSig	"public private a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "private" @7	tsc: TS1028 @7+7 Accessibility modifier already seen. also TS2369
+A2	declSig	"public ...a: A[]"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+16 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	declSig	"public { a }: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+15 A parameter property may not be declared using a binding pattern. also TS2369
+A2	declSig	"public [a]: A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "[" @7	tsc: TS1187 @0+13 A parameter property may not be declared using a binding pattern. also TS2369
+A2	declSig	"public { a }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	declSig	"readonly { a }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "{" @9	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern. also TS2369
+A2	declSig	"readonly [a]"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "[" @9	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	declSig	"readonly ...a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "..." @9	tsc: TS1317 @0+13 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	declSig	"public static"	[fnDecl,fnExpr,overload,method,methodOverload,abstractMethod,ctor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "static" @7	tsc: TS1212 @7+6 Identifier expected. 'static' is a reserved word in strict mode. also TS2369
+A2	declSig	"static static"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "static" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	declSig	"@d a"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d a: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d() a: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d @e a: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d public a: A"	[fnDecl,fnExpr,declareFn,overload,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	declSig	"@d readonly a: A"	[fnDecl,fnExpr,declareFn,overload,methodOverload,abstractMethod,declareMethod,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	declSig	"@d ...a: A[]"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d { a }: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d [a]: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d a = 1"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d a?: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@a.b.c a"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@a.b() a"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@(a) a"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@a<T>() a"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"@d\na: A"	[fnDecl,fnExpr,declareFn,overload,objMethod,generator,asyncFn]	bun: Expected identifier but found "@" @0	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	declSig	"a: asserts a"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "a" @11	tsc: TS1228 @3+9 A type predicate is only allowed in return type position for functions and methods.
+A2	declSig	"a: ?A"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Unexpected ? @3	tsc: TS17020 @3+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	declSig	"a: A?"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Expected ")" but found "?" @4	tsc: TS17019 @3+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	declSig	"a: *"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: Unexpected * @3	tsc: TS8020 @3+1 JSDoc types can only be used inside documentation comments.
+A2	declSig	"{ arguments }"	[method,ctor,setter]	bun: Declarations with the name "arguments" cannot be used in strict mode @2	tsc: TS1210 @2+9 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	declSig	"{ eval }"	[method,ctor,setter]	bun: Declarations with the name "eval" cannot be used in strict mode @2	tsc: TS1210 @2+4 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'eval'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	declSig	"arguments"	[method,ctor,setter]	bun: Declarations with the name "arguments" cannot be used in strict mode @0	tsc: TS1210 @0+9 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	declSig	"eval"	[method,ctor,setter]	bun: Declarations with the name "eval" cannot be used in strict mode @0	tsc: TS1210 @0+4 Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'eval'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.
+A2	declSig	""	[setter]	bun: Setter p must have exactly 1 argument (there are 0) @15	tsc: TS1049 @14+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"a, b"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @3	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"a: A, b: B"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @6	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"a?: A, b?: B"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @7	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"a?: A, b: B"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @7	tsc: TS1016 @7+1 A required parameter cannot follow an optional parameter.
+A2	declSig	"a: A, ...b: B[]"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @9	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"a = 1, b = 2"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @7	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"{ a, b }: A, [c, d]: B"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @13	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"public a?"	[setter]	bun: Expected ")" but found "a" @7	tsc: TS1051 @8+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	declSig	"public a?: A"	[setter]	bun: Expected ")" but found "a" @7	tsc: TS1051 @8+1 A 'set' accessor cannot have an optional parameter. also TS2369
+A2	declSig	"public a = 1"	[setter]	bun: Expected ")" but found "a" @7	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	declSig	"public a: A = 1"	[setter]	bun: Expected ")" but found "a" @7	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	declSig	"readonly a = 1"	[setter]	bun: Expected ")" but found "a" @9	tsc: TS1052 @-2+1 A 'set' accessor parameter cannot have an initializer. also TS2369
+A2	declSig	"public, private"	[setter]	bun: Setter p must have exactly 1 argument (there are 2) @8	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter.
+A2	declSig	"public a, private b, protected c, readonly d"	[setter]	bun: Expected ")" but found "a" @7	tsc: TS1049 @-2+1 A 'set' accessor must have exactly one parameter. also TS2369
+A2	declSig	"yield"	[generator]	bun: Cannot use "yield" or "await" here. @0	tsc: TS1212 @0+5 Identifier expected. 'yield' is a reserved word in strict mode.
+A2	declSig	"yield: A"	[generator]	bun: Cannot use "yield" or "await" here. @0	tsc: TS1212 @0+5 Identifier expected. 'yield' is a reserved word in strict mode.
+A2	declSig	"[await]"	[asyncFn]	bun: Cannot use "yield" or "await" here. @1	tsc: TS1359 @1+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	declSig	"{ a: await }"	[asyncFn]	bun: Cannot use "yield" or "await" here. @5	tsc: TS1359 @5+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	declSig	"await"	[asyncFn]	bun: Cannot use "yield" or "await" here. @0	tsc: TS1359 @0+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	declSig	"await: A"	[asyncFn]	bun: Cannot use "yield" or "await" here. @0	tsc: TS1359 @0+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"...a: A[], b: B"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected "," after rest pattern @9	tsc: TS1014 @0+3 A rest parameter must be last in a parameter list.
+A2	arrowSig	"...a = []"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: A rest argument cannot have a default initializer @5	tsc: TS1048 @3+1 A rest parameter cannot have an initializer.
+A2	arrowSig	"...a: A[] = []"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Invalid binding pattern @-1	tsc: TS1048 @3+1 A rest parameter cannot have an initializer.
+A2	arrowSig	"...a,"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected "," after rest pattern @4	tsc: TS1013 @4+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	arrowSig	"...a: A[],"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected "," after rest pattern @9	tsc: TS1013 @9+1 A rest parameter or binding pattern may not have a trailing comma.
+A2	arrowSig	"a? = 1"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected = @3	tsc: TS1015 @0+1 Parameter cannot have question mark and initializer.
+A2	arrowSig	"readonly public a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "public" @9	tsc: TS1029 @9+6 'public' modifier must precede 'readonly' modifier. also TS2369
+A2	arrowSig	"static a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	arrowSig	"declare a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @8	tsc: TS1090 @0+7 'declare' modifier cannot appear on a parameter.
+A2	arrowSig	"abstract a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	arrowSig	"export a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected export @0	tsc: TS1090 @0+6 'export' modifier cannot appear on a parameter.
+A2	arrowSig	"in a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected in @0	tsc: TS1274 @0+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	arrowSig	"out a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @4	tsc: TS1274 @0+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	arrowSig	"accessor a: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @9	tsc: TS1275 @0+8 'accessor' modifier can only appear on a property declaration.
+A2	arrowSig	"public public"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "public" @7	tsc: TS1212 @7+6 Identifier expected. 'public' is a reserved word in strict mode. also TS2369
+A2	arrowSig	"public public a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "public" @7	tsc: TS1028 @7+6 Accessibility modifier already seen. also TS2369
+A2	arrowSig	"readonly readonly a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "readonly" @9	tsc: TS1030 @9+8 'readonly' modifier already seen. also TS2369
+A2	arrowSig	"public private a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "private" @7	tsc: TS1028 @7+7 Accessibility modifier already seen. also TS2369
+A2	arrowSig	"public static"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "static" @7	tsc: TS1212 @7+6 Identifier expected. 'static' is a reserved word in strict mode. also TS2369
+A2	arrowSig	"static static"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "static" @7	tsc: TS1090 @0+6 'static' modifier cannot appear on a parameter.
+A2	arrowSig	"a: asserts a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "a" @11	tsc: TS1228 @3+9 A type predicate is only allowed in return type position for functions and methods.
+A2	arrowSig	"a: ?A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected ? @3	tsc: TS17020 @3+2 '?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrowSig	"a: A?"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Expected ")" but found "?" @4	tsc: TS17019 @3+2 '?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?
+A2	arrowSig	"a: *"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: Unexpected * @3	tsc: TS8020 @3+1 JSDoc types can only be used inside documentation comments.
+A2	arrowSig	"{ await }"	[asyncArrow]	bun: Cannot use "await" here @2	tsc: TS1359 @2+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"[await]"	[asyncArrow]	bun: Unexpected ] @6	tsc: TS1359 @1+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"{ a: await }"	[asyncArrow]	bun: Unexpected } @11	tsc: TS1359 @5+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"await"	[asyncArrow]	bun: Unexpected ) @5	tsc: TS1359 @0+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"await: A"	[asyncArrow]	bun: Unexpected : @5	tsc: TS1359 @0+5 Identifier expected. 'await' is a reserved word that cannot be used here.
+A2	arrowSig	"async a: A"	[genericArrow]	bun: Expected ")" but found "a" @6	tsc: TS1090 @0+5 'async' modifier cannot appear on a parameter.
+A2	arrowSig	"public ...a: A[]"	[genericArrow]	bun: Expected ")" but found "..." @7	tsc: TS1317 @0+16 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	arrowSig	"public { a }: A"	[genericArrow]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+15 A parameter property may not be declared using a binding pattern. also TS2369
+A2	arrowSig	"public [a]: A"	[genericArrow]	bun: Invalid binding pattern @0	tsc: TS1187 @0+13 A parameter property may not be declared using a binding pattern. also TS2369
+A2	arrowSig	"public { a }"	[genericArrow]	bun: Expected ")" but found "{" @7	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	arrowSig	"readonly { a }"	[genericArrow]	bun: Expected ")" but found "{" @9	tsc: TS1187 @0+14 A parameter property may not be declared using a binding pattern. also TS2369
+A2	arrowSig	"readonly [a]"	[genericArrow]	bun: Invalid binding pattern @0	tsc: TS1187 @0+12 A parameter property may not be declared using a binding pattern. also TS2369
+A2	arrowSig	"readonly ...a"	[genericArrow]	bun: Expected ")" but found "..." @9	tsc: TS1317 @0+13 A parameter property cannot be declared using a rest parameter. also TS2369
+A2	arrowSig	"@d a"	[genericArrow]	bun: Expected "class" but found "a" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d a: A"	[genericArrow]	bun: Expected "class" but found "a" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d() a: A"	[genericArrow]	bun: Expected "class" but found "a" @5	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d @e a: A"	[genericArrow]	bun: Expected "class" but found "a" @6	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d public a: A"	[genericArrow]	bun: Expected "class" but found "public" @3	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	arrowSig	"@d readonly a: A"	[genericArrow]	bun: Expected "class" but found "readonly" @3	tsc: TS1206 @0+1 Decorators are not valid here. also TS2369
+A2	arrowSig	"@d ...a: A[]"	[genericArrow]	bun: Expected "class" but found "..." @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d { a }: A"	[genericArrow]	bun: Expected "class" but found "{" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d [a]: A"	[genericArrow]	bun: Expected "class" but found "[" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d a = 1"	[genericArrow]	bun: Expected "class" but found "a" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d a?: A"	[genericArrow]	bun: Expected "class" but found "a" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@a.b.c a"	[genericArrow]	bun: Expected "class" but found "a" @7	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@a.b() a"	[genericArrow]	bun: Expected "class" but found "a" @7	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@(a) a"	[genericArrow]	bun: Expected "class" but found "a" @5	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@a<T>() a"	[genericArrow]	bun: Expected "class" but found "a" @8	tsc: TS1206 @0+1 Decorators are not valid here.
+A2	arrowSig	"@d\na: A"	[genericArrow]	bun: Expected "class" but found "a" @3	tsc: TS1206 @0+1 Decorators are not valid here.
+B	typeSig	"{ : a }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1131 @2+1 Property or signature expected.
+B	typeSig	"{ a }: "	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1110 @7+1 Type expected.
+B	typeSig	"[this]"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1005 @8+2 ';' expected.
+B	typeSig	"{ a: this }"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1005 @13+2 ';' expected.
+B	typeSig	"this?: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1005 @4+1 ',' expected.
+B	typeSig	"...this: A"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1359 @3+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+B	typeSig	"a:"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1110 @2+1 Type expected.
+B	typeSig	"a?:"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	typeSig	"a: a is B"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1005 @5+2 ',' expected.
+B	typeSig	"a: "	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1110 @3+1 Type expected.
+B	typeSig	"a: |"	[fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion,fnTypeAsArg,fnTypeArrowRet]	bun: accepts	tsc: TS1110 @4+1 Type expected.
+B	memberSig	"[this]"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: accepts	tsc: TS1181 @1+4 Array element destructuring pattern expected.
+B	memberSig	"{ a: this }"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: accepts	tsc: TS1359 @5+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+B	memberSig	"this?: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: accepts	tsc: TS1005 @4+1 ',' expected.
+B	memberSig	"...this: A"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: accepts	tsc: TS1359 @3+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+B	memberSig	"a: a is B"	[callSig,constructSig,methodSig,ifaceMethod,ifaceCall]	bun: accepts	tsc: TS1005 @5+2 ',' expected.
+B	declSig	"{ if }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: accepts	tsc: TS1005 @5+1 ':' expected.
+B	declSig	"{ this }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: accepts	tsc: TS1005 @7+1 ':' expected.
+B	declSig	"{ enum }"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: accepts	tsc: TS1005 @7+1 ':' expected.
+B	declSig	"a: a is B"	[fnDecl,fnExpr,declareFn,overload,method,methodOverload,abstractMethod,declareMethod,ctor,ctorOverload,declareCtor,objMethod,setter,generator,asyncFn]	bun: accepts	tsc: TS1005 @5+2 ',' expected.
+B	declSig	"public\na: A"	[ctor,ctorOverload,declareCtor]	bun: accepts	tsc: TS1005 @7+1 ',' expected.
+B	declSig	"readonly\na: A"	[ctor,ctorOverload,declareCtor]	bun: accepts	tsc: TS1005 @9+1 ',' expected.
+B	arrowSig	"{ ...{ a } }"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1003 @5+1 Identifier expected.
+B	arrowSig	"a!"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @4+2 ';' expected.
+B	arrowSig	"a!: A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @2+1 ')' expected.
+B	arrowSig	"(a)"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @5+2 ';' expected.
+B	arrowSig	"(a): A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @3+1 ')' expected.
+B	arrowSig	"a as A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @8+2 ';' expected.
+B	arrowSig	"a satisfies A"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @15+2 ';' expected.
+B	arrowSig	"<A>a"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @6+2 ';' expected.
+B	arrowSig	"a<A>"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @6+2 ';' expected.
+B	arrowSig	"a: a is B"	[arrow,arrowRet,asyncArrow,genericArrow,arrowInCond,arrowInCondRet]	bun: accepts	tsc: TS1005 @5+2 ',' expected.

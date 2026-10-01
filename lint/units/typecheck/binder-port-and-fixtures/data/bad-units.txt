@@ -1,0 +1,15 @@
+circularImportAlias.ts
+circularReferenceInImport__0/db.d.ts
+duplicateIdentifierRelatedSpans_moduleAugmentation__1/b.ts
+duplicateVarsAcrossFileBoundaries__5/duplicateVarsAcrossFileBoundaries_5.ts
+dynamicNamesErrors.ts
+erasableSyntaxOnlyDeclaration__1/index.d.ts
+erasableSyntaxOnly__0/index.ts
+exportAsNamespace_augment__1/b.ts
+importSpecifiers1__5/e.ts
+moduleAugmentationDuringSyntheticDefaultCheck__2/idx.ts
+moduleAugmentationInAmbientModule1__0/O.d.ts
+moduleAugmentationInAmbientModule2__0/O.d.ts
+moduleAugmentationInAmbientModule3__0/O.d.ts
+moduleAugmentationInAmbientModule4__0/O.d.ts
+module_augmentUninstantiatedModule.ts

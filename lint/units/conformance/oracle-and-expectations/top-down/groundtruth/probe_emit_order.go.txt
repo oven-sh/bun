@@ -1,0 +1,66 @@
+package testrunner
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/microsoft/typescript-go/internal/ast"
+	"github.com/microsoft/typescript-go/internal/core"
+	"github.com/microsoft/typescript-go/internal/diagnosticwriter"
+	"github.com/microsoft/typescript-go/internal/testutil/tsbaseline"
+)
+
+var probeMu sync.Mutex
+
+// Research probe: the error baseline of the program before emit against the one after emit.
+func (c *compilerTest) probeEmitOrder(t *testing.T, suiteName string) {
+	out := os.Getenv("OE_PROBE_OUT")
+	if out == "" {
+		return
+	}
+	files := core.Concatenate(c.tsConfigFiles, core.Concatenate(c.toBeCompiled, c.otherFiles))
+	pretty := c.result.Options.Pretty.IsTrue()
+	text := func(ds []*ast.Diagnostic) string {
+		if len(ds) == 0 {
+			return "<no content>"
+		}
+		return tsbaseline.GetErrorBaseline(t, files, diagnosticwriter.WrapASTDiagnostics(ds), diagnosticwriter.CompareASTDiagnostics, pretty)
+	}
+	pre := c.result.PreDiagnostics
+	post := c.result.PostDiagnostics
+	mapped := len(c.contentMappedFileNames())
+	var a, b string
+	status := "same"
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				status = "panic"
+			}
+		}()
+		a = text(pre)
+		b = text(post)
+		if len(pre) != len(post) {
+			status = "count"
+		} else if a != b {
+			status = "differ"
+		}
+	}()
+	probeMu.Lock()
+	defer probeMu.Unlock()
+	f, err := os.OpenFile(filepath.Join(out, "instances.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Errorf("probe: %v", err)
+		return
+	}
+	fmt.Fprintf(f, "%s\t%s\t%d\t%d\t%d\t%s\n", suiteName, c.configuredName, len(pre), len(post), mapped, status)
+	f.Close()
+	if status != "same" {
+		safe := strings.ReplaceAll(c.configuredName, "/", "_")
+		_ = os.WriteFile(filepath.Join(out, suiteName+"__"+safe+".pre.txt"), []byte(a), 0o644)
+		_ = os.WriteFile(filepath.Join(out, suiteName+"__"+safe+".post.txt"), []byte(b), 0o644)
+	}
+}

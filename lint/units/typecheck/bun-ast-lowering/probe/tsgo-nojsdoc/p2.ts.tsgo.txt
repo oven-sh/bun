@@ -1,0 +1,60 @@
+file /p2.ts scriptKind=3 variant=0 dts=false textLen=111
+externalModuleIndicator KindClassDeclaration[45,68)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=35 identifiers=12 text=13 reparsedClones=0
+root KindSourceFile [0,111) f=0x0
+  .Statements: list [0,110) n=4
+    - KindClassDeclaration [0,45) f=0x0
+      .Members: list [14,43) n=2
+        - KindMethodDeclaration [14,24) f=0x0
+          .Body: KindBlock [21,24) f=0x0
+            .Statements: list [23,23) n=0
+          .Parameters: list [20,20) n=0
+          .modifiers.flags=0x8000
+          .modifiers: list [14,17) n=1
+            - KindDecorator [14,17) f=0x0
+              .Expression: KindIdentifier [16,17) f=0x1000 Text="d"
+          .name: KindIdentifier [17,19) f=0x0 Text="m"
+        - KindPropertyDeclaration [24,43) f=0x0
+          .Initializer: KindNumericLiteral [40,42) f=0x0 Text="1" TokenFlags=0x0
+          .modifiers.flags=0x8100
+          .modifiers: list [24,36) n=2
+            - KindDecorator [24,29) f=0x0
+              .Expression: KindCallExpression [26,29) f=0x1000
+                .Arguments: list [28,28) n=0
+                .Expression: KindIdentifier [26,27) f=0x1000 Text="e"
+            - KindStaticKeyword [29,36) f=0x0
+          .name: KindIdentifier [36,38) f=0x0 Text="x"
+      .modifiers.flags=0x8000
+      .modifiers: list [0,4) n=1
+        - KindDecorator [0,4) f=0x0
+          .Expression: KindIdentifier [1,4) f=0x1000 Text="dec"
+      .name: KindIdentifier [10,12) f=0x0 Text="C"
+    - KindClassDeclaration [45,68) f=0x0
+      .Members: list [67,67) n=0
+      .modifiers.flags=0x8020
+      .modifiers: list [45,57) n=2
+        - KindDecorator [45,50) f=0x0
+          .Expression: KindIdentifier [47,50) f=0x1000 Text="dec"
+        - KindExportKeyword [50,57) f=0x0
+      .name: KindIdentifier [63,65) f=0x0 Text="D"
+    - KindClassDeclaration [68,91) f=0x0
+      .Members: list [90,90) n=0
+      .modifiers.flags=0x8020
+      .modifiers: list [68,80) n=2
+        - KindExportKeyword [68,75) f=0x0
+        - KindDecorator [75,80) f=0x0
+          .Expression: KindIdentifier [77,80) f=0x1000 Text="dec"
+      .name: KindIdentifier [86,88) f=0x0 Text="E"
+    - KindExpressionStatement [91,110) f=0x0
+      .Expression: KindBinaryExpression [91,109) f=0x0
+        .Left: KindIdentifier [91,93) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [93,95) f=0x0
+        .Right: KindClassExpression [95,109) f=0x0
+          .Members: list [108,108) n=0
+          .modifiers.flags=0x8000
+          .modifiers: list [95,100) n=1
+            - KindDecorator [95,100) f=0x0
+              .Expression: KindIdentifier [97,100) f=0x1000 Text="dec"
+  .EndOfFileToken: KindEndOfFile [110,111) f=0x0

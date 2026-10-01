@@ -1,0 +1,2 @@
+PROBE_STRESS=1 over logs/corpus-node_modules.list and logs/corpus-big.list
+files 9824 binaries 1719619 members 2377930 indexes 217944 cases 58122 case keyword found by the text before the test 58122 scans that failed 0

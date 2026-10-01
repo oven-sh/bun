@@ -1,0 +1,8 @@
+[
+ "x = a ? (b): T => (c as U)! : d",
+ "x = a ? (b) : c => (d as U)!",
+ "x = a ? (b) : c => class { private q; constructor(public r?) {} }",
+ "x = a ? (b): T => class { private q; constructor(public r?) {} } : d",
+ "x = a ? (b) : c => <T>e",
+ "x = a ? (b): void => { let v!: number; const enum E { A } abstract class K {} } : d"
+]

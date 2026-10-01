@@ -1,0 +1,32 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+more.ts(2,12): error TS2322: Type '`a${string}`' is not assignable to type '`a${number}`'.
+more.ts(2,23): error TS2322: Type '`b${string}`' is not assignable to type '`a${string}`'.
+more.ts(4,14): error TS2322: Type 'string' is not assignable to type 'Uppercase<string>'.
+more.ts(4,27): error TS2322: Type 'Lowercase<string>' is not assignable to type 'Uppercase<string>'.
+more.ts(5,41): error TS2322: Type '"x"' is not assignable to type '`${number}`'.
+more.ts(7,48): error TS2322: Type '"n"' is not assignable to type 'IsStr<T>'.
+more.ts(9,1): error TS2322: Type '{ a: string; } & { b: number; }' is not assignable to type '{ a: string; b: string; }'.
+  Types of property 'b' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+more.ts(9,10): error TS2322: Type '{ a: string; b: string; }' is not assignable to type '{ a: string; } & { b: number; }'.
+  Type '{ a: string; b: string; }' is not assignable to type '{ b: number; }'.
+    Types of property 'b' are incompatible.
+      Type 'string' is not assignable to type 'number'.
+more.ts(12,10): error TS2394: This overload signature is not compatible with its implementation signature.
+  related: more.ts(14,10): error TS2750: The implementation signature is declared here.
+more.ts(16,1): error TS2322: Type '(x: unknown) => x is number' is not assignable to type '(x: unknown) => x is string'.
+  Type predicate 'x is number' is not assignable to 'x is string'.
+    Type 'number' is not assignable to type 'string'.
+more.ts(16,12): error TS2322: Type '(y: unknown, x: unknown) => x is string' is not assignable to type '(x: unknown) => x is string'.
+  Target signature provides too few arguments. Expected 2 or more, but got 1.
+more.ts(22,32): error TS2322: Type 'string' is not assignable to type 'number'.
+more.ts(33,7): error TS2322: Type 'number' is not assignable to type 'string'.
+more.ts(33,42): error TS2345: Argument of type '(a: 1) => void' is not assignable to parameter of type '(a: number) => void'.
+  Types of parameters 'a' and 'a' are incompatible.
+    Type 'number' is not assignable to type '1'.
+more.ts(35,5): error TS2403: Subsequent variable declarations must have the same type.  Variable 'idv' must be of type '{ (x: number): string; [k: string]: unknown; }', but here has type '{ (x: string): string; [k: string]: unknown; }'.
+  related: more.ts(34,5): message TS6203: 'idv' was also declared here.
+more.ts(36,5): error TS2367: This comparison appears to be unintentional because the types 'string | number' and 'boolean' have no overlap.
+more.ts(39,7): error TS2741: Property 'a' is missing in type 'Pick<{ a: number; b: string; }, "b">' but required in type '{ a: number; }'.
+  related: more.ts(39,13): message TS2728: 'a' is declared here.
+SIZES after check: identity=2 assignable=55 comparable=3 subtype=2 strictSubtype=4 enum=0 types=318

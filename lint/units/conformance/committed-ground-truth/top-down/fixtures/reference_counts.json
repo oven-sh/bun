@@ -1,0 +1,99 @@
+{
+  "upstream": {
+    "typescript-go": "89d5d5b2849a0db0957065889ca58536fa6d2e4a",
+    "TypeScript": "5848bc5157b22ff7f4e3369f4645a514a433b15f"
+  },
+  "corpus": {
+    "files": 22186,
+    "bytes": 32485872,
+    "sha256": "fe1746ba68ab2ebbb75e200ba900339edc30ca13d7633de0d4c1aa93634c5cd2",
+    "cases": 12444,
+    "tsBaselines": 9056,
+    "tsgoBaselines": {
+      "compiler": 276,
+      "conformance": 398
+    },
+    "expectsNoErrors": 23,
+    "accepted": 1163,
+    "triaged": 2,
+    "postEmitOrder": 3
+  },
+  "enumeration": {
+    "files": 12444,
+    "droppedByName": 45,
+    "instances": 14915,
+    "run": 12797,
+    "skipped": 2118,
+    "invalid": 0,
+    "E": 7027,
+    "C": 5770,
+    "compiler": {
+      "instances": 7235,
+      "run": 6282,
+      "skipped": 953,
+      "E": 3187,
+      "C": 3095
+    },
+    "conformance": {
+      "instances": 7680,
+      "run": 6515,
+      "skipped": 1165,
+      "E": 3840,
+      "C": 2675
+    },
+    "skippedByReason": {
+      "unsupported target ES5": 1244,
+      "unsupported module kind AMD": 321,
+      "unsupported module kind System": 222,
+      "unsupported outFile": 87,
+      "unsupported module kind UMD": 57,
+      "unsupported module resolution kind 1": 57,
+      "alwaysStrict=false is unsupported": 52,
+      "unsupported baseUrl": 31,
+      "esModuleInterop=false is unsupported": 24,
+      "unsupported module resolution kind 2": 23
+    },
+    "tags": {
+      "accepted": 442,
+      "skipped-emit": 9,
+      "post-emit-order": 3,
+      "triaged": 2
+    },
+    "oracleSource": {
+      "typescript": 6353,
+      "none": 5747,
+      "typescript-go": 674,
+      "expects-no-errors": 23
+    },
+    "prettyOracles": 14,
+    "tsBaselineUse": {
+      "oracle": 6353,
+      "ofSkippedInstance": 2081,
+      "behindTypescriptGo": 552,
+      "noInstance": 47,
+      "behindExpectsNoErrors": 23
+    }
+  },
+  "digests": {
+    "subtests": "a78d75bfd9dcef2baf757f24a3519742c390c227dd1d73254f72ebe80f22abf3",
+    "names": "889b4a50fd0c57844c662bf32802941375170eeee9aab5b5aa56ce07779423ac",
+    "status": "210ef4e7de70cb369e550af1de3cf26285ef5d3108d77a5892427588fcba68bd",
+    "kinds": "c399abac2a841d3ca06575ea5c22c0242ddd06bec2f665a4ff8b66be344492b6",
+    "oracles": "432fcc857dcde179be33075f7205fd59b101f96f0a704c40739157ca532270c4"
+  },
+  "list": {
+    "rows": 14915,
+    "sha256": "85cbb4e97d2222269cf72fe758b2b43bcbdb1b62f3d3676eb4d2e94a1f7d8960"
+  },
+  "referenceBaselines": {
+    "files": 45811,
+    "notOfARunInstance": 0,
+    "runInstancesWithOne": 12763,
+    "runInstancesWithNone": 34
+  },
+  "referenceRun": {
+    "typescript-go": "89d5d5b2849a0db0957065889ca58536fa6d2e4a",
+    "subtests": "a78d75bfd9dcef2baf757f24a3519742c390c227dd1d73254f72ebe80f22abf3",
+    "skips": "01b4741818d4f0ce453cf99f63d1664df8104b38bb6fc95541716f84062ad3d3"
+  }
+}

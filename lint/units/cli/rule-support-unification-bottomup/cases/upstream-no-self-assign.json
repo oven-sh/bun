@@ -1,0 +1,400 @@
+{
+	"valid": [
+		{
+			"code": "var a = a"
+		},
+		{
+			"code": "a = b"
+		},
+		{
+			"code": "a += a"
+		},
+		{
+			"code": "a = +a"
+		},
+		{
+			"code": "a = [a]"
+		},
+		{
+			"code": "a &= a"
+		},
+		{
+			"code": "a |= a"
+		},
+		{
+			"code": "let a = a",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "const a = a",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a] = a",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a = 1] = [a]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, b] = [b, a]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a,, b] = [, b, a]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[x, a] = [...x, a]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[...a] = [...a, 1]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, ...b] = [0, ...b, 1]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, b] = {a, b}",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a} = a)",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a = 1} = {a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a: b} = {a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a} = {a: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a} = {a() {}})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a} = {[a]: a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({[a]: b} = {[a]: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({'foo': a, 1: a} = {'bar': a, 2: a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a, ...b} = {a, ...b})",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "a.b = a.c"
+		},
+		{
+			"code": "a.b = c.b"
+		},
+		{
+			"code": "a.b = a[b]"
+		},
+		{
+			"code": "a[b] = a.b"
+		},
+		{
+			"code": "a.b().c = a.b().c"
+		},
+		{
+			"code": "b().c = b().c"
+		},
+		{
+			"code": "a.null = a[/(?<zero>0)/]",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "a[b + 1] = a[b + 1]"
+		},
+		{
+			"code": "this.x = this.y"
+		},
+		{
+			"code": "class C { #field; foo() { this['#field'] = this.#field; } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C { #field; foo() { this.#field = this['#field']; } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "a = a"
+		},
+		{
+			"code": "[a] = [a]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, b] = [a, b]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, b] = [a, c]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, b] = [, b]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[a, ...b] = [a, ...b]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "[[a], {b}] = [[a], {b}]",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a} = {a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a: b} = {a: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({'a': b} = {'a': b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a: b} = {'a': b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({'a': b} = {a: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({1: b} = {1: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({1: b} = {'1': b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({'1': b} = {1: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({['a']: b} = {a: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({'a': b} = {[`a`]: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({1: b} = {[1]: b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a, b} = {a, b})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a, b} = {b, a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a, b} = {c, a})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a: {b}, c: [d]} = {a: {b}, c: [d]})",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "({a, b} = {a, ...x, b})",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "a.b = a.b"
+		},
+		{
+			"code": "a.b.c = a.b.c"
+		},
+		{
+			"code": "a[b] = a[b]"
+		},
+		{
+			"code": "a['b'] = a['b']"
+		},
+		{
+			"code": "a[\n    'b'\n] = a[\n    'b'\n]"
+		},
+		{
+			"code": "a.b = a.b"
+		},
+		{
+			"code": "a.b.c = a.b.c"
+		},
+		{
+			"code": "a[b] = a[b]"
+		},
+		{
+			"code": "a['b'] = a['b']"
+		},
+		{
+			"code": "a[\n    'b'\n] = a[\n    'b'\n]"
+		},
+		{
+			"code": "this.x = this.x"
+		},
+		{
+			"code": "a['/(?<zero>0)/'] = a[/(?<zero>0)/]",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "(a?.b).c = (a?.b).c",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "a.b = a?.b",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "class C { #field; foo() { this.#field = this.#field; } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "class C { #field; foo() { [this.#field] = [this.#field]; } }",
+			"languageOptions": {
+				"ecmaVersion": 2022
+			}
+		},
+		{
+			"code": "a &&= a",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "a ||= a",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "a ??= a",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		}
+	],
+	"skipped": 6
+}

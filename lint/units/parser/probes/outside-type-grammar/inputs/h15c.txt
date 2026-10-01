@@ -1,0 +1,23 @@
+interface as {}\n
+interface as {\n  a: 1\n}\nconst x = 1;\n
+namespace as {}\n
+namespace as {\n}\nconst x = 1;\n
+type as any\n
+export interface as {}\n
+declare interface as {}\n
+namespace as {}.foo
+namespace as {}[0]
+namespace as {} as any
+namespace as {} ? 1 : 2
+namespace as {}, x
+namespace as {} = 1
+namespace as {}()
+namespace as {}`x`
+namespace as {}!
+namespace as {}++
+namespace as {} in x
+namespace as {} | X {}
+namespace as {} & { a: 1 } X {}
+interface as {} | X\nfoo()
+interface as {}[]\nfoo()
+interface as { a: 1 } extends B ? C : D\nfoo()

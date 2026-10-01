@@ -1,0 +1,210 @@
+== erased-only  "interface A<T> extends B { x: T }\ntype C = A<string> | undefined;\ndeclare var v1: number, v2: string;\ndeclare let l1: boolean;\ndeclare const k1: 1, { d1, d2: [d3] }: any;\ndeclare function f1<T>(a: T, ...rest: string[]): T;\nfunction over(a: string): void;\nasync function aover(): Promise<void>;\ndeclare class K<T> extends Base<T> implements I1 { p: T; m(): void; constructor(a: T); static [key: string]: any; declare q: number }\n@dec declare abstract class DK { abstract am(): void }\ndeclare enum E1 { A = 1, B, \"c\" = 3 }\ndeclare const enum E2 { X }\ndeclare namespace N1 { const nx: number; function nf(): void; interface NI {} namespace Inner.Deep { type T = 1 } export class NC {} enum NE {} import ie = require(\"y\"); }\nnamespace TypeOnly { export interface TI {} type TT = 2 }\ndeclare module \"ambient\" { export const y: string; global { interface G {} } }\ndeclare module \"*.css\";\ndeclare global { interface Window { z: number } var gv: string }\nexport as namespace MyLib;\nimport type D from \"./d\";\nimport type * as NS from \"./ns\";\nimport type { T1, T2 as T3 } from \"./t\";\nimport { type U1, type V1 as W1 } from \"./u\";\nimport type R = require(\"./r\");\nimport type Q = N1.Inner;\nexport type { T1 };\nexport type { V2 as V3 } from \"./v\";\nexport type * from \"./w\";\nexport type * as W2 from \"./w2\";\nexport { type U1 };\nexport { type X1 as X2 } from \"./x\";\nexport interface EI {}\nexport type ET = 1;\nexport declare const ec: number;\nexport declare function ef(): void;\nexport default interface DI {}\n"
+   module-list=0 records=53
+   interface [0,33) module#0 name=A@[10,11) members=1
+   type-alias [34,65) module#0 name=C@[39,40)
+   var [66,101) module#0 declare ambient kind=var names=v1,v2
+   var [102,126) module#0 declare ambient kind=let names=l1
+   var [127,170) module#0 declare ambient kind=const names=k1,d1,d3
+   function [171,222) module#0 declare ambient no-body name=f1@[188,190) params=2 body=no
+   function [223,254) module#0 no-body name=over@[232,236) params=1 body=no
+   function [255,293) module#0 no-body name=aover@[270,275) params=0 body=no async
+   class [294,427) module#0 declare ambient name=K@[308,309) kept-members=1 decorators=0
+   member method [351,361) scope@343#1 key=m@351 body=no decorators=0
+   member constructor [362,380) scope@343#1 body=no decorators=0
+   member index-signature [381,407) scope@343#1 static open=388 decorators=0
+   member property [408,425) scope@343#1 declare key=q@416 decorators=0
+   class [428,482) module#0 declare ambient abstract name=DK@[456,458) kept-members=0 decorators=1
+   member method [461,480) scope@459#0 abstract key=am@470 body=no decorators=0
+   enum [483,520) module#0 declare ambient name=E1@[496,498) members=3
+   enum [521,548) module#0 declare ambient name=E2@[540,542) members=1 const
+   module [549,720) module#0 declare ambient keyword=namespace name=N1@[567,569) stmts=1 body=yes
+   function [590,610) child@549#1 ambient no-body name=nf@[599,601) params=0 body=no
+   interface [611,626) child@549#1 ambient name=NI@[621,623) members=0
+   module [627,662) child@549#1 ambient keyword=namespace name=Inner@[637,642) stmts=1 body=yes
+   module [643,662) in-tree@642 ambient nested keyword=namespace name=Deep@[643,647) stmts=0 body=yes
+   type-alias [650,660) child@643#0 ambient name=T@[655,656)
+   class [663,681) child@549#1 export ambient name=NC@[676,678) kept-members=0 decorators=0
+   enum [682,692) child@549#1 ambient name=NE@[687,689) members=0
+   import-equals [693,718) child@549#1 ambient name=ie@[700,702) ref=require("y"@713)
+   module [721,778) module#0 keyword=namespace name=TypeOnly@[731,739) stmts=0 body=yes
+   interface [742,764) child@721#0 export name=TI@[759,761) members=0
+   type-alias [765,776) child@721#0 name=TT@[770,772)
+   module [779,857) module#0 declare ambient keyword=module name="ambient"@[794,803) stmts=1 body=yes
+   module [830,855) child@779#1 ambient keyword=global name=global@[830,836) stmts=0 body=yes
+   interface [839,853) child@830#0 ambient name=G@[849,850) members=0
+   module [858,881) module#0 declare ambient no-body keyword=module name="*.css"@[873,880) stmts=0 body=no
+   module [882,946) module#0 declare ambient keyword=global name=global@[890,896) stmts=1 body=yes
+   interface [899,929) child@882#0 ambient name=Window@[909,915) members=1
+   export-as-namespace [947,973) module#0 name=MyLib@[967,972)
+   import [974,999) module#0 type-only default=D@986 star=- items=0/0 path="./d"@[993,998)
+   import [1000,1032) module#0 type-only default=- star=NS@1017 items=0/0 path="./ns"@[1025,1031)
+   import [1033,1073) module#0 type-only default=- star=- items=2/2 path="./t"@[1067,1072)
+   import [1074,1119) module#0 default=- star=- items=0/2 path="./u"@[1113,1118)
+   import-equals [1120,1151) module#0 type-only name=R@[1132,1133) ref=require("./r"@1144)
+   import-equals [1152,1177) module#0 type-only name=Q@[1164,1165) ref=N1.Inner@1168
+   export [1178,1197) module#0 type-only items=1/1 path=-
+   export [1198,1234) module#0 type-only items=1/1 path="./v"@[1228,1233)
+   export [1235,1260) module#0 type-only star path="./w"@[1254,1259)
+   export [1261,1293) module#0 type-only star-as=W2@1278 path="./w2"@[1286,1292)
+   export [1294,1313) module#0 items=0/1 path=-
+   export [1314,1350) module#0 items=0/1 path="./x"@[1344,1349)
+   interface [1351,1373) module#0 export name=EI@[1368,1370) members=0
+   type-alias [1374,1393) module#0 export name=ET@[1386,1388)
+   var [1394,1426) module#0 export declare ambient kind=const names=ec
+   function [1427,1462) module#0 export declare ambient no-body name=ef@[1451,1453) params=0 body=no
+   interface [1463,1493) module#0 export default name=DI@[1488,1490) members=0
+== mixed  "type A = 1;\nconst a0 = 1;\ninterface B {}\nfunction f(x: number): void;\nfunction f(x: string): void;\nfunction f(x: any) {\n  type C = 2;\n  if (x) { interface D {} }\n  try { type E = 3 } catch { type F = 4 } finally { type G = 5 }\n  const g = () => { type H = 6; return 1 };\n  switch (x) { case 1: type I = 7; break; default: declare const j: number; }\n  lbl: type K = 8;\n  if (x) interface L1 {} else type L2 = 9;\n  while (x) declare function w(): void;\n  for (;;) type L3 = 10;\n  do interface L4 {} while (x);\n  declare let last: number\n}\nnamespace NS { export const v = 1; type L = 9; export function h(): void; export function h() {} export declare const lowered: number; }\nclass Cls { static { type M = 10; const s = 1; interface N {} } }\nnamespace a.b { interface X {} }\nnamespace c.d { export const y = 2; type Z = 1 }\nexport declare const z: number;\nexport {};\ntype Last = 0"
+   module-list=7 records=29
+   type-alias [0,11) module#0 name=A@[5,6)
+   interface [26,40) module#1 name=B@[36,37) members=0
+   function [41,69) module#1 no-body name=f@[50,51) params=1 body=no
+   function [70,98) module#1 no-body name=f@[79,80) params=1 body=no
+   type-alias [122,133) scope@118#0 name=C@[127,128)
+   interface [145,159) scope@143#0 name=D@[155,156) members=0
+   type-alias [170,180) scope@164#0 name=E@[175,176)
+   type-alias [191,201) scope@189#0 name=F@[196,197)
+   type-alias [214,224) scope@204#0 name=G@[219,220)
+   type-alias [247,258) scope@245#0 name=H@[252,253)
+   type-alias [294,305) in-tree@294 name=I@[299,300)
+   var [322,346) in-tree@322 declare ambient kind=const names=j
+   type-alias [356,367) in-tree@356 name=K@[361,362)
+   interface [377,392) in-tree@377 name=L1@[387,389) members=0
+   type-alias [398,410) in-tree@398 name=L2@[403,405)
+   function [423,450) in-tree@423 declare ambient no-body name=w@[440,441) params=0 body=no
+   type-alias [462,475) in-tree@462 name=L3@[467,469)
+   interface [481,496) in-tree@481 name=L4@[491,493) members=0
+   var [510,534) scope@118#9 declare ambient kind=let names=last
+   type-alias [572,583) scope@537#1 name=L@[577,578)
+   function [584,610) scope@537#1 export no-body name=h@[600,601) params=0 body=no
+   var [634,671) in-tree@641 export declare ambient stand-in kind=const names=lowered
+   type-alias [695,707) scope@693#0 name=M@[700,701)
+   interface [721,735) scope@693#1 name=N@[731,732) members=0
+   module [752,772) in-tree@751 nested keyword=namespace name=b@[752,753) stmts=0 body=yes
+   interface [756,770) child@752#0 name=X@[766,767) members=0
+   type-alias [809,819) scope@784#1 name=Z@[814,815)
+   var [822,853) module#6 export declare ambient kind=const names=z
+   type-alias [865,878) module#7 name=Last@[870,874)
+== members  "abstract class M {\n  m(): void;\n  m(a?: string): void;\n  m(a?: any) {}\n  constructor();\n  constructor(a?: number) { }\n  abstract am(): void;\n  abstract get ag(): number;\n  abstract set ag(v: number);\n  protected abstract readonly af: string;\n  declare df: number;\n  declare static ds: string;\n  static [k: string]: unknown;\n  readonly [n: number]: string;\n  opt?(): void;\n  [Symbol.iterator](): Iterator<number>;\n  #priv(): void;\n  #priv() {}\n  @dec abstract kept1: number;\n  @dec declare kept2: number;\n  @dec abstract dropped(): void;\n  abstract withBody() { type Inner = 1 }\n  declare abstract both: number;\n  static async *gen(): AsyncGenerator<number>;\n  keptField = 1;\n}\nconst Expr = class { e(): void; e() {} [k: string]: any };"
+   module-list=2 records=21
+   member method [21,31) scope@17#0 key=m@21 body=no decorators=0
+   member method [34,54) scope@17#0 key=m@34 body=no decorators=0
+   member constructor [73,87) scope@17#1 body=no decorators=0
+   member method [120,140) scope@17#2 abstract key=am@129 body=no decorators=0
+   member getter [143,169) scope@17#2 abstract key=ag@156 body=no decorators=0
+   member setter [172,199) scope@17#2 abstract key=ag@185 body=no decorators=0
+   member property [202,241) scope@17#2 abstract key=af@230 decorators=0
+   member property [244,263) scope@17#2 declare key=df@252 decorators=0
+   member property [266,292) scope@17#2 declare static key=ds@281 decorators=0
+   member index-signature [295,323) scope@17#2 static open=302 decorators=0
+   member index-signature [326,355) scope@17#2 open=335 decorators=0
+   member method [358,371) scope@17#2 key=opt@358 body=no decorators=0
+   member method [374,412) scope@17#2 key=[Symbol.iterator]@375 body=no decorators=0
+   member method [415,429) scope@17#2 key=#priv@415 body=no decorators=0
+   member method [506,536) scope@17#5 abstract key=dropped@520 body=no decorators=1
+   member method [539,577) scope@17#5 abstract key=withBody@548 body=yes decorators=0
+   type-alias [561,575) scope@559#0 name=Inner@[566,571)
+   member property [580,610) scope@17#5 declare abstract key=both@597 decorators=0
+   member method [613,657) scope@17#5 static key=gen@627 body=no decorators=0
+   member method [698,708) scope@696#0 key=e@698 body=no decorators=0
+   member index-signature [716,732) scope@696#1 open=716 decorators=0
+== prefixes  "export declare function a(): void\ndeclare export class B {}\n@d1 export declare class C {}\nexport @d2 declare class D {}\nexport default function e(x: string): void;\nexport default function e(x: any) {}\nexport async function g(): Promise<void>;\nexport async function g() {}\n/* lead */ export /* c1 */ declare /* c2 */ const h: number /* trail */ ; // line\ntype I = Array<Array<number>>\ntype J = 1 /* same line */\ninterface K { a: 1 } // after\ndeclare const enum L { A } declare var m: number;;\ntype Z = 0"
+   module-list=2 records=13
+   function [0,33) module#0 export declare ambient no-body name=a@[24,25) params=0 body=no
+   class [34,59) module#0 export declare ambient name=B@[55,56) kept-members=0 decorators=0
+   class [60,89) module#0 export declare ambient name=C@[85,86) kept-members=0 decorators=1
+   class [90,119) module#0 export declare ambient name=D@[115,116) kept-members=0 decorators=1
+   function [120,163) module#0 export default no-body name=e@[144,145) params=1 body=no
+   function [201,242) module#1 export no-body name=g@[223,224) params=0 body=no async
+   var [283,345) module#2 export declare ambient kind=const names=h
+   type-alias [354,383) module#2 name=I@[359,360)
+   type-alias [384,394) module#2 name=J@[389,390)
+   interface [411,431) module#2 name=K@[421,422) members=1
+   enum [441,467) module#2 declare ambient name=L@[460,461) members=1 const
+   var [468,490) module#2 declare ambient kind=var names=m
+   type-alias [492,502) module#2 name=Z@[497,498)
+== default-async-overload  "export default async function n(): Promise<void>;\nexport default async function n() {}\nexport default interface DI2 {}"
+   module-list=1 records=2
+   function [0,49) module#0 export default no-body name=n@[30,31) params=0 body=no async
+   interface [87,118) module#1 export default name=DI2@[112,115) members=0
+== snapshot-arrow-body  "let v = a ? (x): number => { type U = 1; interface I {} declare const d: number; function o(): void; function o() {} return x } : b;"
+   module-list=1 records=4
+   type-alias [29,40) scope@27#0 name=U@[34,35)
+   interface [41,55) scope@27#0 name=I@[51,52) members=0
+   var [56,80) scope@27#0 declare ambient kind=const names=d
+   function [81,100) scope@27#0 no-body name=o@[90,91) params=0 body=no
+== snapshot-class-members  "let v = a ? (x): C => { class K { m(): void; m() {} [k: string]: any; declare p: number } return new K } : b;"
+   module-list=1 records=3
+   member method [34,44) scope@32#0 key=m@34 body=no decorators=0
+   member index-signature [52,69) scope@32#1 open=52 decorators=0
+   member property [70,87) scope@32#1 declare key=p@78 decorators=0
+== snapshot-not-arrow  "let v = a ? (x) : y => { type U = 1; return y };"
+   module-list=1 records=1
+   type-alias [25,36) scope@23#0 name=U@[30,31)
+== snapshot-nested  "let v = a ? (x): any => (b ? (y): any => { type T = 1; return y } : c) : d;"
+   module-list=1 records=1
+   type-alias [43,54) scope@41#0 name=T@[48,49)
+== specifiers  "import { type as as x, type a, type 'str' as s, type default as d, b } from 'm';\nimport { type c } from 'n';\nexport { type as, type as as y, type e as f, g };\nexport { type h } from 'o';\nexport { type i };\nimport type { type j } from 'p';"
+   module-list=2 records=4
+   import [81,108) module#1 default=- star=- items=0/1 path="n"@[104,107)
+   export [159,186) module#2 items=0/1 path="o"@[182,185)
+   export [187,205) module#2 items=0/1 path=-
+   import [206,238) module#2 type-only default=- star=- items=0/1 path="p"@[234,237)
+== import-equals  "import type A = require(\"a\");\nimport type B = C.D.E;\nexport import type F = G.H;\nimport kept = C.D;\ndeclare namespace N { import x = require(\"y\"); export import z = A.B; }\nnamespace OnlyImports { import q = C.D; }"
+   module-list=1 records=7
+   import-equals [0,29) module#0 type-only name=A@[12,13) ref=require("a"@24)
+   import-equals [30,52) module#0 type-only name=B@[42,43) ref=C.D.E@46
+   import-equals [53,80) module#0 export type-only name=F@[72,73) ref=G.H@76
+   module [100,171) module#1 declare ambient keyword=namespace name=N@[118,119) stmts=0 body=yes
+   import-equals [122,146) child@100#0 ambient name=x@[129,130) ref=require("y"@141)
+   import-equals [147,169) child@100#0 export ambient name=z@[161,162) ref=A.B@165
+   module [172,213) module#1 keyword=namespace name=OnlyImports@[182,193) stmts=1 body=yes
+== global-nesting  "declare module \"m\" { type Before = 1; global { interface G {} function gf(a = () => { type InFn = 1 }): void; var gv: number; type After = 2 } const c: number; type End = 3 }\ndeclare global { namespace NodeJS { interface ProcessEnv {} } type GT = 1 }\nexport {};"
+   module-list=1 records=12
+   module [0,174) module#0 declare ambient keyword=module name="m"@[15,18) stmts=1 body=yes
+   type-alias [21,37) child@0#0 ambient name=Before@[26,32)
+   module [38,142) child@0#0 ambient keyword=global name=global@[38,44) stmts=1 body=yes
+   interface [47,61) child@38#0 ambient name=G@[57,58) members=0
+   function [62,109) child@38#0 ambient no-body name=gf@[71,73) params=1 body=no
+   type-alias [86,99) scope@84#0 name=InFn@[91,95)
+   type-alias [126,140) child@38#1 ambient name=After@[131,136)
+   type-alias [160,172) child@0#1 ambient name=End@[165,168)
+   module [175,250) module#0 declare ambient keyword=global name=global@[183,189) stmts=0 body=yes
+   module [192,236) child@175#0 ambient keyword=namespace name=NodeJS@[202,208) stmts=0 body=yes
+   interface [211,234) child@192#0 ambient name=ProcessEnv@[221,231) members=0
+   type-alias [237,248) child@175#0 ambient name=GT@[242,244)
+== declare-empty  "declare;\nfoo()"
+   module-list=1 records=1
+   declare-empty [0,8) module#0
+== ambient-names  "declare module \"fs\" { }\ndeclare module '*.css' { const c: string; export default c }\ndeclare module \"x\";\ndeclare module \"a\\u0062c\" {}\nmodule M1 { export type T = 1 }\nnamespace N2.N3 { }\n"
+   module-list=1 records=7
+   module [0,23) module#0 declare ambient keyword=module name="fs"@[15,19) stmts=0 body=yes
+   module [24,84) module#0 declare ambient keyword=module name="*.css"@[39,46) stmts=2 body=yes
+   module [85,104) module#0 declare ambient no-body keyword=module name="x"@[100,103) stmts=0 body=no
+   module [105,133) module#0 declare ambient keyword=module name="abc"@[120,130) stmts=0 body=yes
+   module [134,165) module#0 keyword=module name=M1@[141,143) stmts=0 body=yes
+   type-alias [146,163) child@134#0 export name=T@[158,159)
+   module [179,185) in-tree@178 nested keyword=namespace name=N3@[179,181) stmts=0 body=yes
+== h18-stale-merge  "namespace module { export const a = 1 }\ndeclare module \"fs\" { export const b: number }\nnamespace module { console.log(typeof b, a) }"
+   module-list=2 records=1
+   module [40,86) module#1 declare ambient keyword=module name="fs"@[55,59) stmts=1 body=yes
+== dts  "export function f(): void;\nexport const x: number;\ndeclare const y: string;\nexport default class C { m(): void }\nimport fs = require(\"fs\");\nexport namespace NS { const q: number }\n"
+   module-list=1 records=6
+   function [0,26) module#0 export ambient no-body name=f@[16,17) params=0 body=no
+   var [51,75) module#1 declare ambient kind=const names=y
+   class [76,112) module#1 export default ambient name=C@[97,98) kept-members=0 decorators=0
+   member method [101,110) scope@99#0 key=m@101 body=no decorators=0
+   import-equals [113,139) module#1 ambient name=fs@[120,122) ref=require("fs"@133)
+   module [140,179) module#1 export ambient keyword=namespace name=NS@[157,159) stmts=1 body=yes
+== scopes  "declare function f(a = () => 1, { b } = {}): void;\nfunction g(cb = function () {}): void;\nfunction g() {}\ndeclare class C { m(a = class {}) { return () => 1 } static { lbl: for (;;) {} } }\nabstract class D { abstract m(a = () => 1): void; @dec(() => 1) abstract n: number; [k: string]: any }\ndeclare enum E { A = (() => 1)() }\nif (x) function h(): void;\ndeclare global { function gf(a = () => 1): void }\ndeclare namespace N { class K { m() { { let z } } } }\nfoo(() => 1);"
+   module-list=4 records=11
+   function [0,50) module#0 declare ambient no-body name=f@[17,18) params=2 body=no
+   function [51,89) module#0 no-body name=g@[60,61) params=1 body=no
+   class [106,188) module#1 declare ambient name=C@[120,121) kept-members=2 decorators=0
+   member method [208,238) scope@206#0 abstract key=m@217 body=no decorators=0
+   member index-signature [273,289) scope@206#1 open=273 decorators=0
+   enum [292,326) module#2 declare ambient name=E@[305,306) members=1
+   function [334,353) in-tree@334 no-body name=h@[343,344) params=0 body=no
+   module [354,403) module#3 declare ambient keyword=global name=global@[362,368) stmts=0 body=yes
+   function [371,401) child@354#0 ambient no-body name=gf@[380,382) params=1 body=no
+   module [404,457) module#3 declare ambient keyword=namespace name=N@[422,423) stmts=0 body=yes
+   class [426,455) child@404#0 ambient name=K@[432,433) kept-members=1 decorators=0

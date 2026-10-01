@@ -1,0 +1,60 @@
+bun side: 1.4.3 e3566be889995ffff8b08823b9233617f979c889  sha256 62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552  (/workspace/notes/lint/units/parser/measure/base/bin/bun)
+tsc 6.0.2; typescript-go oracle sha256 f1958dcd55b7dcd83f7261ff308f6bd9bae832ed1ae2e54d77aa3a1953bfac5f
+corpus: 331132 distinct sources, sha256 48a486502828091add24112ba838ff183884feea3348c28b61c5ff4b4f16136a
+
+view	AA	B	A	RR	CRASH
+ts	124133	20852	17577	168568	2
+tsx	119745	20121	16997	174267	2
+deco	124284	20873	17426	168547	2
+dts	124133	20852	17577	168568	2
+
+per input set (a source that several sets hold counts in each)
+set	view	AA	B	A	RR	CRASH
+bs	ts	440	5	53	26	0
+bs	tsx	441	5	53	25	0
+bs	deco	440	5	53	26	0
+bs	dts	440	5	53	26	0
+gds	ts	42609	15074	4448	147497	0
+gds	tsx	40146	14598	4212	150672	0
+gds	deco	42609	15074	4448	147497	0
+gds	dts	42609	15074	4448	147497	0
+gdt	ts	1974	29	141	261	0
+gdt	tsx	1983	29	139	254	0
+gdt	deco	1963	29	152	261	0
+gdt	dts	1974	29	141	261	0
+lex	ts	241	36	216	460	0
+lex	tsx	256	38	222	437	0
+lex	deco	244	36	213	460	0
+lex	dts	241	36	216	460	0
+otg	ts	1400	122	536	333	0
+otg	tsx	1351	116	527	397	0
+otg	deco	1401	120	535	335	0
+otg	dts	1400	122	536	333	0
+p	ts	50997	4039	9716	15613	2
+p	tsx	49853	3901	9521	17090	2
+p	deco	51163	4046	9550	15606	2
+p	dts	50997	4039	9716	15613	2
+pin	ts	631	9	101	133	0
+pin	tsx	630	9	99	136	0
+pin	deco	631	9	101	133	0
+pin	dts	631	9	101	133	0
+pinfile	ts	136	0	3	5	0
+pinfile	tsx	140	0	3	1	0
+pinfile	deco	137	1	2	4	0
+pinfile	dts	136	0	3	5	0
+resc	ts	4718	566	1305	1163	0
+resc	tsx	4658	555	1283	1256	0
+resc	deco	4716	565	1307	1164	0
+resc	dts	4718	566	1305	1163	0
+side	ts	372	36	23	42	0
+side	tsx	339	25	24	85	0
+side	deco	367	36	28	42	0
+side	dts	372	36	23	42	0
+td	ts	29500	1542	2809	5876	0
+td	tsx	28616	1434	2665	7012	0
+td	deco	29586	1571	2723	5847	0
+td	dts	29500	1542	2809	5876	0
+
+inputs that kill the bun side:
+  #60485 "const c = class { @d declare x: T; };"  signal=SIGABRT exit=null  p09:memberPos
+  #60487 "const c = class { @d abstract x: T; };"  signal=SIGABRT exit=null  p09:memberPos

@@ -1,0 +1,23 @@
+Probes of the research unit "c1-seam-arbitration" (top-down pass). Nothing here is part of the change.
+
+1. What the parse pass alone reports and what the full parse reports (Bun.Transpiler: scanImports = scan pass, transformSync = parse + visit):
+     BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1 /workspace/wt/cli/build/debug/bun-debug js/scan-vs-full.js
+     BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1 /workspace/wt/cli/build/debug/bun-debug js/macro.js        (target "macro" = features.is_macro_runtime)
+     BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1 /workspace/wt/cli/build/debug/bun-debug js/dce.js
+     BUN_DEBUG_QUIET_LOGS=1 NO_COLOR=1 /workspace/wt/cli/build/debug/bun-debug js/dts-corpus.js   (declaration files of node_modules read as TypeScript)
+
+2. The per-file part of a C1 lint run as a binary of its own (Parser::parse, no Transpiler, no JavaScriptCore VM).
+   probe/build.py compiles probe/src/main.rs with rustc against the rlibs of the debug build of the worktree; no crate is rebuilt.
+   It needs <out>/../highway_strings.o (the command that makes it is in /tmp/rsu/cc_hwy.sh of the unit rule-support-unification-bottomup).
+     /workspace/tools/lk python3 probe/build.py /workspace/wt/cli /tmp/c1probe/out
+     cd cases && ASAN_OPTIONS=detect_leaks=0 /tmp/c1probe/out/lintprobe lint *.ts *.js *.tsx *.cjs *.mjs *.mts *.cts
+   modes: lint = no_macros + is_macro_runtime + top_level_await + standard_decorators (the ruling);
+          nomacros = the same without is_macro_runtime; defaults = ParserOptions::init alone.
+   Results (2026-09-29, e3566be889): lint: macro.ts, hash.ts, tla.ts, deco.js, deco.ts, jsx.js, comp.tsx, clean.ts, ret.cjs, m.mts, c.cts, m.mjs, weird.js, empty.ts without error;
+   bad.ts "Unexpected ;" at bad.ts:1:9; visit.js "Invalid assignment target"; break.js; const.ts (error and note); x.d.ts "The constant "x" must be initialized" (false).
+   nomacros: macro.ts "Macros are disabled". defaults: tla.ts and deco.js are errors, macro.ts panics at visit_expr.rs:2341 (macro_context).
+   Corpus: every 4th source file under test/js/bun, test/js/node, test/js/web, test/cli (1,702 files, no .d.ts): 4 files with errors, all four are fixtures with a syntax error on purpose; 0 warnings; 0 panics; 25 s.
+
+3. The planned src/runtime/cli/lint_command.rs, type-checked with the rustc arguments of the crate bun_runtime (deny warnings; metadata only, nothing linked, nothing rebuilt):
+     /workspace/tools/lk python3 typecheck/check.py "$PWD/typecheck/lint_command_typecheck.rs" /tmp/c1tc/out
+   Result (2026-09-29, e3566be889): exit 0, no diagnostics. The file differs from the plan only where its header says so.

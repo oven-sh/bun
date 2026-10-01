@@ -1,0 +1,120 @@
+group	family	input	bun	reason
+01-type-forms	query	"let x: typeof #a;"	"Expected identifier but found \"#a\""	private name outside a class body: early error of Bun
+01-type-forms	query	"type X = typeof #a;"	"Expected identifier but found \"#a\""	private name outside a class body: early error of Bun
+01-type-forms	import	"let x: import(\"x\").#a;"	"Expected identifier but found \"#a\""	private name outside a class body: early error of Bun
+01-type-forms	import	"type X = import(\"x\").#a;"	"Expected identifier but found \"#a\""	private name outside a class body: early error of Bun
+02-object-types	member	"type X = { get #a(): A };"	"Unexpected #a"	private name on an accessor of a type literal: tsc reports TS18016 for a property and for a method and nothing for the accessor
+02-object-types	member	"interface I { get #a(): A }"	"Unexpected #a"	private name on an accessor of a type literal: tsc reports TS18016 for a property and for a method and nothing for the accessor
+03-signatures	arrowSig	"const f = ({ await }): void => {};"	"Cannot use \"await\" here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+03-signatures	arrowSig	"const f = ({ await }) => 0;"	"Cannot use \"await\" here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+03-signatures	arrowSig	"const f = ([await]): void => {};"	"Unexpected ]"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = ([await]) => 0;"	"Unexpected ]"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = ({ a: await }): void => {};"	"Unexpected }"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = ({ a: await }) => 0;"	"Unexpected }"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = (await): void => {};"	"Unexpected )"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = (await) => 0;"	"Unexpected )"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = (await: A): void => {};"	"Unexpected :"	the name `await`: Bun treats the input as a module
+03-signatures	arrowSig	"const f = (await: A) => 0;"	"Unexpected :"	the name `await`: Bun treats the input as a module
+04-type-params-args	targsExpr	"import<A(\"x\");"	"Unexpected <"	unterminated input
+04-type-params-args	targsExpr	"import<A(\"x\");"	"Unexpected <"	unterminated input
+05-assertions	nonNull	"this.#x!;"	"Expected identifier but found \"#x\""	private name outside a class body: early error of Bun
+05-assertions	nonNull	"const v = this.#x!;"	"Expected identifier but found \"#x\""	private name outside a class body: early error of Bun
+05-assertions	arrow	"const v = a ? (await) : b;"	"Unexpected )"	the name `await`: Bun treats the input as a module
+05-assertions	arrow	"a ? (await) : b;"	"Unexpected )"	the name `await`: Bun treats the input as a module
+05-assertions	catch	"try {} catch (e: any = 1) {}"	"Expected \")\" but found \"=\""	initializer on a catch binding: not ECMAScript; tsc reports nothing
+05-assertions	nonNull	"this.#x!;"	"Expected identifier but found \"#x\""	private name outside a class body: early error of Bun
+05-assertions	nonNull	"const v = this.#x!;"	"Expected identifier but found \"#x\""	private name outside a class body: early error of Bun
+05-assertions	arrow	"const v = a ? (await) : b;"	"Unexpected )"	the name `await`: Bun treats the input as a module
+05-assertions	arrow	"a ? (await) : b;"	"Unexpected )"	the name `await`: Bun treats the input as a module
+05-assertions	catch	"try {} catch (e: any = 1) {}"	"Expected \")\" but found \"=\""	initializer on a catch binding: not ECMAScript; tsc reports nothing
+06-class-members	member	"class C { [await: string]: T; }"	"Unexpected :"	the name `await`: Bun treats the input as a module
+06-class-members	member	"abstract class C extends B { [await: string]: T; }"	"Unexpected :"	the name `await`: Bun treats the input as a module
+06-class-members	classHead	"class await {}"	"Cannot use \"await\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+06-class-members	member	"class C { [await: string]: T; }"	"Unexpected :"	the name `await`: Bun treats the input as a module
+06-class-members	member	"abstract class C extends B { [await: string]: T; }"	"Unexpected :"	the name `await`: Bun treats the input as a module
+06-class-members	classHead	"class await {}"	"Cannot use \"await\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+07-module-syntax	importType	"import defer \"x\";"	"Expected \"from\" but found \"\"x\"\""	import defer forms: an ECMAScript proposal, not type syntax
+07-module-syntax	importType	"import.defer(\"x\");"	"Expected \"meta\" but found \"defer\""	import defer forms: an ECMAScript proposal, not type syntax
+07-module-syntax	exportType	"export type { default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportType	"export type { \"a\" };"	"Expected identifier but found \"\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportType	"export type { if };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	importSpec	"import { arguments } from \"x\";"	"Cannot use \"arguments\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+07-module-syntax	importSpec	"import D, { arguments } from \"x\";"	"Cannot use \"arguments\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+07-module-syntax	importSpec	"import { eval } from \"x\";"	"Cannot use \"eval\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+07-module-syntax	importSpec	"import D, { eval } from \"x\";"	"Cannot use \"eval\" as an identifier here"	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type default as A };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { default as A };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"export type { default as A };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type \"a\" };"	"Expected identifier but found \"\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { \"a\" };"	"Expected identifier but found \"\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type if };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type if as A };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { if as A };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"export type { if as A };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { if };"	"Expected identifier but found \"if\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type this };"	"Expected identifier but found \"this\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type null };"	"Expected identifier but found \"null\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type true };"	"Expected identifier but found \"true\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { default as default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"export type { default as default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+07-module-syntax	exportSpec	"let A, B, as, type, from, of; export { type default as default };"	"Expected identifier but found \"default\""	export of a local name that cannot be declared (default, a keyword, a string): no program can use it
+08-declare-namespace-enum	declare	"declare abstract\nclass C {}"	"Unexpected \"abstract\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare namespace;"	"Unexpected \"namespace\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare module;"	"Unexpected \"module\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare module"	"Unexpected \"module\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare global;"	"Expected \"{\" but found \";\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare global"	"Expected \"{\" but found end of file"	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare x;"	"Unexpected \"x\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare x: T;"	"Unexpected \"x\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare 1;"	"Unexpected \"1\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare \"s\";"	"Unexpected \"\\\"s\\\"\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare"	"Unexpected end of file"	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare as any"	"Unexpected end of file"	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare!"	"Unexpected end of file"	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare {}"	"Unexpected \"{\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare { x }"	"Unexpected \"{\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare if (a) {}"	"Unexpected \"if\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare for (;;) {}"	"Unexpected \"for\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare label: x;"	"Unexpected \"label\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare try {} catch {}"	"Unexpected \"try\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare throw x;"	"Unexpected \"throw\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare debugger;"	"Unexpected \"debugger\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare async () => {};"	"Unexpected \"async\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare new C;"	"Unexpected \"new\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare this;"	"Unexpected \"this\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare import(\"x\");"	"Unexpected \"import\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare import.meta;"	"Unexpected \"import\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare abstract;"	"Unexpected \"abstract\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declare	"declare async;"	"Unexpected \"async\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declName	"declare namespace in {}"	"Unexpected \"namespace\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declName	"declare module in {}"	"Unexpected \"module\""	tsc reads `declare` as an identifier and gives no diagnostic for the missing semicolon (parser.go:2080-2082); the statement is not a declaration
+08-declare-namespace-enum	declName	"declare var await: T;"	"Cannot use \"yield\" or \"await\" here."	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+08-declare-namespace-enum	declName	"declare const await: T;"	"Cannot use \"yield\" or \"await\" here."	early error of Bun on the name (await, yield, arguments, eval); tsc reports it outside the grammar codes or not at all
+09-decorators	expr	"@d<T>(1)<U>\nclass C {}"	"Expected \"class\" but found \"<\""	a decorator followed by a line break and `<`: tsc reads a type argument list of an instantiation expression that no program needs
+09-decorators	expr	"class C { @d<T>(1)<U>\nx; }"	"Expected identifier but found \"<\""	a decorator followed by a line break and `<`: tsc reads a type argument list of an instantiation expression that no program needs
+09-decorators	expr	"@d()<T>\nclass C {}"	"Expected \"class\" but found \"<\""	a decorator followed by a line break and `<`: tsc reads a type argument list of an instantiation expression that no program needs
+09-decorators	expr	"class C { @d()<T>\nx; }"	"Expected identifier but found \"<\""	a decorator followed by a line break and `<`: tsc reads a type argument list of an instantiation expression that no program needs
+09-decorators	expr	"class C { @d.#e x; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.#e\nx; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.#e() x; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.#e()\nx; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.e.#f x; }"	"Private name \"#f\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.e.#f\nx; }"	"Private name \"#f\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	otherPos	"if (a) @d class C {}"	"Cannot use a declaration in a single-statement context"	declaration in a single-statement context: early error of Bun
+09-decorators	otherPos	"for (;;) @d class C {}"	"Cannot use a declaration in a single-statement context"	declaration in a single-statement context: early error of Bun
+09-decorators	expr	"class C { @await x; }"	"Expected identifier but found \";\""	the name `await`: Bun treats the input as a module
+09-decorators	expr	"@await class C {}"	"Expected \"class\" but found end of file"	the name `await`: Bun treats the input as a module
+09-decorators	expr	"class C { m(@d.#e a) {} }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.#e x; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { m(@d.#e() a) {} }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.#e() x; }"	"Private name \"#e\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { m(@d.e.#f a) {} }"	"Private name \"#f\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	expr	"class C { @d.e.#f x; }"	"Private name \"#f\" must be declared in an enclosing class"	private name outside a class body: early error of Bun
+09-decorators	otherPos	"if (a) @d class C {}"	"Cannot use a declaration in a single-statement context"	declaration in a single-statement context: early error of Bun
+09-decorators	otherPos	"for (;;) @d class C {}"	"Cannot use a declaration in a single-statement context"	declaration in a single-statement context: early error of Bun
+10-declaration-files	directive	"// @ts-ignore\nexport const x: T;"	"The constant \"x\" must be initialized"	the comment directive hides the diagnostic of tsc
+10-declaration-files	directive	"// @ts-expect-error\nexport const x: T;"	"The constant \"x\" must be initialized"	the comment directive hides the diagnostic of tsc
+10-declaration-files	directive	"// @ts-ignore\nexport const x: T;"	"The constant \"x\" must be initialized"	the comment directive hides the diagnostic of tsc
+10-declaration-files	directive	"// @ts-expect-error\nexport const x: T;"	"The constant \"x\" must be initialized"	the comment directive hides the diagnostic of tsc

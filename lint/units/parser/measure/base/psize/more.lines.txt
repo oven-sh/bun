@@ -1,0 +1,8 @@
+probe lines start at 10433
+ 10433	const _: [(); 0] = [(); core::mem::size_of::<ParserSnapshot<'static>>()];
+ 10434	const _: [(); 0] = [(); core::mem::size_of::<js_lexer::Lexer<'static>>()];
+ 10435	const _: [(); 0] = [(); core::mem::size_of::<js_lexer::LexerSnapshot<'static>>()];
+ 10436	const _: [(); 0] = [(); core::mem::size_of::<js_ast::ts::Metadata>()];
+ 10437	const _: [(); 0] = [(); core::mem::size_of::<js_ast::Expr>()];
+ 10438	const _: [(); 0] = [(); core::mem::size_of::<js_ast::Stmt>()];
+ 10439	const _: [(); 0] = [(); core::mem::size_of::<ParserOptions<'static>>()];

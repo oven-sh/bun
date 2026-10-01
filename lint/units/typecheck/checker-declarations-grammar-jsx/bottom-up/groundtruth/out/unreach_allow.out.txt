@@ -1,0 +1,6 @@
+PARSE unreach.ts parse=[] js=[] bind=[]
+SUGGEST unreach.ts(5,14)+5: suggestion TS6133: 'inner' is declared but its value is never read. [unnecessary]
+SUGGEST unreach.ts(6,9)+1: suggestion TS6133: 'b' is declared but its value is never read. [unnecessary]
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=14 Options=1 SourceFiles=1
+COUNTS TypeCount=90 SymbolCount=6 SignatureCount=5 TotalInstantiationCount=0

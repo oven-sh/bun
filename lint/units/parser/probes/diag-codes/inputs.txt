@@ -1,0 +1,47 @@
+x = a ? b
+f(1;
+function (
+function class() {}
+x = "abc
+x = `abc
+let x = ;
+js:let x = ;
+x = 1 +
+if (x) )
+in x
+)
+js:{ ) }
+function f() { default }
+default
+catch (e) {}
+let x: ;
+function f(a: ) {}
+let x: A<;
+let x: (a: ) => void
+f<A | >(x)
+f<,>;
+new A<B | >()
+let f = (a): => a
+f<>()
+new A<>()
+f<A,>(x)
+let y = a < b > (c)
+let f = (a): (b) => c => a
+class C { #y = 1; m(x: C) { let a: typeof x.#y; } }
+x as A | () => void;
+x as | () => void;
+x as A & new () => B;
+x as A & | B;
+x as { a: };
+x as { a A };
+x as { a: string b: number };
+x as A<>;
+x as A<B,>;
+x as A | (() => void);
+x as { readonly a: string; b?(): void; [k: string]: unknown; new (): A; get c(): number };
+switch (x) { case 1: ) }
+foo bar
+class C { x: number y }
+f(
+let y = a < b | > c
+f<() => => x>(y)

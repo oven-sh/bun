@@ -1,0 +1,105 @@
+a is string
+a is A
+this is string
+this is A
+asserts a
+asserts a is string
+asserts this
+asserts this is string
+asserts
+asserts | string
+asserts.a
+asserts<T>
+string!
+A!
+string![]
+A[]!
+A["x"]
+A[number]
+A[]
+A[][]
+A[0][]
+A[][0]
+string[][0]
+(A)[]
+(A)["x"]
+(string)
+(string)[]
+unique symbol
+unique symbol | symbol
+-1 | 2
+-1n | 2n
+1 | "a"
+"a" | `b`
+`a${string}` | "b"
+null | string
+undefined | string
+null
+undefined
+void | string
+void
+never | string
+string | never
+A | never
+never
+unknown | string
+unknown & string
+any & string
+A.B | A.B
+A.B | A.C
+A.B & A.B
+A | A
+A<string> | A<number>
+A | B
+A | string
+| A
+& A
+| string
+| string | string
+& string & string
+| A | A
+| & string
+string | string & string
+string & string | string
+string | number & string
+string & number | string
+(string | number) & string
+string & (string | number)
+A & B | A
+A | A & B
+A | A & A
+keyof A | keyof B
+readonly string[] & readonly string[]
+readonly A[] | A[]
+typeof a | typeof a
+typeof a | string
+typeof a
+typeof a.b
+typeof a[]
+typeof a["x"]
+import("x")
+import("x").A
+import("x") | string
+typeof import("x")
+import("x")[]
+{} | {}
+{} | string
+[] | []
+[] | string[]
+() => void | string
+(() => void) | string
+(() => void) | (() => void)
+new () => A
+abstract new () => A
+string | (string)
+(string) | string
+((string)) | string
+(A) | A
+(never) | string
+(unknown) & string
+(any) | string
+(null) | string
+(undefined) | string
+((never)) | string
+string | (never)
+string & (unknown)

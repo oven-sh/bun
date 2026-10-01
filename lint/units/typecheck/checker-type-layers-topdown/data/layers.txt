@@ -1,0 +1,1365 @@
+== K-LIT functions 25 lines 252
+file checker/c42_literal_types.rs
+   25396-25408 c.getRegularTypeOfLiteralType
+   25410-25422 c.getFreshTypeOfLiteralType
+   25424-25426 isFreshLiteralType
+   25428-25435 c.getStringLiteralType
+   25437-25452 c.getNumberLiteralType
+   25454-25461 c.getBigIntLiteralType
+   25465-25467 c.parseBigIntLiteralType
+   25469-25471 getStringLiteralValue
+   25473-25475 getNumberLiteralValue
+   25477-25479 getBigIntLiteralValue
+   25481-25483 getBooleanLiteralValue
+   25485-25514 c.getEnumLiteralType
+   25516-25527 isLiteralType
+   25529-25531 isNeitherUnitTypeNorNever
+   25533-25535 isUnitType
+   25537-25545 c.isUnitLikeType
+   25547-25555 c.extractUnitType
+   25557-25573 c.getBaseTypeOfLiteralType
+   25577-25591 c.getBaseTypeOfLiteralTypeForComparison
+   25593-25598 c.getBaseTypeOfEnumLikeType
+   25600-25608 c.getBaseTypeOfLiteralTypeUnion
+   25610-25626 c.getWidenedLiteralType
+   25628-25636 c.getWidenedUniqueESSymbolType
+   25638-25643 c.getWidenedLiteralLikeTypeForContextualType
+   25645-25675 c.isLiteralOfContextualType
+codes 
+panic checker.go:25504 c.getEnumLiteralType panic("Unhandled case in getEnumLiteralType")
+calls core K-OBJ: c.newLiteralType
+calls core S-MERGE: c.getParentOfSymbol
+calls core TYPES: Type.AsIntersectionType Type.AsLiteralType Type.AsUnionType Type.Types
+calls forward K-PRED: c.maybeTypeOfKind
+calls forward K-UNION: c.mapType
+calls forward T-DECLARED: c.getDeclaredTypeOfSymbol
+calls forward T-CONSTRAINT: c.getBaseConstraintOfType c.getBaseConstraintOrType
+called from core c.getBigIntLiteralType <- C-INIT
+called from core c.getNumberLiteralType <- C-INIT
+called from core c.getStringLiteralType <- C-INIT,M-MODULE
+links 
+== K-PRED functions 41 lines 315
+file checker/c43_unions_intersections.rs
+   26348-26350 isUnionWithUndefined
+   26352-26354 isUnionWithNull
+   26356-26358 isIntersectionType
+   26360-26362 isPrimitiveUnion
+   26364-26366 isNotUndefinedType
+   26368-26370 isNotNullType
+   26575-26583 getConstituentCount
+   26585-26591 getConstituentCountOfTypes
+   26593-26597 c.filterTypes
+   26599-26602 c.IsEmptyAnonymousObjectType
+   26604-26606 c.isEmptyResolvedType
+   26608-26620 c.isEmptyObjectType
+   26622-26637 c.isPatternLiteralPlaceholderType
+   26639-26644 c.isPatternLiteralType
+   26646-26648 c.isGenericStringLikeType
+   26650-26658 forEachType
+   26660-26665 someType
+   26667-26672 everyType
+   26674-26679 everyContainedType
+   26681-26715 c.filterType
+   26717-26737 c.removeType
+   26739-26742 containsType
+   26744-26749 insertType
+   26751-26759 countTypes
+   26761-26765 c.isErrorType
+   26767-26769 compareTypeIds
+file checker/c45_base_constraints_normalization.rs
+   27729-27741 c.maybeTypeOfKind
+   27743-27749 c.maybeTypeOfKindConsideringBaseConstraint
+   27751-27753 c.allTypesAssignableToKind
+   27755-27762 c.allTypesAssignableToKindEx
+   27764-27766 c.isTypeAssignableToKind
+   27768-27785 c.isTypeAssignableToKindEx
+   27787-27789 isConstEnumObjectType
+   27791-27793 isConstEnumSymbol
+   27926-27938 c.isUnknownLikeUnionType
+   27943-27951 c.isUniformUnionType
+   27953-27975 c.computeIsUniformUnionType
+   27977-27982 c.containsUndefinedType
+   27984-27986 c.typeHasCallOrConstructSignatures
+   28278-28280 c.extractTypesOfKind
+file checker/c51_type_facts_awaited.rs
+   31607-31612 c.getTargetType
+codes 
+calls core K-OBJ: c.newUnionType
+calls core M-MODULE: c.getMembersOfSymbol
+calls core S-MERGE: c.getParentOfSymbol
+calls core TYPES: Type.AsStructuredType Type.AsTemplateLiteralType Type.AsTypeReference Type.AsUnionType Type.Target Type.Types TypeBase.AsType
+calls core UTIL: CompareTypes
+calls forward K-GENERIC: c.isGenericMappedType
+calls forward K-UNION: c.getUnionTypeFromSortedList
+calls forward T-CONSTRAINT: c.getBaseConstraintOrType
+calls forward T-MEMBERS: c.resolveStructuredTypeMembers
+calls later relater: c.isTypeAssignableTo@149
+called from core c.IsEmptyAnonymousObjectType <- C-INIT
+called from core c.allTypesAssignableToKindEx <- N-DIAG
+called from core c.isErrorType <- M-MODULE
+links 
+== K-GENERIC functions 9 lines 68
+file checker/c40_type_nodes_conditional_tuples.rs
+   24991-24993 c.isGenericType
+   24995-24997 c.isGenericObjectType
+   24999-25001 c.isGenericIndexType
+   25003-25025 c.getGenericObjectFlags
+   25027-25029 c.isGenericTupleType
+   25031-25046 c.isGenericMappedType
+   25055-25058 c.isGenericReducibleType
+   25060-25066 c.isReducibleIntersection
+   25068-25073 c.getUniqueLiteralTypeForTypeParameter
+codes 
+calls core MAPPER: newSimpleTypeMapper
+calls core TYPES: Type.AsIntersectionType Type.AsSubstitutionType Type.TargetTupleType Type.Types
+calls earlier K-PRED: c.isGenericStringLikeType
+calls forward T-TUPLE: isTupleType
+calls forward T-APPARENT: c.getReducedType
+calls forward T-INSTANTIATE: c.instantiateType
+calls forward T-MAPPED: c.getConstraintTypeFromMappedType c.getNameTypeFromMappedType c.getTypeParameterFromMappedType
+called from core c.getUniqueLiteralTypeForTypeParameter <- C-INIT
+links 
+== K-UNION functions 18 lines 468
+file checker/c42_literal_types.rs
+   25677-25682 c.mapTypeWithAlias
+   25684-25686 c.mapType
+   25688-25723 c.mapTypeEx
+file checker/c43_unions_intersections.rs
+   25733-25738 c.getUnionOrIntersectionType
+   25740-25742 c.getUnionType
+   25751-25774 c.getUnionTypeEx
+   25776-25856 c.getUnionTypeWorker
+   25859-25878 c.getUnionTypeFromSortedList
+   25880-25882 c.UnionTypes
+   25884-25945 c.addTypesToUnion
+   25947-25959 c.addNamedUnions
+   25961-25978 c.removeRedundantLiteralTypes
+   25980-25995 c.removeStringLiteralsMatchedByTemplateLiterals
+   25997-26002 c.isTypeMatchedByTemplateLiteralOrStringMapping
+   26004-26055 c.removeConstrainedTypeVariables
+   26057-26145 c.removeSubtypes
+   26771-26781 c.checkCrossProductUnion
+   26783-26801 c.getCrossProductUnionSize
+codes TS2590
+calls core D-SINK: c.error
+calls core K-OBJ: c.getPropagatingFlagsOfTypes c.newUnionType
+calls core T-KEYS: getAliasKey getTypeListKey getUnionKey
+calls core TYPES: Type.AsIntersectionType Type.AsLiteralType Type.AsTemplateLiteralType Type.AsUnionType Type.Types
+calls core UTIL: CompareTypes
+calls earlier K-LIT: c.getRegularTypeOfLiteralType isFreshLiteralType isUnitType
+calls earlier K-PRED: c.IsEmptyAnonymousObjectType c.getTargetType c.isEmptyResolvedType c.isErrorType c.isPatternLiteralType containsType everyType insertType
+calls earlier K-GENERIC: c.isGenericMappedType
+calls forward K-INTERSECT: c.getIntersectionType
+calls forward T-CONSTRAINT: c.getBaseConstraintOfType c.getBaseConstraintOrType
+calls forward T-MEMBERS: c.resolveStructuredTypeMembers
+calls forward T-LOOKUP: c.getPropertiesOfType c.getTypeOfPropertyOfType
+calls forward T-SYMTYPE: c.getTypeOfSymbol
+calls forward K-TEMPLATE: c.isMemberOfStringMapping c.isTypeMatchedByTemplateLiteralType
+calls later relater: c.isTypeDerivedFrom@4993 c.isTypeRelatedTo@169
+calls later tracer: Tracer.Instant@45
+called from core c.getUnionType <- C-INIT,K-OBJ
+links 
+== K-INTERSECT functions 11 lines 363
+file checker/c43_unions_intersections.rs
+   26147-26155 c.intersectTypes
+   26175-26177 c.getIntersectionType
+   26179-26346 c.getIntersectionTypeEx
+   26374-26379 c.addTypesToIntersection
+   26381-26416 c.addTypeToIntersection
+   26418-26434 c.removeRedundantSupertypes
+   26440-26461 c.extractRedundantTemplateLiterals
+   26466-26514 c.intersectUnionsOfPrimitiveTypes
+   26519-26526 c.eachUnionContains
+   26528-26551 c.unionContainsType
+   26553-26573 c.getCrossProductIntersections
+codes 
+calls core K-OBJ: c.getPropagatingFlagsOfTypes c.newIntersectionType
+calls core T-KEYS: getIntersectionKey
+calls core TYPES: Type.Types
+calls core UTIL: orderedSet.add orderedSet.contains
+calls earlier K-LIT: c.getRegularTypeOfLiteralType
+calls earlier K-PRED: c.IsEmptyAnonymousObjectType c.filterTypes c.isErrorType c.isGenericStringLikeType c.isPatternLiteralType containsType everyType getConstituentCountOfTypes insertType isIntersectionType isNotNullType isNotUndefinedType isPrimitiveUnion isUnionWithNull isUnionWithUndefined someType
+calls earlier K-UNION: c.checkCrossProductUnion c.getCrossProductUnionSize c.getUnionTypeEx c.getUnionTypeFromSortedList
+calls forward T-CONSTRAINT: c.getBaseConstraintOfType
+calls later relater: c.isTypeStrictSubtypeOf@157 c.isTypeSubtypeOf@153
+links 
+== T-TUPLE functions 44 lines 434
+file checker/c38_type_nodes_references.rs
+   23410-23415 c.createNormalizedTypeReference
+   23417-23463 c.createNormalizedTupleTypeEx
+   23465-23467 c.createNormalizedTupleType
+   23478-23542 TupleNormalizer.normalize
+   23544-23556 TupleNormalizer.add
+   23559-23566 getStartElementCount
+   23569-23576 getEndElementCount
+   23578-23580 getTotalFixedElementCount
+   23582-23589 c.getElementTypes
+   23591-23593 c.getTypeReferenceArity
+   23595-23597 c.isArrayType
+   23599-23601 c.isReadonlyArrayType
+   23603-23605 isTupleType
+   23607-23609 isMutableTupleType
+   23611-23613 isGenericTupleType
+   23615-23617 isSingleElementGenericTupleType
+   23619-23621 c.isArrayOrTupleType
+   23623-23625 c.isMutableArrayOrTuple
+   23627-23632 c.getElementTypeOfArrayType
+   23634-23638 c.isArrayLikeType
+   23640-23644 c.isMutableArrayLikeType
+   23646-23649 c.isEmptyArrayLiteralType
+   23651-23656 c.isEmptyLiteralType
+   23658-23668 c.isTupleLikeType
+   23670-23672 c.isArrayOrTupleLikeType
+   23674-23676 c.isArrayOrTupleOrIntersection
+   23678-23687 c.getTupleElementType
+file checker/c40_type_nodes_conditional_tuples.rs
+   24791-24796 c.createTypeFromGenericGlobalType
+   24798-24803 c.getGlobalStrictFunctionType
+   24820-24822 c.createIterableType
+   24824-24826 c.createArrayType
+   24828-24830 c.createArrayTypeEx
+   24832-24849 c.getTupleElementFlags
+   24851-24856 c.getTupleElementInfo
+   24858-24861 c.createTupleType
+   24863-24872 c.createTupleTypeEx
+   24874-24889 c.getTupleTargetType
+   24898-24951 c.createTupleTargetType
+   24953-24972 c.getElementTypeOfSliceOfTupleType
+   24974-24976 c.getRestTypeOfTupleType
+   24978-24989 c.getTupleElementTypeOutOfStartCount
+file checker/relater.rs
+   1915-1928 c.sliceTupleType
+   1930-1938 c.getKnownKeysOfTupleType
+   1940-1945 c.getRestArrayTypeOfTupleType
+codes TS2799 TS2800
+calls core C-INIT: c.getGlobalType
+calls core D-SINK: c.error
+calls core K-OBJ: c.createTypeReference c.createTypeReferenceEx c.newObjectType c.newTypeParameter
+calls core LINKS: symbolArenaLinkStore.Get
+calls core S-MERGE: c.newSymbolEx
+calls core T-KEYS: getTupleKey getTypeListKey
+calls core TYPES: InterfaceType.TypeParameters Type.AsTupleType Type.AsTypeParameter Type.Target Type.TargetInterfaceType Type.TargetTupleType Type.Types
+calls earlier K-LIT: c.getNumberLiteralType c.getStringLiteralType
+calls earlier K-PRED: everyType
+calls earlier K-GENERIC: c.isGenericMappedType
+calls earlier K-UNION: c.checkCrossProductUnion c.getUnionType c.getUnionTypeEx c.mapType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls forward T-TYPENODE: c.getArrayElementTypeNode
+calls forward T-LOOKUP: c.getIndexTypeOfType c.getPropertyOfType c.getTypeOfPropertyOfType
+calls forward T-INSTANTIATE: c.getTypeArguments
+calls forward T-SYMTYPE: c.addOptionalityEx
+calls forward K-KEYOF: c.getIndexType
+calls forward K-INDEXED: c.getIndexedAccessType
+calls later relater: c.isTypeAssignableTo@149
+called from core c.createArrayType <- C-INIT
+called from core c.createTypeFromGenericGlobalType <- C-INIT
+called from core c.getGlobalStrictFunctionType <- C-INIT
+called from core isTupleType <- TYPES
+links valueSymbolLinks:1
+== T-DECLARED functions 23 lines 306
+file checker/c29_constraints.rs
+   17413-17441 c.getDeclaredTypeOfClassOrInterface
+   17450-17469 c.isThislessInterface
+file checker/c38_type_nodes_references.rs
+   23779-23782 isLocalTypeAlias
+   23784-23790 c.getDeclaredTypeOfSymbol
+   23792-23808 c.tryGetDeclaredTypeOfSymbol
+   23810-23823 getTypeReferenceName
+   23825-23831 c.getAliasForTypeNode
+   23833-23842 c.getAliasSymbolForTypeNode
+   23844-23849 c.getTypeArgumentsForAliasSymbol
+   23851-23855 c.getOuterTypeParametersOfClassOrInterface
+   23858-23872 c.getClassOrInterfaceLikeDeclaration
+   23874-23876 c.canGetTypeParametersOfClassOrInterface
+file checker/c39_declared_types_enums.rs
+   23879-23915 c.getOuterTypeParameters
+   23917-23925 c.getInferTypeParameters
+   23929-23931 c.getLocalTypeParametersOfClassOrInterfaceOrTypeAlias
+   23933-23940 c.appendLocalTypeParametersOfClassOrInterfaceOrTypeAlias
+   23945-23950 c.appendTypeParameters
+   23952-23958 c.getDeclaredTypeOfTypeParameter
+   23960-23996 c.getDeclaredTypeOfTypeAlias
+   23998-24033 c.getDeclaredTypeOfEnum
+   24040-24048 c.createComputedEnumType
+   24050-24059 c.getDeclaredTypeOfEnumMember
+   24217-24223 c.getDeclaredTypeOfAlias
+codes TS2456
+assert checker.go:23853 c.getOuterTypeParametersOfClassOrInterface debug.Assert(declaration != nil, "Class was missing valueDeclaration -OR- non-class had no interface declarations")
+maprange checker.go:23919 c.getInferTypeParameters node.Locals()
+calls core A-ALIAS: c.resolveAlias
+calls core D-SINK: c.error
+calls core K-OBJ: c.newLiteralType c.newObjectType c.newTypeParameter
+calls core Q-ENTITY: c.resolveEntityName
+calls core S-MERGE: c.getParentOfSymbol c.getSymbolOfDeclaration
+calls core T-KEYS: getTypeListKey
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution
+calls core TYPES: InterfaceType.TypeParameters Type.AsInterfaceType Type.AsLiteralType Type.AsTypeParameter
+calls core UTIL: isTypeAlias
+calls earlier K-LIT: c.getEnumLiteralType c.getFreshTypeOfLiteralType
+calls earlier K-UNION: c.getUnionTypeEx
+calls forward T-ENUMVAL: c.getEnumMemberValue
+calls forward T-TYPENODE: c.getTypeFromTypeNode
+calls forward T-LOOKUP: c.getSignaturesOfType
+calls forward T-SYMTYPE: c.getTypeOfSymbol
+calls later c12_iteration_types: c.getBuiltinIteratorReturnType@6490
+calls later c50_contextual_properties_inference_context: c.isContextSensitive@31020
+calls later printer: c.symbolToString@124
+called from core c.getAliasForTypeNode <- K-OBJ
+called from core c.getDeclaredTypeOfSymbol <- C-INIT,N-DIAG
+links declaredTypeLinks:5 typeAliasLinks:1
+== T-ENUMVAL functions 6 lines 155
+file checker/c39_declared_types_enums.rs
+   24035-24038 c.getEnumMemberValue
+   24061-24079 c.computeEnumMemberValues
+   24081-24116 c.computeEnumMemberValue
+   24118-24145 c.computeConstantEnumMemberValue
+   24147-24198 c.evaluateEntity
+   24200-24215 c.evaluateEnumMember
+codes TS1061 TS1066 TS1164 TS2452 TS2474 TS2477 TS2478 TS2565 TS2651 TS18033 TS18055 TS18056
+panic checker.go:24197 c.evaluateEntity panic("Unhandled case in evaluateEntity")
+calls core C-INIT: c.getGlobalSymbol
+calls core D-SINK: c.error
+calls core N-DIAG: c.isBlockScopedNameDeclaredBeforeUse
+calls core Q-ENTITY: c.resolveEntityName
+calls core UTIL: c.isConstantVariable isNumericLiteralName
+calls later c14_expressions: c.checkExpression@7643
+calls later printer: c.symbolToString@124
+calls later relater: c.checkTypeAssignableTo@339
+called from core c.evaluateEntity <- C-INIT
+links enumMemberLinks:2 nodeLinks:1
+== T-TYPENODE functions 39 lines 708
+file checker/c38_type_nodes_references.rs
+   22913-22919 c.tryGetTypeFromTypeNode
+   22921-22923 c.getTypeFromTypeNode
+   22925-23012 c.getTypeFromTypeNodeWorker
+   23014-23020 c.getTypeFromThisTypeNode
+   23022-23034 c.getThisType
+   23036-23045 c.getTypeFromLiteralTypeNode
+   23047-23061 c.getTypeFromTypeLiteralOrFunctionOrConstructorTypeNode
+   23063-23072 c.getTypeFromIndexedAccessTypeNode
+   23074-23094 c.getTypeFromTypeOperatorNode
+   23096-23115 c.getESSymbolLikeTypeForNode
+   23117-23132 c.getTypeFromTypeReference
+   23134-23189 c.getIntendedTypeFromJSDocTypeReference
+   23191-23199 c.getSymbolFromTypeReference
+   23201-23214 c.resolveTypeReferenceName
+   23216-23251 c.getUnresolvedSymbolForEntityName
+   23253-23258 getSymbolPath
+   23260-23278 c.getTypeReferenceType
+   23283-23328 c.getTypeFromClassOrInterfaceReference
+   23330-23332 c.getTypeArgumentsFromNode
+   23334-23346 c.checkNoTypeArguments
+   23350-23366 c.isDeferredTypeReferenceNode
+   23371-23381 c.isResolvedByTypeAlias
+   23385-23408 c.mayResolveTypeAlias
+   23694-23753 c.getTypeFromTypeAliasReference
+   23755-23777 c.getTypeAliasInstantiation
+file checker/c40_type_nodes_conditional_tuples.rs
+   24225-24236 c.getTypeFromTypeQueryNode
+   24238-24265 c.getTypeFromArrayOrTupleTypeNode
+   24267-24269 c.isVariadicTupleElement
+   24271-24281 c.getArrayOrTupleTargetType
+   24283-24285 c.isReadonlyTypeOperator
+   24287-24297 c.getTypeFromNamedTupleTypeNode
+   24299-24306 c.getTypeFromRestTypeNode
+   24308-24326 c.getArrayElementTypeNode
+   24328-24330 c.getTypeFromOptionalTypeNode
+   24332-24339 c.getTypeFromUnionTypeNode
+   24341-24360 c.getTypeFromIntersectionTypeNode
+   24362-24376 c.getTypeFromTemplateTypeNode
+   24378-24390 c.getTypeFromMappedTypeNode
+   24690-24696 c.getTypeFromInferTypeNode
+codes TS2314 TS2315 TS2526 TS2707 TS8026 TS8027
+panic checker.go:23090 c.getTypeFromTypeOperatorNode panic("Unhandled case in getTypeFromTypeOperatorNode")
+panic checker.go:23363 c.isDeferredTypeReferenceNode panic("Unhandled case in isDeferredTypeReferenceNode")
+calls core A-ALIAS: c.resolveAlias
+calls core D-SINK: c.error
+calls core K-OBJ: c.createDeferredTypeReference c.createTypeReferenceEx c.newIntrinsicType c.newObjectType c.newUniqueESSymbolType
+calls core LINKS: nodeLinkStore.Get
+calls core M-MODULE: c.getMembersOfSymbol
+calls core MAPPER: newTypeMapper
+calls core Q-ENTITY: c.resolveEntityName
+calls core S-MERGE: c.getMergedSymbol c.getSymbolOfDeclaration c.getSymbolOfNode c.newSymbolEx
+calls core T-KEYS: getAliasKey getTypeAliasInstantiationKey
+calls core TYPES: InterfaceType.LocalTypeParameters InterfaceType.OuterTypeParameters Type.AsInterfaceType Type.AsMappedType
+calls core UTIL: isConstTypeReference isNodeDescendantOf isValidESSymbolDeclaration
+calls earlier K-LIT: c.getRegularTypeOfLiteralType
+calls earlier K-PRED: c.isPatternLiteralType
+calls earlier K-UNION: c.getUnionTypeEx
+calls earlier K-INTERSECT: c.getIntersectionTypeEx
+calls earlier T-TUPLE: c.createArrayType c.createNormalizedTupleTypeEx c.getTupleElementFlags c.getTupleElementInfo c.getTupleTargetType
+calls earlier T-DECLARED: c.getAliasForTypeNode c.getAliasSymbolForTypeNode c.getDeclaredTypeOfClassOrInterface c.getDeclaredTypeOfSymbol c.getDeclaredTypeOfTypeParameter c.getTypeArgumentsForAliasSymbol c.tryGetDeclaredTypeOfSymbol getTypeReferenceName isLocalTypeAlias
+calls forward T-CONSTRAINT: c.fillMissingTypeArguments c.getMinTypeArgumentCount
+calls forward T-MEMBERS: c.isValidIndexKeyType
+calls forward T-INSTANTIATE: c.instantiateTypeWithAlias
+calls forward T-SYMTYPE: c.addOptionality c.addOptionalityEx c.getNullableType
+calls forward T-WIDEN: c.getWidenedType
+calls forward K-KEYOF: c.getIndexType
+calls forward K-INDEXED: c.getIndexedAccessTypeEx
+calls forward K-SUBST: c.getConditionalFlowTypeOfType c.getNoInferType
+calls forward K-COND: c.getTypeFromConditionalTypeNode
+calls forward T-MAPPED: c.getConstraintTypeFromMappedType
+calls forward K-TEMPLATE: c.getStringMappingType c.getTemplateLiteralType
+calls forward K-IMPORTTYPE: c.getTypeFromImportTypeNode
+calls later c14_expressions: c.checkExpression@7643 c.checkExpressionCached@7603
+calls later c17_unary_meta_yield: c.checkExpressionWithTypeArguments@10727
+calls later c34_return_types: c.createPromiseType@20462
+calls later printer: c.TypeToStringEx@55 c.symbolToString@124
+called from core c.getTypeFromTypeNode <- A-ALIAS
+links symbolNodeLinks:1 typeAliasLinks:3 typeNodeLinks:14
+== T-CONSTRAINT functions 29 lines 543
+file checker/c29_constraints.rs
+   17141-17151 c.getConstraintOfType
+   17153-17158 c.getConstraintOfTypeParameter
+   17160-17162 c.hasNonCircularBaseConstraint
+   17165-17201 c.getConstraintFromTypeParameter
+   17203-17206 c.getConstraintOrUnknownFromTypeParameter
+   17208-17279 c.getInferredTypeParameterConstraint
+   17281-17290 c.getTypeParametersForTypeReferenceOrImport
+   17292-17304 c.getTypeParametersForTypeAndSymbol
+   17306-17312 c.getEffectiveTypeArgumentAtIndex
+   17314-17319 c.getConstraintOfIndexedAccess
+   17321-17340 c.getConstraintFromIndexedAccess
+   17342-17347 c.getConstraintOfConditionalType
+   17349-17355 c.getConstraintFromConditionalType
+   17357-17376 c.getDefaultConstraintOfConditionalType
+   17378-17411 c.getConstraintOfDistributiveConditionalType
+file checker/c36_properties_apparent_types.rs
+   22047-22049 c.getEffectiveTypeArguments
+   22052-22060 c.getMinTypeArgumentCount
+   22062-22066 c.hasTypeParameterDefault
+   22068-22098 c.fillMissingTypeArguments
+   22100-22105 c.getDefaultTypeArgumentType
+   22110-22119 c.getDefaultFromTypeParameter
+   22121-22156 c.getResolvedTypeParameterDefault
+   22158-22161 c.getDefaultOrUnknownFromTypeParameter
+file checker/c45_base_constraints_normalization.rs
+   27551-27557 c.getBaseConstraintOrType
+   27559-27568 c.getBaseConstraintOfType
+   27570-27611 c.getResolvedBaseConstraint
+   27613-27714 c.computeBaseConstraint
+   27716-27725 c.getNextBaseConstraint
+file checker/c47_promised_mapped_template.rs
+   29255-29266 c.getConstraintDeclaration
+codes TS2313 TS2751
+calls core D-SINK: c.error
+calls core MAPPER: newDeferredTypeMapper newSimpleTypeMapper newTypeMapper prependTypeMapping
+calls core N-RESOLVE: c.getResolvedSymbolOrNil
+calls core S-MERGE: c.getSymbolOfDeclaration
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution
+calls core TYPES: InterfaceType.LocalTypeParameters Type.AsConditionalType Type.AsConstrainedType Type.AsIndexType Type.AsIndexedAccessType Type.AsInterfaceType Type.AsTemplateLiteralType Type.AsTypeParameter Type.Target Type.TargetTupleType Type.Types
+calls core UTIL: IsTypeAny NewDiagnosticForNode isNodeDescendantOf
+calls earlier K-PRED: c.isErrorType everyType
+calls earlier K-GENERIC: c.isGenericMappedType c.isGenericTupleType
+calls earlier K-UNION: c.getUnionType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.createArrayType c.createTupleTypeEx c.getElementTypes c.isArrayOrTupleType
+calls earlier T-DECLARED: c.getDeclaredTypeOfTypeParameter
+calls earlier T-TYPENODE: c.getTypeFromTypeNode
+calls forward T-APPARENT: c.isMappedTypeGenericIndexedAccess
+calls forward T-INSTANTIATE: c.instantiateType
+calls forward K-KEYOF: c.getIndexTypeForMappedType
+calls forward K-INDEXED: c.getIndexedAccessTypeOrUndefined c.getSimplifiedType c.getSimplifiedTypeOrConstraint c.substituteIndexedMappedType
+calls forward K-SUBST: c.getSubstitutionIntersection
+calls forward K-COND: c.getConditionalTypeInstantiation c.getFalseTypeFromConditionalType c.getInferredTrueTypeFromConditionalType
+calls forward T-MAPPED: c.getNameTypeFromMappedType c.isMappedTypeWithKeyofConstraintDeclaration
+calls forward K-TEMPLATE: c.getStringMappingType c.getTemplateLiteralType
+calls later printer: c.TypeToString@43
+calls later relater: c.isTypeIdenticalTo@117 getRecursionIdentity@810
+called from core c.getConstraintOfTypeParameter <- T-KEYS
+called from core c.getResolvedBaseConstraint <- UTIL
+links typeAliasLinks:1
+== T-BASE functions 18 lines 298
+file checker/c28_types_of_symbols.rs
+   17030-17041 c.getBaseTypeVariableOfClass
+   17051-17101 c.getBaseConstructorTypeOfClass
+   17103-17105 c.isFunctionType
+   17107-17116 c.isConstructorType
+   17120-17130 c.isMixinConstructorType
+file checker/c33_members_base_types_signatures.rs
+   19281-19318 c.getBaseTypes
+   19320-19332 c.getTupleBaseType
+   19334-19379 c.resolveBaseTypesOfClass
+   19381-19387 getBaseTypeNodeOfClass
+   19389-19398 c.getInstantiatedConstructorsForTypeArguments
+   19400-19405 c.getConstructorsForTypeArguments
+   19612-19632 c.resolveBaseTypesOfInterface
+   19634-19644 c.areAllOuterTypeParametersApplied
+   19646-19648 c.reportCircularBaseType
+   19651-19662 c.isValidBaseType
+   19665-19678 c.hasBaseType
+   19680-19685 getTargetType
+   19687-19710 c.getTypeWithThisArgument
+codes TS2310 TS2312 TS2506 TS2507 TS2508 TS2509 TS2735
+panic checker.go:19301 c.getBaseTypes panic("Unhandled case in getBaseTypes")
+calls core D-SINK: c.addDiagnostic c.error
+calls core K-OBJ: c.createTypeReference
+calls core S-MERGE: createDiagnosticForNode
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution
+calls core TYPES: InterfaceType.OuterTypeParameters InterfaceType.TypeParameters Type.AsInterfaceType Type.AsTupleType Type.Target Type.Types
+calls core UTIL: IsTypeAny NewDiagnosticChainForNode
+calls earlier K-PRED: c.isErrorType
+calls earlier K-GENERIC: c.isGenericMappedType
+calls earlier K-UNION: c.getUnionType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.createArrayTypeEx c.getElementTypeOfArrayType
+calls earlier T-DECLARED: c.getDeclaredTypeOfClassOrInterface c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE: c.getTypeFromClassOrInterfaceReference c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.getBaseConstraintOfType c.getConstraintFromTypeParameter c.getMinTypeArgumentCount
+calls forward T-MEMBERS: c.resolveStructuredTypeMembers
+calls forward T-LOOKUP: c.getSignaturesOfType
+calls forward T-APPARENT: c.elaborateNeverIntersection c.getApparentType c.getReducedType
+calls forward T-SIGDECL: c.getReturnTypeOfSignature
+calls forward T-SIGSHAPE: c.getTypeOfParameter signatureHasRestParameter
+calls forward T-SIGINST: c.getSignatureInstantiation
+calls forward T-INSTANTIATE: c.getTypeArguments
+calls forward K-INDEXED: c.getIndexedAccessType
+calls later c14_expressions: c.checkExpression@7643
+calls later printer: c.TypeToString@43 c.symbolToString@124 c.typeToStringEx@59
+links 
+== T-MEMBERS functions 33 lines 559
+file checker/c33_members_base_types_signatures.rs
+   19176-19203 c.resolveStructuredTypeMembers
+   19205-19207 c.resolveClassOrInterfaceMembers
+   19209-19218 c.resolveTypeReferenceMembers
+   19220-19270 c.resolveObjectTypeMembers
+   19272-19279 findIndexInfo
+   19712-19724 c.addInheritedMembers
+   19726-19737 c.resolveDeclaredMembers
+   19739-19745 c.getIndexInfosOfSymbol
+   19748-19832 c.getIndexInfosOfIndexSymbol
+   19835-19853 c.getObjectLiteralIndexInfo
+   19855-19864 c.isSymbolWithSymbolName
+   19866-19875 c.isSymbolWithNumericName
+   19877-19883 c.isSymbolWithComputedName
+   19885-19893 c.isNumericName
+   19895-19899 c.isNumericComputedName
+   19901-19905 c.isValidIndexKeyType
+   19907-19914 c.findIndexInfo
+   19916-19918 c.getIndexSymbol
+file checker/c35_resolve_members.rs
+   20764-20841 c.resolveAnonymousTypeMembers
+   20843-20852 c.createInstantiatedSymbolTable
+   20854-20865 c.instantiateSymbolTable
+   20867-20905 c.instantiateSymbol
+   20912-20927 isThisless
+   20931-20937 isThislessVariableLikeDeclaration
+   20942-20953 isThislessType
+   20958-20963 isThislessFunctionLikeDeclaration
+   20966-20969 isThislessTypeParameter
+   20971-21006 c.getDefaultConstructSignatures
+file checker/c36_properties_apparent_types.rs
+   22163-22188 c.getNamedMembers
+   22190-22199 c.isDeclarationContainedBy
+   22201-22203 c.isNamedMember
+   22205-22207 c.symbolIsValue
+   22209-22212 c.symbolIsValueEx
+codes 
+panic checker.go:19192 c.resolveStructuredTypeMembers panic("Unhandled case in resolveStructuredTypeMembers")
+panic checker.go:19199 c.resolveStructuredTypeMembers panic("Unhandled case in resolveStructuredTypeMembers")
+maprange checker.go:20790 c.resolveAnonymousTypeMembers members
+maprange checker.go:20859 c.instantiateSymbolTable symbols
+maprange checker.go:22173 c.getNamedMembers members
+maprange checker.go:22180 c.getNamedMembers members
+calls core A-ALIAS: c.getSymbolFlagsEx
+calls core K-OBJ: c.newIndexInfo c.newSignature c.setStructuredTypeMembers
+calls core LINKS: symbolArenaLinkStore.Get
+calls core M-MODULE: c.getExportsOfSymbol c.getMembersOfSymbol
+calls core MAPPER: TypeMapper.MapsThisOnly c.combineTypeMappers newTypeMapper
+calls core S-MERGE: c.getMergedSymbol c.newSymbol
+calls core TYPES: InterfaceType.LocalTypeParameters Type.AsInterfaceType Type.AsObjectType Type.AsStructuredType Type.Target Type.Types
+calls core UTIL: IsKnownSymbol c.sortSymbols hasReadonlyModifier isNumericLiteralName isReservedMemberName isStaticPrivateIdentifierProperty
+calls earlier K-PRED: c.isPatternLiteralType c.isTypeAssignableToKind forEachType
+calls earlier K-GENERIC: c.isGenericType
+calls earlier K-UNION: c.getUnionTypeEx
+calls earlier T-DECLARED: c.getDeclaredTypeOfClassOrInterface c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE: c.getTypeArgumentsFromNode c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.fillMissingTypeArguments c.getMinTypeArgumentCount
+calls earlier T-BASE: c.getBaseConstructorTypeOfClass c.getBaseTypes c.getTypeWithThisArgument getBaseTypeNodeOfClass
+calls forward T-UIMEMBERS: c.resolveIntersectionTypeMembers c.resolveUnionTypeMembers
+calls forward T-LOOKUP: c.getIndexInfosOfType c.getPropertiesOfObjectType c.getPropertiesOfType c.getSignaturesOfType
+calls forward T-SIGDECL: c.getSignaturesOfSymbol c.hasLateBindableIndexSignature
+calls forward T-SIGINST: c.cloneSignature c.createSignatureInstantiation
+calls forward T-INSTANTIATE: c.getTypeArguments c.instantiateIndexInfos c.instantiateSignatures c.instantiateType
+calls forward T-SYMTYPE: c.getTypeOfSymbol
+calls forward K-KEYOF: c.checkComputedPropertyName
+calls forward T-MAPPED: c.resolveMappedTypeMembers
+calls later c14_expressions: c.checkExpressionCached@7603
+calls later inference: c.resolveReverseMappedTypeMembers@1099
+calls later relater: c.isTypeAssignableTo@149
+called from core c.getNamedMembers <- K-OBJ
+called from core c.resolveStructuredTypeMembers <- M-MODULE
+links valueSymbolLinks:1
+== T-UIMEMBERS functions 23 lines 662
+file checker/c20_object_literals_spread.rs
+   13611-13625 c.getUnionIndexInfos
+file checker/c35_resolve_members.rs
+   21166-21183 c.resolveUnionTypeMembers
+   21185-21206 c.getArrayMemberCallSignatures
+   21208-21213 c.isArrayOrTupleSymbol
+   21215-21220 c.isReadonlyArraySymbol
+   21226-21295 c.getUnionSignatures
+   21297-21334 c.combineUnionOrIntersectionMemberSignatures
+   21336-21400 c.combineUnionOrIntersectionParameters
+   21402-21414 c.combineUnionOrIntersectionThisParam
+   21416-21447 c.resolveIntersectionTypeMembers
+   21449-21458 c.appendSignatures
+   21460-21477 c.appendIndexInfo
+   21479-21499 c.findMixins
+   21501-21511 c.includeMixinType
+file checker/c36_properties_apparent_types.rs
+   21528-21535 c.getPropertyOfUnionOrIntersectionType
+   21542-21564 c.getUnionOrIntersectionProperty
+   21566-21773 c.createUnionOrIntersectionProperty
+   21775-21783 c.getTargetSymbol
+   21789-21791 isPrototypeProperty
+   21793-21815 c.hasCommonDeclaration
+   21817-21827 c.createSymbolWithType
+file checker/c45_base_constraints_normalization.rs
+   27795-27820 c.compareProperties
+   27822-27827 compareTypesEqual
+codes 
+assert checker.go:21277 c.getUnionSignatures debug.Assert(signature != nil, "getUnionSignatures bails early on empty signature lists and should not have empty lists on second pass")
+maprange checker.go:21805 c.hasCommonDeclaration commonDeclarations.Keys()
+calls core K-OBJ: c.newIndexInfo c.newSignature c.setStructuredTypeMembers
+calls core LINKS: symbolArenaLinkStore.Get
+calls core MAPPER: TypeMapper.Map c.combineTypeMappers newTypeMapper
+calls core S-MERGE: c.getSymbolIfSameReference c.newSymbolEx
+calls core TYPES: InterfaceType.TypeParameters Type.AsInterfaceType Type.AsUnionOrIntersectionType Type.Mapper Type.Types
+calls core UTIL: getDeclarationModifierFlagsFromSymbol isLateBoundName isObjectLiteralType
+calls earlier K-LIT: isLiteralType
+calls earlier K-PRED: c.isErrorType c.isPatternLiteralType someType
+calls earlier K-UNION: c.getUnionOrIntersectionType c.getUnionType c.mapType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.createArrayType c.createArrayTypeEx c.getRestTypeOfTupleType isTupleType
+calls earlier T-DECLARED: c.getLocalTypeParametersOfClassOrInterfaceOrTypeAlias
+calls earlier T-BASE: c.isMixinConstructorType
+calls forward T-LOOKUP: c.getApplicableIndexInfoForName c.getIndexInfoOfType c.getIndexInfosOfType c.getIndexTypeOfType c.getPropertyOfTypeEx c.getSignaturesOfType c.getTypeOfPropertyOfType
+calls forward T-APPARENT: c.getApparentType
+calls forward T-SIGDECL: c.getReturnTypeOfSignature
+calls forward T-SIGSHAPE: c.getMinArgumentCount c.getParameterCount c.getParameterNameAtPosition c.getTypeAtPosition c.hasEffectiveRestParameter c.tryGetTypeAtPosition
+calls forward T-SIGINST: c.cloneSignature
+calls forward T-INSTANTIATE: c.instantiateType
+calls forward T-SYMTYPE: c.getNonMissingTypeOfSymbol c.getTypeOfSymbol c.getWriteTypeOfSymbol
+calls later c16_function_expressions_collisions: c.createUnionSignature@10385
+calls later c20_object_literals_spread: c.isReadonlySymbol@13950
+calls later relater: c.compareSignaturesIdentical@2200 c.compareTypeParametersIdentical@2280 c.compareTypesIdentical@121 c.findMatchingSignature@2187 c.findMatchingSignatures@2152
+links deferredSymbolLinks:1 valueSymbolLinks:4
+== T-LOOKUP functions 18 lines 196
+file checker/c33_members_base_types_signatures.rs
+   18960-18966 c.getPropertiesOfType
+   18968-18973 c.getPropertiesOfObjectType
+   18975-18999 c.getPropertiesOfUnionOrIntersectionType
+   19001-19003 c.getPropertyOfType
+   19013-19062 c.getPropertyOfTypeEx
+   19065-19071 c.getTypeOfPropertyOfType
+   19073-19075 c.getSignaturesOfType
+   19077-19086 c.getSignaturesOfStructuredType
+   19088-19090 c.getIndexInfosOfType
+   19092-19097 c.getIndexInfosOfStructuredType
+   19101-19103 c.getIndexInfoOfType
+   19107-19113 c.getIndexTypeOfType
+   19115-19120 c.getIndexTypeOfTypeEx
+   19122-19124 c.getApplicableIndexInfo
+   19126-19131 c.getApplicableIndexInfoForName
+   19133-19166 c.findApplicableIndexInfo
+   19168-19174 c.isApplicableIndexType
+file checker/c36_properties_apparent_types.rs
+   21517-21526 c.getPropertyOfObjectType
+codes 
+calls core K-OBJ: c.newIndexInfo
+calls core TYPES: StructuredType.CallSignatures StructuredType.ConstructSignatures Type.AsUnionOrIntersectionType
+calls core UTIL: isLateBoundName isNumericLiteralName
+calls earlier K-LIT: c.getStringLiteralType getStringLiteralValue
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-MEMBERS: c.resolveStructuredTypeMembers c.symbolIsValue c.symbolIsValueEx findIndexInfo
+calls earlier T-UIMEMBERS: c.getPropertyOfUnionOrIntersectionType
+calls forward T-APPARENT: c.getReducedApparentType
+calls forward T-SYMTYPE: c.getTypeOfSymbol
+calls later relater: c.isTypeAssignableTo@149
+called from core c.getPropertyOfType <- A-ALIAS,N-DIAG,Q-ENTITY
+called from core c.getPropertyOfTypeEx <- A-ALIAS,M-MODULE
+called from core c.getSignaturesOfStructuredType <- M-MODULE
+links moduleSymbolLinks:1
+== T-APPARENT functions 12 lines 155
+file checker/c36_properties_apparent_types.rs
+   21829-21836 c.isMappedTypeGenericIndexedAccess
+   21843-21876 c.getApparentType
+   21878-21884 c.getApparentTypeOfMappedType
+   21886-21908 c.getResolvedApparentTypeOfMappedType
+   21910-21925 c.getApparentTypeOfIntersectionType
+   21933-21956 c.getReducedType
+   21958-21968 c.getReducedUnionType
+   21970-21972 c.isNeverReducedProperty
+   21974-21980 c.getReducedApparentType
+   21982-21994 c.elaborateNeverIntersection
+   21996-22000 c.isDiscriminantWithNeverType
+   22002-22005 isConflictingPrivateProperty
+codes TS18031 TS18032
+calls core MAPPER: prependTypeMapping
+calls core TYPES: Type.AsIndexedAccessType Type.AsIntersectionType Type.AsMappedType Type.AsUnionType Type.Types
+calls core UTIL: NewDiagnosticChainForNode
+calls earlier K-PRED: everyType
+calls earlier K-GENERIC: c.isGenericIndexType c.isGenericMappedType
+calls earlier K-UNION: c.getUnionType
+calls earlier T-TUPLE: c.isArrayOrTupleOrIntersection c.isArrayOrTupleType
+calls earlier T-CONSTRAINT: c.getBaseConstraintOfType
+calls earlier T-BASE: c.getTypeWithThisArgument
+calls earlier T-LOOKUP: c.getPropertiesOfUnionOrIntersectionType
+calls forward T-INSTANTIATE: c.instantiateType
+calls forward T-SYMTYPE: c.getTypeOfSymbol
+calls forward T-MAPPED: c.getHomomorphicTypeVariable c.getModifiersTypeFromMappedType getMappedTypeModifiers
+calls later printer: c.symbolToString@124 c.typeToStringEx@59
+links 
+== T-SIGDECL functions 21 lines 285
+file checker/c33_members_base_types_signatures.rs
+   19920-19948 c.getSignaturesOfSymbol
+   19950-20024 c.getSignatureFromDeclaration
+   20026-20035 c.getTypeParametersFromDeclaration
+   20037-20043 c.getAnnotatedAccessorThisParameter
+   20045-20050 c.getAccessorThisParameter
+   20055-20057 c.hasBindableName
+   20062-20065 c.hasLateBindableName
+   20075-20083 c.isLateBindableName
+   20085-20088 c.hasLateBindableIndexSignature
+   20090-20098 c.isLateBindableIndexSignature
+   20100-20102 c.isTypeUsableAsIndexSignatureDeclaration
+   20104-20113 isLateBindableAST
+file checker/c34_return_types.rs
+   20115-20163 c.getReturnTypeOfSignature
+   20165-20170 c.getNonCircularReturnTypeOfSignature
+   20172-20184 c.getReturnTypeFromAnnotation
+   20186-20191 c.getSignatureOfFullSignatureType
+   20193-20203 c.getParameterTypeOfFullSignature
+   20205-20210 c.getReturnTypeOfFullSignature
+   20212-20218 c.getAnnotatedAccessorType
+   20220-20230 c.getAnnotatedAccessorTypeNode
+   20232-20238 getEffectiveSetAccessorTypeAnnotationNode
+codes TS2577 TS7023 TS7024
+calls core D-SINK: c.error
+calls core K-OBJ: c.newSignature
+calls core S-MERGE: c.getMergedSymbol c.getSymbolOfDeclaration
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution
+calls core TYPES: InterfaceType.LocalTypeParameters Signature.TypeParameters Type.AsInterfaceType
+calls core UTIL: GetSetAccessorValueParameter isOptionalDeclaration isTypeUsableAsPropertyName
+calls earlier K-UNION: c.getUnionOrIntersectionType
+calls earlier T-DECLARED: c.getDeclaredTypeOfClassOrInterface c.getDeclaredTypeOfTypeParameter
+calls earlier T-TYPENODE: c.getTypeFromTypeNode
+calls forward T-SIGSHAPE: c.getRestTypeAtPosition c.getTypeAtPosition c.isResolvingReturnTypeOfSignature hasRestParameter isRestParameter
+calls forward T-SIGINST: c.addOptionalTypeMarker c.getSingleCallSignature
+calls forward T-INSTANTIATE: c.instantiateType
+calls forward T-SYMTYPE: c.getOptionalType
+calls forward K-KEYOF: c.checkComputedPropertyName
+calls later c14_expressions: c.checkExpressionCached@7603
+calls later c34_return_types: c.getReturnTypeFromBody@20240
+calls later c48_contextual_types: c.getContextualType@29466
+calls later relater: c.isTypeAssignableTo@149
+called from core c.getSignatureFromDeclaration <- UTIL
+called from core c.hasLateBindableIndexSignature <- M-MODULE
+called from core c.hasLateBindableName <- M-MODULE,S-MERGE
+links signatureLinks:1
+== T-SIGSHAPE functions 36 lines 478
+file checker/c15_calls.rs
+   9721-9723 c.getRestTypeOfSignature
+   9725-9737 c.tryGetRestTypeOfSignature
+file checker/c28_types_of_symbols.rs
+   17132-17134 signatureHasRestParameter
+   17136-17139 c.getTypeOfParameter
+file checker/c45_base_constraints_normalization.rs
+   27855-27879 c.expandSignatureParametersWithTupleMembers
+   27881-27908 c.getUniqAssociatedNamesFromTupleType
+   27910-27913 hasRestParameter
+   27915-27917 isRestParameter
+   27919-27924 getNameFromIndexInfo
+file checker/c47_promised_mapped_template.rs
+   29124-29126 c.getTypeOfFirstParameterOfSignature
+   29128-29133 c.getTypeOfFirstParameterOfSignatureWithFallback
+file checker/relater.rs
+   1708-1720 c.isTopSignature
+   1726-1735 c.getParameterCount
+   1737-1739 c.getMinArgumentCount
+   1741-1780 c.getMinArgumentCountEx
+   1782-1788 c.hasEffectiveRestParameter
+   1790-1796 c.getTypeAtPosition
+   1798-1814 c.tryGetTypeAtPosition
+   1819-1827 c.getRestOrAnyTypeAtPosition
+   1829-1858 c.getRestTypeAtPosition
+   1860-1885 c.getNameableDeclarationAtPosition
+   1887-1889 c.isValidDeclarationForTupleLabel
+   1891-1897 c.getNonArrayRestType
+   1899-1913 c.getEffectiveRestType
+   1947-1952 c.getThisTypeOfSignature
+   1954-1960 c.isInstantiatedGenericParameter
+   1962-1974 c.getParameterNameAtPosition
+   1976-1990 c.getTupleElementLabel
+   1992-2047 c.getTupleElementLabelFromBindingElement
+   2049-2081 c.getTypePredicateOfSignature
+   2083-2111 c.getUnionOrIntersectionTypePredicate
+   2113-2115 c.typePredicateKindsMatch
+   2117-2131 c.createTypePredicateFromTypePredicateNode
+   2133-2139 c.instantiateTypePredicate
+   2141-2143 c.newTypePredicate
+   2145-2150 c.isResolvingReturnTypeOfSignature
+codes 
+calls core LINKS: symbolArenaLinkStore.Get
+calls core S-MERGE: c.newSymbolEx
+calls core T-RSTACK: c.findResolutionCycleStartIndex
+calls core TYPES: Type.TargetTupleType TypeBase.AsType
+calls core UTIL: IsTypeAny hasDotDotDotToken isOptionalDeclaration
+calls earlier K-LIT: c.getNumberLiteralType
+calls earlier K-PRED: someType
+calls earlier K-GENERIC: c.isGenericType
+calls earlier K-UNION: c.getUnionOrIntersectionType
+calls earlier T-TUPLE: c.createArrayType c.createTupleTypeEx c.getElementTypeOfArrayType c.getRestTypeOfTupleType c.isArrayType c.sliceTupleType isTupleType
+calls earlier T-TYPENODE: c.getTypeFromTypeNode
+calls earlier T-LOOKUP: c.getIndexTypeOfType
+calls earlier T-SIGDECL: c.getReturnTypeOfSignature
+calls forward T-INSTANTIATE: c.getTypeArguments c.instantiateType
+calls forward T-SYMTYPE: c.addOptionalityEx c.getTypeOfSymbol
+calls forward K-INDEXED: c.getIndexedAccessType
+calls later c34_return_types: c.getTypePredicateFromBody@20649
+called from core c.getMinArgumentCountEx <- UTIL
+called from core signatureHasRestParameter <- UTIL
+links valueSymbolLinks:1
+== T-SIGINST functions 19 lines 226
+file checker/c33_members_base_types_signatures.rs
+   19407-19422 c.getSignatureInstantiation
+   19424-19430 c.cloneSignature
+   19432-19440 c.getSignatureInstantiationWithoutFillingInTypeArguments
+   19442-19444 c.createSignatureInstantiation
+   19446-19448 c.createSignatureTypeMapper
+   19450-19452 c.getTypeParametersForMapper
+   19455-19457 c.getSingleCallSignature
+   19459-19465 c.getSingleCallOrConstructSignature
+   19467-19480 c.getSingleSignature
+   19482-19508 c.getOrCreateTypeFromSignature
+   19510-19521 c.getErasedSignature
+   19523-19534 c.getCanonicalSignature
+   19536-19550 c.createCanonicalSignature
+   19552-19577 c.getBaseSignature
+   19580-19610 c.instantiateSignatureInContextOf
+file checker/c34_return_types.rs
+   20722-20727 c.addOptionalTypeMarker
+file checker/c35_resolve_members.rs
+   20729-20731 c.instantiateSignature
+   20733-20754 c.instantiateSignatureEx
+   20756-20762 c.instantiateIndexInfo
+codes 
+calls core K-OBJ: c.newIndexInfo c.newObjectType c.newSignature c.setStructuredTypeMembers
+calls core MAPPER: c.combineTypeMappers newArrayToSingleTypeMapper newTypeMapper
+calls core T-KEYS: getTypeListKey
+calls core TYPES: StructuredType.CallSignatures StructuredType.ConstructSignatures Type.AsObjectType Type.AsTypeParameter Type.Mapper Type.Target
+calls earlier K-UNION: c.getUnionType
+calls earlier T-CONSTRAINT: c.fillMissingTypeArguments c.getConstraintOfTypeParameter c.getMinTypeArgumentCount
+calls earlier T-MEMBERS: c.instantiateSymbol c.resolveStructuredTypeMembers
+calls earlier T-SIGDECL: c.getReturnTypeOfSignature
+calls earlier T-SIGSHAPE: c.getEffectiveRestType
+calls forward T-INSTANTIATE: c.cloneTypeParameter c.instantiateSymbols c.instantiateType c.instantiateTypes
+calls later inference: c.applyToParameterTypes@868 c.applyToReturnTypes@896 c.getInferredTypes@1406 c.inferTypes@53 c.newInferenceContext@1251
+links 
+== T-INSTANTIATE functions 26 lines 514
+file checker/c36_properties_apparent_types.rs
+   22007-22045 c.getTypeArguments
+file checker/c37_instantiation.rs
+   22214-22216 c.instantiateType
+   22218-22258 c.instantiateTypeWithAlias
+   22260-22273 c.pushActiveMapper
+   22275-22283 c.popActiveMapper
+   22285-22287 c.findActiveMapper
+   22289-22293 c.clearActiveMapperCaches
+   22298-22313 c.couldContainTypeVariablesWorker
+   22315-22332 c.isNonGenericTopLevelType
+   22334-22411 c.instantiateTypeWorker
+   22418-22515 c.getObjectTypeInstantiation
+   22517-22570 c.isTypeParameterPossiblyReferenced
+   22572-22597 c.instantiateAnonymousType
+   22632-22636 c.cloneTypeParameter
+   22856-22872 c.instantiateReverseMappedType
+   22874-22879 c.instantiateTypeAlias
+   22881-22883 c.instantiateTypes
+   22885-22887 c.instantiateSymbols
+   22889-22891 c.instantiateSignatures
+   22893-22895 c.instantiateIndexInfos
+   22897-22911 instantiateList
+file checker/c40_type_nodes_conditional_tuples.rs
+   24602-24613 c.getPermissiveInstantiation
+   24615-24632 c.getRestrictiveInstantiation
+   24634-24646 c.getRestrictiveTypeParameter
+   24648-24653 c.restrictiveMapperWorker
+   24655-24660 c.permissiveMapperWorker
+codes TS2589 TS4109 TS4110
+panic checker.go:22025 c.getTypeArguments panic("Unhandled case in getTypeArguments")
+calls core D-SINK: c.error
+calls core K-OBJ: c.createDeferredTypeReference c.getPropagatingFlagsOfTypes c.newObjectType c.newTypeParameter
+calls core MAPPER: TypeMapper.Map c.combineTypeMappers c.mapTypeWithCompositeMapper newSimpleTypeMapper newTypeMapper
+calls core N-RESOLVE: c.getResolvedSymbol
+calls core T-KEYS: getTypeInstantiationKey keyBuilder.hash keyBuilder.writeAlias keyBuilder.writeType
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution
+calls core TYPES: InterfaceType.LocalTypeParameters InterfaceType.OuterTypeParameters InterfaceType.TypeParameters Type.AsConditionalType Type.AsIndexedAccessType Type.AsInstantiationExpressionType Type.AsInterfaceType Type.AsMappedType Type.AsObjectType Type.AsReverseMappedType Type.AsStringMappingType Type.AsSubstitutionType Type.AsTemplateLiteralType Type.AsTypeParameter Type.AsTypeReference Type.AsUnionType Type.Mapper Type.Target Type.Types TypeAlias.Symbol TypeAlias.TypeArguments
+calls core UTIL: isNodeDescendantOf
+calls earlier K-GENERIC: c.isGenericType
+calls earlier K-UNION: c.getUnionTypeEx
+calls earlier K-INTERSECT: c.getIntersectionType c.getIntersectionTypeEx
+calls earlier T-TUPLE: c.createNormalizedTypeReference
+calls earlier T-DECLARED: c.getOuterTypeParameters
+calls earlier T-TYPENODE: c.getSymbolFromTypeReference c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.getConstraintDeclaration c.getEffectiveTypeArguments
+calls earlier T-MEMBERS: c.instantiateSymbol
+calls earlier T-SIGINST: c.instantiateIndexInfo c.instantiateSignature
+calls forward K-KEYOF: c.getIndexType
+calls forward K-INDEXED: c.getIndexedAccessTypeEx
+calls forward K-SUBST: c.getNoInferType c.getSubstitutionType c.isNoInferType
+calls forward K-COND: c.getConditionalTypeInstantiation
+calls forward T-MAPPED: c.getTypeParameterFromMappedType c.instantiateMappedType
+calls forward K-TEMPLATE: c.getStringMappingType c.getTemplateLiteralType
+calls later inference: c.inferTypeForHomomorphicMappedType@1004
+calls later printer: c.symbolToString@124
+calls later relater: c.isTypeAssignableTo@149
+calls later tracer: Tracer.Instant@45
+called from core c.couldContainTypeVariablesWorker <- C-INIT
+called from core c.getTypeArguments <- T-KEYS
+called from core c.instantiateType <- K-OBJ,MAPPER
+called from core c.instantiateTypes <- K-OBJ
+called from core c.permissiveMapperWorker <- C-INIT
+called from core c.restrictiveMapperWorker <- C-INIT
+links typeNodeLinks:1
+== T-SYMTYPE functions 66 lines 1379
+file checker/c28_types_of_symbols.rs
+   16495-16506 c.getTypeOfSymbolWithDeferredType
+   16508-16523 c.getWriteTypeOfSymbolWithDeferredType
+   16528-16546 c.getWriteTypeOfSymbol
+   16548-16585 c.GetTypeOfSymbolAtLocation
+   16587-16616 c.getTypeOfSymbol
+   16618-16620 c.getNonMissingTypeOfSymbol
+   16622-16628 c.getTypeOfInstantiatedSymbol
+   16630-16636 c.getWriteTypeOfInstantiatedSymbol
+   16638-16656 c.getTypeOfVariableOrParameterOrProperty
+   16658-16670 c.isParameterOfContextSensitiveSignature
+   16672-16730 c.getTypeOfVariableOrParameterOrPropertyWorker
+   16741-16743 c.getWidenedTypeForVariableLikeDeclaration
+   16746-16889 c.getTypeForVariableLikeDeclaration
+   16891-16915 c.checkDeclarationInitializer
+   16917-16942 c.padObjectLiteralType
+   16944-16950 c.getPropertyNameFromBindingElement
+   16952-16974 c.padTupleType
+   16976-16989 c.widenTypeInferredFromInitializer
+   16991-16996 c.getWidenedLiteralTypeForInitializer
+   16998-17004 c.getTypeOfFuncClassEnumModule
+   17006-17028 c.getTypeOfFuncClassEnumModuleWorker
+file checker/c31_binding_patterns_widening.rs
+   17777-17786 c.isNullOrUndefined
+   17788-17791 c.checkRightHandSideOfForOf
+   17794-17801 c.getTypeForBindingElement
+   17805-17815 c.getTypeForBindingElementParent
+   17817-17900 c.getBindingElementTypeFromParentType
+   17902-17946 c.getRestType
+   17959-17965 c.getFlowTypeOfDestructuring
+   17967-17990 c.getSyntheticElementAccess
+   17992-18005 c.getParentElementAccess
+   18014-18028 c.getTypeFromBindingPattern
+   18031-18064 c.getTypeFromObjectBindingPattern
+   18067-18111 c.getTypeFromArrayBindingPattern
+   18116-18141 c.getTypeFromBindingElement
+   18143-18149 c.declarationBelongsToPrivateAmbientMember
+   18151-18162 c.getTypeOfPrototypeProperty
+   18173-18224 c.getWidenedTypeForAssignmentDeclaration
+   18226-18250 c.getAssignmentDeclarationInitializerType
+   18257-18264 c.hasParentWithTypeAnnotation
+   18266-18278 c.containsSameNamedThisProperty
+   18280-18296 c.getTypeFromPropertyDescriptor
+   18301-18344 c.isConstructorDeclaredThisProperty
+   18346-18350 c.isGlobalSymbolConstructor
+   18352-18383 c.widenTypeForVariableLikeDeclaration
+   18385-18467 c.reportImplicitAny
+   18617-18623 c.getTypeOfEnumMember
+   18625-18678 c.getTypeOfAccessors
+   18680-18710 c.getWriteTypeOfAccessors
+   18712-18741 c.getTypeOfAlias
+   18743-18745 c.addOptionality
+   18747-18752 c.addOptionalityEx
+   18754-18761 c.getOptionalType
+   18764-18775 c.getNullableType
+   18777-18782 c.GetNonNullableType
+   18784-18786 c.IsNullableType
+   18788-18793 c.getNonNullableTypeIfNeeded
+   18795-18800 c.getDeclarationNodeFlagsFromSymbol
+   18802-18810 c.getCombinedNodeFlagsCached
+   18812-18815 c.isVarConstLike
+   18817-18834 c.getEffectivePropertyNameForPropertyNameNode
+   18836-18849 c.tryGetNameFromType
+   18851-18859 c.getCombinedModifierFlagsCached
+file checker/c47_promised_mapped_template.rs
+   29198-29203 c.removeOptionalTypeMarker
+   29205-29213 c.propagateOptionalTypeMarker
+   29215-29220 c.removeMissingType
+   29222-29227 c.removeMissingOrUndefinedType
+codes TS2502 TS2700 TS7005 TS7006 TS7008 TS7010 TS7011 TS7012 TS7019 TS7023 TS7025 TS7031 TS7032 TS7033 TS7039 TS7043(Suggestion) TS7044(Suggestion) TS7045(Suggestion) TS7047(Suggestion) TS7050(Suggestion) TS7051 TS7055
+panic checker.go:16643 c.getTypeOfVariableOrParameterOrProperty panic("Unexpected nil type")
+panic checker.go:16724 c.getTypeOfVariableOrParameterOrPropertyWorker panic("Unhandled case in getTypeOfVariableOrParameterOrPropertyWorker: " + declaration.Kind.String())
+assert checker.go:16681 c.getTypeOfVariableOrParameterOrPropertyWorker debug.Assert(symbol.ValueDeclaration != nil)
+assert checker.go:16820 c.getTypeForVariableLikeDeclaration debug.Assert(thisParameter.Type() == nil)
+panic checker.go:17886 c.getBindingElementTypeFromParentType panic("Unhandled case in getBindingElementTypeFromParentType")
+panic checker.go:18179 c.getWidenedTypeForAssignmentDeclaration panic("location should not be nil when this assignment has a type.")
+panic checker.go:18184 c.getWidenedTypeForAssignmentDeclaration panic("constructor should not be nil when this assignment is in a constructor.")
+panic checker.go:18308 c.isConstructorDeclaredThisProperty panic("location should be cached whenever this expando symbol is cached")
+assert checker.go:18755 c.getOptionalType debug.Assert(c.strictNullChecks)
+calls core A-ALIAS: c.getDeclarationOfAliasSymbol c.getSymbolFlags c.getTargetOfAliasDeclaration c.resolveAlias
+calls core D-SINK: c.error c.errorOrSuggestion
+calls core K-OBJ: c.cloneTypeReference c.createTypeReference c.newAnonymousType c.newIndexInfo c.newObjectType
+calls core LINKS: nodeLinkStore.Get symbolArenaLinkStore.Get
+calls core M-MODULE: c.resolveExternalModuleSymbol
+calls core N-RESOLVE: c.getResolvedSymbol
+calls core S-MERGE: c.getExportSymbolOfValueSymbolIfExported c.getParentOfSymbol c.getSymbolOfDeclaration c.getSymbolOfNode c.newSymbol
+calls core T-RSTACK: c.popTypeResolution c.pushTypeResolution c.reportCircularityError
+calls core TYPES: InterfaceType.TypeParameters Type.AsInterfaceType Type.AsUniqueESSymbolType Type.Flags Type.TargetTupleType Type.Types
+calls core UTIL: IsTypeAny declarationBelongsToPrivateAmbientMember getDeclarationModifierFlagsFromSymbol getPropertyNameFromType hasDotDotDotToken isDeclarationReadonly isEmptyArrayLiteral isObjectLiteralType isOptionalDeclaration isPrivateWithinAmbient isRightSideOfAccessExpression isShorthandAmbientModuleSymbol isTypeUsableAsPropertyName
+calls earlier K-LIT: c.getNumberLiteralType c.getRegularTypeOfLiteralType c.getWidenedLiteralType getNumberLiteralValue getStringLiteralValue
+calls earlier K-PRED: c.filterType c.removeType everyType
+calls earlier K-GENERIC: c.isGenericIndexType c.isGenericObjectType
+calls earlier K-UNION: c.getUnionType c.getUnionTypeEx c.mapType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.createArrayType c.createIterableType c.createTupleTypeEx c.getElementTypes c.getTypeReferenceArity c.isArrayLikeType c.isEmptyArrayLiteralType c.isEmptyLiteralType c.sliceTupleType isTupleType
+calls earlier T-DECLARED: c.getDeclaredTypeOfEnumMember c.getDeclaredTypeOfSymbol
+calls earlier T-TYPENODE: c.getESSymbolLikeTypeForNode c.getTypeAliasInstantiation c.getTypeFromTypeNode c.tryGetTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.getBaseConstraintOrType
+calls earlier T-BASE: c.getBaseTypeVariableOfClass
+calls earlier T-LOOKUP: c.getIndexInfosOfType c.getPropertiesOfObjectType c.getPropertiesOfType c.getPropertyOfType c.getTypeOfPropertyOfType
+calls earlier T-APPARENT: c.getReducedType
+calls earlier T-SIGDECL: c.getAccessorThisParameter c.getAnnotatedAccessorType c.getAnnotatedAccessorTypeNode c.getParameterTypeOfFullSignature c.getReturnTypeOfSignature c.getSignatureFromDeclaration c.hasBindableName
+calls earlier T-SIGSHAPE: c.getTypeOfFirstParameterOfSignature
+calls earlier T-SIGINST: c.addOptionalTypeMarker c.getSingleCallSignature
+calls earlier T-INSTANTIATE: c.instantiateType
+calls forward T-WIDEN: c.getWidenedType c.reportErrorsFromWidening
+calls forward K-KEYOF: c.getExtractStringType c.getIndexType c.getLiteralTypeFromProperty c.getLiteralTypeFromPropertyName
+calls forward K-INDEXED: c.getDeclaringConstructor c.getIndexedAccessTypeEx c.getIndexedAccessTypeOrUndefined
+calls forward T-MAPPED: c.getTypeOfMappedSymbol
+calls later c12_iteration_types: c.checkIteratedTypeOrElementType@6185
+calls later c14_expressions: c.checkExpression@7643 c.checkExpressionCached@7603 c.checkExpressionCachedEx@7607 c.checkExpressionEx@7647 c.checkExpressionWithContextualType@7574 c.checkNonNullExpression@7495 c.getQuickTypeOfExpression@7451 c.getTypeOfExpression@7427
+calls later c18_identifiers_property_access_this: c.checkPropertyAccessExpression@11334 c.getContextualThisParameterType@12112 c.getTypeOfPropertyInBaseClass@11545
+calls later c20_object_literals_spread: c.checkExpressionForMutableLocation@13979 c.checkObjectLiteralMethod@13966 c.checkPropertyAssignment@13774 c.checkShorthandPropertyAssignment@13790 c.getSpreadSymbol@13686 c.hasDefaultValue@13709 c.isSpreadableProperty@13681 c.isValidSpreadType@13605
+calls later c34_return_types: c.getReturnTypeFromBody@20240
+calls later c48_contextual_types: c.getContextuallyTypedParameterType@29581 c.isContextSensitiveFunctionOrObjectLiteralMethod@29619
+calls later c51_type_facts_awaited: c.getAdjustedTypeWithFacts@31282 c.getNonUndefinedType@31671 c.getTypeWithFacts@31273 c.hasTypeFacts@31101
+calls later flow: c.getDestructuringPropertyName@1792 c.getFlowTypeInConstructor@2466 c.getFlowTypeInStaticBlocks@2488 c.getFlowTypeOfReference@77 c.getTypeOfInitializer@2260 c.isMatchingReference@1597 getFlowNodeOfNode@69
+calls later inference: c.getTypeOfReverseMappedSymbol@1145
+calls later jsx: c.checkJsxAttribute@869
+calls later printer: c.TypeToString@43 c.symbolToString@124
+calls later relater: c.isTypeAssignableTo@149
+called from core c.getCombinedNodeFlagsCached <- D-SINK
+called from core c.getDeclarationNodeFlagsFromSymbol <- UTIL
+called from core c.getTypeOfSymbol <- A-ALIAS,M-MODULE,N-DIAG,Q-ENTITY
+links computedNameLinks:1 deferredSymbolLinks:2 symbolNodeLinks:1 valueSymbolLinks:14
+== T-WIDEN functions 13 lines 239
+file checker/c31_binding_patterns_widening.rs
+   18469-18471 c.getWidenedType
+   18473-18512 c.getWidenedTypeWithContext
+   18514-18544 c.getWidenedTypeOfObjectLiteral
+   18546-18562 c.getWidenedProperty
+   18564-18574 WideningContext.getChildContext
+   18576-18589 c.getPropertiesOfContext
+   18591-18605 c.getSiblingsOfContext
+   18607-18615 c.getUndefinedProperty
+file checker/c34_return_types.rs
+   20566-20575 c.reportErrorsFromWidening
+   20577-20600 c.shouldReportErrorsFromWideningWithContextualSignature
+   20611-20647 c.reportWideningErrorsInType
+file checker/c45_base_constraints_normalization.rs
+   28282-28297 c.getRegularTypeOfObjectLiteral
+   28299-28310 c.transformTypeOfMembers
+codes TS7018
+calls core D-SINK: c.error
+calls core K-OBJ: c.createTypeReference c.newAnonymousType c.newIndexInfo
+calls core TYPES: StructuredType.CallSignatures StructuredType.ConstructSignatures Type.Distributed Type.Target Type.Types
+calls core UTIL: isObjectLiteralType
+calls earlier K-PRED: c.isEmptyObjectType
+calls earlier K-GENERIC: c.isGenericType
+calls earlier K-UNION: c.getUnionTypeEx
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.isArrayOrTupleType
+calls earlier T-MEMBERS: c.resolveStructuredTypeMembers
+calls earlier T-UIMEMBERS: c.createSymbolWithType
+calls earlier T-LOOKUP: c.getIndexInfosOfType c.getPropertiesOfObjectType c.getPropertiesOfType c.getPropertyOfObjectType
+calls earlier T-SIGDECL: c.getReturnTypeOfSignature
+calls earlier T-INSTANTIATE: c.getTypeArguments
+calls earlier T-SYMTYPE: c.getTypeOfSymbol c.reportImplicitAny
+calls later c12_iteration_types: c.getIterationTypeOfGeneratorFunctionReturnType@6306
+calls later c48_contextual_types: c.getContextualSignatureForFunctionLikeDeclaration@29834
+calls later c51_type_facts_awaited: c.getAwaitedTypeNoAlias@31389
+calls later printer: c.TypeToString@43 c.symbolToString@124
+links 
+== K-KEYOF functions 13 lines 213
+file checker/c44_index_indexed_access.rs
+   26803-26805 c.getIndexType
+   26807-26830 c.getIndexTypeEx
+   26832-26838 c.getExtractStringType
+   26840-26867 c.getLiteralTypeFromProperties
+   26869-26890 c.getLiteralTypeFromProperty
+   26892-26910 c.getLiteralTypeFromPropertyName
+   26912-26917 c.isKeyTypeIncluded
+   26919-26923 isInvalidComputedPropertyName
+   26925-26943 c.checkComputedPropertyName
+   26957-26963 c.shouldDeferIndexType
+   26965-26974 c.getMappedTypeNameTypeKind
+   26976-26987 c.getIndexTypeForGenericType
+   26994-27044 c.getIndexTypeForMappedType
+codes TS2464
+calls core D-SINK: c.error
+calls core K-OBJ: c.newIndexType
+calls core LINKS: symbolArenaLinkStore.Get
+calls core MAPPER: appendTypeMapping
+calls core S-MERGE: c.getLateBoundSymbol
+calls core T-KEYS: getTypeListKey
+calls core TYPES: Type.AsMappedType Type.AsSubstitutionType Type.Types
+calls core UTIL: IsKnownSymbol getDeclarationModifierFlagsFromSymbol
+calls earlier K-LIT: c.getRegularTypeOfLiteralType c.getStringLiteralType
+calls earlier K-PRED: c.IsEmptyAnonymousObjectType c.filterType c.isTypeAssignableToKind c.maybeTypeOfKind forEachType
+calls earlier K-GENERIC: c.isGenericIndexType c.isGenericMappedType c.isGenericReducibleType c.isGenericTupleType
+calls earlier K-UNION: c.getUnionType c.getUnionTypeEx
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TYPENODE: c.getTypeAliasInstantiation
+calls earlier T-LOOKUP: c.getIndexInfosOfType c.getPropertiesOfType
+calls earlier T-APPARENT: c.getApparentType c.getReducedType
+calls earlier T-INSTANTIATE: c.instantiateType
+calls forward K-SUBST: c.getNoInferType c.isNoInferType
+calls forward T-MAPPED: c.forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType c.getConstraintTypeFromMappedType c.getLowerBoundOfKeyType c.getModifiersTypeFromMappedType c.getNameTypeFromMappedType c.getTypeParameterFromMappedType c.isMappedTypeWithKeyofConstraintDeclaration
+calls later c14_expressions: c.checkExpression@7643
+calls later relater: c.isTypeAssignableTo@149
+called from core c.checkComputedPropertyName <- M-MODULE
+links typeNodeLinks:1 valueSymbolLinks:1
+== K-INDEXED functions 29 lines 588
+file checker/c44_index_indexed_access.rs
+   27046-27048 c.getIndexedAccessType
+   27050-27056 c.getIndexedAccessTypeEx
+   27058-27122 c.getIndexedAccessTypeOrUndefined
+   27124-27336 c.getPropertyTypeForIndexType
+   27338-27344 c.typeHasStaticProperty
+   27346-27352 c.getSuggestionForNonexistentProperty
+   27354-27373 c.getSuggestionForNonexistentIndexSignature
+   27375-27378 c.getSuggestedTypeForNonexistentStringLiteralType
+   27380-27390 getIndexNodeForAccessExpression
+   27392-27396 c.errorIfWritingToReadonlyIndex
+   27398-27400 c.isSelfTypeAccess
+   27402-27449 c.isAssignmentToReadonlyEntity
+   27451-27459 c.isThisPropertyAccessInConstructor
+   27461-27466 c.isAutoTypedProperty
+   27468-27476 c.getDeclaringConstructor
+   27478-27486 c.getPropertyNameFromIndex
+   27488-27491 c.isStringIndexSignatureOnlyTypeWorker
+   27493-27502 c.shouldDeferIndexedAccessType
+   27504-27515 indexTypeLessThan
+file checker/c45_base_constraints_normalization.rs
+   28025-28033 c.getSimplifiedType
+   28038-28051 c.getSimplifiedIndexedAccessType
+   28053-28096 c.getSimplifiedIndexedAccessTypeWorker
+   28098-28111 c.distributeObjectOverIndexType
+   28113-28127 c.distributeIndexOverObjectType
+   28152-28154 c.isIntersectionEmpty
+   28156-28161 c.getSimplifiedTypeOrConstraint
+file checker/c47_promised_mapped_template.rs
+   29414-29427 c.substituteIndexedMappedType
+   29430-29435 c.couldAccessOptionalProperty
+   29437-29447 c.getTypeOfPropertyOrIndexSignatureOfType
+codes TS2339 TS2493 TS2514 TS2536 TS2537 TS2538 TS2540 TS2542 TS2551 TS2576 TS2862 TS7015 TS7052 TS7053 TS7054
+calls core A-ALIAS: c.getDeclarationOfAliasSymbol
+calls core D-SINK: c.addDeprecatedSuggestion c.addDiagnostic c.error c.isDeprecatedSymbol
+calls core K-OBJ: c.newIndexedAccessType
+calls core LINKS: nodeLinkStore.Get
+calls core MAPPER: c.combineTypeMappers newSimpleTypeMapper
+calls core N-DIAG: c.getSpellingSuggestionForName
+calls core N-RESOLVE: c.getResolvedSymbol
+calls core Q-ENTITY: c.getFullyQualifiedName
+calls core S-MERGE: c.getParentOfSymbol createDiagnosticForNode
+calls core T-KEYS: getIndexedAccessKey
+calls core TYPES: Type.AsIndexedAccessType Type.AsLiteralType Type.AsMappedType Type.AsStructuredType Type.TargetTupleType Type.Types
+calls core UTIL: CompareTypes IsTypeAny NewDiagnosticChainForNode NewDiagnosticForNode c.isJSLiteralType getAssignmentTargetKind getPropertyNameFromType isDeleteTarget isNumericLiteralName isObjectLiteralType isThisProperty isTypeUsableAsPropertyName tryGetPropertyAccessOrIdentifierToString
+calls earlier K-LIT: getStringLiteralValue
+calls earlier K-PRED: c.isTypeAssignableToKind c.removeType everyType isConstEnumObjectType
+calls earlier K-GENERIC: c.isGenericIndexType c.isGenericMappedType c.isGenericObjectType c.isGenericReducibleType c.isGenericTupleType c.isGenericType
+calls earlier K-UNION: c.getUnionType c.getUnionTypeEx c.mapType
+calls earlier K-INTERSECT: c.getIntersectionType c.getIntersectionTypeEx c.intersectTypes
+calls earlier T-TUPLE: c.getElementTypeOfSliceOfTupleType c.getTupleElementTypeOutOfStartCount c.getTypeReferenceArity getTotalFixedElementCount isTupleType
+calls earlier T-CONSTRAINT: c.getBaseConstraintOfType c.getConstraintOfType
+calls earlier T-LOOKUP: c.getApplicableIndexInfo c.getApplicableIndexInfoForName c.getIndexInfoOfType c.getIndexInfosOfType c.getIndexTypeOfType c.getPropertiesOfType c.getPropertyOfObjectType c.getPropertyOfType c.getTypeOfPropertyOfType
+calls earlier T-APPARENT: c.getReducedApparentType c.getReducedType
+calls earlier T-SIGSHAPE: c.getMinArgumentCount c.getTypeAtPosition
+calls earlier T-SIGINST: c.getSingleCallSignature
+calls earlier T-INSTANTIATE: c.instantiateType
+calls earlier T-SYMTYPE: c.addOptionalityEx c.getTypeOfSymbol c.getWriteTypeOfSymbol c.isConstructorDeclaredThisProperty
+calls earlier K-KEYOF: c.getLiteralTypeFromProperty c.getMappedTypeNameTypeKind c.shouldDeferIndexType
+calls forward K-COND: c.getSimplifiedConditionalType
+calls forward T-MAPPED: c.getCombinedMappedTypeOptionality c.getModifiersTypeFromMappedType c.getTemplateTypeFromMappedType c.getTypeParameterFromMappedType getMappedTypeOptionality
+calls later c18_identifiers_property_access_this: c.getControlFlowContainer@11528 c.isUncalledFunctionReference@11784
+calls later c20_object_literals_spread: c.isReadonlySymbol@13950
+calls later c45_base_constraints_normalization: c.markPropertyAsReferenced@27829
+calls later c50_contextual_properties_inference_context: c.getTypeOfPropertyOfContextualType@30674
+calls later flow: c.getFlowTypeOfReference@77
+calls later printer: c.TypeToString@43 c.symbolToString@124
+calls later relater: c.isTypeAssignableTo@149
+called from core c.isStringIndexSignatureOnlyTypeWorker <- C-INIT
+links symbolNodeLinks:1
+== K-SUBST functions 10 lines 97
+file checker/c40_type_nodes_conditional_tuples.rs
+   25075-25110 c.getConditionalFlowTypeOfType
+   25112-25120 c.getImpliedConstraint
+   25122-25124 isUnaryTupleTypeNode
+file checker/c44_index_indexed_access.rs
+   26945-26948 c.isNoInferType
+   26950-26955 c.getSubstitutionIntersection
+   27517-27522 c.getNoInferType
+   27524-27532 c.isNoInferTargetType
+   27534-27539 c.getSubstitutionType
+   27541-27549 c.getOrCreateSubstitutionType
+file checker/c51_type_facts_awaited.rs
+   31694-31702 c.getActualTypeVariable
+codes 
+calls core K-OBJ: c.newSubstitutionType
+calls core TYPES: Type.AsIndexedAccessType Type.AsSubstitutionType Type.AsUnionOrIntersectionType
+calls earlier K-PRED: c.IsEmptyAnonymousObjectType c.isPatternLiteralType everyType
+calls earlier K-UNION: c.getUnionType
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.isArrayOrTupleType
+calls earlier T-TYPENODE: c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.getConstraintOfTypeParameter
+calls earlier K-INDEXED: c.getIndexedAccessType
+calls forward T-MAPPED: c.getHomomorphicTypeVariable c.getTypeParameterFromMappedType
+links 
+== K-COND functions 10 lines 279
+file checker/c37_instantiation.rs
+   22599-22630 c.getConditionalTypeInstantiation
+file checker/c40_type_nodes_conditional_tuples.rs
+   24392-24421 c.getTypeFromConditionalTypeNode
+   24423-24567 c.getConditionalType
+   24573-24590 c.getTailRecursionRoot
+   24592-24596 c.isSimpleTupleType
+   24598-24600 c.isDeferredType
+   24662-24668 c.getTrueTypeFromConditionalType
+   24670-24676 c.getFalseTypeFromConditionalType
+   24678-24688 c.getInferredTrueTypeFromConditionalType
+file checker/c45_base_constraints_normalization.rs
+   28129-28149 c.getSimplifiedConditionalType
+codes TS2589
+calls core D-SINK: c.error
+calls core K-OBJ: c.newConditionalType
+calls core MAPPER: TypeMapper.Map c.combineTypeMappers newTypeMapper prependTypeMapping
+calls core T-KEYS: getConditionalTypeKey
+calls core TYPES: Type.AsConditionalType
+calls earlier K-PRED: someType
+calls earlier K-GENERIC: c.isGenericType
+calls earlier K-UNION: c.getUnionType c.mapTypeWithAlias
+calls earlier T-TUPLE: c.getElementTypes isTupleType
+calls earlier T-DECLARED: c.getAliasForTypeNode c.getInferTypeParameters c.getOuterTypeParameters
+calls earlier T-TYPENODE: c.getTypeFromTypeNode
+calls earlier T-APPARENT: c.getReducedType
+calls earlier T-INSTANTIATE: c.getPermissiveInstantiation c.getRestrictiveInstantiation c.instantiateType c.instantiateTypeAlias c.isTypeParameterPossiblyReferenced
+calls earlier K-INDEXED: c.getSimplifiedType c.isIntersectionEmpty
+calls earlier K-SUBST: c.getActualTypeVariable
+calls later inference: c.inferTypes@53 c.newInferenceContext@1251
+calls later relater: c.isTypeAssignableTo@149
+links typeNodeLinks:1
+== T-MAPPED functions 23 lines 425
+file checker/c35_resolve_members.rs
+   21008-21096 c.resolveMappedTypeMembers
+   21098-21130 c.getTypeOfMappedSymbol
+   21135-21164 c.getLowerBoundOfKeyType
+file checker/c37_instantiation.rs
+   22638-22647 c.getHomomorphicTypeVariable
+   22649-22692 c.instantiateMappedType
+   22694-22697 c.hasArrayOrTypeTypeConstraint
+   22699-22705 c.instantiateMappedArrayType
+   22707-22758 c.instantiateMappedTupleType
+   22760-22772 c.instantiateMappedTypeTemplate
+   22774-22782 getModifiedReadonlyState
+   22784-22790 c.getTypeParameterFromMappedType
+   22792-22798 c.getConstraintTypeFromMappedType
+   22800-22809 c.getNameTypeFromMappedType
+   22811-22821 c.getTemplateTypeFromMappedType
+   22823-22826 c.isMappedTypeWithKeyofConstraintDeclaration
+   22828-22830 c.getConstraintDeclarationForMappedType
+   22832-22839 c.getApparentMappedTypeKeys
+   22841-22854 c.forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType
+file checker/c45_base_constraints_normalization.rs
+   28250-28276 c.getModifiersTypeFromMappedType
+file checker/c47_promised_mapped_template.rs
+   29135-29145 getMappedTypeModifiers
+   29149-29158 getMappedTypeOptionality
+   29163-29181 c.getCombinedMappedTypeOptionality
+   29183-29185 isPartialMappedType
+codes TS2615
+calls core D-SINK: c.error
+calls core K-OBJ: c.newIndexInfo c.setStructuredTypeMembers
+calls core LINKS: symbolArenaLinkStore.Get
+calls core MAPPER: appendTypeMapping prependTypeMapping
+calls core S-MERGE: c.getSymbolOfDeclaration c.newSymbol
+calls core T-RSTACK: c.findResolutionCycleStartIndex c.popTypeResolution c.pushTypeResolution
+calls core TYPES: Type.AsConditionalType Type.AsIndexType Type.AsMappedType Type.Mapper Type.TargetTupleType Type.Types
+calls core UTIL: getPropertyNameFromType isTypeUsableAsPropertyName
+calls earlier K-LIT: c.getStringLiteralType
+calls earlier K-PRED: c.isErrorType c.maybeTypeOfKind everyType forEachType
+calls earlier K-GENERIC: c.isGenericTupleType
+calls earlier K-UNION: c.getUnionType c.mapTypeEx c.mapTypeWithAlias
+calls earlier K-INTERSECT: c.getIntersectionType
+calls earlier T-TUPLE: c.createArrayType c.createArrayTypeEx c.createTupleTypeEx c.getElementTypeOfArrayType c.getElementTypes c.getKnownKeysOfTupleType c.isArrayOrTupleOrIntersection c.isArrayOrTupleType c.isArrayType c.isReadonlyArrayType isTupleType
+calls earlier T-DECLARED: c.getDeclaredTypeOfTypeParameter
+calls earlier T-TYPENODE: c.getTypeFromMappedTypeNode c.getTypeFromTypeNode
+calls earlier T-CONSTRAINT: c.getConstraintOfTypeParameter
+calls earlier T-MEMBERS: c.isValidIndexKeyType
+calls earlier T-UIMEMBERS: c.appendIndexInfo
+calls earlier T-LOOKUP: c.getApplicableIndexInfo c.getIndexInfosOfType c.getPropertiesOfType c.getPropertyOfType
+calls earlier T-APPARENT: c.getApparentType c.getReducedType
+calls earlier T-INSTANTIATE: c.instantiateAnonymousType c.instantiateType
+calls earlier T-SYMTYPE: c.addOptionalityEx c.getOptionalType c.removeMissingOrUndefinedType
+calls earlier K-KEYOF: c.getIndexType c.getLiteralTypeFromProperty c.getMappedTypeNameTypeKind
+calls earlier K-SUBST: c.getActualTypeVariable
+calls earlier K-COND: c.getConditionalTypeInstantiation
+calls later c20_object_literals_spread: c.isReadonlySymbol@13950
+calls later printer: c.TypeToString@43 c.symbolToString@124
+links mappedSymbolLinks:2 valueSymbolLinks:2
+== K-TEMPLATE functions 14 lines 311
+file checker/c47_promised_mapped_template.rs
+   29268-29334 c.getTemplateLiteralType
+   29336-29344 c.getTemplateStringForType
+   29346-29363 c.getStringMappingType
+   29365-29379 applyStringMapping
+   29381-29397 c.applyTemplateStringMapping
+   29399-29407 c.getStringMappingTypeForGenericType
+file checker/relater.rs
+   2354-2363 c.templateLiteralTypesDefinitelyUnrelated
+   2365-2376 c.isTypeMatchedByTemplateLiteralType
+   2378-2395 c.inferTypesFromTemplateLiteralType
+   2418-2500 c.inferFromLiteralPartsToTemplateLiteral
+   2502-2507 c.getStringLikeTypeForType
+   2509-2529 c.isValidTypeForTemplateLiteralPlaceholder
+   2531-2549 c.isMemberOfStringMapping
+   2551-2557 c.applyTargetStringMappingToSource
+codes 
+calls core K-OBJ: c.newStringMappingType c.newTemplateLiteralType
+calls core T-KEYS: getTemplateTypeKey
+calls core TYPES: Type.AsIntrinsicType Type.AsLiteralType Type.AsStringMappingType Type.AsTemplateLiteralType Type.Types
+calls core UTIL: isValidBigIntString isValidNumberString
+calls earlier K-LIT: c.getStringLiteralType getStringLiteralValue
+calls earlier K-PRED: c.isPatternLiteralPlaceholderType c.isPatternLiteralType
+calls earlier K-GENERIC: c.isGenericIndexType
+calls earlier K-UNION: c.checkCrossProductUnion c.mapType
+calls earlier T-CONSTRAINT: c.getBaseConstraintOrType
+calls later relater: c.isTypeAssignableTo@149
+called from core c.getTemplateLiteralType <- C-INIT
+links 
+== K-IMPORTTYPE functions 3 lines 90
+file checker/c40_type_nodes_conditional_tuples.rs
+   24698-24771 c.getTypeFromImportTypeNode
+   24773-24778 c.getIdentifierChain
+   24780-24789 c.resolveImportSymbolType
+codes TS1141 TS1339 TS1340 TS2694
+calls core A-ALIAS: c.getSymbolFlags
+calls core D-SINK: c.error
+calls core LINKS: nodeLinkStore.Get
+calls core M-MODULE: c.getExportsOfSymbol c.resolveExternalModuleName c.resolveExternalModuleSymbol
+calls core N-RESOLVE: c.getSymbol
+calls core Q-ENTITY: c.getFullyQualifiedName
+calls core S-MERGE: c.getMergedSymbol c.resolveSymbol
+calls earlier T-TYPENODE: c.getTypeReferenceType
+calls earlier T-LOOKUP: c.getPropertyOfTypeEx
+calls earlier T-SYMTYPE: c.getTypeOfSymbol
+calls later c17_unary_meta_yield: c.getInstantiationExpressionType@10750
+links symbolNodeLinks:2 typeNodeLinks:1
+== total functions 632 lines 10606

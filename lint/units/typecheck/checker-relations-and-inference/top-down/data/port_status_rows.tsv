@@ -1,0 +1,30 @@
+upstream path	lines	group	Rust module	state	commit
+internal/checker/relater.go	1-91	R-REL: SignatureCheckMode, MinArgumentCountFlags, IntersectionState, RecursionFlags, ExpandingFlags, RelationComparisonResult, ErrorReporter, RecursionId (records; DiagnosticAndArguments and ErrorOutputContainer are unused upstream and not ported)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	93-422	R-REL: asRecursionId .. c.reportDiagnostic (24)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	424-675	R-ELAB: c.checkTypeAssignableToAndOptionallyElaborate .. c.elaborateArrowFunction (11)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	677-870	R-REL: c.isWeakType .. getRecursionIdentityFromTarget (10)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	872-950	R-DISCRIM: c.getBestMatchingType .. c.findBestTypeForObjectLiteral (5)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	952-1028	R-REL: c.shouldReportUnmatchedPropertyError .. excludeProperties (5)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1030-1268	R-DISCRIM: TypeDiscriminator.len .. isNonPrimitiveType (16)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1270-1315	R-REL: c.getTypeNamesForErrorDisplay .. c.typeCouldHaveTopLevelSingletonTypes (4)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1317-1485	R-VARIANCE: c.getVariances .. c.hasCovariantVoidArgument (8)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1487-1705	R-SIGREL: c.isSignatureAssignableTo .. c.compareTypePredicateRelatedTo (3)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1707-1913	T-SIGSHAPE: c.isTopSignature .. c.getEffectiveRestType (13) (row of its own layer)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1915-1945	T-TUPLE: c.sliceTupleType .. c.getRestArrayTypeOfTupleType (3) (row of its own layer)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	1947-2150	T-SIGSHAPE: c.getThisTypeOfSignature .. c.isResolvingReturnTypeOfSignature (12) (row of its own layer)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2152-2313	R-SIGREL: c.findMatchingSignatures .. c.compareTypePredicatesIdentical (6)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2315-2352	R-REL: c.getEffectiveConstraintOfIntersection (1)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2354-2557	K-TEMPLATE: c.templateLiteralTypesDefinitelyUnrelated .. c.applyTargetStringMappingToSource (8) (row of its own layer)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2559-2567	R-SIGREL: visibilityToString (1)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	2569-3933	R-REL: c.getRelater .. r.structuredTypeRelatedToWorker (27)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	3935-3999	R-VARIANCE: r.typeArgumentsRelatedTo (1)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	4001-4019	R-REL: r.mappedTypeRelatedTo (1)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	4021-4130	R-DISCRIM: r.typeRelatedToDiscriminatedType (1)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	4132-4471	R-REL: r.propertiesRelatedTo .. r.propertiesIdenticalTo (7)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	4473-4608	R-SIGREL: r.signaturesRelatedTo .. r.signaturesIdenticalTo (4)	checker/relater.rs	not started	89d5d5b
+internal/checker/relater.go	4610-5044	R-REL: r.indexSignaturesRelatedTo .. r.traceUnionsOrIntersectionsTooLarge (18)	checker/relater.rs	not started	89d5d5b
+internal/checker/inference.go	11-998	I-INFER: c.getInferenceState .. c.inferToMappedType (28)	checker/inference.rs	not started	89d5d5b
+internal/checker/inference.go	1000-1183	I-REVMAP: c.inferTypeForHomomorphicMappedType .. c.replaceIndexedAccess (9)	checker/inference.rs	not started	89d5d5b
+internal/checker/inference.go	1185-1684	I-INFER: c.typesDefinitelyUnrelated .. c.mergeInferences (40)	checker/inference.rs	not started	89d5d5b
+internal/checker/checker.go	27988-28023	R-REL: c.getNormalizedType (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	28163-28248	R-REL: c.getNormalizedUnionOrIntersectionType .. c.getSingleBaseForNonAugmentingSubtype (4)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b

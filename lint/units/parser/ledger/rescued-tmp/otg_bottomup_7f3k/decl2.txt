@@ -1,0 +1,100 @@
+# declare oddities
+declare async\nfunction f(): Promise<void>;
+declare abstract\nclass C {}
+declare namespace;
+declare module;
+declare global;
+declare x;
+var declare = 1, x = 2; declare x;
+declare 1;
+declare
+declare!
+declare {}
+declare if (a) {}
+declare async () => {};
+declare abstract;
+declare import.meta;
+namespace N { this.x }
+namespace N { super.x }
+enum E { A = this }
+enum E { A = super.x }
+enum E { A = 1, 2 }
+enum E { "a", "a" }
+enum E { A, A }
+enum E { 0x10 }
+enum E { ['x'] = 1, B = E.x }
+declare const await: number;
+declare let await: number;
+declare var await: number;
+declare class await {}
+declare const let: number;
+var await = 1;
+await;
+await = 1;
+null = 1;
+super();
+# non-null and casts
+super.x!
+this.#x!
+<T>super.x
+class C extends B { m() { super.x!; <T>super.x; super.x as T; } }
+class C { #x; m() { this.#x!; <T>this.#x; this.#x as T; } }
+class C { #x; m() { return this.#x!.y } }
+class C { #x; m() { return a?.#x! } }
+export const v = <out>x
+export const v = <in>x
+export const v = <out>(x)
+export const v = <out>(x) => x
+export const v = <out, T>(x) => x
+export const v = <out = A>(x) => x
+export const v = <in T>(x) => x
+export const v = <const T>(x) => x
+export const v = <const>x
+export const v = <if>x
+export const v = x as if
+export const v = x as var
+export const v = x as out
+export const v = x as in
+let y: out
+let y: in
+# classHead
+abstract declare class C {}
+class await {}
+export default abstract declare class C {}
+declare abstract class C {}
+export abstract declare class C {}
+declare export abstract class C {}
+abstract export class C {}
+abstract abstract class C {}
+abstract class\nC {}
+abstract async function f() {}
+abstract static class C {}
+public class C {}
+private class C {}
+static class C {}
+readonly class C {}
+async class C {}
+accessor class C {}
+override class C {}
+public const a = 1
+static function f() {}
+public interface I {}
+readonly type T = 1
+private enum E {}
+protected namespace N {}
+public declare class C {}
+declare public class C {}
+public abstract class C {}
+export public class C {}
+public export class C {}
+static\nclass C {}
+public\nclass C {}
+accessor a
+readonly a
+public a
+static a
+async a
+override a
+in a
+out a
+const a

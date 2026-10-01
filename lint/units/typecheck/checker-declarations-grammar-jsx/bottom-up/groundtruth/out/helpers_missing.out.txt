@@ -1,0 +1,7 @@
+PARSE other.ts parse=[] js=[] bind=[]
+PARSE helpers.ts parse=[] js=[] bind=[]
+helpers.ts(3,15)+6: error TS2354: This syntax requires an imported helper but module 'tslib' cannot be found.
+RESOLUTIONDEPTH 0 []
+global: error TS2318: Cannot find global type 'AsyncIterableIterator'.
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=12 GetEmitSyntaxForUsageLocation=1 GetImpliedNodeFormatForEmit=1 GetImportHelpersImportSpecifier=1 GetModeForUsageLocation=2 GetResolvedModule=2 GetSourceFile=1 GetSourceFileForResolvedModule=1 Options=1 SourceFiles=1
+COUNTS TypeCount=100 SymbolCount=8 SignatureCount=7 TotalInstantiationCount=0

@@ -1,0 +1,8 @@
+[
+  {"jsx": true, "code": "switch (x) { case <a/>: break; case <a/>: break; }"},
+  {"jsx": true, "code": "switch (x) { case <a/>: break; case <a />: break; }"},
+  {"jsx": true, "code": "switch (x) { case f(<a>it's</a>): break; case f(<a>it's</a>): break; }"},
+  {"jsx": true, "code": "switch (x) { case 1: return <div>it's: case 1</div>; case 1: return <p/>; }"},
+  {"jsx": true, "code": "switch (x) { case a: return <div>{b}</div>;\ncase a: return <p/>; }"},
+  {"jsx": true, "code": "function C() { switch (x) { case 'a': return <A b={c = c} />; case 'a': return null; } }"}
+]

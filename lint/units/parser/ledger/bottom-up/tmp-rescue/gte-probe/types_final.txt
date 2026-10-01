@@ -1,0 +1,35 @@
+A | B extends C ? string : string
+string | number extends C ? number : number
+string & number extends C ? number : number
+keyof A extends B ? string : string
+readonly A[] extends B ? string : string
+string | keyof A extends B ? number : number
+A extends B ? string : never
+A extends B ? never : string
+A extends B ? string : unknown
+A extends B ? unknown : string
+A extends B ? unknown : unknown
+A extends B ? string : string & never
+A extends B ? never : never | string
+A extends B ? string : keyof A extends C ? string : string
+A extends B ? string | string extends C ? number : number : number
+readonly string
+readonly (string)
+readonly keyof A
+readonly typeof a
+readonly {}
+readonly (() => void)
+readonly string | string
+string | readonly string
+readonly string & string
+readonly string[]["length"]
+unique symbol | string
+string | unique symbol
+unique symbol & string
+unique symbol[]
+import("x") | string
+string | import("x")
+import("x") & string
+import("x").A | string
+import("x")["a"]
+this is string

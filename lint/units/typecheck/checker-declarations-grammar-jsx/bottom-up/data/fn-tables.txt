@@ -1,0 +1,137 @@
+### D-DRIVER (9 fn, 325 l)
+FN checker.go 2202-2545: checkSourceFile*+ checkSourceElements*+ checkSourceElement*+ checkSourceElementWorker+ checkSourceElementUnreachable+ isSourceElementUnreachable+ checkNodeDeferred* checkDeferredNodes+ checkDeferredNode
+OUT(later layers) D-IMPEXP[checkExportAssignment, checkExportDeclaration, checkExternalModuleExports, checkImportDeclaration, checkImportEqualsDeclaration, checkMissingDeclaration]; G-GRAMMAR[checkGrammarSourceFile, checkGrammarStatementInAmbientContext]; D-UNUSED[checkUnusedIdentifiers, checkUnusedRenamedBindingElements, registerForUnusedIdentifiersCheck]; D-FUNC[checkAccessorDeclaration, checkClassStaticBlockDeclaration, checkConstructorDeclaration, checkFunctionDeclaration, checkMethodDeclaration, checkParameter, checkPropertyDeclaration, checkPropertySignature, checkSignatureDeclaration]; D-TYPENODE[checkArrayType, checkConditionalType, checkImportType, checkIndexedAccessType, checkInferType, checkMappedType, checkNamedTupleMember, checkTemplateLiteralType, checkThisType, checkTupleType, checkTypeAliasDeclaration, checkTypeLiteral, checkTypeOperator, checkTypeParameter, checkTypeParameterDeferred, checkTypePredicate, checkTypeQuery, checkTypeReferenceNode, checkUnionOrIntersectionType]; D-STMT[checkBindingElement, checkBlock, checkBreakOrContinueStatement, checkDoStatement, checkForInStatement, checkForOfStatement, checkForStatement, checkIfStatement, checkLabeledStatement, checkReturnStatement, checkSwitchStatement, checkThrowStatement, checkTryStatement, checkWhileStatement, checkWithStatement]; D-CLASS[checkClassDeclaration, checkInterfaceDeclaration]; D-ENUMNS[checkEnumDeclaration, checkEnumMember, checkModuleDeclaration]; D-JSDOC[checkJSDocComments, checkJSDocType]; D-VAR[checkVariableDeclaration, checkVariableStatement]; X-JSX[checkJsxElementDeferred, checkJsxSelfClosingElementDeferred]
+CODES(1) 7027
+
+### D-TYPENODE (31 fn, 513 l)
+FN checker.go 2611-2660: checkTypeParameter* checkTypeParameterDeferred* shouldCheckErasableSyntax*
+FN checker.go 2990-3410: checkTypeReferenceNode* checkTypeReferenceOrImport checkTypeArgumentConstraints getDeprecatedSuggestionNode* checkTypePredicate* getTypePredicateParent checkIfTypePredicateVariableIsDeclaredInBindingPattern checkTypeQuery* checkTypeLiteral* checkObjectTypeForDuplicateDeclarations reportDuplicateMemberErrors checkArrayType* checkTupleType* checkUnionOrIntersectionType* checkThisType* checkTypeOperator* checkConditionalType* checkInferType* checkTemplateLiteralType* checkImportType* getResolutionModeOverride* checkNamedTupleMember* checkIndexedAccessType* checkMappedType*
+FN checker.go 6966-6998: checkTypeAliasDeclaration* checkTypeNameIsReserved
+FN checker.go 7092-7128: checkTypeParameters checkTypeParametersNotReferenced
+OUT(later layers) G-GRAMMAR[checkGrammarMappedType, checkGrammarModifiers, checkGrammarTypeArguments, checkGrammarTypeOperatorNode, containerAllowsBlockScopedVariable, grammarErrorAtPos, grammarErrorOnFirstToken, grammarErrorOnNode]; D-CLASS[areTypeParametersIdentical, checkIndexConstraints, checkTypeForDuplicateIndexSignatures]; D-UNUSED[registerForUnusedIdentifiersCheck]; D-IMPEXP[checkExportsOnMergedDeclarations]
+CODES(32) 1110 1156 1225 1228 1229 1230 1257 1265 1266 1338 1453 1463 1464 2300 2344 2368 2457 2574 2636 2637 2677 2699 2706 2716 2744 2795 2804 2838 5085 5086 5087 8020
+
+### D-VAR (6 fn, 251 l)
+FN checker.go 5854-6110: checkVariableStatement*+ checkVariableDeclarationList+ checkVariableDeclaration*+ checkVariableLikeDeclaration+ errorNextVariableOrPropertyDeclarationMustHaveSameType checkVarDeclaredNamesNotShadowed+!
+OUT(later layers) G-GRAMMAR[checkGrammarForDisallowedBlockScopedVariableStatement, checkGrammarModifiers, checkGrammarVariableDeclaration, checkGrammarVariableDeclarationList]; D-HELPERS[checkExternalEmitHelpers]; D-IMPEXP[areDeclarationFlagsIdentical, checkAliasSymbol, checkExportsOnMergedDeclarations]; E-COLLIDE[checkCollisionsForDeclarationName]; D-DECOR[checkDecorators]; D-ITER[checkIteratedTypeOrElementType]
+CODES(9) 1539 2371 2403 2481 2687 2717 2850 2851 6203
+PANIC 6087
+
+### D-FUNC (21 fn, 680 l)
+FN checker.go 2662-2988: checkParameter* checkPropertyDeclaration* checkPropertySignature* checkSignatureDeclaration* checkAsyncFunctionReturnType checkMethodDeclaration* checkClassStaticBlockDeclaration* checkConstructorDeclaration* findFirstSuperCall isInstancePropertyWithInitializerOrPrivateIdentifierProperty superCallIsRootLevelInConstructor nodeImmediatelyReferencesSuperOrThis checkAccessorDeclaration*
+FN checker.go 3412-3791: checkFunctionDeclaration* checkFunctionOrMethodDeclaration checkFunctionOrConstructorSymbol checkFunctionOrConstructorSymbolWorker getEffectiveDeclarationFlags isImplementationCompatibleWithOverload checkAllCodePathsInNonVoidFunctionReturnOrThrow* isUnwrappedReturnTypeUndefinedVoidOrAny
+OUT(later layers) G-GRAMMAR[checkGrammarAccessor, checkGrammarComputedPropertyName, checkGrammarConstructorTypeAnnotation, checkGrammarConstructorTypeParameters, checkGrammarForGenerator, checkGrammarFunctionLikeDeclaration, checkGrammarIndexSignature, checkGrammarMethod, checkGrammarModifiers, checkGrammarProperty]; E-COLLIDE[checkCollisionsForDeclarationName, setNodeLinksForPrivateIdentifierScope]; D-HELPERS[checkExternalEmitHelpers]; D-JSDOC[checkUnmatchedJSDocParameters]; D-UNUSED[registerForUnusedIdentifiersCheck]; E-AWAIT[checkAwaitedType, getAwaitedTypeNoAlias]; D-ITER[isReferenceToType]; D-DECOR[checkDecorators]
+CODES(49) 1058 1064 1245 1267 1294 1341 1368 2355 2366 2369 2370 2376 2377 2378 2383 2384 2385 2386 2387 2388 2389 2390 2391 2392 2393 2394 2398 2401 2463 2505 2512 2516 2534 2676 2680 2681 2730 2750 2784 2808 2813 2814 6506 7013 7020 7030 8030 17005 18016
+MAPRANGE checkFunctionOrConstructorSymbolWorker@3516
+
+### D-STMT (23 fn, 468 l)
+FN checker.go 3793-4284: checkBlock* checkIfStatement* checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType* checkTestingKnownTruthyTypes checkTestingKnownTruthyType isSymbolUsedInBinaryExpressionChain isSymbolUsedInConditionBody checkDoStatement* checkWhileStatement* checkForStatement* checkForInStatement* getIndexTypeOrString checkForOfStatement* checkBreakOrContinueStatement* checkReturnStatement* checkReturnExpression* checkWithStatement* checkSwitchStatement* checkLabeledStatement* checkThrowStatement* checkTryStatement* checkCatchClause checkBindingElement*
+OUT(later layers) G-GRAMMAR[checkGrammarBindingElement, checkGrammarBreakOrContinueStatement, checkGrammarForInOrForOfStatement, checkGrammarStatementInAmbientContext, checkGrammarVariableDeclarationList, grammarErrorAtPos, grammarErrorOnFirstToken, grammarErrorOnNode]; D-UNUSED[registerForUnusedIdentifiersCheck]; E-AWAIT[checkAwaitedType, getAwaitedTypeOfPromise]; Z-SERVICES[getSymbolAtLocation]; D-HELPERS[checkExternalEmitHelpers]
+CODES(28) 1058 1108 1113 1114 1142 1196 1197 1300 1313 2405 2406 2407 2408 2409 2410 2487 2491 2492 2774 2780 2781 2801 2845 7028 7029 7030 18038 18041
+MAPRANGE checkCatchClause@4270
+
+### D-CLASS (30 fn, 826 l)
+FN checker.go 4286-5146: checkClassDeclaration* checkClassLikeDeclaration* checkJSDocAugmentsTagMatchesExtends checkClassForStaticPropertyNameConflicts checkTypeParameterListsIdentical getClassOrInterfaceDeclarationsOfSymbol areTypeParametersIdentical* checkBaseTypeAccessibility issueMemberSpecificError getTypeWithoutSignatures checkKindsOfPropertyMemberOverrides arePropertiesAbstractOrInterface isPropertyAbstractOrInterface checkMembersForOverrideModifier checkMemberForOverrideModifier getMemberOverrideModifierStatus checkMemberForOverrideModifierWorker getSuggestedSymbolForNonexistentClassMember checkIndexConstraints* checkIndexConstraintForProperty checkIndexConstraintForIndexSignature checkClassOrInterfaceForDuplicateIndexSignatures checkTypeForDuplicateIndexSignatures* checkPropertyInitialization isPropertyWithoutInitializer* isPropertyInitializedInStaticBlocks* isPropertyInitializedInConstructor checkInterfaceDeclaration* checkInheritedPropertiesAreIdentical isPropertyIdenticalTo
+OUT(later layers) G-GRAMMAR[checkGrammarClassLikeDeclaration, checkGrammarInterfaceDeclaration, checkGrammarModifiers, containerAllowsBlockScopedVariable, getIdentifierFromEntityNameExpression, grammarErrorOnFirstToken, grammarErrorOnNode, isNonBindableDynamicName]; D-UNUSED[registerForUnusedIdentifiersCheck]; E-COLLIDE[checkCollisionsForDeclarationName]; D-DECOR[checkDecorators]; D-IMPEXP[checkExportsOnMergedDeclarations]; Z-SERVICES[getApplicableIndexInfos]
+CODES(52) 1156 1211 2319 2320 2374 2411 2413 2415 2416 2417 2420 2422 2423 2425 2426 2427 2428 2430 2499 2500 2510 2515 2545 2564 2610 2611 2612 2650 2653 2654 2655 2656 2675 2699 2720 2728 2797 4112 4113 4114 4115 4116 4117 4119 4120 4121 4122 4123 4127 4128 8023 18036
+MAPRANGE checkKindsOfPropertyMemberOverrides@4701 checkTypeForDuplicateIndexSignatures@5000 checkInheritedPropertiesAreIdentical@5118
+
+### D-ENUMNS (7 fn, 189 l)
+FN checker.go 5148-5342: checkEnumDeclaration* checkEnumMember* checkModuleDeclaration* isInstantiatedModule getFirstNonAmbientClassOrFunctionDeclaration getIsolatedModulesLikeFlagName* checkModuleAugmentationElement
+OUT(later layers) E-COLLIDE[checkCollisionsForDeclarationName]; D-IMPEXP[checkExportsOnMergedDeclarations]; G-GRAMMAR[checkGrammarModifiers, checkGrammarModuleElementContext, grammarErrorOnFirstToken, grammarErrorOnNode]; D-UNUSED[registerForUnusedIdentifiersCheck]
+CODES(18) 1035 1234 1235 1280 1287 1294 1540 2432 2433 2434 2435 2436 2473 2666 2667 2669 2670 18024
+PROGRAM GetEmitModuleFormatOfFile
+
+### D-IMPEXP (23 fn, 719 l)
+FN checker.go 5344-5852: checkImportDeclaration* checkExternalImportOrExportDeclaration checkImportBinding checkModuleExportName hasTypeJsonImportAttribute checkImportAttributes getTypeFromImportAttributes checkImportEqualsDeclaration* checkExportDeclaration* checkExternalModuleNameInGlobalScope checkExportSpecifier isContainedByNamespace* checkExportAssignment* getVerbatimModuleSyntaxErrorMessage checkExternalModuleExports* hasExportedMembersOfKind hasShadowedNamespace isNotOverload checkMissingDeclaration*
+FN checker.go 6826-6964: checkAliasSymbol*! areDeclarationFlagsIdentical*
+FN checker.go 7000-7090: checkExportsOnMergedDeclarations*+ getDeclarationSpaces!
+OUT(later layers) D-HELPERS[checkExternalEmitHelpers]; G-GRAMMAR[checkGrammarExportDeclaration, checkGrammarImportClause, checkGrammarModifiers, checkGrammarModuleElementContext, grammarErrorOnFirstToken, grammarErrorOnNode]; E-COLLIDE[checkCollisionsForDeclarationName]; U-ALIASMARK[markLinkedReferences]; D-DECOR[checkDecorators]
+CODES(62) 1003 1063 1120 1141 1147 1191 1193 1194 1202 1203 1205 1218 1231 1232 1233 1258 1269 1282 1283 1284 1285 1286 1288 1289 1290 1291 1292 1293 1294 1295 1319 1392 1448 1454 1473 1474 1484 1485 1543 2309 2323 2395 2437 2438 2439 2440 2484 2498 2652 2661 2714 2748 2823 2856 2857 2858 2865 2882 18042 18043 18044 18057
+PANIC 7089 ASSERT 6843 6897
+PROGRAM GetEmitModuleFormatOfFile GetImpliedNodeFormatForEmit GetProjectReferenceFromOutputDts
+MAPRANGE checkExternalModuleExports@5797 hasExportedMembersOfKind@5829
+
+### U-ALIASMARK (22 fn, 593 l)
+FN checker.go 28312-28697: markLinkedReferences*! isExportOrExportExpression shouldMarkIdentifierAliasReferenced* isInternalModuleImportEqualsDeclaration markIdentifierAliasReferenced markPropertyAliasReferenced isPartOfImportEqualsModuleReference markExportAssignmentAliasReferenced markJsxAliasReferenced markImportEqualsAliasReferenced markExportSpecifierAliasReferenced
+FN checker.go 28809-29040: markDecoratorAliasReferenced getParameterTypeNodeForDecoratorCheck markDecoratorMedataDataTypeNodeAsReferenced getEntityNameForDecoratorMetadata getEntityNameForDecoratorMetadataFromTypeList markAliasReferenced markAliasSymbolAsReferenced! markExportAsReferenced markEntityNameOrEntityExpressionAsReference getEntityNameFromTypeNode markTypeNodeAsReferenced
+OUT(later layers) Z-SERVICES[isConstEnumOrConstEnumOnlyModule]; X-JSX[getJsxFactoryEntity, getJsxNamespace, getJsxNamespaceContainerForImplicitImport]; D-HELPERS[checkExternalEmitHelpers]
+CODES(3) 1272 1376 2874
+PANIC 28475 28953
+
+### D-UNUSED (21 fn, 261 l)
+FN checker.go 7130-7417: registerForUnusedIdentifiersCheck* checkUnusedIdentifiers*! isReferenced reportUnusedVariable reportUnused unusedIsError! checkUnusedClassMembers! checkUnusedLocalsAndParameters reportUnusedLocal reportUnusedVariables reportUnusedParameters reportUnusedBindingElements reportUnusedVariableDeclarations isUnreferencedVariableDeclaration reportUnusedImports isIdentifierThatStartsWithUnderscore importClauseFromImported checkUnusedInferTypeParameter checkUnusedTypeParameters isUnreferencedTypeParameter checkUnusedRenamedBindingElements*+!
+CODES(9) 2842 2843 6133 6138 6192 6196 6198 6199 6205
+PANIC 7158 7201 7225 ASSERT 7408
+MAPRANGE checkUnusedLocalsAndParameters@7233 checkUnusedLocalsAndParameters@7259 checkUnusedLocalsAndParameters@7266
+
+### D-ITER (30 fn, 565 l)
+FN checker.go 6185-6824: checkIteratedTypeOrElementType* getIteratedTypeOrElementType* getIterationTypeOfGeneratorFunctionReturnType* getIterationTypesOfGeneratorFunctionReturnType* getIterationTypeOfIterable* getIterationTypesOfIterable* getIterationTypesOfIterableWorker getIterationTypesOfIterableFast IterationTypesResolver.getResolvedIterationTypes isReferenceToType* isReferenceToSomeType getBuiltinIteratorReturnType* IterationTypes.hasTypes IterationTypes.getType! combineIterationTypes getIterationTypeUnion getAsyncFromSyncIterationTypes getIterationTypesOfIterableSlow getIterationTypesOfIterator getIterationTypesOfIteratorWorker getIterationTypesOfIteratorFast getIterationTypesOfIteratorSlow getIterationTypesOfMethod getIterationTypesOfIteratorResult isYieldIteratorResult isReturnIteratorResult isIteratorResult reportTypeNotIterableError getIterationDiagnosticDetails isES2015OrLaterIterable
+OUT(later layers) E-AWAIT[getAwaitedTypeEx, getAwaitedTypeOfPromise]
+CODES(9) 2461 2488 2495 2504 2763 2764 2765 2766 2802
+PANIC 6507
+
+### E-AWAIT (18 fn, 310 l)
+FN checker.go 10935-10943: checkAwaitExpression*
+FN checker.go 29042-29133: GetPromisedTypeOfPromise* getPromisedTypeOfPromiseEx! getTypeOfFirstParameterOfSignature getTypeOfFirstParameterOfSignatureWithFallback
+FN checker.go 31355-31591: checkAwaitedType* getAwaitedType* getAwaitedTypeEx* getAwaitedTypeNoAlias* getAwaitedTypeNoAliasEx isAwaitedTypeInstantiation isAwaitedTypeNeeded createAwaitedTypeIfNeeded tryCreateAwaitedType unwrapAwaitedType* isThenableType getAwaitedTypeOfPromise* getAwaitedTypeOfPromiseEx
+OUT(later layers) G-GRAMMAR[checkGrammarAwaitOrAwaitUsing]
+CODES(6) 1059 1060 1062 1320 2684 80007
+PANIC  ASSERT 29099
+
+### D-DECOR (2 fn, 71 l)
+FN checker.go 6112-6183: checkDecorators*+ checkDecorator!
+OUT(later layers) D-HELPERS[checkExternalEmitHelpers]; G-GRAMMAR[checkGrammarDecorator]; E-DECOR[getDecoratorCallSignature]
+CODES(2) 1270 1271
+PANIC 6180
+
+### E-DECOR (29 fn, 463 l)
+FN checker.go 8833-8888: resolveDecorator* isPotentiallyUncalledDecorator getDiagnosticHeadMessageForDecoratorResolution!
+FN checker.go 9273-9302: getDecoratorArgumentCount* getLegacyDecoratorArgumentCount!
+FN checker.go 29924-29930: getContextualTypeForDecorator*
+FN checker.go 30265-30672: getEffectiveDecoratorArguments*! getDecoratorCallSignature* getLegacyDecoratorCallSignature! getESDecoratorCallSignature newClassDecoratorContextType newClassMethodDecoratorContextType newClassGetterDecoratorContextType newClassSetterDecoratorContextType newClassAccessorDecoratorContextType newClassFieldDecoratorContextType getClassMemberDecoratorContextOverrideType newClassMemberDecoratorContextTypeForNode! newClassAccessorDecoratorTargetType newClassAccessorDecoratorResultType newClassFieldDecoratorInitializerMutatorType newESDecoratorCallSignature newFunctionType newGetterFunctionType newSetterFunctionType newCallSignature newTypedPropertyDescriptorType getParentTypeOfClassElement getClassElementPropertyKeyType
+OUT(later layers) Z-SERVICES[getTypeOfNode]
+CODES(5) 1238 1239 1240 1241 1329
+PANIC 8887 9301 30275 30597 ASSERT 30305
+
+### D-HELPERS (5 fn, 133 l)
+FN checker.go 10171-10197: checkClassExpressionExternalHelpers*
+FN checker.go 28699-28807: checkExternalEmitHelpers* hasSignatureWithArityGreaterThan getHelperNames! resolveHelpersModule
+CODES(3) 2343 2354 2807
+PANIC 28792
+PROGRAM GetImportHelpersImportSpecifier
+
+### E-COLLIDE (11 fn, 162 l)
+FN checker.go 10534-10705: checkCollisionsForDeclarationName*+ checkCollisionWithRequireExportsInGeneratedCode+ checkCollisionWithGlobalObjectInGeneratedCode+ needCollisionCheckForIdentifier+ setNodeLinksForPrivateIdentifierScope* recordPotentialCollisionWithWeakMapSetInGeneratedCode+ checkWeakMapSetCollision checkCollisionWithGlobalPromiseInGeneratedCode+ recordPotentialCollisionWithReflectInGeneratedCode+ checkReflectCollision checkClassNameCollisionWithObject
+CODES(7) 2414 2431 2441 2529 2725 2818 18027
+PROGRAM GetEmitModuleFormatOfFile
+
+### G-GRAMMAR (76 fn, 2087 l)
+FN grammarchecks.go 19-2185: grammarErrorOnFirstToken* grammarErrorAtPos* grammarErrorOnNode* grammarErrorOnNodeSkippedOnNoEmit getIdentifierFromEntityNameExpression* checkGrammarRegularExpressionLiteral*! checkGrammarPrivateIdentifierExpression* checkGrammarMappedType* checkGrammarDecorator* checkGrammarExportDeclaration* checkGrammarModuleElementContext* checkGrammarModifiers*+! reportObviousModifierErrors findFirstModifierExcept findFirstIllegalModifier! reportObviousDecoratorErrors findFirstIllegalDecorator checkGrammarAsyncModifier checkGrammarForDisallowedTrailingComma*+ checkGrammarTypeParameterList checkGrammarParameterList checkGrammarForUseStrictSimpleParameterList checkGrammarFunctionLikeDeclaration* checkGrammarClassLikeDeclaration* checkGrammarArrowFunction checkGrammarIndexSignatureParameters checkGrammarIndexSignature* checkGrammarForAtLeastOneTypeArgument checkGrammarTypeArguments* checkGrammarTaggedTemplateChain* checkGrammarHeritageClause checkGrammarExpressionWithTypeArguments* checkGrammarClassDeclarationHeritageClauses! checkGrammarInterfaceDeclaration*! checkGrammarComputedPropertyName* checkGrammarForGenerator*! checkGrammarForInvalidQuestionMark checkGrammarForInvalidExclamationToken checkGrammarObjectLiteralExpression*! checkGrammarJsxElement checkGrammarJsxName checkGrammarJsxExpression checkGrammarForInOrForOfStatement*! checkGrammarAccessor*! doesAccessorHaveCorrectParameterCount checkGrammarTypeOperatorNode* checkGrammarForInvalidDynamicName isNonBindableDynamicName* checkGrammarMethod* checkGrammarBreakOrContinueStatement* checkGrammarBindingElement* checkGrammarVariableDeclaration*+ checkGrammarForEsModuleMarkerInBindingName checkGrammarNameInLetOrConstDeclarations+ checkGrammarVariableDeclarationList*+ checkGrammarAwaitOrAwaitUsing* checkGrammarYieldExpression* checkGrammarForDisallowedBlockScopedVariableStatement*+! containerAllowsBlockScopedVariable*+ checkGrammarMetaProperty* checkGrammarConstructorTypeParameters* checkGrammarConstructorTypeAnnotation* checkGrammarProperty*! checkAmbientInitializer! isInitializerStringOrNumberLiteralExpression isInitializerBigIntLiteralExpression isInitializerSimpleLiteralEnumReference checkGrammarTopLevelElementForRequiredDeclareModifier checkGrammarTopLevelElementsForRequiredDeclareModifier checkGrammarSourceFile*+ checkGrammarStatementInAmbientContext* checkGrammarNumericLiteral* checkGrammarBigIntLiteral* checkGrammarImportClause* checkGrammarTypeOnlyNamedImportsOrExports checkGrammarImportCallExpression*
+CODES(187) 1005 1009 1013 1014 1015 1016 1017 1018 1019 1020 1021 1022 1024 1025 1028 1029 1030 1031 1036 1038 1039 1040 1042 1044 1046 1047 1048 1049 1051 1052 1053 1054 1070 1071 1079 1089 1090 1091 1092 1093 1094 1095 1096 1097 1098 1099 1103 1104 1105 1106 1107 1115 1116 1117 1118 1119 1123 1155 1156 1162 1163 1165 1166 1168 1169 1170 1171 1172 1173 1174 1175 1176 1182 1183 1184 1186 1187 1188 1189 1190 1200 1206 1207 1216 1221 1222 1242 1243 1244 1246 1247 1248 1249 1253 1254 1255 1263 1264 1268 1273 1274 1275 1276 1277 1287 1308 1309 1312 1317 1318 1319 1323 1324 1325 1326 1330 1331 1332 1333 1334 1335 1337 1346 1347 1348 1349 1354 1356 1358 1363 1375 1378 1431 1432 1433 1450 1451 1486 1491 1492 1493 1494 1495 1497 1498 1539 1545 1546 1547 1548 2206 2207 2300 2304 2404 2462 2480 2483 2501 2523 2524 2566 2633 2639 2737 2852 2853 2854 6204 7060 7061 8038 17000 17001 17012 18006 18007 18010 18016 18019 18037 18054 18058 18059 18060 18061 80008
+PANIC 263 637 918 950 977 1105 1324 1787 1885 1896 1942 ASSERT 94 1222
+PROGRAM GetEmitModuleFormatOfFile GetSourceFileMetaData
+
+### X-JSX (59 fn, 1320 l)
+FN jsx.go 72-1488: checkJsxElement* checkJsxElementDeferred* checkJsxExpression* checkJsxSelfClosingElement* checkJsxSelfClosingElementDeferred* checkJsxFragment* checkJsxAttributes* checkJsxOpeningLikeElementOrOpeningFragment checkJsxPreconditions checkJsxReturnAssignableToAppropriateBound inferJsxTypeArguments* getContextualTypeForJsxExpression* getContextualTypeForJsxAttribute* getContextualJsxElementAttributesType* getContextualTypeForChildJsxExpression discriminateContextualTypeByJSXAttributes* elaborateJsxComponents* generateJsxChildren getElaborationElementForJsxChild! elaborateIterableOrArrayLikeTargetElementwise getSuggestedSymbolForNonexistentJSXAttribute* getJSXFragmentType resolveJsxOpeningLikeElement* checkApplicableSignatureForJsxCallLikeElement* createJsxAttributesTypeFromAttributesProperty! checkJsxAttribute* checkJsxChildren getUninstantiatedJsxSignaturesOfType getEffectiveFirstArgumentForJsxSignature* getJsxPropsTypeFromCallSignature getJsxPropsTypeFromClassType getJsxPropsTypeForSignatureFromMember getJsxManagedAttributesFromLocatedAttributes instantiateAliasOrInterfaceWithDefaults getJsxLibraryManagedAttributes getJsxElementTypeSymbol getJsxElementPropertiesName getJsxElementChildrenPropertyName getNameFromJsxElementAttributesContainer getStaticTypeOfReferencedJsxConstructor getIntrinsicAttributesTypeFromStringLiteralType getJsxReferenceKind createSignatureForJSXIntrinsic getIntrinsicAttributesTypeFromJsxOpeningLikeElement! getIntrinsicTagSymbol! getJsxStatelessElementTypeAt getJsxElementClassTypeAt getJsxElementTypeAt getJsxElementTypeTypeAt getJsxType* getJsxNamespaceAt getJsxNamespace* getLocalJsxNamespace getJsxFactoryEntity* getJsxFragmentFactoryEntity parseIsolatedEntityName markAsSynthetic getJsxNamespaceContainerForImplicitImport* getJSXRuntimeImportSpecifier
+OUT(later layers) Z-SERVICES[getApplicableIndexSymbol, getSymbolAtLocation]
+CODES(26) 2339 2412 2558 2602 2604 2607 2608 2609 2698 2710 2728 2745 2746 2747 2786 2787 2788 2789 2875 2879 6229 7026 17004 17016 17017 18053
+PANIC 417 1224 ASSERT 762 768 1189
+PROGRAM GetJSXRuntimeImportSpecifier
+
+### D-JSDOC (7 fn, 150 l)
+FN checker.go 2547-2609: checkJSDocComments* checkJSDocComment resolveJSDocMemberName checkJSDocType* checkJSDocTypeIsInJsFile
+FN jsdoc.go 9-100: checkUnmatchedJSDocParameters* getAllJSDocTags
+OUT(later layers) Z-SERVICES[containsArgumentsReference]
+CODES(6) 8020 8024 8029 8032 17019 17020
+
+### T-JSDECL (8 fn, 176 l)
+FN checker.go 18151-18350: getTypeOfPrototypeProperty* getWidenedTypeForAssignmentDeclaration*! getAssignmentDeclarationInitializerType hasParentWithTypeAnnotation containsSameNamedThisProperty getTypeFromPropertyDescriptor isConstructorDeclaredThisProperty*! isGlobalSymbolConstructor*
+CODES(0) 
+PANIC 18179 18184 18308
+
+### Z-SERVICES (16 fn, 573 l)
+FN checker.go 31704-32296: GetSymbolAtLocation getSymbolAtLocation*! getIndexSignaturesAtLocation getSymbolOfNameOrPropertyAccessExpression! isThisPropertyAndThisTyped getTypeOfNode* getThisTypeOfObjectLiteralFromContextualType* getThisTypeFromContextualType getThisTypeArgument getApplicableIndexInfos* getApplicableIndexSymbol* getRegularTypeOfExpression* containsArgumentsReference* GetTypeAtLocation GetEmitResolver* GetAliasedSymbol*
+CODES(0) 
+PANIC 31846 31921
+

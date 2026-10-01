@@ -1,0 +1,11 @@
+file:line	input	bun now	tsc code	start	length	message
+test/bundler/transpiler/transpiler.test.js:659	"export abstract\nclass Foo {}\nnew Foo"	accepts	1128	0	6	"Declaration or statement expected."
+test/bundler/transpiler/transpiler.test.js:660	"export declare\nclass Foo {}\nnew Foo"	accepts	1128	0	6	"Declaration or statement expected."
+test/bundler/transpiler/transpiler.test.js:661	"export declare\nlet x = 1\nuse(x)"	accepts	1128	0	6	"Declaration or statement expected."
+test/bundler/transpiler/transpiler.test.js:989	"f<number>.g"	accepts	1477	1	8	"An instantiation expression cannot be followed by a property access."
+test/bundler/transpiler/transpiler.test.js:1340	"const x: unique = y"	accepts	1110	16	1	"Type expected."
+test/bundler/transpiler/transpiler.test.js:1341	"const x: unique<T> = y"	accepts	1110	15	1	"Type expected."
+test/bundler/transpiler/transpiler.test.js:1567	"class Container { get data(): typeof this.#data {} }"	accepts	1003	47	0	"Identifier expected."
+test/bundler/transpiler/transpiler.test.js:1568	"const a: typeof this.#a = 1;"	accepts	1003	23	0	"Identifier expected."
+test/bundler/transpiler/transpiler.test.js:1581	"interface Foo { new bar<const T>(): T }"	accepts	1131	16	3	"Property or signature expected."
+test/bundler/transpiler/transpiler.test.js:1583	"let x: { new bar<const T>(): T }"	accepts	1131	9	3	"Property or signature expected."

@@ -1,0 +1,54 @@
+file /q_q3_arrow.js scriptKind=1 variant=1 dts=false textLen=103
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=37 identifiers=10 text=12 reparsedClones=4
+root KindSourceFile [0,103) f=0x10000
+  .Statements: list [0,102) n=4
+    - KindJSTypeAliasDeclaration [21,41) f=0x212008
+      .Type: KindNumberKeyword [31,37) f=0x410008
+      .name: KindIdentifier [39,41) f=0x412008 Text="T3"
+      .jsdoc: KindJSDoc [17,44) f=0x412000 parent=KindParameter[17,46)
+        .Comment: list [17,21) n=0
+        .Tags: list [21,41) n=1
+          - KindJSDocTypedefTag [21,41) f=0x412000
+            .TagName: KindIdentifier [22,29) f=0x412000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [30,38) f=0x412000
+              .Type: KindNumberKeyword [31,37) f=0x410000
+            .name: KindIdentifier [39,41) f=0x412000 Text="T3"
+    - KindVariableStatement [0,53) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [0,52) f=0x10002
+        .Declarations: list [5,52) n=1
+          - KindVariableDeclaration [5,52) f=0x10000
+            .Initializer: KindArrowFunction [9,52) f=0x10000
+              .Body: KindIdentifier [50,52) f=0x12000 Text="a"
+              .EqualsGreaterThanToken: KindEqualsGreaterThanToken [47,50) f=0x10000
+              .Parameters: list [17,46) n=1
+                - KindParameter [17,46) f=0x212000
+                  .name: KindIdentifier [17,46) f=0x12000 Text="a"
+                  .jsdoc: KindJSDoc [17,44) f=0x412000 SHARED
+              .modifiers.flags=0x400
+              .modifiers: list [9,15) n=1
+                - KindAsyncKeyword [9,15) f=0x10000
+            .name: KindIdentifier [5,7) f=0x10000 Text="f"
+    - KindJSTypeAliasDeclaration [62,82) f=0x210008
+      .Type: KindNumberKeyword [72,78) f=0x410008
+      .name: KindIdentifier [80,82) f=0x410008 Text="T4"
+      .jsdoc: KindJSDoc [58,85) f=0x410000 parent=KindFunctionExpression[58,100)
+        .Comment: list [58,62) n=0
+        .Tags: list [62,82) n=1
+          - KindJSDocTypedefTag [62,82) f=0x410000
+            .TagName: KindIdentifier [63,70) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [71,79) f=0x410000
+              .Type: KindNumberKeyword [72,78) f=0x410000
+            .name: KindIdentifier [80,82) f=0x410000 Text="T4"
+    - KindExpressionStatement [53,102) f=0x10000
+      .Expression: KindCallExpression [53,101) f=0x10000
+        .Arguments: list [58,100) n=1
+          - KindFunctionExpression [58,100) f=0x210000
+            .Body: KindBlock [97,100) f=0x10000
+              .Statements: list [99,99) n=0
+            .Parameters: list [96,96) n=0
+            .jsdoc: KindJSDoc [58,85) f=0x410000 SHARED
+        .Expression: KindIdentifier [53,57) f=0x10000 Text="foo"
+  .EndOfFileToken: KindEndOfFile [102,103) f=0x10000

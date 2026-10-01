@@ -1,0 +1,130 @@
+checker/checker.go:918	NewChecker	stored in c.compareSymbols	method value c.compareSymbolsWorker	func(s1 *ast.Symbol, s2 *ast.Symbol) int
+checker/checker.go:919	NewChecker	stored in c.compareSymbolChains	method value c.compareSymbolChainsWorker	func(a []*ast.Symbol, b []*ast.Symbol) int
+checker/checker.go:937	NewChecker	stored in c.evaluate	result of evaluator.NewEvaluator	evaluator.Evaluator
+checker/checker.go:971	NewChecker	stored in c.resolveName	method value c.createNameResolver().Resolve	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol
+checker/checker.go:972	NewChecker	stored in c.resolveNameForSymbolSuggestion	method value c.createNameResolverForSuggestion().Resolve	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol
+checker/checker.go:1068	NewChecker	stored in c.getGlobalESSymbolType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1069	NewChecker	stored in c.getGlobalBigIntType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1070	NewChecker	stored in c.getGlobalImportMetaType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1071	NewChecker	stored in c.getGlobalImportAttributesType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1072	NewChecker	stored in c.getGlobalImportAttributesTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1073	NewChecker	stored in c.getGlobalNonNullableTypeAliasOrNil	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1074	NewChecker	stored in c.getGlobalExtractSymbol	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1075	NewChecker	stored in c.getGlobalDisposableType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1076	NewChecker	stored in c.getGlobalAsyncDisposableType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1077	NewChecker	stored in c.getGlobalAwaitedSymbol	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1078	NewChecker	stored in c.getGlobalAwaitedSymbolOrNil	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1079	NewChecker	stored in c.getGlobalNaNSymbolOrNil	result of c.getGlobalValueSymbolResolver	func() *ast.Symbol
+checker/checker.go:1080	NewChecker	stored in c.getGlobalRecordSymbol	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1081	NewChecker	stored in c.getGlobalTemplateStringsArrayType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1082	NewChecker	stored in c.getGlobalESSymbolConstructorSymbolOrNil	result of c.getGlobalValueSymbolResolver	func() *ast.Symbol
+checker/checker.go:1083	NewChecker	stored in c.getGlobalESSymbolConstructorTypeSymbolOrNil	result of c.getGlobalTypeSymbolResolver	func() *ast.Symbol
+checker/checker.go:1084	NewChecker	stored in c.getGlobalImportCallOptionsType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1085	NewChecker	stored in c.getGlobalImportCallOptionsTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1086	NewChecker	stored in c.getGlobalPromiseType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1087	NewChecker	stored in c.getGlobalPromiseTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1088	NewChecker	stored in c.getGlobalPromiseLikeType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1089	NewChecker	stored in c.getGlobalPromiseConstructorSymbol	result of c.getGlobalValueSymbolResolver	func() *ast.Symbol
+checker/checker.go:1090	NewChecker	stored in c.getGlobalPromiseConstructorSymbolOrNil	result of c.getGlobalValueSymbolResolver	func() *ast.Symbol
+checker/checker.go:1091	NewChecker	stored in c.getGlobalOmitSymbol	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1092	NewChecker	stored in c.getGlobalNoInferSymbolOrNil	result of c.getGlobalTypeAliasResolver	func() *ast.Symbol
+checker/checker.go:1093	NewChecker	stored in c.getGlobalIteratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1094	NewChecker	stored in c.getGlobalIterableType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1095	NewChecker	stored in c.getGlobalIterableTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1096	NewChecker	stored in c.getGlobalIterableIteratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1097	NewChecker	stored in c.getGlobalIterableIteratorTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1098	NewChecker	stored in c.getGlobalIteratorObjectType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1099	NewChecker	stored in c.getGlobalGeneratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1100	NewChecker	stored in c.getGlobalAsyncIteratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1101	NewChecker	stored in c.getGlobalAsyncIterableType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1102	NewChecker	stored in c.getGlobalAsyncIterableTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1103	NewChecker	stored in c.getGlobalAsyncIterableIteratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1104	NewChecker	stored in c.getGlobalAsyncIterableIteratorTypeChecked	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1105	NewChecker	stored in c.getGlobalAsyncIteratorObjectType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1106	NewChecker	stored in c.getGlobalAsyncGeneratorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1107	NewChecker	stored in c.getGlobalIteratorYieldResultType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1108	NewChecker	stored in c.getGlobalIteratorReturnResultType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1109	NewChecker	stored in c.getGlobalTypedPropertyDescriptorType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1110	NewChecker	stored in c.getGlobalClassDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1111	NewChecker	stored in c.getGlobalClassMethodDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1112	NewChecker	stored in c.getGlobalClassGetterDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1113	NewChecker	stored in c.getGlobalClassSetterDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1114	NewChecker	stored in c.getGlobalClassAccessorDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1115	NewChecker	stored in c.getGlobalClassAccessorDecoratorTargetType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1116	NewChecker	stored in c.getGlobalClassAccessorDecoratorResultType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1117	NewChecker	stored in c.getGlobalClassFieldDecoratorContextType	result of c.getGlobalTypeResolver	func() *checker.Type
+checker/checker.go:1158	(*Checker).getGlobalTypeResolver	returned	result of core.Memoize	func() *checker.Type
+checker/checker.go:1165	(*Checker).getGlobalTypeAliasResolver	returned	result of core.Memoize	func() *ast.Symbol
+checker/checker.go:1172	(*Checker).getGlobalValueSymbolResolver	returned	result of core.Memoize	func() *ast.Symbol
+checker/checker.go:1178	(*Checker).getGlobalTypeSymbolResolver	returned	result of core.Memoize	func() *ast.Symbol
+checker/checker.go:1184	(*Checker).getGlobalTypesResolver	returned	result of core.Memoize	func() []*checker.Type
+checker/checker.go:1253	(*Checker).initializeClosures	stored in c.isPrimitiveOrObjectOrEmptyType	closure	func(t *checker.Type) bool
+checker/checker.go:1256	(*Checker).initializeClosures	stored in c.containsMissingType	closure	func(t *checker.Type) bool
+checker/checker.go:1259	(*Checker).initializeClosures	stored in c.couldContainTypeVariables	method value c.couldContainTypeVariablesWorker	func(t *checker.Type) bool
+checker/checker.go:1260	(*Checker).initializeClosures	stored in c.isStringIndexSignatureOnlyType	method value c.isStringIndexSignatureOnlyTypeWorker	func(t *checker.Type) bool
+checker/checker.go:1261	(*Checker).initializeClosures	stored in c.markNodeAssignments	method value c.markNodeAssignmentsWorker	func(node *ast.Node) bool
+checker/checker.go:1262	(*Checker).initializeClosures	stored in c.compareTypesAssignable	method value c.compareTypesAssignableWorker	func(source *checker.Type, target *checker.Type, reportErrors bool) checker.Ternary
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIteratorType	field value c.getGlobalIteratorType	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableType	field value c.getGlobalIterableType	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableTypeChecked	field value c.getGlobalIterableTypeChecked	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableIteratorType	field value c.getGlobalIterableIteratorType	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableIteratorTypeChecked	field value c.getGlobalIterableIteratorTypeChecked	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIteratorObjectType	field value c.getGlobalIteratorObjectType	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalGeneratorType	field value c.getGlobalGeneratorType	func() *checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalBuiltinIteratorTypes	result of c.getGlobalTypesResolver	func() []*checker.Type
+checker/checker.go:1266	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.resolveIterationType	closure	func(t *checker.Type, errorNode *ast.Node) *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIteratorType	field value c.getGlobalAsyncIteratorType	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableType	field value c.getGlobalAsyncIterableType	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableTypeChecked	field value c.getGlobalAsyncIterableTypeChecked	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableIteratorType	field value c.getGlobalAsyncIterableIteratorType	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIterableIteratorTypeChecked	field value c.getGlobalAsyncIterableIteratorTypeChecked	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalIteratorObjectType	field value c.getGlobalAsyncIteratorObjectType	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalGeneratorType	field value c.getGlobalAsyncGeneratorType	func() *checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.getGlobalBuiltinIteratorTypes	result of c.getGlobalTypesResolver	func() []*checker.Type
+checker/checker.go:1283	(*Checker).initializeIterationResolvers	literal checker.IterationTypesResolver.resolveIterationType	closure	func(t *checker.Type, errorNode *ast.Node) *checker.Type
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.GetSymbolOfDeclaration	method value c.getSymbolOfDeclaration	func(node *ast.Node) *ast.Symbol
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.Error	method value c.error	func(location *ast.Node, message *diagnostics.Message, args ...any) *ast.Diagnostic
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.Lookup	method value c.getSymbol	func(symbols ast.SymbolTable, name string, meaning ast.SymbolFlags) *ast.Symbol
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.SymbolReferenced	method value c.symbolReferenced	func(symbol *ast.Symbol, meaning ast.SymbolFlags)
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.SetRequiresScopeChangeCache	method value c.setRequiresScopeChangeCache	func(node *ast.Node, value core.Tristate)
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.GetRequiresScopeChangeCache	method value c.getRequiresScopeChangeCache	func(node *ast.Node) core.Tristate
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.OnPropertyWithInvalidInitializer	method value c.checkAndReportErrorForInvalidInitializer	func(errorLocation *ast.Node, name string, propertyWithInvalidInitializer *ast.Node, result *ast.Symbol) bool
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.OnFailedToResolveSymbol	method value c.onFailedToResolveSymbol	func(errorLocation *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message)
+checker/checker.go:1473	(*Checker).createNameResolver	literal binder.NameResolver.OnSuccessfullyResolvedSymbol	method value c.onSuccessfullyResolvedSymbol	func(errorLocation *ast.Node, result *ast.Symbol, meaning ast.SymbolFlags, lastLocation *ast.Node, associatedDeclarationForContainingInitializerOrBindingName *ast.Node, withinDeferredContext bool)
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.GetSymbolOfDeclaration	method value c.getSymbolOfDeclaration	func(node *ast.Node) *ast.Symbol
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.Error	method value c.error	func(location *ast.Node, message *diagnostics.Message, args ...any) *ast.Diagnostic
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.Lookup	method value c.getSuggestionForSymbolNameLookup	func(symbols ast.SymbolTable, name string, meaning ast.SymbolFlags) *ast.Symbol
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.SymbolReferenced	method value c.symbolReferenced	func(symbol *ast.Symbol, meaning ast.SymbolFlags)
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.SetRequiresScopeChangeCache	method value c.setRequiresScopeChangeCache	func(node *ast.Node, value core.Tristate)
+checker/checker.go:1491	(*Checker).createNameResolverForSuggestion	literal binder.NameResolver.GetRequiresScopeChangeCache	method value c.getRequiresScopeChangeCache	func(node *ast.Node) core.Tristate
+checker/checker.go:1770	getPrimitiveTypeAliasSuggestions	returned	closure	func(yield func(*ast.Symbol) bool)
+checker/checker.go:17238	(*Checker).getInferredTypeParameterConstraint	returned	closure	func() *checker.Type
+checker/checker.go:25881	(*Checker).UnionTypes	returned	result of maps.Values	iter.Seq[*checker.Type]
+checker/emitresolver.go:47	newEmitResolver	stored in e.isValueAliasDeclaration	method value e.isValueAliasDeclarationWorker	func(node *ast.Node) bool
+checker/emitresolver.go:48	newEmitResolver	stored in e.aliasMarkingVisitor	method value e.aliasMarkingVisitorWorker	func(node *ast.Node) bool
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.ResolveName	field value r.checker.resolveName	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetResolvedSymbol	method value r.checker.getResolvedSymbolOrNil	func(node *ast.Node) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetMergedSymbol	method value r.checker.getMergedSymbol	func(symbol *ast.Symbol) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetParentOfSymbol	method value r.checker.getParentOfSymbol	func(symbol *ast.Symbol) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetSymbolOfDeclaration	method value r.checker.getSymbolOfDeclaration	func(node *ast.Node) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetTypeOnlyAliasDeclaration	method value r.checker.getTypeOnlyAliasDeclarationEx	func(symbol *ast.Symbol, meaning ast.SymbolFlags) *ast.Node
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetExportSymbolOfValueSymbolIfExported	method value r.checker.getExportSymbolOfValueSymbolIfExported	func(symbol *ast.Symbol) *ast.Symbol
+checker/emitresolver.go:844	(*EmitResolver).getReferenceResolver	literal binder.ReferenceResolverHooks.GetElementAccessExpressionName	method value r.checker.tryGetElementAccessExpressionName	func(node *ast.ElementAccessExpression) (string, bool)
+checker/inference.go:1274	(*Checker).newInferenceContextWorker	literal checker.InferenceContext.compareTypes	variable compareTypes	checker.TypeComparer
+checker/jsx.go:377	(*Checker).generateJsxChildren	returned	closure	func(yield func(checker.JsxElaborationElement) bool)
+checker/jsx.go:404	(*Checker).getElaborationElementForJsxChild	literal checker.JsxElaborationElement.createDiagnostic	closure	func(prop *ast.Node) *ast.Diagnostic
+checker/mapper.go:236	newFunctionTypeMapper	stored in m.fn	variable fn	func(*checker.Type) *checker.Type
+checker/nodebuilder.go:293	(*Checker).getNodeBuilder	returned	variable releaseNodes	func()
+checker/nodebuilder.go:296	(*Checker).getNodeBuilder	returned	variable releaseNodes	func()
+checker/nodebuilderimpl.go:133	(*NodeBuilderImpl).saveRestoreFlags	returned	closure	func()
+checker/nodebuilderscopes.go:27	cloneNodeBuilderContext	returned	closure	func()
+checker/nodebuilderscopes.go:44	(*NodeBuilderImpl).addSymbolTypeToContext	returned	closure	func()
+checker/nodebuilderscopes.go:56	(*NodeBuilderImpl).enterSignatureScope	returned	variable cleanup	func()
+checker/nodebuilderscopes.go:159	(*NodeBuilderImpl).enterNewScope	returned	variable undo	func()
+checker/nodebuilderscopes.go:240	(*NodeBuilderImpl).enterNewScope	returned	closure	func()
+checker/nodecopy.go:878	getExistingNodeTreeVisitor	literal ast.NodeVisitorHooks.VisitNodes	closure	func(nodes *ast.NodeList, v *ast.NodeVisitor) *ast.NodeList
+checker/nodecopy.go:878	getExistingNodeTreeVisitor	literal ast.NodeVisitorHooks.VisitNode	closure	func(node *ast.Node, v *ast.NodeVisitor) *ast.Node
+checker/relater.go:1061	(*Checker).findMatchingDiscriminantType	literal checker.TypeDiscriminator.isRelatedTo	variable isRelatedTo	func(source *checker.Type, target *checker.Type) checker.Ternary
+checker/tracer.go:31	(*Tracer).Push	returned	result of t.tracing.Push	func()
+checker/tracer.go:38	(*Tracer).Push	returned	closure	func()
+checker/tracer.go:64	(*Tracer).temporarilyAddCheckerIndex	returned	closure	func()

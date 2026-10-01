@@ -1,0 +1,122 @@
+layer	function	where	caller module	callers
+D-DRIVER	c.checkSourceFile	checker.go:2202-2236	c21_resolved_symbols_diagnostics	c.getDiagnostics
+D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c15_calls	c.resolveCall, c.resolveUntypedCall
+D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c16_function_expressions_collisions	c.checkClassExpressionDeferred
+D-DRIVER	c.checkSourceElements	checker.go:2238-2245	c17_unary_meta_yield	c.checkExpressionWithTypeArguments
+D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethodDeferred
+D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c17_unary_meta_yield	c.checkSatisfiesExpression
+D-DRIVER	c.checkSourceElement	checker.go:2247-2258	c19_assertions_binary_operators	c.checkAssertion
+D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c15_calls	c.getCandidateForOverloadFailure
+D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c16_function_expressions_collisions	c.checkClassExpression, c.checkFunctionExpressionOrObjectLiteralMethod
+D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c17_unary_meta_yield	c.checkVoidExpression
+D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c19_assertions_binary_operators	c.checkAssertion
+D-DRIVER	c.checkNodeDeferred	checker.go:2490-2496	c20_object_literals_spread	c.checkObjectLiteral
+D-TYPENODE	c.shouldCheckErasableSyntax	checker.go:2658-2660	c19_assertions_binary_operators	c.checkAssertion
+D-TYPENODE	c.getDeprecatedSuggestionNode	checker.go:3041-3061	c15_calls	c.checkDeprecatedSignature
+D-TYPENODE	c.getResolutionModeOverride	checker.go:3340-3371	nodecopy.go	NodeBuilderImpl.getModuleSpecifierOverride
+D-FUNC	c.checkSignatureDeclaration	checker.go:2731-2780	c16_function_expressions_collisions	c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod
+D-FUNC	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow	checker.go:3736-3786	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethodDeferred
+D-STMT	c.checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	checker.go:3822-3827	c17_unary_meta_yield	c.checkConditionalExpression
+D-STMT	c.checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	checker.go:3822-3827	c19_assertions_binary_operators	c.checkBinaryLikeExpression
+D-STMT	c.checkReturnExpression	checker.go:4139-4162	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethodDeferred
+D-CLASS	c.checkClassLikeDeclaration	checker.go:4301-4402	c16_function_expressions_collisions	c.checkClassExpression
+D-CLASS	c.isPropertyWithoutInitializer	checker.go:5032-5034	c18_identifiers_property_access_this	c.getFlowTypeOfAccessExpression
+D-CLASS	c.isPropertyInitializedInStaticBlocks	checker.go:5036-5051	c04_name_resolution_hooks	c.isUsedInFunctionOrInstanceProperty
+D-ENUMNS	c.getIsolatedModulesLikeFlagName	checker.go:5312-5314	c14_expressions	c.checkConstEnumAccess
+D-IMPEXP	isContainedByNamespace	checker.go:5665-5671	c23_alias_targets	c.getTargetOfExportAssignment
+U-ALIASMARK	c.markLinkedReferences	checker.go:28312-28477	c18_identifiers_property_access_this	c.checkIdentifier, c.checkPropertyAccessExpressionOrQualifiedName
+U-ALIASMARK	shouldMarkIdentifierAliasReferenced	checker.go:28494-28513	c18_identifiers_property_access_this	c.checkIdentifier
+D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130-7134	c16_function_expressions_collisions	c.checkClassExpressionDeferred
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c14_expressions	c.checkArrayLiteral
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c17_unary_meta_yield	c.checkSpreadExpression, c.getYieldedTypeOfYieldExpression
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c19_assertions_binary_operators	c.checkArrayLiteralAssignment
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c31_binding_patterns_widening	c.checkRightHandSideOfForOf, c.getBindingElementTypeFromParentType
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	c48_contextual_types	c.getSpreadArgumentType
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185-6194	flow.go	c.getExplicitTypeOfSymbol, c.getTypeOfDestructuredArrayElement, c.getTypeOfDestructuredSpreadExpression
+D-ITER	c.getIteratedTypeOrElementType	checker.go:6196-6301	c14_expressions	c.checkArrayLiteral
+D-ITER	c.getIteratedTypeOrElementType	checker.go:6196-6301	c48_contextual_types	c.getContextualTypeForElementExpression
+D-ITER	c.getIterationTypeOfGeneratorFunctionReturnType	checker.go:6306-6312	c17_unary_meta_yield	c.checkYieldExpression
+D-ITER	c.getIterationTypeOfGeneratorFunctionReturnType	checker.go:6306-6312	c34_return_types	c.getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded, c.shouldReportErrorsFromWideningWithContextualSignature, c.unwrapReturnType
+D-ITER	c.getIterationTypeOfGeneratorFunctionReturnType	checker.go:6306-6312	c48_contextual_types	c.checkGeneratorInstantiationAssignabilityToReturnType, c.getContextualIterationType, c.getContextualTypeForReturnExpression, c.getContextualTypeForYieldOperand
+D-ITER	c.getIterationTypesOfGeneratorFunctionReturnType	checker.go:6314-6325	c17_unary_meta_yield	c.checkYieldExpression
+D-ITER	c.getIterationTypesOfGeneratorFunctionReturnType	checker.go:6314-6325	c48_contextual_types	c.getContextualTypeForYieldOperand
+D-ITER	c.getIterationTypeOfIterable	checker.go:6328-6334	c17_unary_meta_yield	c.checkYieldExpression
+D-ITER	c.getIterationTypesOfIterable	checker.go:6355-6375	c34_return_types	c.checkAndAggregateYieldOperandTypes
+D-ITER	c.isReferenceToType	checker.go:6482-6484	nodebuilderimpl.go	NodeBuilderImpl.typeReferenceToTypeNode
+D-ITER	c.getBuiltinIteratorReturnType	checker.go:6490-6492	c39_declared_types_enums	c.getDeclaredTypeOfTypeAlias
+E-AWAIT	c.checkAwaitExpression	checker.go:10935-10943	c14_expressions	c.checkExpressionWorker
+E-AWAIT	c.GetPromisedTypeOfPromise	checker.go:29042-29044	c18_identifiers_property_access_this	c.reportNonexistentProperty
+E-AWAIT	c.GetPromisedTypeOfPromise	checker.go:29042-29044	c34_return_types	c.getWidenedLiteralLikeTypeForContextualReturnTypeIfNeeded
+E-AWAIT	c.checkAwaitedType	checker.go:31355-31366	c34_return_types	c.checkAndAggregateReturnExpressionTypes, c.getReturnTypeFromBody
+E-AWAIT	c.getAwaitedType	checker.go:31376-31378	c14_expressions	c.getQuickTypeOfExpression
+E-AWAIT	c.getAwaitedType	checker.go:31376-31378	c15_calls	c.invocationErrorDetails
+E-AWAIT	c.getAwaitedTypeEx	checker.go:31380-31386	c03_init	c.initializeIterationResolvers
+E-AWAIT	c.getAwaitedTypeEx	checker.go:31380-31386	c17_unary_meta_yield	c.getYieldedTypeOfYieldExpression
+E-AWAIT	c.getAwaitedTypeNoAlias	checker.go:31389-31391	c19_assertions_binary_operators	c.reportOperatorError
+E-AWAIT	c.getAwaitedTypeNoAlias	checker.go:31389-31391	c34_return_types	c.createPromiseLikeType, c.createPromiseType, c.shouldReportErrorsFromWideningWithContextualSignature, c.unwrapReturnType
+E-AWAIT	c.getAwaitedTypeNoAlias	checker.go:31389-31391	c48_contextual_types	c.getContextualTypeForAwaitOperand, c.getContextualTypeForReturnExpression
+E-AWAIT	c.unwrapAwaitedType	checker.go:31562-31570	c34_return_types	c.checkAndAggregateReturnExpressionTypes, c.createPromiseLikeType, c.createPromiseType, c.getReturnTypeFromBody, c.unwrapReturnType
+E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581-31583	c15_calls	c.maybeAddMissingAwaitInfo
+E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581-31583	c19_assertions_binary_operators	c.checkArithmeticOperandType
+E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581-31583	c48_contextual_types	c.getContextualReturnType
+E-DECOR	c.resolveDecorator	checker.go:8833-8864	c15_calls	c.resolveSignature
+E-DECOR	c.getDecoratorArgumentCount	checker.go:9273-9278	c15_calls	c.hasCorrectArity
+E-DECOR	c.getContextualTypeForDecorator	checker.go:29924-29930	c48_contextual_types	c.getContextualType
+E-DECOR	c.getEffectiveDecoratorArguments	checker.go:30265-30276	c49_call_arguments_decorator_signatures	c.getEffectiveCallArguments
+D-HELPERS	c.checkClassExpressionExternalHelpers	checker.go:10171-10197	c16_function_expressions_collisions	c.checkClassExpression
+D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c17_unary_meta_yield	c.checkYieldExpression
+D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c18_identifiers_property_access_this	c.checkPropertyAccessExpressionOrQualifiedName
+D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699-28735	c19_assertions_binary_operators	c.checkInExpression, c.checkObjectLiteralDestructuringPropertyAssignment
+E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534-10551	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethod
+G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c18_identifiers_property_access_this	c.checkPropertyAccessExpressionOrQualifiedName
+G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38-45	c19_assertions_binary_operators	c.checkAssertion, c.checkNullishCoalesceOperands
+G-GRAMMAR	c.checkGrammarRegularExpressionLiteral	grammarchecks.go:69-98	c14_expressions	c.checkRegularExpressionLiteral
+G-GRAMMAR	c.checkGrammarPrivateIdentifierExpression	grammarchecks.go:100-118	c14_expressions	c.checkPrivateIdentifierExpression
+G-GRAMMAR	c.checkGrammarForDisallowedTrailingComma	grammarchecks.go:671-676	c19_assertions_binary_operators	c.checkArrayLiteralDestructuringElementAssignment, c.checkObjectLiteralDestructuringPropertyAssignment
+G-GRAMMAR	c.checkGrammarFunctionLikeDeclaration	grammarchecks.go:758-765	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethod
+G-GRAMMAR	c.checkGrammarTypeArguments	grammarchecks.go:855-857	c15_calls	c.checkCallExpression, c.checkTaggedTemplateExpression
+G-GRAMMAR	c.checkGrammarTaggedTemplateChain	grammarchecks.go:859-864	c15_calls	c.checkTaggedTemplateExpression
+G-GRAMMAR	c.checkGrammarExpressionWithTypeArguments	grammarchecks.go:885-890	c17_unary_meta_yield	c.checkExpressionWithTypeArguments
+G-GRAMMAR	c.checkGrammarForGenerator	grammarchecks.go:974-988	c16_function_expressions_collisions	c.checkFunctionExpressionOrObjectLiteralMethod
+G-GRAMMAR	c.checkGrammarObjectLiteralExpression	grammarchecks.go:998-1136	c20_object_literals_spread	c.checkObjectLiteral
+G-GRAMMAR	c.checkGrammarMethod	grammarchecks.go:1414-1460	c20_object_literals_spread	c.checkObjectLiteralMethod
+G-GRAMMAR	c.checkGrammarYieldExpression	grammarchecks.go:1759-1770	c17_unary_meta_yield	c.checkYieldExpression
+G-GRAMMAR	c.checkGrammarMetaProperty	grammarchecks.go:1813-1839	c17_unary_meta_yield	c.checkMetaProperty
+G-GRAMMAR	c.checkGrammarStatementInAmbientContext	grammarchecks.go:2029-2057	c14_expressions	c.checkExpressionStatement
+G-GRAMMAR	c.checkGrammarNumericLiteral	grammarchecks.go:2059-2085	c14_expressions	c.checkExpressionWorker
+G-GRAMMAR	c.checkGrammarBigIntLiteral	grammarchecks.go:2087-2098	c14_expressions	c.checkExpressionWorker
+G-GRAMMAR	c.checkGrammarImportCallExpression	grammarchecks.go:2144-2185	c14_expressions	c.checkImportCallExpression
+X-JSX	c.checkJsxElement	jsx.go:72-75	c14_expressions	c.checkExpressionWorker
+X-JSX	c.checkJsxExpression	jsx.go:89-99	c14_expressions	c.checkExpressionWorker
+X-JSX	c.checkJsxSelfClosingElement	jsx.go:101-104	c14_expressions	c.checkExpressionWorker
+X-JSX	c.checkJsxFragment	jsx.go:110-124	c14_expressions	c.checkExpressionWorker
+X-JSX	c.checkJsxAttributes	jsx.go:126-129	c14_expressions	c.checkExpressionWorker
+X-JSX	c.inferJsxTypeArguments	jsx.go:198-203	c15_calls	c.inferTypeArguments
+X-JSX	c.getContextualTypeForJsxExpression	jsx.go:205-213	c48_contextual_types	c.getContextualType
+X-JSX	c.getContextualTypeForJsxAttribute	jsx.go:215-227	c48_contextual_types	c.getContextualType
+X-JSX	c.getContextualJsxElementAttributesType	jsx.go:229-240	c48_contextual_types	c.getContextualType
+X-JSX	c.discriminateContextualTypeByJSXAttributes	jsx.go:266-294	c50_contextual_properties_inference_context	c.getApparentTypeOfContextualType
+X-JSX	c.elaborateJsxComponents	jsx.go:296-367	relater.go	c.elaborateError
+X-JSX	c.getSuggestedSymbolForNonexistentJSXAttribute	jsx.go:485-498	relater.go	Relater.hasExcessProperties
+X-JSX	c.resolveJsxOpeningLikeElement	jsx.go:545-585	c15_calls	c.resolveSignature
+X-JSX	c.checkApplicableSignatureForJsxCallLikeElement	jsx.go:591-701	c15_calls	c.isSignatureApplicable
+X-JSX	c.checkJsxAttribute	jsx.go:869-875	c28_types_of_symbols	c.getTypeOfVariableOrParameterOrPropertyWorker
+X-JSX	c.getEffectiveFirstArgumentForJsxSignature	jsx.go:925-930	c48_contextual_types	c.getContextualTypeForArgumentAtIndex
+X-JSX	c.getJsxType	jsx.go:1293-1302	relater.go	Relater.reportErrorResults
+T-JSDECL	c.getTypeOfPrototypeProperty	checker.go:18151-18162	c28_types_of_symbols	c.getTypeOfVariableOrParameterOrPropertyWorker
+T-JSDECL	c.getWidenedTypeForAssignmentDeclaration	checker.go:18173-18224	c28_types_of_symbols	c.getTypeOfVariableOrParameterOrPropertyWorker
+T-JSDECL	c.isConstructorDeclaredThisProperty	checker.go:18301-18344	c44_index_indexed_access	c.isThisPropertyAccessInConstructor
+T-JSDECL	c.isGlobalSymbolConstructor	checker.go:18346-18350	c31_binding_patterns_widening	c.widenTypeForVariableLikeDeclaration
+Z-SERVICES	c.getThisTypeOfObjectLiteralFromContextualType	checker.go:32165-32180	c18_identifiers_property_access_this	c.getContextualThisParameterType
+Z-SERVICES	c.getRegularTypeOfExpression	checker.go:32238-32243	nodebuilderimpl.go	NodeBuilderImpl.serializeTypeForExpression
+Z-SERVICES	c.getRegularTypeOfExpression	checker.go:32238-32243	pseudotypenodebuilder.go	NodeBuilderImpl.pseudoTypeToType
+Z-SERVICES	c.GetEmitResolver	checker.go:32286-32292	nodebuilderimpl.go	NodeBuilderImpl.isTriviallySerializableComputedName, NodeBuilderImpl.serializeTypeForDeclaration
+Z-SERVICES	c.GetEmitResolver	checker.go:32286-32292	symbolaccessibility.go	c.IsAnySymbolAccessible
+Z-SERVICES	c.GetAliasedSymbol	checker.go:32294-32296	utilities.go	SkipAlias
+Z-SERVICES	getMeaningOfEntityNameReference	emitresolver.go:311-332	nodecopy.go	getExistingNodeTreeVisitor
+Z-SERVICES	EmitResolver.isEntityNameVisible	emitresolver.go:340-380	nodebuilderimpl.go	NodeBuilderImpl.isTriviallySerializableComputedName
+Z-SERVICES	EmitResolver.hasVisibleDeclarations	emitresolver.go:384-465	symbolaccessibility.go	c.IsAnySymbolAccessible
+Z-SERVICES	EmitResolver.requiresAddingImplicitUndefined	emitresolver.go:585-603	nodebuilderimpl.go	NodeBuilderImpl.serializeTypeForDeclaration
+Z-SERVICES	c.GetConstantValue	services.go:859-886	nodebuilder_hover.go	NodeBuilderImpl.enumMemberInitializer
+Z-SERVICES	c.IsLibSymbolForHoverVerbosity	services.go:1114-1125	nodebuilderimpl.go	NodeBuilderImpl.isExpandableType
+Z-SERVICES	c.IsLibTypeForHoverVerbosity	services.go:1129-1140	nodebuilderimpl.go	NodeBuilderImpl.isExpandableType

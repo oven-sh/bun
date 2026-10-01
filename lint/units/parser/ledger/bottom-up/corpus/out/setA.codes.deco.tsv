@@ -1,0 +1,277 @@
+code	rows of set A with it	rows where it is the only code outside NR	grammar range	in NR	in VH	in STRUCTURAL	message	example
+2304	11517	0		y	y		Cannot find name 'out'.	const v = <out>x
+7006	2412	172					Parameter 'a' implicitly has an 'any' type.	const f = (a): !1 => 0;
+2369	2021	589				y	A parameter property is only allowed in a constructor implementation.	type X = (public a: A) => void;
+1274	1325	831	y				'in' modifier can only appear on a type parameter of a class, interface or type alias	type X = <in T>() => T;
+1228	1240	1022	y				A type predicate is only allowed in return type position for functions and methods.	type X = A<asserts a>;
+2371	1204	756				y	A parameter initializer is only allowed in a function or constructor implementation.	let g: (a = 1) => void
+1099	943	761	y				Type argument list cannot be empty.	type X = A<>;
+1098	733	542	y				Type parameter list cannot be empty.	type X = <>() => void;
+17020	720	623	y				'!' at the start of a type is not valid TypeScript syntax. Did you mean to write '1'?	type X = !1;
+1206	701	357	y				Decorators are not valid here.	let x: new (@d a) => A;
+2564	620	65					Property 'p' has no initializer and is not definitely assigned in the constructor.	class C { p: !1; }
+8020	526	441	y				JSDoc types can only be used inside documentation comments.	type X = A.<B>;
+1273	479	421	y				'public' modifier cannot appear on a type parameter	type X<public T> = T
+17019	449	406	y				'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?	type X = A<B?>;
+2318	432	0		y	y		Cannot find global type 'IterableIterator'.	function* f(...a: A[], b: B) {}
+2307	399	0		y	y		Cannot find module 'x' or its corresponding type declarations.	type X = typeof import("x")<C>;
+1090	397	205	y				'static' modifier cannot appear on a parameter.	type X = (static a: A) => void;
+1005	296	226	y				'symbol' expected.	type X = unique A;
+1187	296	24	y				A parameter property may not be declared using a binding pattern.	type X = (public { a }: A) => void;
+1018	295	0	y				An index signature parameter cannot have an accessibility modifier.	type X = { [public k: string]: A };
+7031	292	33					Binding element 'a' implicitly has an 'any' type.	type X = ([a] = []) => void;
+1212	278	9	y				Identifier expected. 'public' is a reserved word in strict mode.	type X = (public = 1) => void;
+1213	233	44	y				Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.	class C { p: (public = 1) => void; }
+1141	228	211	y				String literal expected.	type X = typeof import(x);
+7008	221	49					Member '[K in A]' implicitly has an 'any' type.	interface I { [K in A] = 1 }
+7032	206	0					Property 'a' implicitly has type 'any', because its set accessor lacks a parameter type annotation.	type X = { set a(v = 1) };
+2503	171	0		y	y		Cannot find namespace 'if'.	type X = if.x;
+2500	168	161				y	A class can only implement an identifier/qualified-name with optional type arguments.	class C implements a() {}
+1042	164	97	y				'async' modifier cannot be used here.	async interface I {}
+1275	158	96	y				'accessor' modifier can only appear on a property declaration.	type X = (accessor a: A) => void;
+2842	153	127				y	'b' is an unused renaming of 'a'. Did you intend to use it as a type annotation?	type X = ({ a: b = 1 }) => void;
+2322	146	0			y		Type '0' is not assignable to type '1'.	const f = (a): !1 => 0;
+2499	135	128				y	An interface can only extend an identifier/qualified-name with optional type arguments.	interface I extends a() {}
+1183	117	7	y				An implementation cannot be declared in ambient contexts.	type X = { get a(): A {} };
+1029	115	33	y				'in' modifier must precede 'out' modifier.	type X<out in T> = T
+1242	114	71	y				'abstract' modifier can only appear on a class, method, or property declaration.	type X = (abstract a: A) => void;
+2730	114	59				y	An arrow function cannot have a 'this' parameter.	const f = (this) => 0;
+1030	111	47	y				'in' modifier already seen.	type X<in in T> = T
+1048	111	50	y				A rest parameter cannot have an initializer.	type X = (...a = []) => void;
+1094	109	6	y				An accessor cannot have type parameters.	class C { get p<in T>() { return 1 } }
+1009	106	98	y				Trailing comma not allowed.	type X = A<B,>;
+1096	103	76	y				An index signature must have exactly one parameter.	class C { p: A\n[]; }
+1170	103	78	y				A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type.	type X = { [a + b]: A };
+1317	94	12	y				A parameter property cannot be declared using a rest parameter.	let x: new (public ...a: A[]) => A;
+1248	93	70	y				A class member cannot have the 'const' keyword.	class C { const x: T; }
+7019	91	2					Rest parameter 'a' implicitly has an 'any[]' type.	let x: new (readonly ...a) => A;
+1031	88	64	y				'export' modifier cannot appear on class elements of this kind.	class C { export x: T; }
+1015	86	17	y				Parameter cannot have question mark and initializer.	type X = (a?: A = 1) => void;
+1028	82	0	y				Accessibility modifier already seen.	let x: (public public a) => void;
+2339	73	17			y		Property 'a' does not exist on type '{}'.	type X = ({ a } = {}) => void;
+1155	72	39	y				'const' declarations must be initialized.	const v = x as T, y;
+1225	72	49	y				Cannot find parameter 'keyof'.	function f(): keyof is B { throw 0 }
+1013	70	41	y				A rest parameter or binding pattern may not have a trailing comma.	function f(...a,) {}
+2591	66	0		y			Cannot find name 'module'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your t	declare module;
+2711	65	9			y		A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option.	import<A>("x");
+5086	62	51				y	A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type.	type X = [a: A?];
+2462	57	11				y	A rest element must be last in a destructuring pattern.	function f([...a, b]) {}
+1184	56	32	y				Modifiers cannot appear here.	const v = { public m() {} };
+1049	54	9	y				A 'set' accessor must have exactly one parameter.	class C { set p() {} }
+18016	52	44	y				Private identifiers are not allowed outside class bodies.	type X = { #a: A };
+1017	49	40	y				An index signature cannot have a rest parameter.	type X = { [...k: string[]]: A };
+1354	49	16	y				'readonly' type modifier is only permitted on array and tuple literal types.	type X = readonly if;
+1247	48	33	y				A type literal property cannot have an initializer.	type X = { a: A = 1 };
+1162	47	34	y				An object member cannot be declared optional.	const v = { a?: 1 };
+1326	47	0	y				This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.	import<A>("x");
+2660	46	27				y	'super' can only be referenced in members of derived classes or object literal expressions.	class C extends super.a {}
+7061	46	26				y	A mapped type may not declare properties or methods.	type X = { [K as B in A]: C };
+1200	44	21	y				Line terminator not permitted before arrow.	const f = <T,>(a: T)\n=> a;
+1277	43	29	y				'const' modifier can only appear on a type parameter of a function, method or class	interface I<const T> {}
+1014	41	26	y				A rest parameter must be last in a parameter list.	function f(...a: A[], b: B) {}
+2378	41	0					A 'get' accessor must return a value.	type X = { get a(): A {} };
+1497	38	0	y				Expression must be enclosed in parentheses to be used as a decorator.	@#d class C {}
+1092	37	3	y				Type parameters cannot appear on a constructor declaration.	class C { constructor<>() {} }
+1335	37	0	y				'unique symbol' types are not allowed here.	type X = unique unique symbol;
+2637	37	2					Variance annotations are only supported in type aliases for object, function, constructor, and mapped types.	type X<in in T> = T
+1025	35	20	y				An index signature cannot have a trailing comma.	type X = { [k,]: A };
+1243	35	26	y				'readonly' modifier cannot be used with 'accessor' modifier.	class C { accessor readonly x: T; }
+1019	34	26	y				An index signature parameter cannot have a question mark.	type X = { [k?: string]: A };
+7014	34	0					Function type, which lacks return-type annotation, implicitly has an 'any' return type.	type X = function(this: A);
+1040	33	20	y				'async' modifier cannot be used in an ambient context.	declare function f(async a: A): void;
+1044	33	33	y				'public' modifier cannot appear on a module or namespace element.	public interface I {}
+5087	33	29				y	A labeled tuple element is declared as rest with a '...' before the name, rather than before the type.	type X = [a: ...A];
+1097	31	20	y				'extends' list cannot be empty.	interface I extends {}
+2583	31	0		y			Cannot find name 'Promise'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2015' or later.	declare async\nfunction f(): Promise<void>;
+2347	30	0					Untyped function calls may not accept type arguments.	this<asserts a>(x);
+2391	30	1				y	Function implementation is missing or not immediately following the declaration.	class C { accessor m(): void; }
+1210	28	0	y				Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.moz	class C { m({ arguments }) {} }
+7005	28	0					Variable 'y' implicitly has an 'any' type.	const v = x as T, y;
+2364	26	19				y	The left-hand side of an assignment expression must be a variable or a property access.	f<asserts a> = 1;
+1194	25	16	y				Export declarations are not permitted in a namespace.	namespace N { export { A }; }
+1235	25	24	y				A namespace declaration is only allowed at the top level of a namespace or module.	function f() { declare namespace N {} }
+1539	25	19	y				A 'bigint' literal cannot be used as a property name.	type X = { 1n: A };
+1341	24	5	y				Class constructor may not be an accessor.	class C { get constructor() {} }
+1359	24	8	y				Identifier expected. 'await' is a reserved word that cannot be used here.	async function f([await]) {}
+18004	23	8	y				No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer.	({ a! } = y)
+1071	22	22	y				'accessor' modifier cannot appear on an index signature.	class C { accessor [k: string]: T; }
+1172	22	18	y				'extends' clause already seen.	interface I extends A extends B {}
+2355	22	0			y		A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.	function f(x: any): function () {} { return null as any }
+2502	21	4					'a' is referenced directly or indirectly in its own type annotation.	function f(a: typeof a<>) {}
+2538	21	1					Type 'any' cannot be used as an index type.	let g: ({[a]: {b}}) => void
+1035	20	14	y				Only ambient modules can use quoted names.	declare\nmodule "m" {}
+1308	20	10	y				'await' expressions are only allowed within async functions and at the top levels of modules.	function f() { return await x as T }
+1491	20	13	y				'declare' modifier cannot appear on a 'using' declaration.	declare using x: T
+2749	20	0		y	y		'x' refers to a value, but is being used as a type here. Did you mean 'typeof x'?	let x: typeof import(x);
+1110	19	17	y				Type expected.	function f<U extends #a, V = #a>() {}
+2300	19	10				y	Duplicate identifier '"a"'.	enum E { "a", "a" }
+2693	19	0		y	y		'never' only refers to a type, but is being used as a value here.	let v = x as  extends [infer U extends B] ? U : never;
+4112	18	6					This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.	class C { override accessor x: T; }
+1173	17	14	y				'extends' clause must precede 'implements' clause.	class C implements D extends B {}
+1211	17	13	y				A class declaration without the 'default' modifier must have a name.	class {}
+1232	17	15	y				An import declaration can only be used at the top level of a namespace or module.	function f() { import type A from "x"; }
+1164	16	16	y				Computed property names are not allowed in enums.	enum E { [x] }
+1253	16	12	y				Abstract properties can only appear within an abstract class.	class C { abstract abstract x: T; }
+1255	16	12	y				A definite assignment assertion '!' is not permitted in this context.	const v = { a!: 1 };
+1052	15	0	y				A 'set' accessor parameter cannot have an initializer.	type X = { set a(v = 1) };
+1147	15	15	y				Import declarations in a namespace cannot reference a module.	namespace N { import A from "x"; }
+1451	15	1	y				Private identifiers are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand-side of an	@#d class C {}
+1039	14	14	y				Initializers are not allowed in ambient contexts.	declare class C { accessor x = 1; }
+1054	13	1	y				A 'get' accessor cannot have parameters.	class C { get x(a) { return 1 } }
+1123	13	11	y				Variable declaration list cannot be empty.	export let;
+1191	13	13	y				An import declaration cannot have modifiers.	export import type from "x";
+1363	13	11	y				A type-only import can specify a default import or named bindings, but not both.	import type A, { B } from "x";
+2315	13	0					Type 'C' is not generic.	class C { @d x: A<B<C<>>>; }
+2697	13	1			y		An async function or method must return a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option.	const v = { static async m() {} };
+1003	12	10	y				Identifier expected.	let A, B, as, type, from, of; export { type "a" as A };
+1020	12	0	y				An index signature parameter cannot have an initializer.	type X = { [k: string = 1]: A };
+1024	12	6	y				'readonly' modifier can only appear on a property declaration or index signature.	const v = { readonly m() {} };
+2337	12	3				y	Super calls are not permitted outside constructors or in nested functions inside constructors.	super(x);
+2370	12	0					A rest parameter must be of an array type.	class C { @d m(...a: asserts a) {} }
+2558	12	0					Expected 0 type arguments, but got 1.	(function () {})<asserts a>(x);
+2669	12	1				y	Augmentations for the global scope can only be directly nested in external modules or ambient module declarations.	declare\nglobal {}
+2670	12	2				y	Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.	declare\nglobal {}
+18012	12	8	y				'#constructor' is a reserved word.	class C { #constructor() {} }
+1540	11	6	y				A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.	declare module as {}
+2207	11	9				y	The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement.	export type { type default };
+2452	11	11				y	An enum member cannot have a numeric name.	enum E { A = 1, 2 }
+2683	11	0					'this' implicitly has type 'any' because it does not have a type annotation.	namespace N { this.x }
+1022	10	0	y				An index signature parameter must have a type annotation.	type X = { [k,]: A };
+1108	10	7	y				A 'return' statement can only be used within a function body.	declare return;
+1174	10	10	y				Classes can only extend a single class.	class C extends B, D {}
+1276	10	9	y				An 'accessor' property cannot be declared optional.	class C { accessor x?: T; }
+2680	10	0				y	A 'this' parameter must be the first parameter.	const f = (a, this: A) => 0;
+1053	9	1	y				A 'set' accessor cannot have rest parameter.	class C { set p(...a,) {} }
+1163	9	6	y				A 'yield' expression is only allowed in a generator body.	yield x!;
+1186	9	6	y				A rest element cannot have an initializer.	type X = ({ ...a = 1 }) => R;
+1358	9	9	y				Tagged template expressions are not permitted in an optional chain.	a?.<b>`t`
+2303	9	0					Circular definition of import alias 'A'.	if (a) export type { A };
+1021	8	8	y				An index signature must have a type annotation.	class C { [k: string]; }
+1089	8	5	y				'async' modifier cannot appear on a constructor declaration.	class C { async constructor() {} }
+1100	8	2	y				Invalid use of 'arguments' in strict mode.	function f(public arguments) {}
+1312	8	7	y				Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.	const v = { a = 1 };
+1344	8	6	y				'A label is not allowed here.	label: import A = B.C;
+1368	8	6	y				Class constructor may not be a generator.	class C { *constructor() {} }
+1495	8	4	y				'export' modifier cannot appear on an 'await using' declaration.	export await using x: T = y;
+1079	7	7	y				A 'declare' modifier cannot be used with an import declaration.	declare import A from "x";
+1175	7	6	y				'implements' clause already seen.	class C implements D implements E {}
+1231	7	7	y				An export assignment must be at the top level of a file or module declaration.	function f() { export = x; }
+1233	7	3	y				An export declaration can only be used at the top level of a namespace or module.	function f() { export type { A }; }
+1264	7	7	y				Declarations with definite assignment assertions must also have type annotations.	let x!
+2483	7	1				y	The left-hand side of a 'for...of' statement cannot use a type annotation.	for (const a: asserts a of b) {}
+2524	7	1					'await' expressions cannot be used in a parameter initializer.	function f(a = await b) {}
+2526	7	0					A 'this' type is available only in a non-static member of a class or interface.	const f = (this: this) => 0;
+2635	7	0					Type '{}' has no signatures for which the type argument list is applicable.	import.meta<asserts a>;
+2858	7	6				y	Import attribute values must be string literal expressions.	import type A from "x" with { a: 1 };
+2882	7	0		y			Cannot find module or type declarations for side-effect import of 'x'.	import defer "x";
+1036	6	5	y				Statements are not allowed in ambient contexts.	declare class C { static { return } }
+1051	6	0	y				A 'set' accessor cannot have an optional parameter.	class C { set p(public a?) {} }
+1156	6	6	y				'type' declarations can only be declared inside a block.	if (x) type as = 1;
+1254	6	0	y				A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference.	declare using a = b;
+1319	6	6	y				A default export can only be used in an ECMAScript-style module.	namespace N { export default 1 }
+2480	6	3				y	'let' is not allowed to be used as a name in 'let' or 'const' declarations.	declare const let: T;
+2784	6	3				y	'get' and 'set' accessors cannot declare 'this' parameters.	class C { set p(this) {} }
+7041	6	0					The containing arrow function captures the global value of 'this'.	const f = (this: typeof this) => 0;
+1196	5	0	y				Catch clause variable type annotation must be 'any' or 'unknown' if specified.	try {} catch (e: asserts a) {}
+1244	5	0	y				Abstract methods can only appear within an abstract class.	const v = { abstract m() {} };
+1338	5	5	y				'infer' declarations are only permitted in the 'extends' clause of a conditional type.	type T = [infer U extends B | C ? 1 : 2]
+1450	5	0	y				Dynamic imports can only accept a module specifier and an optional set of attributes as arguments	import("x", y, z);
+2331	5	0				y	'this' cannot be referenced in a module or namespace body.	namespace N { this.x }
+2332	5	0				y	'this' cannot be referenced in current location.	enum E { A = this }
+7017	5	4					Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.	this.#x!;
+8038	5	5	y				Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.	@a export @b class C {}
+1102	4	0	y				'delete' cannot be called on an identifier in strict mode.	type A<T extends delete a> = T
+1120	4	4	y				An export assignment cannot have modifiers.	declare export = x;
+1169	4	3	y				A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.	interface I { [a + b]: A }
+1182	4	4	y				A destructuring declaration must have an initializer.	const\n{}
+1193	4	4	y				An export declaration cannot have modifiers.	declare export {};
+1197	4	1	y				Catch clause variable cannot have an initializer.	try {} catch (e = 1) {}
+1240	4	0	y				Unable to resolve signature of property decorator when called as an expression.   This expression is not callable.     Type 'void' has no call signatures.	class C { @super() x; }
+1316	4	4	y				Global module exports may only appear at top level.	function f() { export as namespace X; }
+2464	4	0					A computed property name must be of type 'string', 'number', 'symbol', or 'any'.	interface I { [K in A, L in B]: C }
+17012	4	3	y				'x' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?	import.x;
+18041	4	4	y				A 'return' statement cannot be used inside a class static block.	class C { static { return } }
+18058	4	4	y				Default imports are not allowed in a deferred import.	import defer A from "x";
+1105	3	3	y				A 'break' statement can only be used within an enclosing iteration or switch statement.	namespace N { break }
+1106	3	3	y				The left-hand side of a 'for...of' statement may not be 'async'.	for (async of x) {}
+1190	3	3	y				The variable declaration of a 'for...of' statement cannot have an initializer.	for (let a = 1 of []) {}
+1245	3	0	y				Method 'a' cannot have an implementation because it is marked abstract.	abstract class C extends B {\n  abstract abstract a() {}\n}
+1246	3	3	y				An interface property cannot have an initializer.	interface I { a: A = 1 }
+1492	3	3	y				'using' declarations may not have binding patterns.	using { a }: T = y
+1545	3	1	y				'using' declarations are not allowed in ambient contexts.	declare namespace N { using x: T; }
+2311	3	2					Cannot find name 'await'. Did you mean to write this in an async function?	@await() class C {}
+2357	3	3				y	The operand of an increment or decrement operator must be a variable or a property access.	f<--1>(x);
+2365	3	3					Operator '<' cannot be applied to types 'number' and 'boolean'.	x = 1 <!-- c
+2377	3	0					Constructors for derived classes must contain a 'super' call.	abstract class C extends B { async constructor() {} }
+2395	3	1					Individual declarations in merged declaration 'M' must be all exported or all local.	namespace M {export import M_A = M;}\nexport namespace M {export {M_A as a};}
+2411	3	3					Property 'm' of type '() => void' is not assignable to 'string' index type 'number'.	class C { [k: string]: number, m() {} }
+2699	3	1					Static property 'prototype' conflicts with built-in property 'Function.prototype' of constructor function 'C'.	class C { static prototype = 1 }
+7010	3	0					'f', which lacks return-type annotation, implicitly has an 'any' return type.	@dec declare function f();
+18006	3	3	y				Classes may not have a field named 'constructor'.	abstract class C extends B {\n  "constructor": A\n}
+18036	3	0	y				Class decorators can't be used with static private identifier. Consider removing the experimental decorator.	@x class C { @d static accessor #x = 1; }
+18059	3	3	y				Named imports are not allowed in a deferred import.	import defer { A } from "x";
+1066	2	0	y				In ambient enum declarations member initializer must be constant expression.	declare enum x { y = await 1 }
+1103	2	2	y				'for await' loops are only allowed within async functions and at the top levels of modules.	function f(){ for await (const x of y) {} }
+1104	2	2	y				A 'continue' statement can only be used within an enclosing iteration statement.	continue;
+1116	2	2	y				A 'break' statement can only jump to a label of an enclosing statement.	break foo;
+1117	2	2	y				An object literal cannot have multiple properties with the same name.	x = { __proto__: 1, __proto__: 2 }
+1142	2	2	y				Line break not permitted here.	throw\n1
+1188	2	2	y				Only a single variable declaration is allowed in a 'for...of' statement.	for (let x, z of y) {}
+1214	2	2	y				Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode.	export default let;
+1215	2	2	y				Invalid use of 'eval'. Modules are automatically in strict mode.	export {}; eval = 1;
+1221	2	0	y				Generators are not allowed in an ambient context.	declare class C { *constructor() {} }
+1234	2	2	y				An ambient module declaration is only allowed at the top level in a file.	{ declare module "m" {} }
+1238	2	0	y				Unable to resolve signature of class decorator when called as an expression.   This expression is not callable.     Type 'void' has no call signatures.	@super() class C {}
+1241	2	0	y				Unable to resolve signature of method decorator when called as an expression.   This expression is not callable.     Type 'void' has no call signatures.	class C { @super() m() {} }
+1263	2	2	y				Declarations with initializers cannot also have definite assignment assertions.	let x! = 1
+1314	2	0	y				Global module exports may only appear in module files.	@d export as namespace X;
+1315	2	0	y				Global module exports may only appear in declaration files.	export as namespace N;\nexport const a: A;
+1325	2	0	y				Argument of dynamic import cannot be spread element.	import(...x);
+1355	2	2	y				A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.	let v = x as \u0063onst
+1375	2	0	y				'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'e	class C { m(@(await d) a) {} }
+1499	2	2	y				Unknown regular expression flag.	x = /a/z
+2448	2	0					Block-scoped variable 'z' used before its declaration.	const v = y ? z : <T>(x: T) => y, z;
+2469	2	2					The '<=' operator cannot be applied to type 'symbol'.	a as keyof B <= c;
+2567	2	2					Enum declarations can only merge with namespace or other enum declarations.	enum E {} class E {}
+2584	2	0		y	y		Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.	\n        import {a, b, c, d, e} from './other.ts'\n        let a\n        const b = 0\n        var c\n        function d() { return 5; }\n        class e { constructor() { this.prop = 2; }}\n        console.log(JSON.stringify([a, b, c, d(), new e]))\n      
+2668	2	0					'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.	export module "m" {}
+2677	2	0					A type predicate's type must be assignable to its parameter's type.   Type 'string' is not assignable to type 'void'.	class C { @d m<U>(a: asserts a is string): asserts a is string { throw 0 } }
+2695	2	0					Left side of comma operator is unused and has no side effects.	interface I { [K in A, L in B]: C }
+2857	2	1				y	Import attributes cannot be used with type-only imports or exports.	import type A from "x" with { a: 1 };
+7034	2	0					Variable 'a' implicitly has type 'any' in some locations where its type cannot be determined.	\n        import {a, b, c, d, e} from './other.ts'\n        let a\n        const b = 0\n        var c\n        function d() { return 5; }\n        class e { constructor() { this.prop = 2; }}\n        console.log(JSON.stringify([a, b, c, d(), new e]))\n      
+7057	2	0					'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.	function* g(a = yield 1) {}
+18011	2	0	y				The operand of a 'delete' operator cannot be a private identifier.	x = delete this.#a
+18024	2	2	y				An enum member cannot be named with a private identifier.	enum E { #a }
+18033	2	1	y				Type '() => any' is not assignable to type 'number' as required for computed enum member values.	enum x { y = () => this }
+18037	2	1	y				'await' expression cannot be used inside a class static block.	abstract class C extends B {\n  static { await a }\n}
+1016	1	1	y				A required parameter cannot follow an optional parameter.	class C { set p(a?: A, b: B) {} }
+1101	1	0	y				'with' statements are not allowed in strict mode.	with (x) const enum E { a }
+1107	1	0	y				Jump target cannot cross function boundary.	type A = { get a() { break } }
+1113	1	1	y				A 'default' clause cannot appear more than once in a 'switch' statement.	switch (x) { default: default: }
+1176	1	1	y				Interface declaration cannot have 'implements' clause.	interface I implements A extends B {}
+1189	1	1	y				The variable declaration of a 'for...in' statement cannot have an initializer.	for (let x = 1 in y) {}
+1239	1	0	y				Unable to resolve signature of parameter decorator when called as an expression.   This expression is not callable.     Type 'void' has no call signatures.	class C { m(@super() a) {} }
+1258	1	1	y				A default export must be at the top level of a file or module declaration.	if (x) { export default 1 }
+1500	1	1	y				Duplicate regular expression flag.	x = /a/gg
+1546	1	0	y				'await using' declarations are not allowed in ambient contexts.	declare global { await using x; }
+2314	1	0					Generic type 'Foo' requires 1 type argument(s).	type Foo<T> = T; let a: Foo<>; let b: Foo<string,>;
+2323	1	0					Cannot redeclare exported variable 'a'.	export const a = 1; export { a };
+2335	1	1					'super' can only be referenced in a derived class.	class C { static { enum x { y = super.foo } } }
+2405	1	1					The left-hand side of a 'for...in' statement must be of type 'string' or 'any'.	for (1 in a) {}
+2410	1	0					The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.	with (x) const enum E { a }
+2413	1	1					'number' index type 'string' is not assignable to 'string' index type 'number'.	class C { [k: string]: number, [j: number]: string }
+2451	1	1					Cannot redeclare block-scoped variable 'a'.	let a; let a;
+2456	1	1					Type alias 'as' circularly references itself.	type as = as
+2461	1	0					Type 'unknown' is not an array type.	try {} catch ([a] = []) {}
+2474	1	0					const enum member initializers must be constant expressions.	async function f() { const enum x { y = await 1 } }
+2484	1	0					Export declaration conflicts with exported declaration of 'a'.	export const a = 1; export { a };
+2487	1	1					The left-hand side of a 'for...of' statement must be a variable or a property access.	for (1 of x) {}
+2523	1	0					'yield' expressions cannot be used in a parameter initializer.	function* g(a = yield 1) {}
+2534	1	0					A function returning 'never' cannot have a reachable end point.	function f(x): keyof asserts x {}
+2709	1	0					Cannot use namespace 'A' as a type.	namespace A { export type B<T> = T } let a: A.<string>;
+2813	1	0					Class declaration cannot implement overload list for 'a'.	class a {} function a() {}
+2814	1	0					Function with bodies can only merge with classes that are ambient.	class a {} function a() {}
+5076	1	1					'??' and '||' operations cannot be mixed without parentheses.	x = a ?? b || c
+7033	1	0					Property 'a' implicitly has type 'any', because its get accessor lacks a return type annotation.	var o = { get a() };
+17013	1	0	y				Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.	x = new.foo
+18061	1	1	y				'source' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?	import.source("x");

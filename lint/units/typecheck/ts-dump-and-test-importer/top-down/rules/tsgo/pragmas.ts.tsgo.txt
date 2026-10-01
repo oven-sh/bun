@@ -1,0 +1,39 @@
+file /pragmas.ts scriptKind=3 variant=0 dts=false textLen=222
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=14 identifiers=2 text=4 reparsedClones=0
+pragma reference [0,31) kind=2 path="./a.ts"[21,27)
+pragma reference [32,87) kind=2 resolution-mode="import"[77,83) types="node"[54,58)
+pragma reference [88,118) kind=2 lib="es2015"[108,114)
+pragma ts-check [119,131) kind=2
+referencedFile [21,27) "./a.ts" mode=0 preserve=false
+typeReference [54,58) "node" mode=99 preserve=false
+libReference [108,114) "es2015" mode=0 preserve=false
+checkJs enabled=true [119,131)
+commentDirective [132,145) kind=2
+commentDirective [167,186) kind=1
+root KindSourceFile [0,222) f=0x0
+  .Statements: list [0,207) n=2
+    - KindVariableStatement [0,166) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,165) f=0x1
+        .Declarations: list [149,165) n=1
+          - KindVariableDeclaration [149,165) f=0x0
+            .Initializer: KindStringLiteral [161,165) f=0x0 Text="x" TokenFlags=0x0
+            .Type: KindNumberKeyword [152,159) f=0x0
+            .name: KindIdentifier [149,151) f=0x0 Text="a"
+    - KindVariableStatement [166,207) f=0x0
+      .DeclarationList: KindVariableDeclarationList [166,206) f=0x1
+        .Declarations: list [190,206) n=1
+          - KindVariableDeclaration [190,206) f=0x0
+            .Initializer: KindStringLiteral [202,206) f=0x0 Text="y" TokenFlags=0x0
+            .Type: KindNumberKeyword [193,200) f=0x0
+            .name: KindIdentifier [190,192) f=0x0 Text="b"
+  .EndOfFileToken: KindEndOfFile [207,222) f=0x200000
+    .jsdoc: KindJSDoc [207,221) f=0x400000
+      .Comment: list [208,212) n=0
+      .Tags: list [212,219) n=1
+        - KindJSDocUnknownTag [212,219) f=0x400000
+          .Comment: list [217,219) n=1
+            - KindJSDocText [217,219) f=0x400000 text="h"
+          .TagName: KindIdentifier [213,216) f=0x400000 Text="jsx"

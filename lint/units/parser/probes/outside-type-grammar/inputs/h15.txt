@@ -1,0 +1,44 @@
+type as = 1;
+type satisfies = 1;
+type as<T> = T;
+type as = 1; let x: as;
+interface as {}
+interface satisfies { a: 1 }
+interface as<T> extends B {}
+declare type as = 1;
+declare interface as {}
+type as T;
+type as T X = 1;
+type as <T>() => void;
+interface as T;
+type is = 1;
+type asserts = 1;
+type infer = 1;
+type of = 1;
+type type = 1;
+type async = 1;
+type await = 1;
+type yield = 1;
+type let = 1;
+type static = 1;
+type readonly = 1;
+type keyof = 1;
+type unique = 1;
+type declare = 1;
+type abstract = 1;
+type namespace = 1;
+type module = 1;
+type global = 1;
+type out = 1;
+type in = 1;
+type any = 1;
+namespace as {}
+namespace as.b {}
+namespace satisfies { export const a = 1 }
+module as {}
+declare namespace as {}
+declare module as {}
+export type as = 1;
+export interface as {}
+export namespace as { export const a = 1 }
+export declare type as = 1;

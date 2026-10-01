@@ -1,0 +1,3174 @@
+[
+ {
+  "code": "var a = 1; switch (a) {case 1: break; case 2: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1; switch (a) {case 1: break; case '1': break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1; switch (a) {case 1: break; case true: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1; switch (a) {default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p.p.p2: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1, f = function(b) { return b ? { p1: 1 } : { p1: 2 }; }; switch (a) {case f(true).p1: break; case f(true, false).p1: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a + 2).p1: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a == 1 ? 2 : 3).p1: break; case f(a === 1 ? 2 : 3).p1: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1, f1 = function() { return { p1: 1 } }, f2 = function() { return { p1: 2 } }; switch (a) {case f1().p1: break; case f2().p1: break; default: break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = [1,2]; switch(a.toString()){case ([1,2]).toString():break; case ([1]).toString():break; default:break;}",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch(a) { case a: break; } switch(a) { case a: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch(a) { case toString: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var a = 1; switch (a) {case 1: break; case 1: break; case 2: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 39,
+    "endLine": 1,
+    "endColumn": 53,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 39,
+    "start": 38,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = '1'; switch (a) {case '1': break; case '1': break; case '2': break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, one = 1; switch (a) {case one: break; case one: break; case 2: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 50,
+    "endLine": 1,
+    "endColumn": 66,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 50,
+    "start": 49,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p.p.p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 69,
+    "endLine": 1,
+    "endColumn": 88,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 69,
+    "start": 68,
+    "length": 12,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f = function(b) { return b ? { p1: 1 } : { p1: 2 }; }; switch (a) {case f(true).p1: break; case f(true).p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 103,
+    "endLine": 1,
+    "endColumn": 126,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 103,
+    "start": 102,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a + 1).p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 87,
+    "endLine": 1,
+    "endColumn": 111,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 87,
+    "start": 86,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a === 1 ? 2 : 3).p1: break; case f(a === 1 ? 2 : 3).p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 97,
+    "endLine": 1,
+    "endColumn": 131,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 97,
+    "start": 96,
+    "length": 27,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f1 = function() { return { p1: 1 } }; switch (a) {case f1().p1: break; case f1().p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 83,
+    "endLine": 1,
+    "endColumn": 103,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 83,
+    "start": 82,
+    "length": 13,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = [1, 2]; switch(a.toString()){case ([1, 2]).toString():break; case ([1, 2]).toString():break; default:break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 70,
+    "endLine": 1,
+    "endColumn": 101,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 70,
+    "start": 69,
+    "length": 25,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: case a: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case b: break; case a: break; case c: break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 44,
+    "endLine": 1,
+    "endColumn": 58,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 74,
+    "endLine": 1,
+    "endColumn": 88,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 44,
+    "start": 43,
+    "length": 7,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 74,
+    "start": 73,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p. p // comment\n .p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 69,
+    "endLine": 2,
+    "endColumn": 13,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 69,
+    "start": 68,
+    "length": 26,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p .p\n/* comment */\n.p1: break; case p.p.p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 13,
+    "endLine": 3,
+    "endColumn": 32,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 13,
+    "start": 84,
+    "length": 12,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p .p\n/* comment */\n.p1: break; case p. p // comment\n .p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 13,
+    "endLine": 4,
+    "endColumn": 13,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 13,
+    "start": 84,
+    "length": 26,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, p = {p: {p1: 1, p2: 1}}; switch (a) {case p.p.p1: break; case p. p // comment\n .p1: break; case p .p\n/* comment */\n.p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 69,
+    "endLine": 2,
+    "endColumn": 13,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 2,
+    "column": 14,
+    "endLine": 4,
+    "endColumn": 12,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 69,
+    "start": 68,
+    "length": 26,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 2,
+    "column": 14,
+    "start": 102,
+    "length": 28,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(a + 1).p1: break; case f(a+1).p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 87,
+    "endLine": 1,
+    "endColumn": 109,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 87,
+    "start": 86,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "var a = 1, f = function(s) { return { p1: s } }; switch (a) {case f(\na + 1 // comment\n).p1: break; case f(a+1)\n.p1: break; default: break;}",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 14,
+    "endLine": 4,
+    "endColumn": 12,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 14,
+    "start": 99,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1: break; case 1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 43,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1: break; case 1.0: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 1: break; case 0x1: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 1: break; case 1e0: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 1_0: break; case 10: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 'a': break; case \"a\": break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 'a': break; case 'a': break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 47,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 'a': break; case '\\x61': break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case `a`: break; case 'a': break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case `a`: break; case `a`: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 47,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case `a${b}c`: break; case `a${ b }c`: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case `a${b}c`: break; case `a${b} c`: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case (a): break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case ((a)): break; case (a): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a).b: break; case a.b: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case (a.b): break; case a.b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a).b: break; case (a).b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a) + (b): break; case (a) + (b): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case ((a) + (b)): break; case (a) + (b): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 39,
+    "endLine": 1,
+    "endColumn": 61,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 39,
+    "start": 38,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a + b) + c: break; case a + b + c: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a + (b * c): break; case a + b * c: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a.b: break; case a['b']: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a.b: break; case a?.b: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a ? b : c: break; case a?b:c: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? b : c: break; case (a ? b : c): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 61,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case [a,]: break; case [a]: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case f(a,): break; case f(a): break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case {a}: break; case {a: a}: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case {a: 1}.a: break; case {a:1} . a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 58,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case /a b/: break; case /a  b/: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case /a/g: break; case /a/g: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a / b / c: break; case a/b/c: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case \\u0061: break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 48,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a.\\u0062: break; case a.b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 52,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1n: break; case 1n: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1n: break; case 0x1n: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case function(){ return 1 }: break; case function(){ return 1; }: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case function(){ return 1 }: break; case function(){return 1}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 50,
+    "endLine": 1,
+    "endColumn": 83,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 50,
+    "start": 49,
+    "length": 26,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case () => { x: 1 }: break; case ()=>{x:1}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a => a: break; case (a) => a: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case new A: break; case new A(): break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case typeof a: break; case typeof(a): break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case typeof a: break; case typeof /* c */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 36,
+    "endLine": 1,
+    "endColumn": 65,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 36,
+    "start": 35,
+    "length": 22,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a in b: break; case a  in  b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case - - a: break; case -  -a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a++ + b: break; case a + ++b: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a\n: break; case // c\n a: break; }",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 10,
+    "endLine": 3,
+    "endColumn": 11,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 10,
+    "start": 29,
+    "length": 13,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case /* case */ a: break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: { break; } case a: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 40,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: case b: case a:\n}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 37,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { default: case a: case a: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 38,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a, b: break; case a,b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 48,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a, b): break; case a, b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a = b: break; case a=b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case this: break; case this: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case null: break; case null: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case true: break; case true: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case -1: break; case -1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case - 1: break; case -1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 46,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1.: break; case 1: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case .5: break; case 0.5: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 1..toString(): break; case 1. .toString(): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 41,
+    "endLine": 1,
+    "endColumn": 68,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 41,
+    "start": 40,
+    "length": 20,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a?.b: break; case a ?. b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 12,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a?.[0]: break; case a ?. [0]: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? .5 : 1: break; case a?.5:1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 38,
+    "endLine": 1,
+    "endColumn": 57,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 38,
+    "start": 37,
+    "length": 12,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ?? b: break; case a??b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a >>> b: break; case a>>>b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 35,
+    "endLine": 1,
+    "endColumn": 53,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 35,
+    "start": 34,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 'a b': break; case 'a  b': break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case 'a\\\nb': break; case 'ab': break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case class { static x = 1 }: break; case class{static x=1}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 50,
+    "endLine": 1,
+    "endColumn": 80,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 50,
+    "start": 49,
+    "length": 23,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a.case: break; case a . case: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case async () => 1: break; case async()=>1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 41,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 41,
+    "start": 40,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case `${`${a}`}`: break; case `${ `${ a }` }`: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 39,
+    "endLine": 1,
+    "endColumn": 67,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 39,
+    "start": 38,
+    "length": 21,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case `}`: break; case `}`: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 47,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a[b ? c : d]: break; case a[b?c:d]: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 61,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case {a: b ? c : d}: break; case {a:b?c:d}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case yield: break; case yield: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a\n\n.b: break; case a.b: break; }",
+  "eslint": [
+   {
+    "line": 3,
+    "column": 12,
+    "endLine": 3,
+    "endColumn": 28,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 3,
+    "column": 12,
+    "start": 32,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case // case\n a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 11,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case // case (\n a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 11,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 18,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case /* case /* x */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 23,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x = \"case /*\"; case /* x */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x = \"http://\"; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x = 1; // case\n case a: break; }",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 2,
+    "endLine": 2,
+    "endColumn": 16,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 2,
+    "start": 37,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x = 1; /* case */ case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x.case; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x. case\n(a); case a: break; }",
+  "eslint": [
+   {
+    "line": 2,
+    "column": 6,
+    "endLine": 2,
+    "endColumn": 20,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 2,
+    "column": 6,
+    "start": 34,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: x = {case: 1}; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case(a): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 44,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case/**/a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 46,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case\na: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 10,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case\n\n(\n(\na\n)\n)\n: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 8,
+    "endColumn": 9,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case ( // c\n a ): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 13,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case ( /* ( */ a ): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 19,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case /* ( */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case é: break; case é: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 43,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 29,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 'é': break; case 'é': break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 47,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a.é.b: break; case a . é . b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 33,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 𝒳: break; case 𝒳: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case \\u{61}: break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 48,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a\\u0062: break; case ab: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 35,
+    "endLine": 1,
+    "endColumn": 50,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 35,
+    "start": 34,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case '\\u0061': break; case 'a': break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a: break; }\nswitch (a) { case a: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a: switch (b) { case a: case a: } case a: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 50,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 53,
+    "endLine": 1,
+    "endColumn": 60,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 7,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 53,
+    "start": 52,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case function(){ switch (b) { case a: case a: } }: break; case 1: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 52,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 52,
+    "start": 51,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case a\n: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 9,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case a /* c */: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 51,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? b : c ? d : e: break; case a?b:c?d:e: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 45,
+    "endLine": 1,
+    "endColumn": 67,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 45,
+    "start": 44,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? b ? c : d : e: break; case a?b?c:d:e: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 45,
+    "endLine": 1,
+    "endColumn": 67,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 45,
+    "start": 44,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? {b: c} : d: break; case a?{b:c}:d: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? b : {c: d}: break; case a?b:{c:d}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ? (b) : c: break; case a ? b : c: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case (a) ? b : c: break; case a ? b : c: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a ? b : (c): break; case a ? b : c: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case x => x ? 1 : 2: break; case x=>x?1:2: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 63,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ?.5 : 1: break; case a ? .5:1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 37,
+    "endLine": 1,
+    "endColumn": 58,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 37,
+    "start": 36,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a?.b ? c : d: break; case a ?. b?c:d: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 63,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 16,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ?? b ? c : d: break; case a??b?c:d: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 63,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 42,
+    "start": 41,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a ??= b ? c : d: break; case a??=b?c:d: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 43,
+    "endLine": 1,
+    "endColumn": 65,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 43,
+    "start": 42,
+    "length": 15,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "function* g() { switch (a) { case yield a: break; case yield a: break; } }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 51,
+    "endLine": 1,
+    "endColumn": 71,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 51,
+    "start": 50,
+    "length": 13,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "async function g() { switch (a) { case await a: break; case await  a: break; } }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 56,
+    "endLine": 1,
+    "endColumn": 77,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 56,
+    "start": 55,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a.b.c: break; case a\n  .b\n  .c: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 33,
+    "endLine": 3,
+    "endColumn": 13,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 33,
+    "start": 32,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case (a, b): break; case (a , b): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 13,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1: break; case (1): break; case ((1)): break; case 1: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 46,
+    "endLine": 1,
+    "endColumn": 64,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 65,
+    "endLine": 1,
+    "endColumn": 79,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 9,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 46,
+    "start": 45,
+    "length": 11,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 65,
+    "start": 64,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 0: case 0: case 0: case 0: }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 22,
+    "endLine": 1,
+    "endColumn": 29,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 37,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 38,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 22,
+    "start": 21,
+    "length": 7,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 7,
+    "message": "Duplicate case label."
+   },
+   {
+    "line": 1,
+    "column": 38,
+    "start": 37,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) {case 0:case 0:}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 20,
+    "endLine": 1,
+    "endColumn": 27,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 20,
+    "start": 19,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch(a){case\t0:case\t0:}",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 25,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; default: break; case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 45,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 45,
+    "start": 44,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case ()=>{}: break; case () => {}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 55,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 14,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case {}: break; case {}: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case []: break; case [ ]: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 46,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case [,]: break; case [ , ]: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case [,,]: break; case [,]: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case a<b>(c): break; case a < b > (c): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 35,
+    "endLine": 1,
+    "endColumn": 59,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 35,
+    "start": 34,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a--: break; case a --: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 48,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a - -b: break; case a - - b: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 13,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a - --b: break; case a -- - b: break; }",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "switch (a) { case !!a: break; case ! ! a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 11,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a.b: break; case a.\nb: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 31,
+    "endLine": 2,
+    "endColumn": 10,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 31,
+    "start": 30,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1.5e-3: break; case 1.5e-3: break; case 1.5E-3: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 34,
+    "endLine": 1,
+    "endColumn": 53,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 34,
+    "start": 33,
+    "length": 12,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1.e3: break; case 1.e3: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 0.: break; case 0.: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 30,
+    "endLine": 1,
+    "endColumn": 45,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 30,
+    "start": 29,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 09.5: break; case 09.5: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 32,
+    "start": 31,
+    "length": 10,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 07.toString(): break; case 07 .toString(): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 41,
+    "endLine": 1,
+    "endColumn": 68,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 41,
+    "start": 40,
+    "length": 20,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case 1_0.0_1e1_0: break; case 1_0.0_1e1_0: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 39,
+    "endLine": 1,
+    "endColumn": 63,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 39,
+    "start": 38,
+    "length": 17,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: do x(); while (y) case a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 40,
+    "endLine": 1,
+    "endColumn": 54,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 7,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case /* x; case */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 1,
+    "endColumn": 57,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 21,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case /* x;\n case */ a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 19,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 29,
+    "start": 28,
+    "length": 22,
+    "message": "Duplicate case label."
+   }
+  ]
+ },
+ {
+  "code": "switch (a) { case a: break; case // x; case\n a: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 29,
+    "endLine": 2,
+    "endColumn": 11,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 40,
+    "start": 39,
+    "length": 8,
+    "message": "Duplicate case label."
+   }
+  ],
+  "differs": true,
+  "why": "a comment between the keyword and the test has the word case where a keyword can stand"
+ },
+ {
+  "code": "switch (x) { case <a/>: break; case <a/>: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 49,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [],
+  "jsx": true,
+  "differs": true,
+  "why": "a test with JSX is not compared"
+ },
+ {
+  "code": "switch (x) { case <a/>: break; case <a />: break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 32,
+    "endLine": 1,
+    "endColumn": 50,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [],
+  "jsx": true,
+  "differs": true,
+  "why": "a test with JSX is not compared"
+ },
+ {
+  "code": "switch (x) { case f(<a>it's</a>): break; case f(<a>it's</a>): break; }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 42,
+    "endLine": 1,
+    "endColumn": 69,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [],
+  "jsx": true,
+  "differs": true,
+  "why": "a test with JSX is not compared"
+ },
+ {
+  "code": "function C() { switch (x) { case 'a': return <A b={c = c} />; case 'a': return null; } }",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 63,
+    "endLine": 1,
+    "endColumn": 85,
+    "message": "Duplicate case label."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 63,
+    "start": 62,
+    "length": 9,
+    "message": "Duplicate case label."
+   }
+  ],
+  "jsx": true
+ }
+]

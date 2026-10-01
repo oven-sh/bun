@@ -1,0 +1,36 @@
+files 12445
+file	tree depth	directly nested expressions	nested statements	nodes
+compiler/binderBinaryExpressionStress.ts	4957	4953	1	19365
+compiler/binderBinaryExpressionStressJs.ts	4957	4953	1	19365
+compiler/parsingDeepParenthensizedExpression.ts	284	280	5	5473
+conformance/jsdoc/jsdocTypeFromChainedAssignment3.ts	102	101	1	499
+compiler/uncalledFunctionChecksInConditionalPerf.ts	53	52	1	111
+compiler/nestedUnaryExpressionHang.ts	31	30	1	35
+conformance/fixSignatureCaching.ts	42	28	15	2954
+compiler/constructorWithIncompleteTypeAnnotation.ts	24	18	6	1105
+conformance/jsx/tsxReactEmitNesting.tsx	23	15	3	290
+compiler/chainedCallsWithTypeParameterConstrainedToOtherTypeParameter2.ts	18	14	2	318
+compiler/contextualTypeLogicalOr.ts	18	14	1	139
+compiler/dynamicNames.ts	14	13	1	786
+conformance/parser/ecmascript5/RealWorld/parserindenter.ts	21	13	12	3170
+conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity6.ts	16	13	2	666
+conformance/parser/ecmascript5/parserRealSource14.ts	20	13	10	4772
+conformance/parser/ecmascript5/parserRealSource7.ts	24	13	16	4834
+compiler/APISample_jsdoc.ts	17	12	9	566
+compiler/chainedCallsWithTypeParameterConstrainedToOtherTypeParameter.ts	13	12	2	97
+conformance/parser/ecmascript5/RegularExpressions/parserRegularExpression4.ts	14	12	2	109
+conformance/parser/ecmascript5/parserRealSource11.ts	31	12	22	11811
+conformance/parser/ecmascript5/parserRealSource2.ts	17	12	12	1238
+conformance/salsa/typeFromPropertyAssignment31.ts	15	12	3	188
+conformance/salsa/typeFromPropertyAssignment32.ts	15	12	3	188
+conformance/salsa/typeFromPropertyAssignment33.ts	15	12	3	188
+conformance/types/typeRelationships/recursiveTypes/recursiveTypeReferences1.ts	17	12	4	885
+compiler/duplicateLocalVariable1.ts	24	11	11	1881
+compiler/nonNullReferenceMatching.ts	16	11	2	287
+compiler/truthinessPromiseCoercion.ts	20	11	8	183
+compiler/underscoreTest1.ts	14	11	3	8906
+conformance/es6/spread/arrayLiteralSpread.ts	17	11	2	151
+files with a chain of directly nested expressions longer than N: 50:5 100:4 200:3 500:2 1000:2 2000:2 4000:2
+by tree depth: binderBinaryExpressionStress.ts=4957 binderBinaryExpressionStressJs.ts=4957 parsingDeepParenthensizedExpression.ts=284 deeplyNestedConditionalTypes.ts=103 jsdocTypeFromChainedAssignment3.ts=102 uncalledFunctionChecksInConditionalPerf.ts=53 parenthesizedTypes.ts=44 fixSignatureCaching.ts=42 nestedUnaryExpressionHang.ts=31 parserRealSource11.ts=31 parserharness.ts=29 autolift3.ts=26
+by nested statements: parserRealSource11.ts=22 parserharness.ts=16 parserRealSource7.ts=16 fixSignatureCaching.ts=15 parserRealSource6.ts=14 parserRealSource8.ts=13 narrowingOfQualifiedNames.ts=13 capturedLetConstInLoop8.ts=13 capturedLetConstInLoop8_ES6.ts=13 parserindenter.ts=12 parserRealSource2.ts=12 duplicateLocalVariable1.ts=11
+by nodes: largeControlFlowGraph.ts=70007 manyConstExports.ts=30002 resolvingClassDeclarationWhenInBaseTypeResolution.ts=28171 unionSubtypeReductionErrors.ts=27034 binaryArithmeticControlFlowGraphNotTooLarge.ts=20609 conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts=20088 binderBinaryExpressionStress.ts=19365 binderBinaryExpressionStressJs.ts=19365

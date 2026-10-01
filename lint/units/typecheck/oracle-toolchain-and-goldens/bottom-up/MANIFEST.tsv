@@ -1,0 +1,28 @@
+path below test/cli/lint/typecheck/	made by	files	raw bytes	packed bytes	read by	in git	remarks
+dump-ast.ts	written by hand (ts-dump-and-test-importer/top-down/probe/dump-ast.ts)	1	15800	-	nobody in a test: loading typescript takes 27 to 36 s under the debug build	committed	run by hand with a release bun to make dumps/ again
+oracle/ (bootstrap.sh, replay.sh, probe/, state/state.sh, state/runs.txt, bunprobe/)	this directory of the notes	57	310398	70000	nobody in CI: needs Go 1.26 and github.com	committed or left in the notes	the only way to make golden/ again; .go files are outside prettier, comment-cop and tsconfig
+fixtures/cases/**.ts(x)	cp from TypeScript/tests/cases, the 215 cases of SELECTION.tsv	215	165274	50471	binder test (splits units in memory)	committed	158 of the 215 have CRLF: needs fixtures/** -text in a .gitattributes of this directory
+fixtures/synthetic/*	binder-port-and-fixtures/data/synthetic	4	709	-	binder test	committed	
+fixtures/selection.tsv	binder-port-and-fixtures/prototype/select.mjs	1	52505	-	binder test (unit list)	committed	
+fixtures/baselines/*.symbols	cp from typescript-go/testdata/baselines/reference/submodule	215	884941	106200	binder test (declaration names)	committed	CRLF inside; no attribute rule touches .symbols
+fixtures/baselines/*.errors.txt	cp from the same directory	138	475272	61066	binder test (binder diagnostics), later K3 tests	committed	CRLF inside
+dumps/cases (one .ast.json per unit, or one bundle)	bun dump-ast.ts on the 218 units and 4 synthetic inputs	222	1024279	269883	importer test, binder test	committed (generated once)	sizes of the 269-unit sample of ts-dump-and-test-importer; the dump holds the source text and its FNV-1a hash
+dumps/lib.es5 (lib.es5, lib.decorators, lib.decorators.legacy)	bun dump-ast.ts on internal/bundled/libs	3	948661	197820	every checker test, K4	committed (generated once)	from the reference libs, not from node_modules/typescript/lib: 7 of 107 lib files differ
+dumps/lib.default (82 files, closure of lib.es2025.full)	the same	82	12182402	2433967	K4 with default libs, K5	generated, or committed as .gz	19-file es6 closure (10,750 of 12,797 instances): 11254811 / 2242051
+golden/tree/cases/*.tsgo.txt	tsgoprobe tree -nojsdoc	222	2318309	317781	importer test	committed	
+golden/tree/lib.es5/*.tsgo.txt	tsgoprobe tree -nojsdoc	3	830623	105319	importer test	committed	
+golden/tree/lib.default/*.tsgo.txt	tsgoprobe tree -nojsdoc	82	11065097	1323233	importer test of the default libs	generated, or a digest list	108 libs with JSDoc: 19409601 raw
+golden/bind/cases/*.bind.txt	tsgoprobe bind	222	2652759	537485	binder test	committed	
+golden/bind/lib.es5/*.bind.txt	tsgoprobe bind	3	1208406	227716	binder test	committed	
+golden/bind/lib.default/*.bind.txt	tsgoprobe bind	82	14114145	2503308	binder test of the default libs	generated, or a digest list	108 libs: 18908204 / 3359935
+golden/state/*.state.txt	oracle/state/state.sh make	41	3658292	340924	checker layer tests (K3)	committed	
+golden/init/*.txt (old initprobe text)	tsgoprobe init, 7 runs of checker-core-scratch	7	66507	-	optional: superseded by golden/state/init.*	committed or dropped	named out.*.txt in the notes: out.* is in .gitignore
+golden/check/*.out.txt	tsgoprobe check|checkstate|checkopts: 6 + 16 + 7 + 32 + 5 + 11 runs	77	137082	-	K3 diagnostics tests, K4	committed	inputs: 72 files, 49126 bytes (fixtures/k3/)
+golden/rel/*.trace.txt(.gz)	tsgoprobe rel -trace -funcs, 12 inputs	24	1081513	81875	relater and inference tests	committed (.gz) or generated	
+golden/printer/*	tsgoprobe typestrings|declstrings|roundtrip|rt	8	1537609	268232	type printer tests	committed (.gz)	typestrings 65 KB gz each, roundtrip 63 KB gz, rt texts 33 KB gz
+golden/diagnostics/small/*	tsgoprobe diag on the small vector set	3	1164395	176390	diagnostics formatting test (K1)	committed	the full set: 13015251 raw, 1122402 gz
+golden/program/order/*.txt	tsgoprobe cli --listFiles	21	23923	-	lib closure and load order test	committed	
+golden/program/manifest.jsonl.gz	tsgoprobe suite with K5_MANIFEST_DIR and K5_OPTS	1	19365330	556878	K5 driver (program of each of the 12,797 instances)	committed (.gz)	programs.jsonl.gz, file lists only: 178436
+TOTAL es5-only set (every row but lib.default, init and the K5 manifest)			18490750	2868665			packed: gzip -9 where measured, else a quarter of raw
+TOTAL default libs (the three lib.default rows)			37361644	6260508			
+TOTAL K5 manifest			19365330	556878			

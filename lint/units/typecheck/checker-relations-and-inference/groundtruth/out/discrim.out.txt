@@ -1,0 +1,13 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+discrim.ts(2,28): error TS2322: Type 'string' is not assignable to type 'number'.
+discrim.ts(3,17): error TS2322: Type '"d"' is not assignable to type '"a" | "b" | "c"'.
+  related: discrim.ts(1,12): message TS6500: The expected type comes from property 'kind' which is declared here on type 'S'
+discrim.ts(9,25): error TS2322: Type 'string' is not assignable to type '3'.
+discrim.ts(11,7): error TS2322: Type '{ k: 3; v3: 4; }' is not assignable to type 'Big'.
+  Type '{ k: 3; v3: 4; }' is not assignable to type '{ k: 3; v3: 3; }'.
+    Types of property 'v3' are incompatible.
+      Type '4' is not assignable to type '3'.
+discrim.ts(13,7): error TS2322: Type 'string | number | boolean' is not assignable to type 'string | number'.
+  Type 'boolean' is not assignable to type 'string | number'.
+discrim.ts(14,7): error TS2322: Type '"d"' is not assignable to type '"a" | "b" | "c"'.
+SIZES after check: identity=0 assignable=18 comparable=0 subtype=0 strictSubtype=0 enum=0 types=150

@@ -1,0 +1,9 @@
+file j1.js bytes=104
+s_local 22
+  b_identifier 26 name="x"
+  e_number 30 value=1
+s_local 51
+  b_identifier 55 name="y"
+  e_number 59 value=2
+s_function 87
+  b_identifier 98 name="a"

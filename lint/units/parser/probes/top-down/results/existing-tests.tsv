@@ -1,0 +1,33 @@
+source	target	key	index	type_in_source	bun	tsc	tsc_strictNullChecks_false
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	27	p27: null & string	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	28	p28: string & null	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	29	p29: undefined & string	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	30	p30: string & undefined	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	39	p39: null | string	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	40	p40: string | null	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	41	p41: undefined | string	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	42	p42: string | undefined	String	Object	String
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	57	p57: null | Swag	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	58	p58: Swag | null	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	59	p59: undefined | Swag	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	60	p60: Swag | undefined	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	69	p69: null & Swag	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	70	p70: Swag & null	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	71	p71: undefined & Swag	Swag	Object	Swag
+test/bundler/transpiler/decorator-metadata.test.ts	A1	paramtypes	72	p72: Swag & undefined	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	27	p27: null & string	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	28	p28: string & null	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	29	p29: undefined & string	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	30	p30: string & undefined	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	39	p39: null | string	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	40	p40: string | null	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	41	p41: undefined | string	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	42	p42: string | undefined	String	Object	String
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	57	p57: null | Swag	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	58	p58: Swag | null	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	59	p59: undefined | Swag	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	60	p60: Swag | undefined	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	69	p69: null & Swag	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	70	p70: Swag & null	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	71	p71: undefined & Swag	Swag	Object	Swag
+test/bundler/bundler_decorator_metadata.test.ts ? /entry.ts	Yolo	paramtypes	72	p72: Swag & undefined	Swag	Object	Swag

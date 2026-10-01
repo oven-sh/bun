@@ -1,0 +1,10 @@
+[
+ "class A { accessor foo; accessor foo; }",
+ "class A { static accessor; accessor; }",
+ "class A { constructor() {} ['constructor']; }",
+ "class A { \\u0063onstructor() {} }",
+ "x = class { 'constructor'() { super.x; } }",
+ "class A { accessor a; a; static accessor b; static b; }",
+ "class A { 'prototype'() {} prototype() {} }",
+ "class A { a() {} a() {} }\nexport {};"
+]

@@ -1,0 +1,41 @@
+file /ambient.d.ts scriptKind=3 variant=0 dts=true textLen=110
+externalModuleIndicator KindVariableStatement[77,109)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=25 identifiers=5 text=5 reparsedClones=0
+root KindSourceFile [0,110) f=0x800000
+  .Statements: list [0,109) n=3
+    - KindFunctionDeclaration [0,36) f=0x800000
+      .Parameters: list [19,28) n=1
+        - KindParameter [19,28) f=0x800000
+          .Type: KindNumberKeyword [21,28) f=0x800000
+          .name: KindIdentifier [19,20) f=0x800000 Text="a"
+      .Type: KindVoidKeyword [30,35) f=0x800000
+      .modifiers.flags=0x80
+      .modifiers: list [0,7) n=1
+        - KindDeclareKeyword [0,7) f=0x800000
+      .name: KindIdentifier [16,18) f=0x800000 Text="f"
+    - KindModuleDeclaration [36,77) f=0x800000 Keyword=KindNamespaceKeyword
+      .Body: KindModuleBlock [56,77) f=0x800000
+        .Statements: list [58,75) n=1
+          - KindVariableStatement [58,75) f=0x800000
+            .DeclarationList: KindVariableDeclarationList [58,74) f=0x800002
+              .Declarations: list [64,74) n=1
+                - KindVariableDeclaration [64,74) f=0x800000
+                  .Type: KindNumberKeyword [67,74) f=0x800000
+                  .name: KindIdentifier [64,66) f=0x800000 Text="x"
+      .modifiers.flags=0x80
+      .modifiers: list [36,44) n=1
+        - KindDeclareKeyword [36,44) f=0x800000
+      .name: KindIdentifier [54,56) f=0x800000 Text="N"
+    - KindVariableStatement [77,109) f=0x800000
+      .DeclarationList: KindVariableDeclarationList [92,108) f=0x800002
+        .Declarations: list [98,108) n=1
+          - KindVariableDeclaration [98,108) f=0x800000
+            .Type: KindStringKeyword [101,108) f=0x800000
+            .name: KindIdentifier [98,100) f=0x800000 Text="y"
+      .modifiers.flags=0xa0
+      .modifiers: list [77,92) n=2
+        - KindExportKeyword [77,84) f=0x800000
+        - KindDeclareKeyword [84,92) f=0x800000
+  .EndOfFileToken: KindEndOfFile [109,110) f=0x800000

@@ -1,0 +1,12 @@
+QUEUED 1790701326475 2026-09-29T17:02:06+00:00
+CMD bash -c 
+  python3 /workspace/notes/lint/tools/symsizes.py /workspace/notes/lint/units/parser/measure/base/bin/bun-profile | tee /workspace/notes/lint/units/parser/measure/base/symsizes.b.txt
+  python3 /workspace/notes/lint/tools/symsizes.py /workspace/notes/lint/units/parser/measure/base/bin/bun-profile --json > /workspace/notes/lint/units/parser/measure/base/symsizes.b.json
+  python3 /workspace/notes/lint/units/parser/measure/grammar-syms.py /workspace/notes/lint/units/parser/measure/base/bin/bun-profile | tee /workspace/notes/lint/units/parser/measure/base/grammar-syms.b.txt
+  python3 /workspace/notes/lint/units/parser/measure/grammar-syms.py /workspace/notes/lint/units/parser/measure/base/bin/bun-profile --json > /workspace/notes/lint/units/parser/measure/base/grammar-syms.b.json
+START 1790701876677 2026-09-29T17:11:16+00:00 load=526.44 457.00 394.94
+END 1790701881630 2026-09-29T17:11:21+00:00 load=516.48 456.09 394.98
+EXIT 0
+WAIT_MS 550202
+RUN_MS 4953
+DONE

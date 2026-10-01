@@ -1,0 +1,28 @@
+# Names that neither the CI runner nor bun test takes for a test. Checked with probes/names_check.ts, whose two functions are the two rules below.
+# rule ci: scripts/runner.node.ts:2459-2461 isJavaScript = /\.(c|m)?(j|t)sx?$/ on the base name; :2492-2494 isTestStrict = isJavaScript and /\.test|spec\./ on the base name (case matters, anywhere in the name);
+#          :2496-2498 isHidden leaves out a base name that starts with "." and a directory that matches /node_modules|node.js/; :2500-2519 getTests walks every other directory below test/.
+# rule bun: src/runtime/cli/test/Scanner.rs:239-255 and :426: the extension has a JavaScript-like loader and the name without its last extension ends in .test, _test, .spec or _spec;
+#          :332 the name is lowercased first; :339 a directory that starts with "." or is named node_modules is not entered. A file named on the command line needs no suffix (:325-329).
+# Proved with the installed bun 1.4.3 in /tmp/cgt/names (39 files): bun test took a.test.ts, b_test.ts, bar.test.mjs, baz.spec.cjs, c.spec.ts, d_spec.ts, foo.Test.ts, FOO_TEST.TS, harness_spec.js, spawn.test.ts, runner/compiler_test.ts,
+# and left e-fixture.ts, f.fixture.ts, fixtures/x.test.fixture.ts, my.test-fixture.ts, q.test.d.ts, aspec.ts, fixtures/spec.ts, spec.helper.ts, respec.data.ts, inspect.ts, contest.ts, latest.ts, vfstest.ts, TestFoo.ts.
+# The rule of the CI runner takes aspec.ts, fixtures/spec.ts, spec.helper.ts, respec.data.ts, q.test.d.ts, fixtures/x.test.fixture.ts and my.test-fixture.ts too, and leaves b_test.ts, foo.Test.ts, FOO_TEST.TS and runner/compiler_test.ts.
+# So a name is safe when its base name holds neither ".test" nor "spec." and its stem does not end in "_test" or "_spec" in any case. A spawned helper ends in -fixture.ts (test/CLAUDE.md:98; root .gitattributes:36 marks *-fixture* as generated).
+name	ci	bun	verdict
+test/cli/lint/conformance.test.ts	takes	takes	the one test file
+test/cli/lint/conformance/runner/compiler_test.ts	-	takes	breaks the rule: "bun test" from the root and any filter that matches its path load it as a test file ("Ran 0 tests across 1 file", exit 0). New name: runner/compilertest.ts, with its two importers (runner/index.ts:12, runner/materialize.ts:4) and the assembler (overlay/assemble.ts:29 and the edits at :304-306)
+test/cli/lint/conformance/runner/compilertest.ts	-	-	safe (as vfstest.ts is)
+test/cli/lint/conformance/runner/test_case_parser.ts	-	-	safe
+test/cli/lint/conformance/runner/vfstest.ts	-	-	safe
+test/cli/lint/conformance/runner/*.ts (the other 28 modules), sweep.ts	-	-	safe
+test/cli/lint/conformance/update-reference.ts (the script of prototype/gen_reference.ts; any name without the two patterns)	-	-	safe
+test/cli/lint/conformance/reference_counts.json, expectations.json, post-emit-order.txt, UPSTREAM, sync.sh, runner/options_table.json, runner/UPSTREAM_PORTED	-	-	no JavaScript extension
+test/cli/lint/conformance/fixtures/instances.tsv, directives-inputs.json, directives-expected.json	-	-	no JavaScript extension
+test/cli/lint/conformance/fixtures/lints-fixture.ts, crashes-fixture.ts, runs-fixture.ts, silent-fixture.ts	-	-	safe; they are files of the project of test/tsconfig.json (its "exclude": "fixtures" covers test/fixtures only) and pass tsc 6.0.2 with strict
+test/cli/lint/conformance/corpus/** (22186 files of the scratch commit)	0 taken	0 taken	safe at the pinned commits; sync.sh:181-182 stops on ".test", "spec." and "_test." but is blind to "_Test." and "_SPEC." in other cases: it has to lowercase the name for the second rule
+# Names of today's prototypes that break the rule if they are committed as they are (all 13 are taken by both rules):
+check-contract-default-spawn/top-down/spawn.test.ts, manifest.test.ts, plain.test.ts; check-contract-default-spawn/prototype/spawn.test.ts	takes	takes	their tests move into conformance.test.ts or stay in the notes
+oracle-and-expectations/bottom-up/prototype/expectations.test.ts	takes	takes	the same
+test-file-and-sweep/bottom-up/prototype/proto.test.ts, proto2.test.ts, overhead.test.ts, semantics.test.ts, stall.test.ts, throws.test.ts	takes	takes	notes only
+shared-foundation-merge/top-down/proof/foundation.test.ts	takes	takes	notes only
+check-contract-default-spawn/top-down/fakes/lints.ts, crashes.ts, runs.ts, silent.ts; test-file-and-sweep/top-down/fake-spawn-check.ts, replay-check.ts	-	-	not taken, but a spawned helper has to end in -fixture.ts: fixtures/lints-fixture.ts and so on
+# Checked on the planned file list (/tmp/cgt/planned-paths.txt, 22234 paths with the new name of compiler_test.ts): the CI runner takes 1, bun test takes 1, both test/cli/lint/conformance.test.ts.

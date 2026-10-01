@@ -1,0 +1,139 @@
+@d class C {}
+@d() class C {}
+@d()! class C {}
+@d! class C {}
+@d!() class C {}
+@d!.e class C {}
+@d.e! class C {}
+@d.e!() class C {}
+@d()() class C {}
+@d().e class C {}
+@d()[0] class C {}
+@d[0] class C {}
+@d`x` class C {}
+@d<T> class C {}
+@d<T>() class C {}
+@d<T>(1)<U> class C {}
+@d()<T> class C {}
+@d.e<T>() class C {}
+@d<T>.e class C {}
+@d<T>!() class C {}
+@(d) class C {}
+@(d as any) class C {}
+@(d!) class C {}
+@(d)() class C {}
+@(d).e class C {}
+@(d)! class C {}
+@d as any class C {}
+@d?.e class C {}
+@d?.() class C {}
+@new D class C {}
+@new D() class C {}
+@this.d class C {}
+@super.d class C {}
+@import.meta.d class C {}
+@function () {} class C {}
+@class {} class C {}
+@1 class C {}
+@"s" class C {}
+@[d][0] class C {}
+@{}.d class C {}
+@d\nclass C {}
+@d @e class C {}
+@d export class C {}
+export @d class C {}
+@d export default class C {}
+export default @d class C {}
+@d export @e class C {}
+export @d export class C {}
+@d abstract class C {}
+@d declare class C {}
+@d export abstract class C {}
+@d export declare class C {}
+export default @d abstract class C {}
+export @d abstract class C {}
+export @d declare class C {}
+abstract @d class C {}
+declare @d class C {}
+export abstract @d class C {}
+var x = @d class {};
+var x = @d class C {};
+var x = @d abstract class {};
+var x = @d() @e class {};
+f(@d class {});
+(@d class {});
+class C { @d m() {} }
+class C { @d() m() {} }
+class C { @d()! m() {} }
+class C { @d! m() {} }
+class C { @d<T>() m() {} }
+class C { @d()<T> m() {} }
+class C { @d p; }
+class C { @d p = 1; }
+class C { @d static p; }
+class C { static @d p; }
+class C { @d public p; }
+class C { public @d p; }
+class C { @d readonly p; }
+class C { readonly @d p; }
+class C { @d declare p: number; }
+class C { declare @d p: number; }
+class C { @d abstract p: number; }
+class C { @d override p = 1; }
+class C { @d accessor p = 1; }
+class C { accessor @d p = 1; }
+class C { @d get p() { return 1 } }
+class C { @d set p(v) {} }
+class C { get @d p() { return 1 } }
+class C { @d async m() {} }
+class C { async @d m() {} }
+class C { @d *m() {} }
+class C { @d constructor() {} }
+class C { @d static {} }
+class C { @d [k: string]: number }
+class C { @d ["x"]() {} }
+class C { @d\n["x"]() {} }
+class C { @d() ["x"]() {} }
+class C { @d #p = 1; }
+class C { @d m(): void; }
+class C { @d m(): void; m() {} }
+class C { m(): void; @d m() {} }
+class C { @d abstract m(): void; }
+class C { m(@d a) {} }
+class C { m(@d() a) {} }
+class C { m(@d a, @e b) {} }
+class C { m(@d @e a) {} }
+class C { m(@d ...a) {} }
+class C { m(@d { a }) {} }
+class C { m(@d a?) {} }
+class C { m(@d a = 1) {} }
+class C { m(@d this) {} }
+class C { m(@d this: C) {} }
+class C { constructor(@d a) {} }
+class C { constructor(@d public a) {} }
+class C { constructor(public @d a) {} }
+class C { static m(@d a) {} }
+class C { set p(@d v) {} }
+class C { get p(@d v) { return 1 } }
+class C { m(a, @d) {} }
+class C { @d }
+class C { @d; }
+class C { @d; m() {} }
+class C { @ d m() {} }
+function f(@d a) {}
+var f = function (@d a) {};
+var f = (@d a) => 1;
+var o = { m(@d a) {} };
+var o = { @d m() {} };
+@d function f() {}
+@d var x;
+@d enum E {}
+@d interface I {}
+@d type T = 1;
+@d namespace N {}
+@d import x from "y";
+@d export const x = 1;
+@d;
+@d
+@d x;
+@d 1;

@@ -1,0 +1,159 @@
+file stmt1.ts bytes=762
+s_directive 14
+s_local 35
+  b_identifier 39 name="a"
+  e_number 43 value=1
+  b_identifier 46 name="b"
+s_local 49
+  b_identifier 53 name="c"
+  e_number 57 value=2
+s_local 60
+  b_identifier 66 name="d"
+  e_number 70 value=3
+  b_object 73
+    e_string 75 text="e"
+    b_identifier 75 name="e"
+    e_string 78 text="f"
+    b_identifier 81 name="g"
+    e_number 85 value=4
+    e_missing 93
+    b_identifier 91 name="h"
+  e_identifier 97 name="o"
+  b_array 100
+    b_identifier 101 name="i"
+    b_missing 104
+    b_identifier 106 name="j"
+    e_number 110 value=5
+    b_identifier 116 name="k"
+  e_identifier 121 name="arr"
+s_if 126
+  e_identifier 130 name="a"
+  s_expr 133
+    e_identifier 133 name="b"
+  s_if 141
+    e_identifier 145 name="c"
+    s_block 148
+      s_expr 150
+        e_identifier 150 name="d"
+    s_empty -1
+s_do_while 162
+  s_expr 165
+    e_call 165
+      e_identifier 165 name="x"
+  e_identifier 177 name="y"
+s_while 180
+  e_identifier 187 name="y"
+  s_expr 190
+    e_call 190
+      e_identifier 190 name="x"
+s_for 195
+  s_local 200
+    b_identifier 204 name="i"
+    e_number 208 value=0
+  e_binary 211 op=bin_lt
+    e_identifier 211 name="i"
+    e_number 215 value=10
+  e_unary 219 op=un_post_inc
+    e_identifier 219 name="i"
+  s_block 224
+s_for 227
+  s_block 236
+s_for_in 239
+  s_local 244
+    b_identifier 250 name="k"
+  e_identifier 255 name="o"
+  s_block 258
+s_for_of 261
+  s_expr 266
+    e_identifier 266 name="x"
+  e_identifier 271 name="xs"
+  s_block 275
+s_for_of 278
+  s_local 283
+    b_array 287
+      b_identifier 288 name="a1"
+      b_identifier 292 name="b1"
+  e_identifier 299 name="xs"
+  s_empty -1
+s_label 305
+  s_for 310
+    s_block 319
+      s_break 321
+      s_continue 332
+s_switch 348
+  e_identifier 356 name="a"
+  e_number 366 value=1
+  s_expr 369
+    e_call 369
+      e_identifier 369 name="x"
+  s_break 374
+  s_expr 390
+    e_call 390
+      e_identifier 390 name="y"
+  e_number 400 value=2
+s_try 405
+  s_expr 411
+    e_call 411
+      e_identifier 411 name="a"
+  b_identifier 425 name="e"
+  s_expr 430
+    e_call 430
+      e_identifier 430 name="b"
+  s_expr 447
+    e_call 447
+      e_identifier 447 name="c"
+s_try 454
+  s_expr 460
+    e_call 460
+      e_identifier 460 name="a"
+  s_expr 475
+    e_call 475
+      e_identifier 475 name="b"
+s_throw 482
+  e_new 488
+    e_identifier 492 name="Error"
+    e_string 498 text="x"
+s_debugger 504
+s_function 514
+  b_identifier 526 name="a"
+  b_identifier 529 name="b"
+  e_number 533 value=1
+  b_identifier 539 name="c"
+  s_return 544
+    e_identifier 551 name="a"
+s_function 556
+  s_expr 579
+    e_await 579
+      e_identifier 585 name="a"
+  s_for_of 588
+    s_local 599
+      b_identifier 605 name="x"
+    e_identifier 610 name="y"
+    s_block 613
+s_function 618
+  s_expr 636
+    e_yield 636
+  s_expr 643
+    e_yield 643
+      e_number 649 value=1
+  s_expr 652
+    e_yield 652
+      e_call 659
+        e_identifier 659 name="g"
+s_class 666
+s_class 677
+  e_identifier 693 name="C"
+  e_string 697 text="x"
+  e_number 701 value=1
+  e_string 711 text="y"
+  e_string 714 text="method"
+  e_function 720
+s_block 728
+  s_expr 730
+    e_identifier 730 name="a"
+s_with 735
+  e_identifier 741 name="o"
+  s_block 744
+    s_expr 746
+      e_identifier 746 name="p"
+s_export_clause 751

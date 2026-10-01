@@ -1,0 +1,247 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /generic.ts
+SINCE type=85 signature=4
+DRIVE declared
+DECLARED InterfaceDeclaration@/generic.ts:0:70 T86
+DECLARED TypeParameter@/generic.ts:14:15 T87
+DECLARED TypeParameter@/generic.ts:41:42 T89
+DECLARED TypeAliasDeclaration@/generic.ts:137:168 T94
+DECLARED TypeAliasDeclaration@/generic.ts:168:203 T14
+DECLARED TypeAliasDeclaration@/generic.ts:203:253 T96
+DECLARED TypeParameter@/generic.ts:231:245 T97
+DECLARED TypeAliasDeclaration@/generic.ts:253:308 T103
+DECLARED TypeParameter@/generic.ts:265:266 T104
+DECLARED TypeParameter@/generic.ts:267:285 T105
+DECLARED TypeParameter@/generic.ts:292:298 T106
+DECLARED TypeAliasDeclaration@/generic.ts:358:408 T112
+DECLARED TypeParameter@/generic.ts:369:370 T108
+DECLARED TypeParameter@/generic.ts:390:392 T109
+DECLARED TypeAliasDeclaration@/generic.ts:444:481 T124
+DECLARED TypeAliasDeclaration@/generic.ts:481:511 T128
+DECLARED TypeAliasDeclaration@/generic.ts:511:552 T130
+DECLARED TypeParameter@/generic.ts:521:522 T129
+DECLARED TypeParameter@/generic.ts:607:608 T131
+DECLARED TypeParameter@/generic.ts:609:627 T132
+DRIVE typenodes
+TYPENODE TypeReference@/generic.ts:29:31 T87
+TYPENODE FunctionType@/generic.ts:46:58 T133
+TYPENODE TypeReference@/generic.ts:50:52 T87
+TYPENODE TypeReference@/generic.ts:56:58 T89
+TYPENODE TypeReference@/generic.ts:60:67 T134
+TYPENODE TypeReference@/generic.ts:65:66 T89
+TYPENODE TypeReference@/generic.ts:88:100 T90
+TYPENODE StringKeyword@/generic.ts:93:99 T14
+TYPENODE TypeReference@/generic.ts:119:136 T136
+TYPENODE TypeReference@/generic.ts:124:135 T135
+TYPENODE NumberKeyword@/generic.ts:128:134 T15
+TYPENODE TypeOperator@/generic.ts:149:167 T94
+TYPENODE TypeReference@/generic.ts:155:167 T90
+TYPENODE StringKeyword@/generic.ts:160:166 T14
+TYPENODE IndexedAccessType@/generic.ts:181:202 T14
+TYPENODE TypeReference@/generic.ts:181:193 T90
+TYPENODE StringKeyword@/generic.ts:186:192 T14
+TYPENODE LiteralType@/generic.ts:194:201 T92
+TYPENODE MappedType@/generic.ts:218:252 T96
+TYPENODE UnionType@/generic.ts:235:245 T102
+TYPENODE LiteralType@/generic.ts:235:239 T98
+TYPENODE LiteralType@/generic.ts:241:245 T100
+TYPENODE TypeReference@/generic.ts:248:250 T97
+TYPENODE TypeOperator@/generic.ts:277:285 T107
+TYPENODE TypeReference@/generic.ts:283:285 T104
+TYPENODE MappedType@/generic.ts:288:307 T103
+TYPENODE TypeReference@/generic.ts:296:298 T105
+TYPENODE IndexedAccessType@/generic.ts:300:305 T137
+TYPENODE TypeReference@/generic.ts:300:302 T104
+TYPENODE TypeReference@/generic.ts:303:304 T106
+TYPENODE TypeReference@/generic.ts:330:357 T141
+TYPENODE TypeLiteral@/generic.ts:337:351 T138
+TYPENODE LiteralType@/generic.ts:341:343 T113
+TYPENODE LiteralType@/generic.ts:347:349 T115
+TYPENODE LiteralType@/generic.ts:352:356 T139
+TYPENODE ConditionalType@/generic.ts:373:407 T112
+TYPENODE TypeReference@/generic.ts:373:375 T108
+TYPENODE ArrayType@/generic.ts:383:395 T110
+TYPENODE ParenthesizedType@/generic.ts:383:393 T109
+TYPENODE InferType@/generic.ts:385:392 T109
+TYPENODE TypeReference@/generic.ts:397:399 T109
+TYPENODE NeverKeyword@/generic.ts:401:407 T24
+TYPENODE TypeReference@/generic.ts:428:443 T14
+TYPENODE ArrayType@/generic.ts:434:442 T143
+TYPENODE StringKeyword@/generic.ts:434:440 T14
+TYPENODE TemplateLiteralType@/generic.ts:456:480 T124
+TYPENODE TemplateLiteralTypeSpan@/generic.ts:460:473 T5
+TYPENODE UnionType@/generic.ts:460:469 T102
+TYPENODE LiteralType@/generic.ts:460:463 T98
+TYPENODE LiteralType@/generic.ts:465:469 T100
+TYPENODE TemplateLiteralTypeSpan@/generic.ts:473:480 T5
+TYPENODE UnionType@/generic.ts:473:478 T117
+TYPENODE LiteralType@/generic.ts:473:474 T113
+TYPENODE LiteralType@/generic.ts:476:478 T115
+TYPENODE TypeReference@/generic.ts:494:510 T128
+TYPENODE LiteralType@/generic.ts:505:509 T126
+TYPENODE TypeLiteral@/generic.ts:525:551 T130
+TYPENODE TypeReference@/generic.ts:533:540 T130
+TYPENODE TypeReference@/generic.ts:538:539 T129
+TYPENODE TypeReference@/generic.ts:547:549 T129
+TYPENODE TypeReference@/generic.ts:571:583 T144
+TYPENODE NumberKeyword@/generic.ts:576:582 T15
+TYPENODE TypeOperator@/generic.ts:619:627 T145
+TYPENODE TypeReference@/generic.ts:625:627 T131
+TYPENODE TypeReference@/generic.ts:631:633 T131
+TYPENODE TypeReference@/generic.ts:637:639 T132
+TYPENODE IndexedAccessType@/generic.ts:641:646 T146
+TYPENODE TypeReference@/generic.ts:641:643 T131
+TYPENODE TypeReference@/generic.ts:644:645 T132
+DRIVE symtypes
+SYMTYPE PropertySignature@/generic.ts:18:32 "value"@PropertySignature@/generic.ts:18:32/0x4 T87
+SYMTYPE MethodSignature@/generic.ts:32:68 "map"@MethodSignature@/generic.ts:32:68/0x2000 T147
+SYMTYPE Parameter@/generic.ts:44:58 "f"@Parameter@/generic.ts:44:58/0x1 T133
+SYMTYPE Parameter@/generic.ts:48:52 "t"@Parameter@/generic.ts:48:52/0x1 T87
+SYMTYPE VariableDeclaration@/generic.ts:84:100 "b1"@VariableDeclaration@/generic.ts:84:100/0x2 T90
+SYMTYPE VariableDeclaration@/generic.ts:115:136 "b2"@VariableDeclaration@/generic.ts:115:136/0x2 T136
+SYMTYPE VariableDeclaration@/generic.ts:322:357 "picked"@VariableDeclaration@/generic.ts:322:357/0x2 T141
+SYMTYPE PropertySignature@/generic.ts:338:344 "x"@PropertySignature@/generic.ts:338:344/0x4 T113
+SYMTYPE PropertySignature@/generic.ts:344:349 "y"@PropertySignature@/generic.ts:344:349/0x4 T115
+SYMTYPE VariableDeclaration@/generic.ts:422:443 "elem"@VariableDeclaration@/generic.ts:422:443/0x2 T14
+SYMTYPE PropertySignature@/generic.ts:527:541 "self"@PropertySignature@/generic.ts:527:541/0x4 T130
+SYMTYPE PropertySignature@/generic.ts:541:549 "item"@PropertySignature@/generic.ts:541:549/0x4 T129
+SYMTYPE VariableDeclaration@/generic.ts:566:583 "rec"@VariableDeclaration@/generic.ts:566:583/0x2 T144
+SYMTYPE FunctionDeclaration@/generic.ts:584:647 "pick"@FunctionDeclaration@/generic.ts:584:647/0x10 T148
+SYMTYPE Parameter@/generic.ts:629:633 "o"@Parameter@/generic.ts:629:633/0x1 T131
+SYMTYPE Parameter@/generic.ts:634:639 "k"@Parameter@/generic.ts:634:639/0x1 T132
+STATE
+COUNTS TypeCount=148 SymbolCount=8 SignatureCount=4 TotalInstantiationCount=18 transientSymbols=8 mergedSymbols=0 globals=133
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=148 SymbolCount=8 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=148
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x6 data=Interface symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 target=T86 inst=[T86 T90 T134 T135 T136] targs=[T87] tparams=[T87 T88] outer=0 this=T88 bases=nil dmembers={"T":"T"@TypeParameter@/generic.ts:14:15/0x40000 "map":"map"@MethodSignature@/generic.ts:32:68/0x2000 "value":"value"@PropertySignature@/generic.ts:18:32/0x4} dcalls=nil dctors=nil dindex=nil
+TYPE 87 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/generic.ts:14:15/0x40000 constraint=nil
+TYPE 88 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 constraint=T86 isThisType
+TYPE 89 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="U"@TypeParameter@/generic.ts:41:42/0x40000 constraint=nil
+TYPE 90 flags=0x100000 objectFlags=0x40200004 data=TypeReference symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 members={"map":Y1 "value":Y2} props=[Y2 Y1] sigs=nil calls=0 index=nil target=T86 targs=[T14]
+TYPE 91 flags=0x200000 objectFlags=0x0 data=Index target=T90 indexFlags=0
+TYPE 92 flags=0x400 objectFlags=0x0 data=Literal value=s"value" fresh=T95 regular=T92
+TYPE 93 flags=0x400 objectFlags=0x0 data=Literal value=s"map" fresh=nil regular=T93
+TYPE 94 flags=0x8000000 objectFlags=0x8000 data=Union types=[T93 T92] origin=T91
+TYPE 95 flags=0x400 objectFlags=0x0 data=Literal value=s"value" fresh=T95 regular=T92
+TYPE 96 flags=0x100000 objectFlags=0x20 data=Mapped symbol="\xFEtype"@MappedType@/generic.ts:218:252/0x800 alias="Flagged"@TypeAliasDeclaration@/generic.ts:203:253/0x80000nil declaration=MappedType@/generic.ts:218:252 typeParameter=T97 constraintType=T102 nameType=nil templateType=nil modifiersType=nil resolvedApparentType=nil containsError=false
+TYPE 97 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="P"@TypeParameter@/generic.ts:231:245/0x40000 baseConstraint=T102 constraint=T102
+TYPE 98 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T99 regular=T98
+TYPE 99 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T99 regular=T98
+TYPE 100 flags=0x400 objectFlags=0x0 data=Literal value=s"b" fresh=T101 regular=T100
+TYPE 101 flags=0x400 objectFlags=0x0 data=Literal value=s"b" fresh=T101 regular=T100
+TYPE 102 flags=0x8000000 objectFlags=0x8000 data=Union baseConstraint=T102 types=[T98 T100]
+TYPE 103 flags=0x100000 objectFlags=0x180020 data=Mapped symbol="\xFEtype"@MappedType@/generic.ts:288:307/0x800 alias="Pick2"@TypeAliasDeclaration@/generic.ts:253:308/0x80000[T104 T105] inst=[T103 T141] declaration=MappedType@/generic.ts:288:307 typeParameter=T106 constraintType=T105 nameType=nil templateType=nil modifiersType=nil resolvedApparentType=nil containsError=false
+TYPE 104 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/generic.ts:265:266/0x40000 constraint=nil
+TYPE 105 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="K"@TypeParameter@/generic.ts:267:285/0x40000 baseConstraint=T30 constraint=T107
+TYPE 106 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="P"@TypeParameter@/generic.ts:292:298/0x40000 baseConstraint=T30 constraint=T105
+TYPE 107 flags=0x200000 objectFlags=0x0 data=Index baseConstraint=T30 target=T104 indexFlags=0
+TYPE 108 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/generic.ts:369:370/0x40000 constraint=nil
+TYPE 109 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="E"@TypeParameter@/generic.ts:390:392/0x40000 baseConstraint=T43 constraint=T43
+TYPE 110 flags=0x100000 objectFlags=0x40180004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T109]
+TYPE 111 flags=0x100000 objectFlags=0x4 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T9]
+TYPE 112 flags=0x4000000 objectFlags=0x180000 data=Conditional alias="Elem"@TypeAliasDeclaration@/generic.ts:358:408/0x80000[T108] root=R1 checkType=T108 extendsType=T110 combinedMapper=inference(fixing=true)
+TYPE 113 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T114 regular=T113
+TYPE 114 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T114 regular=T113
+TYPE 115 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=T116 regular=T115
+TYPE 116 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=T116 regular=T115
+TYPE 117 flags=0x8000000 objectFlags=0x8000 data=Union types=[T113 T115]
+TYPE 118 flags=0x400 objectFlags=0x0 data=Literal value=s"a-1" fresh=nil regular=T118
+TYPE 119 flags=0x400 objectFlags=0x0 data=Literal value=s"a-2" fresh=nil regular=T119
+TYPE 120 flags=0x8000000 objectFlags=0x8000 data=Union types=[T118 T119]
+TYPE 121 flags=0x400 objectFlags=0x0 data=Literal value=s"b-1" fresh=nil regular=T121
+TYPE 122 flags=0x400 objectFlags=0x0 data=Literal value=s"b-2" fresh=nil regular=T122
+TYPE 123 flags=0x8000000 objectFlags=0x8000 data=Union types=[T121 T122]
+TYPE 124 flags=0x8000000 objectFlags=0x8000 data=Union types=[T118 T119 T121 T122]
+TYPE 125 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="S"@TypeParameter@/lib.es5.d.ts:76317:76333/0x40000 constraint=nil
+TYPE 126 flags=0x400 objectFlags=0x0 data=Literal value=s"ab" fresh=T127 regular=T126
+TYPE 127 flags=0x400 objectFlags=0x0 data=Literal value=s"ab" fresh=T127 regular=T126
+TYPE 128 flags=0x400 objectFlags=0x0 data=Literal value=s"AB" fresh=nil regular=T128
+TYPE 129 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/generic.ts:521:522/0x40000 constraint=nil
+TYPE 130 flags=0x100000 objectFlags=0x180010 data=Object symbol="\xFEtype"@TypeLiteral@/generic.ts:525:551/0x800 alias="Rec"@TypeAliasDeclaration@/generic.ts:511:552/0x80000[T129] inst=[T130 T144]
+TYPE 131 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/generic.ts:607:608/0x40000 constraint=nil
+TYPE 132 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="K"@TypeParameter@/generic.ts:609:627/0x40000 constraint=nil
+TYPE 133 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@FunctionType@/generic.ts:46:58/0x800
+TYPE 134 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 target=T86 targs=[T89]
+TYPE 135 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 target=T86 targs=[T15]
+TYPE 136 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 target=T86 targs=[T135]
+TYPE 137 flags=0x2000000 objectFlags=0x0 data=IndexedAccess objectType=T104 indexType=T106 accessFlags=0x0
+TYPE 138 flags=0x100000 objectFlags=0x180010 data=Object symbol="\xFEtype"@TypeLiteral@/generic.ts:337:351/0x800
+TYPE 139 flags=0x400 objectFlags=0x0 data=Literal value=s"x" fresh=T140 regular=T139
+TYPE 140 flags=0x400 objectFlags=0x0 data=Literal value=s"x" fresh=T140 regular=T139
+TYPE 141 flags=0x100000 objectFlags=0x180060 data=Mapped symbol="\xFEtype"@MappedType@/generic.ts:288:307/0x800 alias="Pick2"@TypeAliasDeclaration@/generic.ts:253:308/0x80000[T138 T139] target=T103 mapper=composite(simple(T106=>T142),array([T104 T105]=>[T138 T139])) declaration=MappedType@/generic.ts:288:307 typeParameter=T142 constraintType=nil nameType=nil templateType=nil modifiersType=nil resolvedApparentType=nil containsError=false
+TYPE 142 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="P"@TypeParameter@/generic.ts:292:298/0x40000 constraint=nil target=T106 mapper=composite(simple(T106=>T142),array([T104 T105]=>[T138 T139]))
+TYPE 143 flags=0x100000 objectFlags=0x40080004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T14]
+TYPE 144 flags=0x100000 objectFlags=0x80050 data=Object symbol="\xFEtype"@TypeLiteral@/generic.ts:525:551/0x800 alias="Rec"@TypeAliasDeclaration@/generic.ts:511:552/0x80000[T15] target=T130 mapper=simple(T129=>T15)
+TYPE 145 flags=0x200000 objectFlags=0x0 data=Index target=T131 indexFlags=0
+TYPE 146 flags=0x2000000 objectFlags=0x0 data=IndexedAccess objectType=T131 indexType=T132 accessFlags=0x0
+TYPE 147 flags=0x100000 objectFlags=0x10 data=Object symbol="map"@MethodSignature@/generic.ts:32:68/0x2000
+TYPE 148 flags=0x100000 objectFlags=0x10 data=Object symbol="pick"@FunctionDeclaration@/generic.ts:584:647/0x10
+ROOT R1 node=ConditionalType@/generic.ts:373:407 checkType=T108 extendsType=T110 distributive=true inferTypeParameters=[T109] outerTypeParameters=[T108] inst=[T14 T112] alias="Elem"@TypeAliasDeclaration@/generic.ts:358:408/0x80000[T108]
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "Uppercase"@TypeAliasDeclaration@/lib.es5.d.ts:76243:76347/0x80000 aliasDeclaredType=T8 aliasTypeParameters=[T125] aliasInstantiations=[T8]
+LINKS "S"@TypeParameter@/lib.es5.d.ts:76317:76333/0x40000 declaredType=T125
+LINKS "Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 declaredType=T86 resolvedMembers={"T":"T"@TypeParameter@/generic.ts:14:15/0x40000 "map":"map"@MethodSignature@/generic.ts:32:68/0x2000 "value":"value"@PropertySignature@/generic.ts:18:32/0x4}
+LINKS "T"@TypeParameter@/generic.ts:14:15/0x40000 declaredType=T87 referenceKinds=0xc09e8
+LINKS "map"@MethodSignature@/generic.ts:32:68/0x2000 type=T147
+LINKS "value"@PropertySignature@/generic.ts:18:32/0x4 type=T87
+LINKS "Elem"@TypeAliasDeclaration@/generic.ts:358:408/0x80000 aliasDeclaredType=T112 aliasTypeParameters=[T108] aliasInstantiations=[T14 T112]
+LINKS "Flagged"@TypeAliasDeclaration@/generic.ts:203:253/0x80000 aliasDeclaredType=T96
+LINKS "Keys"@TypeAliasDeclaration@/generic.ts:137:168/0x80000 aliasDeclaredType=T94
+LINKS "Pair"@TypeAliasDeclaration@/generic.ts:444:481/0x80000 aliasDeclaredType=T124
+LINKS "Pick2"@TypeAliasDeclaration@/generic.ts:253:308/0x80000 aliasDeclaredType=T103 aliasTypeParameters=[T104 T105] aliasInstantiations=[T103 T141]
+LINKS "Rec"@TypeAliasDeclaration@/generic.ts:511:552/0x80000 aliasDeclaredType=T130 aliasTypeParameters=[T129] aliasInstantiations=[T130 T130 T144]
+LINKS "Upper"@TypeAliasDeclaration@/generic.ts:481:511/0x80000 aliasDeclaredType=T128
+LINKS "Value"@TypeAliasDeclaration@/generic.ts:168:203/0x80000 aliasDeclaredType=T14
+LINKS "b1"@VariableDeclaration@/generic.ts:84:100/0x2 type=T90
+LINKS "b2"@VariableDeclaration@/generic.ts:115:136/0x2 type=T136
+LINKS "elem"@VariableDeclaration@/generic.ts:422:443/0x2 type=T14
+LINKS "pick"@FunctionDeclaration@/generic.ts:584:647/0x10 type=T148
+LINKS "picked"@VariableDeclaration@/generic.ts:322:357/0x2 type=T141
+LINKS "rec"@VariableDeclaration@/generic.ts:566:583/0x2 type=T144
+LINKS "U"@TypeParameter@/generic.ts:41:42/0x40000 declaredType=T89 referenceKinds=0xc09e8
+LINKS "f"@Parameter@/generic.ts:44:58/0x1 type=T133
+LINKS "\xFEtype"@FunctionType@/generic.ts:46:58/0x800 resolvedMembers={"\xFEcall":"\xFEcall"@FunctionType@/generic.ts:46:58/0x20000}
+LINKS "t"@Parameter@/generic.ts:48:52/0x1 type=T87
+LINKS "P"@TypeParameter@/generic.ts:231:245/0x40000 declaredType=T97 referenceKinds=0xc09e8
+LINKS "K"@TypeParameter@/generic.ts:267:285/0x40000 declaredType=T105 referenceKinds=0xc09e8
+LINKS "T"@TypeParameter@/generic.ts:265:266/0x40000 declaredType=T104 referenceKinds=0xc09e8
+LINKS "P"@TypeParameter@/generic.ts:292:298/0x40000 declaredType=T106 referenceKinds=0xc09e8
+LINKS "\xFEtype"@TypeLiteral@/generic.ts:337:351/0x800 resolvedMembers={"x":"x"@PropertySignature@/generic.ts:338:344/0x4 "y":"y"@PropertySignature@/generic.ts:344:349/0x4}
+LINKS "x"@PropertySignature@/generic.ts:338:344/0x4 type=T113
+LINKS "y"@PropertySignature@/generic.ts:344:349/0x4 type=T115
+LINKS "T"@TypeParameter@/generic.ts:369:370/0x40000 declaredType=T108 referenceKinds=0xc09e8
+LINKS "E"@TypeParameter@/generic.ts:390:392/0x40000 declaredType=T109 referenceKinds=0xc09e8
+LINKS "T"@TypeParameter@/generic.ts:521:522/0x40000 declaredType=T129 referenceKinds=0xc09e8
+LINKS "\xFEtype"@TypeLiteral@/generic.ts:525:551/0x800 resolvedMembers={"item":"item"@PropertySignature@/generic.ts:541:549/0x4 "self":"self"@PropertySignature@/generic.ts:527:541/0x4}
+LINKS "item"@PropertySignature@/generic.ts:541:549/0x4 type=T129
+LINKS "self"@PropertySignature@/generic.ts:527:541/0x4 type=T130
+LINKS "K"@TypeParameter@/generic.ts:609:627/0x40000 declaredType=T132 referenceKinds=0xc09e8
+LINKS "T"@TypeParameter@/generic.ts:607:608/0x40000 declaredType=T131 referenceKinds=0xc09e8
+LINKS "k"@Parameter@/generic.ts:634:639/0x1 type=T132
+LINKS "o"@Parameter@/generic.ts:629:633/0x1 type=T131
+GLOBALS count=133 transient=2
+SYMBOL Y1 name="map" flags=0x2002000 checkFlags=0x1 declarations=[MethodSignature@/generic.ts:32:68] valueDeclaration=MethodSignature@/generic.ts:32:68 parent="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 target="map"@MethodSignature@/generic.ts:32:68/0x2000 mapper=array([T87 T88]=>[T14 T90])
+SYMBOL Y2 name="value" flags=0x2000004 checkFlags=0x1 declarations=[PropertySignature@/generic.ts:18:32] valueDeclaration=PropertySignature@/generic.ts:18:32 parent="Box"@InterfaceDeclaration@/generic.ts:0:70/0x40 type=T14 target="value"@PropertySignature@/generic.ts:18:32/0x4 mapper=array([T87 T88]=>[T14 T90])
+SYMBOLS named=2 unnamed=6

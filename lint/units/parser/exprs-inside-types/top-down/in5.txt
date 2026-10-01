@@ -1,0 +1,18 @@
+# K inputs accepted today whose reading must not change without lint
+switch (q) { case (y): (a = 1) => z => w; }
+a < { b: c = 1 } > (d)
+a < { [b + c]: d } > (e)
+a < { get x() { return 1 } } > (e)
+a < { m(p = 1) { } } > (e)
+a < { [k]: d } > (e)
+async (q): ({ [s]: T }) => x
+let f = (a): ({ [k]: v }) => x
+x ? (y) : (a = 1) => z => w
+x ? (y) : (a = 1) => z
+async (q): (readonly a) => x
+let f = (a): (readonly b) => x
+new X<{ [b + c]: d }>(e)
+f<(a = 1) => void>(x)
+# K inputs accepted today whose reading must not change without lint tsx
+<T extends-x>(y)</T>
+const v = <T extends -x,>(y: T) => y

@@ -1,0 +1,25 @@
+function	where	callers that corpus diagnostics execute (layer or module)	service callees that corpus diagnostics never execute
+c.getSymbolAtLocation	checker.go:31717-31885	c.checkApplicableSignatureForJsxCallLikeElement[X-JSX], c.checkTestingKnownTruthyType[D-STMT], c.getTypeOfNode[Z-SERVICES], c.isSymbolUsedInBinaryExpressionChain[D-STMT], c.isSymbolUsedInConditionBody[D-STMT]	
+c.getSymbolOfNameOrPropertyAccessExpression	checker.go:31903-32036	c.getSymbolAtLocation[Z-SERVICES]	
+c.getTypeOfNode	checker.go:32053-32163	c.getESDecoratorCallSignature[E-DECOR], c.getLegacyDecoratorCallSignature[E-DECOR], c.getSymbolAtLocation[Z-SERVICES]	
+c.getThisTypeOfObjectLiteralFromContextualType	checker.go:32165-32180	c.getContextualThisParameterType[c18_identifiers_property_access_this]	
+c.getThisTypeFromContextualType	checker.go:32182-32196	c.getThisTypeOfObjectLiteralFromContextualType[Z-SERVICES]	
+c.getThisTypeArgument	checker.go:32198-32203	c.getThisTypeFromContextualType[Z-SERVICES]	
+c.getApplicableIndexInfos	checker.go:32205-32207	c.checkIndexConstraintForIndexSignature[D-CLASS], c.checkIndexConstraintForProperty[D-CLASS]	
+c.getApplicableIndexSymbol	checker.go:32209-32236	c.getIntrinsicTagSymbol[X-JSX], c.getSymbolOfNameOrPropertyAccessExpression[Z-SERVICES]	
+c.getRegularTypeOfExpression	checker.go:32238-32243	c.getTypeOfNode[Z-SERVICES], NodeBuilderImpl.pseudoTypeToType[pseudotypenodebuilder.go]	
+c.containsArgumentsReference	checker.go:32245-32280	c.checkUnmatchedJSDocParameters[D-JSDOC]	
+c.GetEmitResolver	checker.go:32286-32292	c.IsAnySymbolAccessible[symbolaccessibility.go], NodeBuilderImpl.isTriviallySerializableComputedName[nodebuilderimpl.go], NodeBuilderImpl.serializeTypeForDeclaration[nodebuilderimpl.go]	
+newEmitResolver	emitresolver.go:45-51	c.GetEmitResolver[Z-SERVICES]	EmitResolver.aliasMarkingVisitorWorker, EmitResolver.isValueAliasDeclarationWorker
+EmitResolver.isDeclarationVisible	emitresolver.go:111-129	EmitResolver.determineIfDeclarationIsVisible[Z-SERVICES], EmitResolver.hasVisibleDeclarations[Z-SERVICES]	
+EmitResolver.determineIfDeclarationIsVisible	emitresolver.go:131-234	EmitResolver.isDeclarationVisible[Z-SERVICES]	c.GetEffectiveDeclarationFlags
+getMeaningOfEntityNameReference	emitresolver.go:311-332	EmitResolver.isEntityNameVisible[Z-SERVICES], getExistingNodeTreeVisitor[nodecopy.go]	
+EmitResolver.isEntityNameVisible	emitresolver.go:340-380	NodeBuilderImpl.isTriviallySerializableComputedName[nodebuilderimpl.go]	EmitResolver.isSymbolAccessible
+EmitResolver.hasVisibleDeclarations	emitresolver.go:384-465	c.IsAnySymbolAccessible[symbolaccessibility.go], EmitResolver.isEntityNameVisible[Z-SERVICES]	noopAddVisibleAlias
+EmitResolver.requiresAddingImplicitUndefined	emitresolver.go:585-603	NodeBuilderImpl.serializeTypeForDeclaration[nodebuilderimpl.go]	
+EmitResolver.requiresAddingImplicitUndefinedWorker	emitresolver.go:605-607	EmitResolver.requiresAddingImplicitUndefined[Z-SERVICES]	EmitResolver.declaredParameterTypeContainsUndefined
+EmitResolver.isOptionalUninitializedParameterProperty	emitresolver.go:622-627	EmitResolver.requiresAddingImplicitUndefinedWorker[Z-SERVICES]	
+EmitResolver.isRequiredInitializedParameter	emitresolver.go:629-637	EmitResolver.requiresAddingImplicitUndefinedWorker[Z-SERVICES]	
+EmitResolver.isOptionalParameter	emitresolver.go:639-641	EmitResolver.isOptionalUninitializedParameterProperty[Z-SERVICES], EmitResolver.isRequiredInitializedParameter[Z-SERVICES]	
+isConstEnumOrConstEnumOnlyModule	emitresolver.go:693-695	c.markAliasReferenced[U-ALIASMARK], c.markEntityNameOrEntityExpressionAsReference[U-ALIASMARK], c.markExportAsReferenced[U-ALIASMARK], c.markPropertyAliasReferenced[U-ALIASMARK]	
+c.IsArgumentsSymbol	services.go:229-231	c.containsArgumentsReference[Z-SERVICES]	

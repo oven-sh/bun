@@ -1,0 +1,167 @@
+== K-LIT functions 25, with a caller in a core layer or an earlier layer 3
+c.getBigIntLiteralType <- C-INIT
+c.getNumberLiteralType <- C-INIT
+c.getStringLiteralType <- C-INIT,M-MODULE
+== K-PRED functions 41, with a caller in a core layer or an earlier layer 4
+c.IsEmptyAnonymousObjectType <- C-INIT
+c.allTypesAssignableToKindEx <- N-DIAG
+c.isErrorType <- M-MODULE
+c.maybeTypeOfKind <- K-LIT
+== K-GENERIC functions 9, with a caller in a core layer or an earlier layer 2
+c.getUniqueLiteralTypeForTypeParameter <- C-INIT
+c.isGenericMappedType <- K-PRED
+== K-UNION functions 18, with a caller in a core layer or an earlier layer 3
+c.getUnionType <- C-INIT,K-OBJ
+c.getUnionTypeFromSortedList <- K-PRED
+c.mapType <- K-LIT
+== K-INTERSECT functions 11, with a caller in a core layer or an earlier layer 1
+c.getIntersectionType <- K-UNION
+== T-TUPLE functions 44, with a caller in a core layer or an earlier layer 4
+c.createArrayType <- C-INIT
+c.createTypeFromGenericGlobalType <- C-INIT
+c.getGlobalStrictFunctionType <- C-INIT
+isTupleType <- TYPES,K-GENERIC
+== T-DECLARED functions 23, with a caller in a core layer or an earlier layer 2
+c.getAliasForTypeNode <- K-OBJ
+c.getDeclaredTypeOfSymbol <- C-INIT,N-DIAG,K-LIT
+== T-ENUMVAL functions 6, with a caller in a core layer or an earlier layer 2
+c.evaluateEntity <- C-INIT
+c.getEnumMemberValue <- T-DECLARED
+== T-TYPENODE functions 39, with a caller in a core layer or an earlier layer 2
+c.getArrayElementTypeNode <- T-TUPLE
+c.getTypeFromTypeNode <- A-ALIAS,T-DECLARED
+== T-CONSTRAINT functions 29, with a caller in a core layer or an earlier layer 6
+c.fillMissingTypeArguments <- T-TYPENODE
+c.getBaseConstraintOfType <- K-LIT,K-UNION,K-INTERSECT
+c.getBaseConstraintOrType <- K-LIT,K-PRED,K-UNION
+c.getConstraintOfTypeParameter <- T-KEYS
+c.getMinTypeArgumentCount <- T-TYPENODE
+c.getResolvedBaseConstraint <- UTIL
+== T-BASE functions 18, with a caller in a core layer or an earlier layer 0
+== T-MEMBERS functions 33, with a caller in a core layer or an earlier layer 3
+c.getNamedMembers <- K-OBJ
+c.isValidIndexKeyType <- T-TYPENODE
+c.resolveStructuredTypeMembers <- M-MODULE,K-PRED,K-UNION,T-BASE
+== T-UIMEMBERS functions 23, with a caller in a core layer or an earlier layer 2
+c.resolveIntersectionTypeMembers <- T-MEMBERS
+c.resolveUnionTypeMembers <- T-MEMBERS
+== T-LOOKUP functions 18, with a caller in a core layer or an earlier layer 11
+c.getApplicableIndexInfoForName <- T-UIMEMBERS
+c.getIndexInfoOfType <- T-UIMEMBERS
+c.getIndexInfosOfType <- T-MEMBERS,T-UIMEMBERS
+c.getIndexTypeOfType <- T-TUPLE,T-UIMEMBERS
+c.getPropertiesOfObjectType <- T-MEMBERS
+c.getPropertiesOfType <- K-UNION,T-MEMBERS
+c.getPropertyOfType <- A-ALIAS,N-DIAG,Q-ENTITY,T-TUPLE
+c.getPropertyOfTypeEx <- A-ALIAS,M-MODULE,T-UIMEMBERS
+c.getSignaturesOfStructuredType <- M-MODULE
+c.getSignaturesOfType <- T-DECLARED,T-BASE,T-MEMBERS,T-UIMEMBERS
+c.getTypeOfPropertyOfType <- K-UNION,T-TUPLE,T-UIMEMBERS
+== T-APPARENT functions 12, with a caller in a core layer or an earlier layer 5
+c.elaborateNeverIntersection <- T-BASE
+c.getApparentType <- T-BASE,T-UIMEMBERS
+c.getReducedApparentType <- T-LOOKUP
+c.getReducedType <- K-GENERIC,T-BASE
+c.isMappedTypeGenericIndexedAccess <- T-CONSTRAINT
+== T-SIGDECL functions 21, with a caller in a core layer or an earlier layer 5
+c.getReturnTypeOfSignature <- T-BASE,T-UIMEMBERS
+c.getSignatureFromDeclaration <- UTIL
+c.getSignaturesOfSymbol <- T-MEMBERS
+c.hasLateBindableIndexSignature <- M-MODULE,T-MEMBERS
+c.hasLateBindableName <- M-MODULE,S-MERGE
+== T-SIGSHAPE functions 36, with a caller in a core layer or an earlier layer 13
+c.getMinArgumentCount <- T-UIMEMBERS
+c.getMinArgumentCountEx <- UTIL
+c.getParameterCount <- T-UIMEMBERS
+c.getParameterNameAtPosition <- T-UIMEMBERS
+c.getRestTypeAtPosition <- T-SIGDECL
+c.getTypeAtPosition <- T-UIMEMBERS,T-SIGDECL
+c.getTypeOfParameter <- T-BASE
+c.hasEffectiveRestParameter <- T-UIMEMBERS
+c.isResolvingReturnTypeOfSignature <- T-SIGDECL
+c.tryGetTypeAtPosition <- T-UIMEMBERS
+hasRestParameter <- T-SIGDECL
+isRestParameter <- T-SIGDECL
+signatureHasRestParameter <- UTIL,T-BASE
+== T-SIGINST functions 19, with a caller in a core layer or an earlier layer 5
+c.addOptionalTypeMarker <- T-SIGDECL
+c.cloneSignature <- T-MEMBERS,T-UIMEMBERS
+c.createSignatureInstantiation <- T-MEMBERS
+c.getSignatureInstantiation <- T-BASE
+c.getSingleCallSignature <- T-SIGDECL
+== T-INSTANTIATE functions 26, with a caller in a core layer or an earlier layer 11
+c.cloneTypeParameter <- T-SIGINST
+c.couldContainTypeVariablesWorker <- C-INIT
+c.getTypeArguments <- T-KEYS,T-TUPLE,T-BASE,T-MEMBERS,T-SIGSHAPE
+c.instantiateIndexInfos <- T-MEMBERS
+c.instantiateSignatures <- T-MEMBERS
+c.instantiateSymbols <- T-SIGINST
+c.instantiateType <- K-OBJ,MAPPER,K-GENERIC,T-CONSTRAINT,T-MEMBERS,T-UIMEMBERS,T-APPARENT,T-SIGDECL,T-SIGSHAPE,T-SIGINST
+c.instantiateTypeWithAlias <- T-TYPENODE
+c.instantiateTypes <- K-OBJ,T-SIGINST
+c.permissiveMapperWorker <- C-INIT
+c.restrictiveMapperWorker <- C-INIT
+== T-SYMTYPE functions 66, with a caller in a core layer or an earlier layer 9
+c.addOptionality <- T-TYPENODE
+c.addOptionalityEx <- T-TUPLE,T-TYPENODE,T-SIGSHAPE
+c.getCombinedNodeFlagsCached <- D-SINK
+c.getDeclarationNodeFlagsFromSymbol <- UTIL
+c.getNonMissingTypeOfSymbol <- T-UIMEMBERS
+c.getNullableType <- T-TYPENODE
+c.getOptionalType <- T-SIGDECL
+c.getTypeOfSymbol <- A-ALIAS,M-MODULE,N-DIAG,Q-ENTITY,K-UNION,T-DECLARED,T-MEMBERS,T-UIMEMBERS,T-LOOKUP,T-APPARENT,T-SIGSHAPE
+c.getWriteTypeOfSymbol <- T-UIMEMBERS
+== T-WIDEN functions 13, with a caller in a core layer or an earlier layer 2
+c.getWidenedType <- T-TYPENODE,T-SYMTYPE
+c.reportErrorsFromWidening <- T-SYMTYPE
+== K-KEYOF functions 13, with a caller in a core layer or an earlier layer 6
+c.checkComputedPropertyName <- M-MODULE,T-MEMBERS,T-SIGDECL
+c.getExtractStringType <- T-SYMTYPE
+c.getIndexType <- T-TUPLE,T-TYPENODE,T-INSTANTIATE,T-SYMTYPE
+c.getIndexTypeForMappedType <- T-CONSTRAINT
+c.getLiteralTypeFromProperty <- T-SYMTYPE
+c.getLiteralTypeFromPropertyName <- T-SYMTYPE
+== K-INDEXED functions 29, with a caller in a core layer or an earlier layer 8
+c.getDeclaringConstructor <- T-SYMTYPE
+c.getIndexedAccessType <- T-TUPLE,T-BASE,T-SIGSHAPE
+c.getIndexedAccessTypeEx <- T-TYPENODE,T-INSTANTIATE,T-SYMTYPE
+c.getIndexedAccessTypeOrUndefined <- T-CONSTRAINT,T-SYMTYPE
+c.getSimplifiedType <- T-CONSTRAINT
+c.getSimplifiedTypeOrConstraint <- T-CONSTRAINT
+c.isStringIndexSignatureOnlyTypeWorker <- C-INIT
+c.substituteIndexedMappedType <- T-CONSTRAINT
+== K-SUBST functions 10, with a caller in a core layer or an earlier layer 5
+c.getConditionalFlowTypeOfType <- T-TYPENODE
+c.getNoInferType <- T-TYPENODE,T-INSTANTIATE,K-KEYOF
+c.getSubstitutionIntersection <- T-CONSTRAINT
+c.getSubstitutionType <- T-INSTANTIATE
+c.isNoInferType <- T-INSTANTIATE,K-KEYOF
+== K-COND functions 10, with a caller in a core layer or an earlier layer 5
+c.getConditionalTypeInstantiation <- T-CONSTRAINT,T-INSTANTIATE
+c.getFalseTypeFromConditionalType <- T-CONSTRAINT
+c.getInferredTrueTypeFromConditionalType <- T-CONSTRAINT
+c.getSimplifiedConditionalType <- K-INDEXED
+c.getTypeFromConditionalTypeNode <- T-TYPENODE
+== T-MAPPED functions 23, with a caller in a core layer or an earlier layer 15
+c.forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType <- K-KEYOF
+c.getCombinedMappedTypeOptionality <- K-INDEXED
+c.getConstraintTypeFromMappedType <- K-GENERIC,T-TYPENODE,K-KEYOF
+c.getHomomorphicTypeVariable <- T-APPARENT,K-SUBST
+c.getLowerBoundOfKeyType <- K-KEYOF
+c.getModifiersTypeFromMappedType <- T-APPARENT,K-KEYOF,K-INDEXED
+c.getNameTypeFromMappedType <- K-GENERIC,T-CONSTRAINT,K-KEYOF
+c.getTemplateTypeFromMappedType <- K-INDEXED
+c.getTypeOfMappedSymbol <- T-SYMTYPE
+c.getTypeParameterFromMappedType <- K-GENERIC,T-INSTANTIATE,K-KEYOF,K-INDEXED,K-SUBST
+c.instantiateMappedType <- T-INSTANTIATE
+c.isMappedTypeWithKeyofConstraintDeclaration <- T-CONSTRAINT,K-KEYOF
+c.resolveMappedTypeMembers <- T-MEMBERS
+getMappedTypeModifiers <- T-APPARENT
+getMappedTypeOptionality <- K-INDEXED
+== K-TEMPLATE functions 14, with a caller in a core layer or an earlier layer 4
+c.getStringMappingType <- T-TYPENODE,T-CONSTRAINT,T-INSTANTIATE
+c.getTemplateLiteralType <- C-INIT,T-TYPENODE,T-CONSTRAINT,T-INSTANTIATE
+c.isMemberOfStringMapping <- K-UNION
+c.isTypeMatchedByTemplateLiteralType <- K-UNION
+== K-IMPORTTYPE functions 3, with a caller in a core layer or an earlier layer 1
+c.getTypeFromImportTypeNode <- T-TYPENODE

@@ -1,0 +1,74 @@
+FILE /lib1.ts
+  EXPORT "I" flags=0x40 transient=false -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19
+  EXPORT "NS" flags=0x200 transient=false -> "NS" flags=0x200 decls=1 first=KindModuleDeclaration@/lib1.ts:53
+  EXPORT "OnlyType" flags=0x80000 transient=false -> "OnlyType" flags=0x80000 decls=1 first=KindTypeAliasDeclaration@/lib1.ts:156
+  EXPORT "a" flags=0x2 transient=false -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12
+  EXPORT "default" flags=0x10 transient=false -> "default" flags=0x10 decls=1 first=KindFunctionDeclaration@/lib1.ts:123
+FILE /lib2.ts
+  EXPORT "I" flags=0x40 transient=false -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19
+  EXPORT "NS" flags=0x200 transient=false -> "NS" flags=0x200 decls=1 first=KindModuleDeclaration@/lib1.ts:53
+  EXPORT "OnlyType" flags=0x80000 transient=false -> "OnlyType" flags=0x80000 decls=1 first=KindTypeAliasDeclaration@/lib1.ts:156
+  EXPORT "TypeI" flags=0x200000 transient=false -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19
+  EXPORT "a" flags=0x2 transient=false -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12
+  EXPORT "own" flags=0x2 transient=false -> "own" flags=0x2 decls=1 first=KindVariableDeclaration@/lib2.ts:107
+  EXPORT "renamed" flags=0x200000 transient=false -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12
+  EXPORT "star" flags=0x200000 transient=false -> "\"/lib1\"" flags=0x200 decls=1 first=KindSourceFile@/lib1.ts:0
+  EXPORT "\\xFEexport" flags=0x800000 transient=false -> "\\xFEexport" flags=0x800000 decls=1 first=KindExportDeclaration@/lib2.ts:0
+FILE /lib3.ts
+  EXPORT "I" flags=0x40 transient=false -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19
+  EXPORT "NS" flags=0x200 transient=false -> "NS" flags=0x200 decls=1 first=KindModuleDeclaration@/lib1.ts:53
+  EXPORT "OnlyType" flags=0x80000 transient=false -> "OnlyType" flags=0x80000 decls=1 first=KindTypeAliasDeclaration@/lib1.ts:156
+  EXPORT "a" flags=0x2 transient=false -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib3.ts:41
+  EXPORT "\\xFEexport" flags=0x800000 transient=false -> "\\xFEexport" flags=0x800000 decls=1 first=KindExportDeclaration@/lib3.ts:0
+  TYPEONLYEXPORTSTAR [I=KindExportDeclaration@0 NS=KindExportDeclaration@0 OnlyType=KindExportDeclaration@0 default=KindExportDeclaration@0]
+FILE /eq.ts
+  EXPORT "Mid" flags=0x200 transient=false -> "Mid" flags=0x200 decls=1 first=KindModuleDeclaration@/eq.ts:17
+FILE /cyc1.ts
+  EXPORT "x" flags=0x200000 transient=false -> unknownSymbol
+FILE /cyc2.ts
+  EXPORT "x" flags=0x200000 transient=false -> unknownSymbol
+FILE /user.ts
+  ALIAS "I" flags=0x200000 -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19 | getSymbolFlags=0x200040 typeOnly=nil
+  ALIAS "I3" flags=0x200000 -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19 | getSymbolFlags=0x200040 typeOnly=KindExportDeclaration@0
+  ALIAS "L" flags=0x200000 -> "L" flags=0x40 decls=1 first=KindInterfaceDeclaration@/eq.ts:63 | getSymbolFlags=0x200040 typeOnly=nil
+  ALIAS "NS" flags=0x200000 -> "NS" flags=0x200 decls=1 first=KindModuleDeclaration@/lib1.ts:53 | getSymbolFlags=0x200200 typeOnly=nil
+  ALIAS "OnlyType" flags=0x200000 -> "OnlyType" flags=0x80000 decls=1 first=KindTypeAliasDeclaration@/lib1.ts:156 | getSymbolFlags=0x280000 typeOnly=nil
+  ALIAS "TypeI" flags=0x200000 -> "I" flags=0x40 decls=1 first=KindInterfaceDeclaration@/lib1.ts:19 | getSymbolFlags=0x200040 typeOnly=KindExportSpecifier@130
+  ALIAS "a" flags=0x200000 -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12 | getSymbolFlags=0x200002 typeOnly=nil
+  ALIAS "a3" flags=0x200000 -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib3.ts:41 | getSymbolFlags=0x200002 typeOnly=nil
+  ALIAS "aa" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  ALIAS "all" flags=0x200000 -> "\"/lib2\"" flags=0x200 decls=1 first=KindSourceFile@/lib2.ts:0 | getSymbolFlags=0x200200 typeOnly=nil
+  ALIAS "bad" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  ALIAS "d" flags=0x200000 -> "default" flags=0x10 decls=1 first=KindFunctionDeclaration@/lib1.ts:123 | getSymbolFlags=0x200010 typeOnly=nil
+  ALIAS "eq" flags=0x200000 -> "Outer" flags=0x200 decls=1 first=KindModuleDeclaration@/eq.ts:0 | getSymbolFlags=0x200200 typeOnly=nil
+  ALIAS "leaf" flags=0x200000 -> "leaf" flags=0x2 decls=1 first=KindVariableDeclaration@/eq.ts:53 | getSymbolFlags=0x200002 typeOnly=nil
+  ALIAS "missing" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  ALIAS "nodef" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  ALIAS "nomod" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  ALIAS "own" flags=0x200000 -> "own" flags=0x2 decls=1 first=KindVariableDeclaration@/lib2.ts:107 | getSymbolFlags=0x200002 typeOnly=nil
+  ALIAS "renamed" flags=0x200000 -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12 | getSymbolFlags=0x200002 typeOnly=nil
+  ALIAS "star" flags=0x200000 -> "\"/lib1\"" flags=0x200 decls=1 first=KindSourceFile@/lib1.ts:0 | getSymbolFlags=0x200200 typeOnly=nil
+  ALIAS "ta" flags=0x200000 -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12 | getSymbolFlags=0x200002 typeOnly=KindImportSpecifier@196
+  ALIAS "x" flags=0x200000 -> unknownSymbol | getSymbolFlags=0x3fffffff typeOnly=nil
+  EXPORT "NS" flags=0x200000 transient=false -> "NS" flags=0x200 decls=1 first=KindModuleDeclaration@/lib1.ts:53
+  EXPORT "reexported" flags=0x200000 transient=false -> "a" flags=0x2 decls=1 first=KindVariableDeclaration@/lib1.ts:12
+COUNTS TypeCount=67 SymbolCount=6 SignatureCount=4 mergedSymbols=0 typeResolutions=0
+DIAG (0,0) TS2318 Cannot find global type 'Array'.
+DIAG (0,0) TS2318 Cannot find global type 'Boolean'.
+DIAG (0,0) TS2318 Cannot find global type 'CallableFunction'.
+DIAG (0,0) TS2318 Cannot find global type 'Function'.
+DIAG (0,0) TS2318 Cannot find global type 'IArguments'.
+DIAG (0,0) TS2318 Cannot find global type 'NewableFunction'.
+DIAG (0,0) TS2318 Cannot find global type 'Number'.
+DIAG (0,0) TS2318 Cannot find global type 'Object'.
+DIAG (0,0) TS2318 Cannot find global type 'RegExp'.
+DIAG (0,0) TS2318 Cannot find global type 'String'.
+DIAG /cyc1.ts(9,10) TS2303 Circular definition of import alias 'x'.
+DIAG /cyc2.ts(9,10) TS2303 Circular definition of import alias 'x'.
+DIAG /user.ts(115,122) TS2305 Module '"./lib2"' has no exported member 'missing'.
+DIAG /user.ts(319,323) TS2694 Namespace 'Outer.Mid' has no exported member 'nope'.
+DIAG /user.ts(371,389) TS2307 Cannot find module './does-not-exist' or its corresponding type declarations.
+DIAG /user.ts(400,402) TS2614 Module '"./lib1"' has no exported member 'aa'. Did you mean to use 'import aa from "./lib1"' instead?
+DIAG /user.ts(427,432) TS1192 Module '"/lib2"' has no default export.
+  RELATED /lib2.ts(0,23) TS1195 'export *' does not re-export a default.
+PROGRAMCALLS [BindSourceFiles=1 GetCurrentDirectory=7 GetDefaultResolutionModeForFile=2 GetEmitSyntaxForUsageLocation=3 GetImpliedNodeFormatForEmit=1 GetModeForUsageLocation=32 GetProjectReferenceFromSource=2 GetRedirectTargets=2 GetResolvedModule=31 GetResolvedModuleFromModuleSpecifier=3 GetSourceFile=27 GetSourceFileForResolvedModule=27 GetSourceOfProjectReferenceIfOutputIncluded=4 GetSymlinkCache=2 Options=1 SourceFiles=1 UseCaseSensitiveFileNames=6]

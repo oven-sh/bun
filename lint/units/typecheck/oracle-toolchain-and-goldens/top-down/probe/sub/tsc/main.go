@@ -1,0 +1,60 @@
+// Imported from units/typecheck/end-to-end-k4-k5/groundtruth/k4real_main.go.txt by import-legacy.sh. Do not edit here.
+// Research probe: typescript-go's command line entry with the bundled libs, without the language server.
+// usage: k4real <tsc arguments>      coverage is written to $GOCOVERDIR
+package tsc
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"time"
+
+	"github.com/microsoft/typescript-go/internal/bundled"
+	"github.com/microsoft/typescript-go/internal/execute"
+	"github.com/microsoft/typescript-go/internal/tspath"
+	"github.com/microsoft/typescript-go/internal/vfs"
+	"github.com/microsoft/typescript-go/internal/vfs/osvfs"
+)
+
+type osSys struct {
+	writer             io.Writer
+	fs                 vfs.FS
+	defaultLibraryPath string
+	cwd                string
+	start              time.Time
+}
+
+func (s *osSys) SinceStart() time.Duration             { return time.Since(s.start) }
+func (s *osSys) Now() time.Time                        { return time.Now() }
+func (s *osSys) FS() vfs.FS                            { return s.fs }
+func (s *osSys) DefaultLibraryPath() string            { return s.defaultLibraryPath }
+func (s *osSys) GetCurrentDirectory() string           { return s.cwd }
+func (s *osSys) Writer() io.Writer                     { return s.writer }
+func (s *osSys) ErrorWriter() io.Writer                { return os.Stderr }
+func (s *osSys) WriteOutputIsTTY() bool                { return false }
+func (s *osSys) GetWidthOfTerminal() int               { return 0 }
+func (s *osSys) GetEnvironmentVariable(n string) string { return os.Getenv(n) }
+func (s *osSys) Spawn(command []string, dir string, stderr io.Writer) (io.ReadWriteCloser, error) {
+	return nil, errors.New("spawn is not available in the probe")
+}
+
+func Main() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		os.Exit(3)
+	}
+	libPath := bundled.LibPath()
+	if p := os.Getenv("K4REAL_LIBDIR"); p != "" {
+		libPath = tspath.NormalizePath(p)
+	}
+	sys := &osSys{
+		cwd:                tspath.NormalizePath(cwd),
+		fs:                 bundled.WrapFS(osvfs.FS()),
+		defaultLibraryPath: libPath,
+		writer:             os.Stdout,
+		start:              time.Now(),
+	}
+	result := execute.CommandLine(context.Background(), sys, os.Args[1:], nil)
+	os.Exit(int(result.Status))
+}

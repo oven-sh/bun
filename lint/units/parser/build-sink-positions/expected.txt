@@ -1,0 +1,377 @@
+== call-nested  "f<A<B>>(x)"
+    list CallExpression.typeArguments pos 2 end 6 count 1 trailingComma false
+   TypeReference start 2 end 6 (full start 2) "A<B>"
+    list TypeReference.typeArguments pos 4 end 5 count 1 trailingComma false
+    TypeReference start 4 end 5 (full start 4) "B"
+== annotation-nested  "let x: A<B<C>>"
+   TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+    list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+    TypeReference start 9 end 13 (full start 9) "B<C>"
+     list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+     TypeReference start 11 end 12 (full start 11) "C"
+== close-ge  "let x: A<B>= y"
+   TypeReference start 7 end 11 (full start 6) "A<B>"
+    list TypeReference.typeArguments pos 9 end 10 count 1 trailingComma false
+    TypeReference start 9 end 10 (full start 9) "B"
+== close-gge  "let x: A<B<C>>= y"
+   TypeReference start 7 end 14 (full start 6) "A<B<C>>"
+    list TypeReference.typeArguments pos 9 end 13 count 1 trailingComma false
+    TypeReference start 9 end 13 (full start 9) "B<C>"
+     list TypeReference.typeArguments pos 11 end 12 count 1 trailingComma false
+     TypeReference start 11 end 12 (full start 11) "C"
+== close-ggg  "let x: A<B<C<D>>>"
+   TypeReference start 7 end 17 (full start 6) "A<B<C<D>>>"
+    list TypeReference.typeArguments pos 9 end 16 count 1 trailingComma false
+    TypeReference start 9 end 16 (full start 9) "B<C<D>>"
+     list TypeReference.typeArguments pos 11 end 15 count 1 trailingComma false
+     TypeReference start 11 end 15 (full start 11) "C<D>"
+      list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+      TypeReference start 13 end 14 (full start 13) "D"
+== close-ggge  "let x: A<B<C<D>>>= y"
+   TypeReference start 7 end 17 (full start 6) "A<B<C<D>>>"
+    list TypeReference.typeArguments pos 9 end 16 count 1 trailingComma false
+    TypeReference start 9 end 16 (full start 9) "B<C<D>>"
+     list TypeReference.typeArguments pos 11 end 15 count 1 trailingComma false
+     TypeReference start 11 end 15 (full start 11) "C<D>"
+      list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+      TypeReference start 13 end 14 (full start 13) "D"
+== close-ge-arrow  "let f = (a): a is A<B>=> a"
+   FirstTypeNode start 13 end 22 (full start 12) "a is A<B>"
+    TypeReference start 18 end 22 (full start 17) "A<B>"
+     list TypeReference.typeArguments pos 20 end 21 count 1 trailingComma false
+     TypeReference start 20 end 21 (full start 20) "B"
+== open-ll  "f<<T>(a: T) => void>(g)"
+    list CallExpression.typeArguments pos 2 end 19 count 1 trailingComma false
+   FunctionType start 2 end 19 (full start 2) "<T>(a: T) => void"
+    list FunctionType.typeParameters pos 3 end 4 count 1 trailingComma false
+    list FunctionType.parameters pos 6 end 10 count 1 trailingComma false
+    TypeParameter start 3 end 4 (full start 3) "T"
+    Parameter start 6 end 10 (full start 6) "a: T"
+     TypeReference start 9 end 10 (full start 8) "T"
+    VoidKeyword start 15 end 19 (full start 14) "void"
+== new-nested  "new F<A<B>>()"
+    list NewExpression.typeArguments pos 6 end 10 count 1 trailingComma false
+   TypeReference start 6 end 10 (full start 6) "A<B>"
+    list TypeReference.typeArguments pos 8 end 9 count 1 trailingComma false
+    TypeReference start 8 end 9 (full start 8) "B"
+== tagged  "f<A<B>>`x`"
+    list TaggedTemplateExpression.typeArguments pos 2 end 6 count 1 trailingComma false
+   TypeReference start 2 end 6 (full start 2) "A<B>"
+    list TypeReference.typeArguments pos 4 end 5 count 1 trailingComma false
+    TypeReference start 4 end 5 (full start 4) "B"
+== instantiation  "const g = f<A<B>>;"
+   ExpressionWithTypeArguments start 10 end 17 (full start 9) "f<A<B>>"
+    list ExpressionWithTypeArguments.typeArguments pos 12 end 16 count 1 trailingComma false
+    TypeReference start 12 end 16 (full start 12) "A<B>"
+     list TypeReference.typeArguments pos 14 end 15 count 1 trailingComma false
+     TypeReference start 14 end 15 (full start 14) "B"
+== typeparams-default  "function f<T = A<B>>() {}"
+    list FunctionDeclaration.typeParameters pos 11 end 19 count 1 trailingComma false
+   TypeParameter start 11 end 19 (full start 11) "T = A<B>"
+    TypeReference start 15 end 19 (full start 14) "A<B>"
+     list TypeReference.typeArguments pos 17 end 18 count 1 trailingComma false
+     TypeReference start 17 end 18 (full start 17) "B"
+== typeparams-ge  "type X<T extends A<B>>= T"
+    list TypeAliasDeclaration.typeParameters pos 7 end 21 count 1 trailingComma false
+   TypeParameter start 7 end 21 (full start 7) "T extends A<B>"
+    TypeReference start 17 end 21 (full start 16) "A<B>"
+     list TypeReference.typeArguments pos 19 end 20 count 1 trailingComma false
+     TypeReference start 19 end 20 (full start 19) "B"
+   TypeReference start 24 end 25 (full start 23) "T"
+== jsx-simple  "const e = <Foo<string> a=\"1\" />;"
+    list JsxSelfClosingElement.typeArguments pos 15 end 21 count 1 trailingComma false
+   StringKeyword start 15 end 21 (full start 15) "string"
+== jsx-nested  "const e = <Foo<A<B>>>x</Foo>;"
+    list JsxOpeningElement.typeArguments pos 15 end 19 count 1 trailingComma false
+   TypeReference start 15 end 19 (full start 15) "A<B>"
+    list TypeReference.typeArguments pos 17 end 18 count 1 trailingComma false
+    TypeReference start 17 end 18 (full start 17) "B"
+== jsx-comment  "const e = <Foo<T> /* c */ a />;"
+    list JsxSelfClosingElement.typeArguments pos 15 end 16 count 1 trailingComma false
+   TypeReference start 15 end 16 (full start 15) "T"
+== jsx-selfclose  "const e = <Foo<A<B>>/>;"
+    list JsxSelfClosingElement.typeArguments pos 15 end 19 count 1 trailingComma false
+   TypeReference start 15 end 19 (full start 15) "A<B>"
+    list TypeReference.typeArguments pos 17 end 18 count 1 trailingComma false
+    TypeReference start 17 end 18 (full start 17) "B"
+== template  "type T = `a${B}c${ D<E> }e`"
+   TemplateLiteralType start 9 end 27 (full start 8) "`a${B}c${ D<E> }e`"
+    list TemplateLiteralType.templateSpans pos 13 end 27 count 2 trailingComma false
+    TemplateHead start 9 end 13 (full start 8) "`a${"
+    TemplateLiteralTypeSpan start 13 end 18 (full start 13) "B}c${"
+     TypeReference start 13 end 14 (full start 13) "B"
+     TemplateMiddle start 14 end 18 (full start 14) "}c${"
+    TemplateLiteralTypeSpan start 19 end 27 (full start 18) "D<E> }e`"
+     TypeReference start 19 end 23 (full start 18) "D<E>"
+      list TypeReference.typeArguments pos 21 end 22 count 1 trailingComma false
+      TypeReference start 21 end 22 (full start 21) "E"
+     LastTemplateToken start 24 end 27 (full start 23) "}e`"
+== union-leading  "type T = | A | B<C>"
+   UnionType start 9 end 19 (full start 8) "| A | B<C>"
+    list UnionType.types pos 8 end 19 count 2 trailingComma false
+    TypeReference start 11 end 12 (full start 10) "A"
+    TypeReference start 15 end 19 (full start 14) "B<C>"
+     list TypeReference.typeArguments pos 17 end 18 count 1 trailingComma false
+     TypeReference start 17 end 18 (full start 17) "C"
+== union-single-leading  "type T = | A"
+   UnionType start 9 end 12 (full start 8) "| A"
+    list UnionType.types pos 8 end 12 count 1 trailingComma false
+    TypeReference start 11 end 12 (full start 10) "A"
+== conditional  "type T = A | B extends C ? D : E[]"
+   ConditionalType start 9 end 34 (full start 8) "A | B extends C ? D : E[]"
+    UnionType start 9 end 14 (full start 8) "A | B"
+     list UnionType.types pos 8 end 14 count 2 trailingComma false
+     TypeReference start 9 end 10 (full start 8) "A"
+     TypeReference start 13 end 14 (full start 12) "B"
+    TypeReference start 23 end 24 (full start 22) "C"
+    TypeReference start 27 end 28 (full start 26) "D"
+    ArrayType start 31 end 34 (full start 30) "E[]"
+     TypeReference start 31 end 32 (full start 30) "E"
+== array-indexed  "type T = A [ ] [ K ]"
+   IndexedAccessType start 9 end 20 (full start 8) "A [ ] [ K ]"
+    ArrayType start 9 end 14 (full start 8) "A [ ]"
+     TypeReference start 9 end 10 (full start 8) "A"
+    TypeReference start 17 end 18 (full start 16) "K"
+== tuple  "type T = [a: A, b?: B, ...c: C[], D?, ...E]"
+   TupleType start 9 end 43 (full start 8) "[a: A, b?: B, ...c: C[], D?, ...E]"
+    list TupleType.elements pos 10 end 42 count 5 trailingComma false
+    NamedTupleMember start 10 end 14 (full start 10) "a: A"
+     TypeReference start 13 end 14 (full start 12) "A"
+    NamedTupleMember start 16 end 21 (full start 15) "b?: B"
+     TypeReference start 20 end 21 (full start 19) "B"
+    NamedTupleMember start 23 end 32 (full start 22) "...c: C[]"
+     ArrayType start 29 end 32 (full start 28) "C[]"
+      TypeReference start 29 end 30 (full start 28) "C"
+    OptionalType start 34 end 36 (full start 33) "D?"
+     TypeReference start 34 end 35 (full start 33) "D"
+    RestType start 38 end 42 (full start 37) "...E"
+     TypeReference start 41 end 42 (full start 41) "E"
+== tuple-trailing  "type T = [A, B , ]"
+   TupleType start 9 end 18 (full start 8) "[A, B , ]"
+    list TupleType.elements pos 10 end 16 count 2 trailingComma true
+    TypeReference start 10 end 11 (full start 10) "A"
+    TypeReference start 13 end 14 (full start 12) "B"
+== object  "type T = { a: A; b?: B, c(x: X): Y\n readonly [k: string]: V ; new <U>(u: U): W }"
+   TypeLiteral start 9 end 80 (full start 8) "{ a: A; b?: B, c(x: X): Y\n readonly [k: string]: V ; new <U>(u: U): W }"
+    list TypeLiteral.members pos 10 end 78 count 5 trailingComma false
+    PropertySignature start 11 end 16 (full start 10) "a: A;"
+     TypeReference start 14 end 15 (full start 13) "A"
+    PropertySignature start 17 end 23 (full start 16) "b?: B,"
+     TypeReference start 21 end 22 (full start 20) "B"
+    MethodSignature start 24 end 34 (full start 23) "c(x: X): Y"
+     list MethodSignature.parameters pos 26 end 30 count 1 trailingComma false
+     Parameter start 26 end 30 (full start 26) "x: X"
+      TypeReference start 29 end 30 (full start 28) "X"
+     TypeReference start 33 end 34 (full start 32) "Y"
+    IndexSignature start 36 end 61 (full start 34) "readonly [k: string]: V ;"
+     list IndexSignature.parameters pos 46 end 55 count 1 trailingComma false
+     Parameter start 46 end 55 (full start 46) "k: string"
+      StringKeyword start 49 end 55 (full start 48) "string"
+     TypeReference start 58 end 59 (full start 57) "V"
+    ConstructSignature start 62 end 78 (full start 61) "new <U>(u: U): W"
+     list ConstructSignature.typeParameters pos 67 end 68 count 1 trailingComma false
+     list ConstructSignature.parameters pos 70 end 74 count 1 trailingComma false
+     TypeParameter start 67 end 68 (full start 67) "U"
+     Parameter start 70 end 74 (full start 70) "u: U"
+      TypeReference start 73 end 74 (full start 72) "U"
+     TypeReference start 77 end 78 (full start 76) "W"
+== mapped  "type T = { -readonly [K in keyof U as N<K>]+?: U[K] ; }"
+   MappedType start 9 end 55 (full start 8) "{ -readonly [K in keyof U as N<K>]+?: U[K] ; }"
+    list MappedType.members pos 53 end 53 count 0 trailingComma false
+    TypeParameter start 22 end 34 (full start 22) "K in keyof U"
+     TypeOperator start 27 end 34 (full start 26) "keyof U"
+      TypeReference start 33 end 34 (full start 32) "U"
+    TypeReference start 38 end 42 (full start 37) "N<K>"
+     list TypeReference.typeArguments pos 40 end 41 count 1 trailingComma false
+     TypeReference start 40 end 41 (full start 40) "K"
+    IndexedAccessType start 47 end 51 (full start 46) "U[K]"
+     TypeReference start 47 end 48 (full start 46) "U"
+     TypeReference start 49 end 50 (full start 49) "K"
+== fn  "type T = <U extends V = W>(this: X, a?: A, ...r: R[]) => a is B"
+   FunctionType start 9 end 63 (full start 8) "<U extends V = W>(this: X, a?: A, ...r: R[]) => a is B"
+    list FunctionType.typeParameters pos 10 end 25 count 1 trailingComma false
+    list FunctionType.parameters pos 27 end 52 count 3 trailingComma false
+    TypeParameter start 10 end 25 (full start 10) "U extends V = W"
+     TypeReference start 20 end 21 (full start 19) "V"
+     TypeReference start 24 end 25 (full start 23) "W"
+    Parameter start 27 end 34 (full start 27) "this: X"
+     TypeReference start 33 end 34 (full start 32) "X"
+    Parameter start 36 end 41 (full start 35) "a?: A"
+     TypeReference start 40 end 41 (full start 39) "A"
+    Parameter start 43 end 52 (full start 42) "...r: R[]"
+     ArrayType start 49 end 52 (full start 48) "R[]"
+      TypeReference start 49 end 50 (full start 48) "R"
+    FirstTypeNode start 57 end 63 (full start 56) "a is B"
+     TypeReference start 62 end 63 (full start 61) "B"
+== ctor  "type T = abstract new (a: A) => B"
+   ConstructorType start 9 end 33 (full start 8) "abstract new (a: A) => B"
+    list ConstructorType.parameters pos 23 end 27 count 1 trailingComma false
+    Parameter start 23 end 27 (full start 23) "a: A"
+     TypeReference start 26 end 27 (full start 25) "A"
+    TypeReference start 32 end 33 (full start 31) "B"
+== operators  "type T = keyof readonly A[] | unique symbol"
+   UnionType start 9 end 43 (full start 8) "keyof readonly A[] | unique symbol"
+    list UnionType.types pos 8 end 43 count 2 trailingComma false
+    TypeOperator start 9 end 27 (full start 8) "keyof readonly A[]"
+     TypeOperator start 15 end 27 (full start 14) "readonly A[]"
+      ArrayType start 24 end 27 (full start 23) "A[]"
+       TypeReference start 24 end 25 (full start 23) "A"
+    TypeOperator start 30 end 43 (full start 29) "unique symbol"
+     SymbolKeyword start 37 end 43 (full start 36) "symbol"
+== infer  "type T = A extends (infer U extends V)[] ? U : never"
+   ConditionalType start 9 end 52 (full start 8) "A extends (infer U extends V)[] ? U : never"
+    TypeReference start 9 end 10 (full start 8) "A"
+    ArrayType start 19 end 40 (full start 18) "(infer U extends V)[]"
+     ParenthesizedType start 19 end 38 (full start 18) "(infer U extends V)"
+      InferType start 20 end 37 (full start 20) "infer U extends V"
+       TypeParameter start 26 end 37 (full start 25) "U extends V"
+        TypeReference start 36 end 37 (full start 35) "V"
+    TypeReference start 43 end 44 (full start 42) "U"
+    NeverKeyword start 47 end 52 (full start 46) "never"
+== import  "type T = typeof import(\"m\", { with: { a: \"b\" } }).Q.R<S>"
+   LastTypeNode start 9 end 56 (full start 8) "typeof import(\"m\", { with: { a: \"b\" } }).Q.R<S>"
+    list LastTypeNode.typeArguments pos 54 end 55 count 1 trailingComma false
+    LiteralType start 23 end 26 (full start 23) "\"m\""
+    FirstNode start 50 end 53 (full start 50) "Q.R"
+    TypeReference start 54 end 55 (full start 54) "S"
+== typeof  "type T = typeof a.b<C>"
+   TypeQuery start 9 end 22 (full start 8) "typeof a.b<C>"
+    list TypeQuery.typeArguments pos 20 end 21 count 1 trailingComma false
+    FirstNode start 16 end 19 (full start 15) "a.b"
+    TypeReference start 20 end 21 (full start 20) "C"
+== predicates  "declare function f(x: any): asserts x is A<B>"
+   AnyKeyword start 22 end 25 (full start 21) "any"
+   FirstTypeNode start 28 end 45 (full start 27) "asserts x is A<B>"
+    TypeReference start 41 end 45 (full start 40) "A<B>"
+     list TypeReference.typeArguments pos 43 end 44 count 1 trailingComma false
+     TypeReference start 43 end 44 (full start 43) "B"
+== asserts-this  "declare class C { m(): asserts this }"
+   FirstTypeNode start 23 end 35 (full start 22) "asserts this"
+    ThisType start 31 end 35 (full start 30) "this"
+== literal  "type T = - 1 | -2n | \"s\" | `t` | true | null"
+   UnionType start 9 end 44 (full start 8) "- 1 | -2n | \"s\" | `t` | true | null"
+    list UnionType.types pos 8 end 44 count 6 trailingComma false
+    LiteralType start 9 end 12 (full start 8) "- 1"
+    LiteralType start 15 end 18 (full start 14) "-2n"
+    LiteralType start 21 end 24 (full start 20) "\"s\""
+    LiteralType start 27 end 30 (full start 26) "`t`"
+    LiteralType start 33 end 37 (full start 32) "true"
+    LiteralType start 40 end 44 (full start 39) "null"
+== paren  "type T = ( A | B )[]"
+   ArrayType start 9 end 20 (full start 8) "( A | B )[]"
+    ParenthesizedType start 9 end 18 (full start 8) "( A | B )"
+     UnionType start 11 end 16 (full start 10) "A | B"
+      list UnionType.types pos 10 end 16 count 2 trailingComma false
+      TypeReference start 11 end 12 (full start 10) "A"
+      TypeReference start 15 end 16 (full start 14) "B"
+== nonnull  "type T = A!"
+   JSDocNonNullableType start 9 end 11 (full start 8) "A!"
+    TypeReference start 9 end 10 (full start 8) "A"
+== qualified  "type T = a . b . C<D>"
+   TypeReference start 9 end 21 (full start 8) "a . b . C<D>"
+    list TypeReference.typeArguments pos 19 end 20 count 1 trailingComma false
+    FirstNode start 9 end 18 (full start 8) "a . b . C"
+     FirstNode start 9 end 14 (full start 8) "a . b"
+    TypeReference start 19 end 20 (full start 19) "D"
+== typeargs-trailing-comma  "type T = A<B, >"
+   TypeReference start 9 end 15 (full start 8) "A<B, >"
+    list TypeReference.typeArguments pos 11 end 13 count 1 trailingComma true
+    TypeReference start 11 end 12 (full start 11) "B"
+== comments  "type T = /*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;"
+   TypeReference start 15 end 40 (full start 8) "A /*2*/ < /*3*/ B /*4*/ >"
+    list TypeReference.typeArguments pos 24 end 32 count 1 trailingComma false
+    TypeReference start 31 end 32 (full start 24) "B"
+== cast-angle  "const v = <A<B>>x;"
+   TypeReference start 11 end 15 (full start 11) "A<B>"
+    list TypeReference.typeArguments pos 13 end 14 count 1 trailingComma false
+    TypeReference start 13 end 14 (full start 13) "B"
+== as-nested  "const v = x as A<B<C>>;"
+   TypeReference start 15 end 22 (full start 14) "A<B<C>>"
+    list TypeReference.typeArguments pos 17 end 21 count 1 trailingComma false
+    TypeReference start 17 end 21 (full start 17) "B<C>"
+     list TypeReference.typeArguments pos 19 end 20 count 1 trailingComma false
+     TypeReference start 19 end 20 (full start 19) "C"
+== satisfies-ge  "let v = x satisfies A<B>; v = y as A<B<C>>"
+   TypeReference start 20 end 24 (full start 19) "A<B>"
+    list TypeReference.typeArguments pos 22 end 23 count 1 trailingComma false
+    TypeReference start 22 end 23 (full start 22) "B"
+   TypeReference start 35 end 42 (full start 34) "A<B<C>>"
+    list TypeReference.typeArguments pos 37 end 41 count 1 trailingComma false
+    TypeReference start 37 end 41 (full start 37) "B<C>"
+     list TypeReference.typeArguments pos 39 end 40 count 1 trailingComma false
+     TypeReference start 39 end 40 (full start 39) "C"
+== heritage  "class C<T> extends B<A<T>> implements I<J<K>> {}"
+    list ClassDeclaration.typeParameters pos 8 end 9 count 1 trailingComma false
+   TypeParameter start 8 end 9 (full start 8) "T"
+   ExpressionWithTypeArguments start 19 end 26 (full start 18) "B<A<T>>"
+    list ExpressionWithTypeArguments.typeArguments pos 21 end 25 count 1 trailingComma false
+    TypeReference start 21 end 25 (full start 21) "A<T>"
+     list TypeReference.typeArguments pos 23 end 24 count 1 trailingComma false
+     TypeReference start 23 end 24 (full start 23) "T"
+   ExpressionWithTypeArguments start 38 end 45 (full start 37) "I<J<K>>"
+    list ExpressionWithTypeArguments.typeArguments pos 40 end 44 count 1 trailingComma false
+    TypeReference start 40 end 44 (full start 40) "J<K>"
+     list TypeReference.typeArguments pos 42 end 43 count 1 trailingComma false
+     TypeReference start 42 end 43 (full start 42) "K"
+== interface-heritage  "interface I<T> extends A<B<T>> {}"
+    list InterfaceDeclaration.typeParameters pos 12 end 13 count 1 trailingComma false
+   TypeParameter start 12 end 13 (full start 12) "T"
+   ExpressionWithTypeArguments start 23 end 30 (full start 22) "A<B<T>>"
+    list ExpressionWithTypeArguments.typeArguments pos 25 end 29 count 1 trailingComma false
+    TypeReference start 25 end 29 (full start 25) "B<T>"
+     list TypeReference.typeArguments pos 27 end 28 count 1 trailingComma false
+     TypeReference start 27 end 28 (full start 27) "T"
+== arrow-generic-tsx  "const f = <T,>(x: A<B<T>>) => x;"
+    list ArrowFunction.typeParameters pos 11 end 13 count 1 trailingComma true
+   TypeParameter start 11 end 12 (full start 11) "T"
+   TypeReference start 18 end 25 (full start 17) "A<B<T>>"
+    list TypeReference.typeArguments pos 20 end 24 count 1 trailingComma false
+    TypeReference start 20 end 24 (full start 20) "B<T>"
+     list TypeReference.typeArguments pos 22 end 23 count 1 trailingComma false
+     TypeReference start 22 end 23 (full start 22) "T"
+== return-type-gge  "function f(): A<B<C>> {}"
+   TypeReference start 14 end 21 (full start 13) "A<B<C>>"
+    list TypeReference.typeArguments pos 16 end 20 count 1 trailingComma false
+    TypeReference start 16 end 20 (full start 16) "B<C>"
+     list TypeReference.typeArguments pos 18 end 19 count 1 trailingComma false
+     TypeReference start 18 end 19 (full start 18) "C"
+== optional-chain-call  "a?.b<A<B>>(c)"
+    list CallExpression.typeArguments pos 5 end 9 count 1 trailingComma false
+   TypeReference start 5 end 9 (full start 5) "A<B>"
+    list TypeReference.typeArguments pos 7 end 8 count 1 trailingComma false
+    TypeReference start 7 end 8 (full start 7) "B"
+== typeparams-nested-close  "type X<T extends A<B<C>>> = T"
+    list TypeAliasDeclaration.typeParameters pos 7 end 24 count 1 trailingComma false
+   TypeParameter start 7 end 24 (full start 7) "T extends A<B<C>>"
+    TypeReference start 17 end 24 (full start 16) "A<B<C>>"
+     list TypeReference.typeArguments pos 19 end 23 count 1 trailingComma false
+     TypeReference start 19 end 23 (full start 19) "B<C>"
+      list TypeReference.typeArguments pos 21 end 22 count 1 trailingComma false
+      TypeReference start 21 end 22 (full start 21) "C"
+   TypeReference start 28 end 29 (full start 27) "T"
+== empty-type-arguments  "type T = A<>"
+   TypeReference start 9 end 12 (full start 8) "A<>"
+    list TypeReference.typeArguments pos 11 end 11 count 0 trailingComma false
+== accessor-members  "type T = { get a(): A; set a(v: A) }"
+   TypeLiteral start 9 end 36 (full start 8) "{ get a(): A; set a(v: A) }"
+    list TypeLiteral.members pos 10 end 34 count 2 trailingComma false
+    GetAccessor start 11 end 22 (full start 10) "get a(): A;"
+     list GetAccessor.parameters pos 17 end 17 count 0 trailingComma false
+     TypeReference start 20 end 21 (full start 19) "A"
+    SetAccessor start 23 end 34 (full start 22) "set a(v: A)"
+     list SetAccessor.parameters pos 29 end 33 count 1 trailingComma false
+     Parameter start 29 end 33 (full start 29) "v: A"
+      TypeReference start 32 end 33 (full start 31) "A"
+== binding-parameter  "type T = ({ a, b: [c] }: X, [d]?: Y) => void"
+   FunctionType start 9 end 44 (full start 8) "({ a, b: [c] }: X, [d]?: Y) => void"
+    list FunctionType.parameters pos 10 end 35 count 2 trailingComma false
+    Parameter start 10 end 26 (full start 10) "{ a, b: [c] }: X"
+     TypeReference start 25 end 26 (full start 24) "X"
+    Parameter start 28 end 35 (full start 27) "[d]?: Y"
+     TypeReference start 34 end 35 (full start 33) "Y"
+    VoidKeyword start 40 end 44 (full start 39) "void"
+== initializer-parameter  "type T = (a = 1) => void"
+   FunctionType start 9 end 24 (full start 8) "(a = 1) => void"
+    list FunctionType.parameters pos 10 end 15 count 1 trailingComma false
+    Parameter start 10 end 15 (full start 10) "a = 1"
+    VoidKeyword start 20 end 24 (full start 19) "void"

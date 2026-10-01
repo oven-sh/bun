@@ -1,0 +1,64 @@
+where	function	layer	callers in layers that land before	callers in later layers
+relater.go:117	c.isTypeIdenticalTo	R-REL	T-CONSTRAINT	c07_check_functions,c09_check_classes_interfaces,c11_check_variables_decorators,emitresolver.go,nodebuilder_hover.go,nodebuilderimpl.go
+relater.go:121	c.compareTypesIdentical	R-REL	T-UIMEMBERS	c09_check_classes_interfaces,c16_function_expressions_collisions,nodebuilder_hover.go,pseudotypenodebuilder.go
+relater.go:135	c.compareTypesAssignableWorker	R-REL	C-INIT	
+relater.go:149	c.isTypeAssignableTo	R-REL	K-PRED,T-INSTANTIATE,T-LOOKUP,T-MEMBERS,T-SIGDECL,T-SYMTYPE,T-TUPLE	K-COND,K-INDEXED,K-KEYOF,K-TEMPLATE,c06_check_members_type_nodes,c07_check_functions,c08_check_statements,c09_check_classes_interfaces,c12_iteration_types,c14_expressions,c15_calls,c16_function_expressions_collisions,c19_assertions_binary_operators,c20_object_literals_spread,c50_contextual_properties_inference_context,exports.go,flow.go,jsx.go,services.go
+relater.go:153	c.isTypeSubtypeOf	R-REL	K-INTERSECT	c15_calls,c51_type_facts_awaited,flow.go
+relater.go:157	c.isTypeStrictSubtypeOf	R-REL	K-INTERSECT	flow.go
+relater.go:161	c.isTypeComparableTo	R-REL		c19_assertions_binary_operators
+relater.go:165	c.areTypesComparable	R-REL		c19_assertions_binary_operators,flow.go
+relater.go:169	c.isTypeRelatedTo	R-REL	K-UNION	c07_check_functions,c15_calls,c47_promised_mapped_template,flow.go,jsx.go
+relater.go:339	c.checkTypeAssignableTo	R-REL	T-ENUMVAL	c05_check_source_file,c06_check_members_type_nodes,c09_check_classes_interfaces,c10_check_enums_modules_imports,c11_check_variables_decorators,c12_iteration_types,c14_expressions,c19_assertions_binary_operators,c48_contextual_types
+relater.go:343	c.checkTypeAssignableToEx	R-REL		c06_check_members_type_nodes,c09_check_classes_interfaces,c12_iteration_types,c15_calls
+relater.go:347	c.checkTypeComparableTo	R-REL		c08_check_statements,c19_assertions_binary_operators
+relater.go:351	c.checkTypeRelatedTo	R-REL		jsx.go
+relater.go:358	c.checkTypeRelatedToEx	R-REL		c15_calls,jsx.go
+relater.go:414	c.reportDiagnostic	R-REL		c12_iteration_types,jsx.go
+relater.go:424	c.checkTypeAssignableToAndOptionallyElaborate	R-ELAB		c08_check_statements,c10_check_enums_modules_imports,c11_check_variables_decorators,c17_unary_meta_yield,c19_assertions_binary_operators,c20_object_literals_spread,jsx.go
+relater.go:428	c.checkTypeRelatedToAndOptionallyElaborate	R-ELAB		c15_calls,jsx.go
+relater.go:438	c.elaborateError	R-ELAB		jsx.go
+relater.go:544	c.elaborateElement	R-ELAB		jsx.go
+relater.go:618	c.getBestMatchIndexedAccessTypeOrUndefined	R-ELAB		jsx.go
+relater.go:632	c.checkExpressionForMutableLocationWithContextualType	R-ELAB		jsx.go
+relater.go:743	isHyphenatedJsxName	R-REL		jsx.go
+relater.go:1080	c.isDiscriminantProperty	R-DISCRIM		c50_contextual_properties_inference_context,flow.go,jsx.go
+relater.go:1111	c.getKeyPropertyName	R-DISCRIM		c50_contextual_properties_inference_context,flow.go
+relater.go:1124	c.getConstituentTypeForKeyType	R-DISCRIM		c50_contextual_properties_inference_context,flow.go
+relater.go:1205	c.discriminateTypeByDiscriminableItems	R-DISCRIM		c50_contextual_properties_inference_context,jsx.go
+relater.go:1270	c.getTypeNamesForErrorDisplay	R-REL		c19_assertions_binary_operators
+relater.go:1290	c.getTypeNameForErrorDisplay	R-REL		c08_check_statements
+relater.go:1446	c.createMarkerType	R-VARIANCE		c05_check_source_file
+relater.go:1466	c.getTypeParameterModifiers	R-VARIANCE		c05_check_source_file,nodebuilderimpl.go
+relater.go:1487	c.isSignatureAssignableTo	R-SIGREL		c07_check_functions
+relater.go:2152	c.findMatchingSignatures	R-SIGREL	T-UIMEMBERS	
+relater.go:2187	c.findMatchingSignature	R-SIGREL	T-UIMEMBERS	
+relater.go:2200	c.compareSignaturesIdentical	R-SIGREL	T-UIMEMBERS	c16_function_expressions_collisions,nodebuilder_hover.go
+relater.go:2280	c.compareTypeParametersIdentical	R-SIGREL	T-UIMEMBERS	c16_function_expressions_collisions
+relater.go:2559	visibilityToString	R-SIGREL		grammarchecks.go
+relater.go:2863	c.isTypeSubsetOf	R-REL		flow.go
+relater.go:4993	c.isTypeDerivedFrom	R-REL	K-UNION	flow.go
+inference.go:53	c.inferTypes	I-INFER	T-SIGINST	K-COND,c14_expressions,c15_calls,c16_function_expressions_collisions,jsx.go
+inference.go:868	c.applyToParameterTypes	I-INFER	T-SIGINST	c14_expressions
+inference.go:896	c.applyToReturnTypes	I-INFER	T-SIGINST	c14_expressions
+inference.go:1004	c.inferTypeForHomomorphicMappedType	I-REVMAP	T-INSTANTIATE	
+inference.go:1099	c.resolveReverseMappedTypeMembers	I-REVMAP	T-MEMBERS	
+inference.go:1145	c.getTypeOfReverseMappedSymbol	I-REVMAP	T-SYMTYPE	
+inference.go:1251	c.newInferenceContext	I-INFER	T-SIGINST	K-COND,c15_calls
+inference.go:1258	c.cloneInferenceContext	I-INFER		c15_calls
+inference.go:1265	c.cloneInferredPartOfContext	I-INFER		c15_calls
+inference.go:1285	c.addIntraExpressionInferenceSite	I-INFER		c14_expressions,c20_object_literals_spread,jsx.go
+inference.go:1302	c.inferFromIntraExpressionSites	I-INFER	MAPPER	
+inference.go:1317	c.getInferredType	I-INFER	MAPPER	
+inference.go:1406	c.getInferredTypes	I-INFER	T-SIGINST	c15_calls,jsx.go
+inference.go:1414	c.getMapperFromContext	I-INFER		c15_calls,c18_identifiers_property_access_this
+inference.go:1423	c.createOuterReturnMapper	I-INFER		c15_calls
+inference.go:1621	c.isSkipDirectInferenceNode	I-INFER		c14_expressions
+inference.go:1625	newInferenceInfo	I-INFER		c14_expressions
+inference.go:1642	clearCachedInferences	I-INFER	MAPPER	
+inference.go:1650	hasInferenceCandidates	I-INFER		c14_expressions,c15_calls
+inference.go:1654	hasInferenceCandidatesOrDefault	I-INFER		c50_contextual_properties_inference_context
+inference.go:1669	hasOverlappingInferences	I-INFER		c14_expressions
+inference.go:1678	c.mergeInferences	I-INFER		c14_expressions
+checker.go:11997	c.forEachProperty	R-REL		c18_identifiers_property_access_this
+checker.go:12011	c.getDeclaringClass	R-REL		c18_identifiers_property_access_this
+checker.go:13217	c.isExactOptionalPropertyMismatch	R-REL		c19_assertions_binary_operators,jsx.go

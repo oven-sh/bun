@@ -1,0 +1,44 @@
+file p6.ts bytes=171
+s_expr 0
+  e_binary 0 op=bin_assign
+    e_identifier 0 name="x"
+    e_arrow 4
+      b_identifier 11 name="a"
+      e_await 15
+        e_number 21 value=1
+      b_identifier 24 name="b"
+      s_expr 32
+        e_await 32
+          e_identifier 38 name="a"
+s_expr 44
+  e_binary 44 op=bin_assign
+    e_identifier 44 name="x"
+    e_arrow 48
+      b_identifier 49 name="a"
+      b_object 52
+        e_string 53 text="b"
+        b_identifier 53 name="b"
+      b_array 57
+        b_identifier 58 name="c"
+      e_identifier 63 name="d"
+      b_identifier 69 name="e"
+      s_return 75
+        e_identifier 75 name="a"
+s_function 78
+  b_identifier 89 name="a"
+  e_arrow 93
+    b_identifier 94 name="b"
+    s_return 100
+      e_identifier 100 name="b"
+s_expr 106
+  e_binary 106 op=bin_assign
+    e_identifier 106 name="x"
+    e_function 110
+      b_identifier 128 name="a"
+      s_expr 133
+        e_yield 133
+          e_identifier 139 name="a"
+s_expr 145
+  e_binary 145 op=bin_assign
+    e_identifier 145 name="x"
+    e_function 149

@@ -1,0 +1,1 @@
+{"files":1,"bytes":1506667,"tokens":334090,"paren":9608,"arrowParen":10,"asyncArrowParen":0,"asyncWord":24,"classMembers":4,"arrowExprBody":5,"comments":1,"lessThan":421}

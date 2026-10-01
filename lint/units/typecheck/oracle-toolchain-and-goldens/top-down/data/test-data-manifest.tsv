@@ -1,0 +1,26 @@
+# Everything planned under test/cli/lint/typecheck/ (sizes measured on 215 cases = 218 units + 4 synthetic inputs; gzip -9 or tar.gz).
+# path	made by	raw bytes	packed bytes	read by	committed or generated	note
+dump-ast.ts	hand (units/typecheck/ts-dump-and-test-importer/top-down/probe/dump-ast.ts)	15800	-	dumps.sh, K5 runner	committed	TypeScript 6.0.2 tree to flat JSON, schema bun-tsast v1
+typecheck.test.ts	hand	-	-	CI (bun bd test)	committed	the only file the runner picks up (name holds .test); one spawn per group, never one per fixture
+.gitattributes	hand	8	-	git	committed	`* -text`: 158 of the 215 cases hold a CR, and .json, .ts are `text eol=lf` at the root
+UPSTREAM, LICENSE-APACHE	hand	-	-	-	committed	repository and commits of the cases, lib files and goldens
+fixtures/cases/*.ts(x)	copy of _submodules/TypeScript/tests/cases (SELECTION.tsv column 2)	165274	50471	dump-ast.ts, binder and checker tests	committed	215 files, flat (base names are unique), longest base name 105 characters
+fixtures/baselines/*.symbols	copy of testdata/baselines/reference/submodule	884941	105794	binder test (declaration names)	committed	215 files; TypeScript's own differ in bytes for some (892076)
+fixtures/baselines/*.errors.txt	copy of testdata/baselines/reference/submodule	475272	60800	binder and checker tests	committed	138 files
+fixtures/baselines/*.types	copy of testdata/baselines/reference/submodule	637010	96137	checker (after the printer)	later	215 files
+fixtures/synthetic/*	units/typecheck/binder-port-and-fixtures/data/synthetic	709	-	binder test	committed	4 files: statements of the binder that no case reaches
+dumps/cases.ast.json.gz	bun dump-ast.ts over the units	1024279	269883	test importer	committed	measured on 200 cases = 269 units; a test cannot make it (TypeScript takes 26 s to load under the debug build)
+golden/tree/*.tsgo.txt (one tar.gz)	oracle tree -nojsdoc	2318309	318053	importer test	committed	222 units; the importer prints the same text from the node table
+golden/bind/*.bind.txt (one tar.gz)	oracle bind	2652759	537520	binder test	committed	222 units, format bind-dump v1; identical to units/typecheck/binder-port-and-fixtures/data/bind-dumps.tar.gz
+golden/types/*.types.txt (one tar.gz)	oracle types ... | oracle canon (golden/types/RUNS.txt)	2372196	267890	checker layer tests	committed	23 dumps, format types-dump v1 after canon; SCHEMA.txt 63 lines
+golden/checker/*.out.txt	oracle init, k4, rel, check, decl, print-decls (replay.sh)	about 200000	about 40000	checker tests with text	committed as needed	119 small files of the research passes, all regenerated identical
+fixtures/checker/*	units/typecheck/oracle-toolchain-and-goldens/top-down/fixtures and the inputs of the research passes	24161	-	checker layer tests	committed	39 files
+libs/*.d.ts	copy of internal/bundled/libs	3785075	558663	K4, K5	decision	108 files; node_modules/typescript/lib has 108 files of the same names, 7 differ (es5, es2015.collection, es2015.core, es2015.symbol, es2017.string, es2018.intl, es2020.intl)
+dumps/lib.es5.ast.json.gz	bun dump-ast.ts	948661	197820	K3 layer tests, K4 with --lib es5	committed	3 files: es5, decorators, decorators.legacy
+dumps/lib.es2015.ast.json.gz	bun dump-ast.ts	11254811	2242051	K5 (10750 of 12797 instances)	decision	19 files
+dumps/lib.es2025.full.ast.json.gz	bun dump-ast.ts	12182402	2433967	K4 with the default target	decision	82 files; esnext.full closure 93 files 12344486 / 2484228; all 108 files 15989865 / 3226295
+k5/manifest.jsonl.gz	oracle manifest	19365330	556878	K5 runner (program of each instance)	decision	12797 lines; owned by whoever owns the runner (units/conformance)
+k5/passing.txt	K5 runner	-	-	K5 ratchet	committed	grows only
+oracle/ (bootstrap.sh, replay.sh, probe/)	units/typecheck/oracle-toolchain-and-goldens/top-down	231007	65611	nobody in CI	decision	37 files of the probe (213830 bytes of Go); regenerates every golden above
+# totals: committed without lib dumps beyond es5 and without libs: about 9.5 MB raw, about 1.9 MB as stored (cases and baselines plain, dumps and goldens packed).
+# with the es2025.full lib dump and the 108 lib files: + 16.0 MB raw, + 3.0 MB packed. The largest tracked file of test/ today is 9.0 MB; test/ is 87.9 MB in 15000 files.

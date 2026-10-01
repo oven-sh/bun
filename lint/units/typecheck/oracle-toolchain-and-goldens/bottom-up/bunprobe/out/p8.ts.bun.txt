@@ -1,0 +1,2 @@
+file p8.ts bytes=256
+error: does not parse (errors=4)

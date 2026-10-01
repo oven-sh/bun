@@ -1,0 +1,89 @@
+bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889 typescript 6.0.2
+"x = a ? (b): c => (d) : e => f;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (b) => (d) : e => f;
+     bun.ts  OK  x = a ? b : (c) => (d) => f;
+"x = a ? (b): T => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  OK  x = a ? b : (T) => (c) => e;
+"x = a ? (b): T => ({ c }) : d => ({ d });"
+     tsc-GRAM  TS18004@21 (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (b) => ({ c }) : d => ({ d });
+     bun.ts  OK  x = a ? b : (T) => ({ c }) => ({ d });
+"x = a ? y => (b): c => (d) : e => f;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? y => (b) => (d) : e => f;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? <T>(b): c => (d) : e => f;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@19,TS1382@30,TS1382@19,TS1382@30,TS17008@9,TS1005@34
+     tsc.js  "use strict"; x = a ? (b) => (d) : e => f;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? async (b): c => (d) : e => f;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? async (b) => (d) : e => f;
+     bun.ts  OK  x = a ? async(b) : (c) => (d) => f;
+"x = a ? (b: B) => (c) : d => e;"
+     tsc-REJ TS1005@30   
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? () => (c) : d => e;"
+     tsc-REJ TS1005@26   
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? (a1, b: B) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (a1, b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? <T>(b: B) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@19,TS1382@30,TS1382@19,TS1382@30,TS17008@9,TS1005@34
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? (a1, ...r) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006,TS7019) 
+     tsc.js  "use strict"; x = a ? (a1, ...r) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? (a1, b?) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (a1, b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? ({ b }: B) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? ({ b }) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? y => ({ y }) : z => ({ z });"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? y => ({ y }) : z => ({ z });
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? (a1, b) => ({ a1, b }) : c => ({ c });"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? (a1, b) => ({ a1, b }) : c => ({ c });
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? async () : c => d;"
+     tsc-REJ TS1005@25   
+     bun.ts  OK  x = a ? async() : (c) => d;
+"x = a ? async (...b) : c => d;"
+     tsc-REJ TS1005@29   
+     bun.ts  OK  x = a ? async(b) : (c) => d;
+"x = new <T>(b);"
+     tsc-REJ TS1109@8   
+     bun.ts  OK  x = new b;
+     bun.tsx ERR Syntax Error
+"x = a ? z = (b) : c => d;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = a ? z = (b) : c => d;
+     bun.ts  ERR Expected ":" but found ";"
+"x = y ? a ? ((b)) : c => d : z;"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; x = y ? a ? ((b)) : c => d : z;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? ((b)): c => d : e;"
+     tsc-REJ TS1005@22   
+     bun.ts  OK  x = a ? (b) => d : e;
+"switch (x) { case ((b)): c => d; }"
+     tsc-OK    (also TS2304,TS7006) 
+     tsc.js  "use strict"; switch (x) { case ((b)): c => d; }
+     bun.ts  ERR Expected ":" but found ";"
+"x = ((b)): c => d;"
+     tsc-REJ TS1005@9   
+     bun.ts  OK  x = (b) => d;

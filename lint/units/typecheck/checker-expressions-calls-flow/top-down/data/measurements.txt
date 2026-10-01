@@ -1,0 +1,54 @@
+Measurements of the reference (typescript-go at 89d5d5b), made with the probes of ../groundtruth and ../probe.
+The layer model is the one of ../../bottom-up (py/layers.py): 487 functions, 10467 lines, 123 closures, 197 diagnostic codes.
+
+1. Nesting in the test cases (probe/depthscan.cjs, TypeScript 6.0.2, 12445 files of tests/cases/compiler and conformance;
+   the same figures as ../../bottom-up/data/depth-summary.tsv)
+   directly nested expressions on one path: binderBinaryExpressionStress.ts 4953, binderBinaryExpressionStressJs.ts 4953,
+   parsingDeepParenthensizedExpression.ts 280, jsdocTypeFromChainedAssignment3.ts 101, uncalledFunctionChecksInConditionalPerf.ts 52,
+   nestedUnaryExpressionHang.ts 30; every other file is at 28 or below. More than 100: 4 files, more than 500: 2 files.
+   The stress file holds two chains: 0 + 1 + ... + 1499 (1499 binary expressions) and '' + '' + ... (4953 binary expressions).
+
+2. Go stack that the reference needs (checkprobe -maxstack N: parse, bind and check run on one goroutine; a Go stack doubles)
+   min.ts with the default libraries: passes with 32 KB.
+   binderBinaryExpressionStress.ts: fails with 2 MB, passes with 4 MB.
+   largeControlFlowGraph.ts: fails with 1 MB, passes with 2 MB (10000 statements data[0] = 0; the depth counter stops at 2000 and
+   the expected output is TS2563 at the first token of the file).
+   Of the 211 largest and deepest case files (go_stack_256k_sample.tsv: 150 by node count, 60 by tree depth, 40 by statement nesting)
+   208 pass with 256 KB; the three that do not are the two stress files and largeControlFlowGraph.ts.
+   Calls per level upstream: a nested binary expression is 4 (checkExpressionEx, checkExpressionWorker, checkBinaryExpression,
+   checkBinaryLikeExpression); a flow node is 2 or more (getTypeAtFlowNode and one of its eight helpers).
+   Bun gives a pool thread 4 MB on Linux and 18 MB on Windows (src/threading/ThreadPool.rs:687); bun_core::StackCheck keeps 128 KB
+   free (256 KB on Windows, 384 KB more under ASAN, src/bun_core/util.rs:2203).
+
+3. K4: const x: number = "s"; (groundtruth/out/min.*.out.txt, k4_*_blocks.tsv, k4_*_functions.tsv)
+   Output in every setting: min.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+   with lib.es5.d.ts only: 264 functions of the checker entered, 12 of the twelve layers (E-CORE 5: checkExpressionCached,
+   checkExpressionCachedEx, checkExpressionEx, instantiateTypeWithSingleGenericCallSignature, checkExpressionWorker; E-FACTS 1:
+   convertAutoToAny; F-NARROW 2: getFlowState, putFlowState; F-REACH 2: isReachableFlowNode, isReachableFlowNodeWorker; F-UNREACH 2).
+   flowInvocationCount 0: no type is computed at a flow node; reachability of the one statement is asked once.
+   After NewChecker TypeCount 85, SymbolCount 6, SignatureCount 4; after the check 87, 6, 4.
+   with the default library of the reference (lib.es2025.full.d.ts and the 81 files it references, 2.94 MB): 353 functions entered,
+   38 of the twelve layers (E-CORE 9, E-ACCESS 12, E-FACTS 3, F-NARROW 10, F-REACH 2, F-UNREACH 2). flowInvocationCount 2:
+   getFlowTypeOfReferenceEx runs for the identifier Symbol and for the access Symbol.iterator, getTypeAtFlowNode twice through its
+   Start arm. One FlowState is made and taken three times. checkExpressionEx runs three times (the literal "s", Symbol.iterator,
+   Symbol). After NewChecker TypeCount 85, SymbolCount 221, SignatureCount 4; after the check 89, 222, 5.
+   The same 38 functions with lib.esnext.full.d.ts (93 files).
+   Why: the elaboration of the failed assignment (elaborateDidYouMeanToCallOrConstruct, relater.go:478) asks for the call signatures
+   of the source type "s"; its apparent type is the global String; resolving the members of String late binds the member
+   [Symbol.iterator] that lib.es2015.iterable.d.ts adds; checkComputedPropertyName (26925) checks the expression Symbol.iterator.
+   Functions of later steps that this run enters: checkComputedPropertyName, isInvalidComputedPropertyName (K-KEYOF); isSelfTypeAccess,
+   isAssignmentToReadonlyEntity, isThisPropertyAccessInConstructor (K-INDEXED); getConditionalFlowTypeOfType, isNoInferType (K-SUBST);
+   getTemplateLiteralType (K-TEMPLATE); isSkipDirectInferenceNode (I-INFER); markLinkedReferences,
+   shouldMarkIdentifierAliasReferenced (X-MARKREF); 7 collision checks (X-COLLISION); the source file, variable statement and
+   grammar checks (X-SOURCE 4, X-DEFERRED 1, X-VAR 6, X-ALIAS-UNUSED 2, X-GRAMMAR 8).
+
+4. Vectors of this pass (groundtruth/inputs, groundtruth/out): flow1.ts, calls1.ts, unreach1.ts with the diagnostics, the state
+   counters after the check and the executed blocks of the twelve layers (134, 138 and 72 functions). TS7027 is a suggestion unless
+   allowUnreachableCode is false: the probe prints it with -unreachable-error. The ten inputs of ../../bottom-up/groundtruth enter
+   417 of the 487 functions; they were run with lib.es5.d.ts and seven es2015 files.
+
+5. Cross-check of the stack tests: py/recursion.py builds the call graph with the calls through the function-valued fields of
+   the checker (markNodeAssignments, couldContainTypeVariables, isStringIndexSignatureOnlyType, compareTypesAssignable, evaluate,
+   resolveName) and finds no cycle through the 487 functions that avoids the 54 entries of ../../bottom-up/data/recursion.txt,
+   with and without the type printer in the graph. One recursion is outside the call graph: the two closures of
+   getInstantiationExpressionType (10773-10814).

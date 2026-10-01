@@ -1,0 +1,5 @@
+layer	site	function	helper	arguments after the first
+E-CORE	checker.go:7560	c.reportObjectPossiblyNullOrUndefinedError	IfElse	core.IfElse(facts&TypeFactsIsNull != 0, diagnostics.X_0_is_possibly_null_or_undefined, diagnostics.X_0_is_possibly_undefined) | diagnostics.X_0_is_possibly_null
+E-CORE	checker.go:7566	c.reportObjectPossiblyNullOrUndefinedError	IfElse	core.IfElse(facts&TypeFactsIsNull != 0, diagnostics.Object_is_possibly_null_or_undefined, diagnostics.Object_is_possibly_undefined) | diagnostics.Object_is_possibly_null
+E-CALL	checker.go:9231	c.hasCorrectArity	IfElse	len(args) | 1
+E-CALL	checker.go:9985	c.reportCannotInvokePossiblyNullOrUndefinedError	IfElse	core.IfElse(facts&TypeFactsIsNull != 0, diagnostics.Cannot_invoke_an_object_which_is_possibly_null_or_undefined, diagnostics.Cannot_invoke_an_object_which_is_possibly_undefined) | diagnostics.Cannot_i

@@ -1,0 +1,13 @@
+arrayLiteralLinks	E-CALL: getSpreadIndices
+assertionLinks	E-CORE: checkAssertion checkAssertionDeferred
+exportTypeLinks	E-CALL: invocationErrorRecovery
+mappedSymbolLinks	E-LITERAL: tryMergeUnionOfObjectTypeAndEmptyObject getSpreadSymbol; F-NARROW: getExplicitTypeOfSymbol
+markedAssignmentSymbolLinks	F-NARROW: isSymbolAssignedDefinitely isSymbolAssigned isPastLastAssignment ensureAssignmentsMarked markNodeAssignmentsWorker
+nodeLinks	E-LITERAL: checkRegularExpressionLiteral; E-ACCESS: checkSuperExpression parameterInitializerContainsUndefined reportNonexistentProperty getNarrowedTypeOfSymbol; E-FUNC: contextuallyCheckFunctionExpressionOrObjectLiteralMethod; F-NARROW: ensureAssignmentsMarked hasParentWithAssignmentsMarked
+signatureLinks	E-CALL: getResolvedSignature resolveCall; E-CTX: getContextuallyTypedParameterType getContextualTypeForArgumentAtIndex; F-NARROW: getEffectsSignature
+spreadLinks	E-LITERAL: getSpreadType
+switchStatementLinks	F-NARROW: isExhaustiveSwitchStatement getSwitchClauseTypeOfWitnesses getSwitchClauseTypes
+symbolNodeLinks	E-OPER: checkAssignmentOperator checkInExpression; E-ACCESS: getSymbolForPrivateIdentifierExpression checkPropertyAccessExpressionOrQualifiedName
+symbolReferenceLinks	E-ACCESS: markPropertyAsReferenced
+typeNodeLinks	E-CORE: checkExpressionCachedEx; F-NARROW: getTypeOfInitializer
+valueSymbolLinks	E-LITERAL: checkObjectLiteral getSpreadType tryMergeUnionOfObjectTypeAndEmptyObject getSpreadSymbol; E-ACCESS: forEachProperty markPropertyAsReferenced; E-FUNC: assignParameterType assignBindingElementTypes; E-CTX: getContextualTypeForObjectLiteralElement isCircularMappedProperty

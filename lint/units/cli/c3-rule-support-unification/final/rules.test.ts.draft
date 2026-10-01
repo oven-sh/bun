@@ -1,0 +1,48 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
+
+// Cases marked eslintTest are from tests/lib/rules of eslint/eslint at the commit in src/lint/UPSTREAM_PORTED (MIT, src/lint/LICENSE.eslint).
+type Report = { line: number; column: number; message: string };
+type Case = { code: string; jsx?: true; expect: Report[]; differs?: string; eslint?: Report[]; eslintTest?: true };
+
+const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
+const rulesDir = join(import.meta.dir, "rules");
+
+for (const file of [...new Bun.Glob("*.json").scanSync(rulesDir)].sort()) {
+  const rule = file.slice(0, -".json".length);
+  test.concurrent(rule, async () => {
+    const cases: Case[] = await Bun.file(join(rulesDir, file)).json();
+    const names = cases.map((c, i) => `c${String(i).padStart(4, "0")}.${c.jsx ? "jsx" : "js"}`);
+    using dir = tempDir(`lint-${rule}`, Object.fromEntries(cases.map((c, i) => [names[i], c.code])));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--lint", ...names],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const got: Report[][] = cases.map(() => []);
+    const unexpected: string[] = [];
+    for (const line of stderr.split("\n")) {
+      const m = /^c(\d{4})\.jsx?\((\d+),(\d+)\): error ([^:]+): (.*)$/.exec(line);
+      if (!m) {
+        if (line) unexpected.push(line);
+      } else if (m[4] === rule) {
+        got[+m[1]].push({ line: +m[2], column: +m[3], message: m[5] });
+      } else if (m[4] === "syntax" || m[4] === "internal-error") {
+        unexpected.push(line);
+      }
+    }
+    // The plain format writes a line break inside a text as a space.
+    const printed = (r: Report) => ({ ...r, message: r.message.replace(/[\r\n]/g, " ") });
+    expect(unexpected).toEqual([]);
+    expect(cases.map((c, i) => ({ code: c.code, reports: got[i] }))).toEqual(
+      cases.map(c => ({ code: c.code, reports: c.expect.map(printed) })),
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(2);
+  });
+}

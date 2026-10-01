@@ -1,0 +1,23 @@
+class	arguments	example	example baseline
+01-keyword	9718	any	allowSyntheticDefaultImports9.errors.txt
+02-literal	2670	"api"	cjsObjectDefinePropertyPrivateModuleDeclarationEmit.errors.txt
+03-identifier	29029	foo	allowSyntheticDefaultImports9.errors.txt
+04-qualified-name	394	B.Outer	deeplyNestedArrayTypes.errors.txt
+05-other-single-token	2951	mapper@1.0.0	contentMapperSupplementalDiagnostics.errors.txt
+06-other-text	189	class Aéé	unicodeSpellingSuggestions.errors.txt
+10-array	454	B.Inner[]	deeplyNestedArrayTypes.errors.txt
+10-conditional	78	Recur<T>[number] & (T extends unknown[] ? {} : { [K in keyof T]?: Recur<T[K]> | undefined; })[number	recursiveIndexedAccessSimplification.errors.txt
+10-constructor	513	{ new (): ErrImpl<number>; prototype: ErrImpl<any>; } & (() => number)	aliasInstantiationExpressionGenericIntersectionNoCrash1.errors.txt
+10-function	1641	(a: string) => void	functionTypeParameterNameFromTupleLabel.errors.txt
+10-generic	2144	Foo<unknown>	circularVariance1.errors.txt
+10-import-type	167	import("/node_modules/c/node_modules/x/index").default	deduplicatePackages(deduplicatepackages=false).errors.txt
+10-intersection	169	typeof A & typeof B	declarationEmitForMixinsWithStaticAccessors1.errors.txt
+10-keyof	83	keyof IntrinsicElements	errorInfoForRelatedIndexTypesNoConstraintElaboration.errors.txt
+10-mapped	36	<N extends string, QR>(queries: { [QK in keyof QR]: any; }) => (state?: { queries: QR; }) => { queri	instantiationExpressionErrorNoCrash.errors.txt
+10-object	2381	{ c: number; f: any; }	circularDestructuring.errors.txt
+10-predicate	34	 is not assignable to type 	exportAssignmentExpressionIsExpressionNode.errors.txt
+10-rest-or-elision	52	concat(...)	arrayOfSubtypeIsAssignableToReadonlyArray.errors.txt
+10-template	140	`${Path}/${Path}`	templateLiteralIntersection2.errors.txt
+10-tuple-or-index	885	[B.Inner]	deeplyNestedTupleTypes.errors.txt
+10-typeof	432	typeof C	declarationEmitForMixinsWithStaticAccessors1.errors.txt
+10-union	1141	string | number	circularDestructuring.errors.txt

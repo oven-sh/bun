@@ -1,0 +1,195 @@
+{"loader":"ts","code":"import 1","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"import ;","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"x = 1 + (a) => a","tsc":["TS1005@12+2 ';' expected."]}
+{"loader":"ts","code":"x = 1 + a => a","tsc":["TS1005@10+2 ';' expected."]}
+{"loader":"tsx","code":"x = <div {1}></div>","tsc":["TS1005@10+1 '...' expected."]}
+{"loader":"tsx","code":"x = <div {a}></div>","tsc":["TS1005@10+1 '...' expected."]}
+{"loader":"tsx","code":"x = <div {\"a\"}></div>","tsc":["TS1005@10+3 '...' expected."]}
+{"loader":"tsx","code":"x = <div>","tsc":["TS17008@5+3 JSX element 'div' has no corresponding closing tag.","TS1005@9+0 '</' expected."]}
+{"loader":"tsx","code":"x = <div></div","tsc":["TS1005@14+0 '>' expected."]}
+{"loader":"tsx","code":"x = <div a={}></div>","tsc":[]}
+{"loader":"ts","code":"x = {get *a() {}}","tsc":["TS1005@9+1 ',' expected."]}
+{"loader":"ts","code":"x = {*get a() {}}","tsc":["TS1005@10+1 '(' expected."]}
+{"loader":"ts","code":"class A { static *[Symbol.iterator]*() {} }","tsc":["TS1005@35+1 '(' expected.","TS1003@36+1 Identifier expected."]}
+{"loader":"ts","code":"let f: (1) => void;","tsc":["TS1005@11+2 ';' expected.","TS1109@18+1 Expression expected."]}
+{"loader":"ts","code":"let f: ({1x}) => void;","tsc":["TS1351@10+1 An identifier or keyword cannot immediately follow a numeric literal.","TS1131@9+1 Property or signature expected.","TS1005@10+1 ';' expected.","TS1128@11+1 Declaration or statement expected.","TS1128@12+1 Declaration or statement expected.","TS1128@14+2 Declaration or statement expected.","TS1109@21+1 Expression expected."]}
+{"loader":"ts","code":"let f: ({...1}) => void;","tsc":["TS1131@9+3 Property or signature expected.","TS1005@16+2 ';' expected.","TS1109@23+1 Expression expected."]}
+{"loader":"ts","code":"let f: (a, ) => void;","tsc":[]}
+{"loader":"ts","code":"let f: (a b) => void;","tsc":["TS1005@10+1 ')' expected.","TS1005@11+1 ',' expected.","TS1005@13+2 ';' expected.","TS1109@20+1 Expression expected."]}
+{"loader":"ts","code":"type T = { a: 1 b: 2 }","tsc":["TS1005@16+1 ';' expected."]}
+{"loader":"ts","code":"type T = { ; }","tsc":["TS1131@11+1 Property or signature expected."]}
+{"loader":"ts","code":"type T = { + }","tsc":["TS1131@11+1 Property or signature expected.","TS1109@13+1 Expression expected."]}
+{"loader":"ts","code":"type T = { 1 + }","tsc":["TS1131@11+1 Property or signature expected.","TS1109@15+1 Expression expected."]}
+{"loader":"ts","code":"type T = [function: number]","tsc":[]}
+{"loader":"ts","code":"type T = [if: number]","tsc":["TS1110@10+2 Type expected.","TS1005@12+1 '(' expected.","TS1434@14+6 Unexpected keyword or identifier.","TS1128@20+1 Declaration or statement expected."]}
+{"loader":"ts","code":"type T = [a?: number, b]","tsc":[]}
+{"loader":"ts","code":"type T = [const: number]","tsc":["TS1110@10+5 Type expected.","TS1134@15+1 Variable declaration expected.","TS1005@23+1 ',' expected."]}
+{"loader":"ts","code":"x = (a?)","tsc":["TS1005@8+0 '=>' expected."]}
+{"loader":"ts","code":"x = (a?, b)","tsc":["TS1005@11+0 '=>' expected."]}
+{"loader":"ts","code":"x = ({a = 1})","tsc":[]}
+{"loader":"ts","code":"x = (a: number)","tsc":["TS1005@15+0 '=>' expected."]}
+{"loader":"ts","code":"x = (...a)","tsc":["TS1005@10+0 '=>' expected."]}
+{"loader":"ts","code":"x = (a, ...b)","tsc":["TS1109@8+3 Expression expected.","TS1434@11+1 Unexpected keyword or identifier.","TS1128@12+1 Declaration or statement expected."]}
+{"loader":"ts","code":"x = ()","tsc":["TS1109@5+1 Expression expected."]}
+{"loader":"ts","code":"x = a ?? b || c","tsc":[]}
+{"loader":"ts","code":"x = a && b ?? c","tsc":[]}
+{"loader":"ts","code":"@dec","tsc":["TS1146@4+0 Declaration expected."]}
+{"loader":"ts","code":"@dec enum E {}","tsc":[]}
+{"loader":"ts","code":"@dec function f() {}","tsc":[]}
+{"loader":"ts","code":"@dec abstract\nclass A {}","tsc":["TS1146@4+0 Declaration expected."]}
+{"loader":"ts","code":"@dec declare\nclass A {}","tsc":["TS1146@4+0 Declaration expected."]}
+{"loader":"ts","code":"@dec declare function f();","tsc":[]}
+{"loader":"ts","code":"export foo","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"export 1","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"namespace N { export default 1 }","tsc":[]}
+{"loader":"ts","code":"namespace N { export * from 'x' }","tsc":[]}
+{"loader":"ts","code":"namespace N { export { a } from 'x' }","tsc":[]}
+{"loader":"ts","code":"namespace N { import 'x' }","tsc":[]}
+{"loader":"ts","code":"namespace N { import * as a from 'x' }","tsc":[]}
+{"loader":"ts","code":"namespace N { import { a } from 'x' }","tsc":[]}
+{"loader":"ts","code":"namespace N { import a from 'x' }","tsc":[]}
+{"loader":"ts","code":"if (x) { import a from 'x' }","tsc":[]}
+{"loader":"ts","code":"if (x) { export { a } }","tsc":[]}
+{"loader":"ts","code":"if (x) { export default 1 }","tsc":[]}
+{"loader":"ts","code":"if (x) { export const a = 1 }","tsc":[]}
+{"loader":"ts","code":"for await (;;) {}","tsc":["TS1005@11+1 'of' expected."]}
+{"loader":"ts","code":"for await (x in y) {}","tsc":["TS1005@13+2 'of' expected."]}
+{"loader":"ts","code":"class A { constructor() { #a } }","tsc":[]}
+{"loader":"ts","code":"class A { #a; m() { #a } }","tsc":[]}
+{"loader":"ts","code":"class A { #a; m() { #a + 1 } }","tsc":[]}
+{"loader":"ts","code":"await a ** b","tsc":["TS17006@0+7 An unary expression with the 'await' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."]}
+{"loader":"ts","code":"x = void a ** b","tsc":["TS17006@4+6 An unary expression with the 'void' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."]}
+{"loader":"ts","code":"x = delete a ** b","tsc":["TS17006@4+8 An unary expression with the 'delete' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."]}
+{"loader":"ts","code":"x = +a ** b; y = ~a ** b; z = !a ** b","tsc":["TS17006@4+2 An unary expression with the '+' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.","TS17006@17+2 An unary expression with the '~' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.","TS17006@30+2 An unary expression with the '!' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses."]}
+{"loader":"ts","code":"x = a!\n!b","tsc":[]}
+{"loader":"ts","code":"switch (x) { case 1: ) }","tsc":["TS1129@21+1 Statement expected."]}
+{"loader":"ts","code":"a\n)","tsc":["TS1128@2+1 Declaration or statement expected."]}
+{"loader":"ts","code":"if (x) )","tsc":["TS1109@7+1 Expression expected."]}
+{"loader":"ts","code":"x = )","tsc":["TS1109@4+1 Expression expected."]}
+{"loader":"ts","code":"{ ) }","tsc":["TS1128@2+1 Declaration or statement expected."]}
+{"loader":"ts","code":")","tsc":["TS1128@0+1 Declaration or statement expected."]}
+{"loader":"ts","code":"default","tsc":["TS1005@0+7 'export' expected."]}
+{"loader":"ts","code":"x = `${)}`","tsc":["TS1109@7+1 Expression expected.","TS1128@8+1 Declaration or statement expected.","TS1160@10+0 Unterminated template literal."]}
+{"loader":"ts","code":"class A { ) }","tsc":["TS1068@10+1 Unexpected token. A constructor, method, accessor, or property was expected."]}
+{"loader":"ts","code":"x = { ) }","tsc":["TS1136@6+1 Property assignment expected."]}
+{"loader":"ts","code":"x = [ ) ]","tsc":["TS1137@6+1 Expression or comma expected."]}
+{"loader":"ts","code":"f( ; )","tsc":["TS1005@3+1 ')' expected.","TS1128@5+1 Declaration or statement expected."]}
+{"loader":"ts","code":"let [ 1 ] = x","tsc":["TS1181@6+1 Array element destructuring pattern expected.","TS1005@8+1 ';' expected.","TS1128@10+1 Declaration or statement expected."]}
+{"loader":"ts","code":"let { 1 } = x","tsc":["TS1005@8+1 ':' expected."]}
+{"loader":"ts","code":"function f( 1 ) {}","tsc":["TS1003@12+1 Identifier expected."]}
+{"loader":"ts","code":"function f<1>() {}","tsc":["TS1139@11+1 Type parameter declaration expected.","TS1109@14+1 Expression expected.","TS1005@16+1 ';' expected."]}
+{"loader":"ts","code":"f<1,>()","tsc":[]}
+{"loader":"ts","code":"let x: Array<>","tsc":[]}
+{"loader":"ts","code":"let x: [ , ]","tsc":["TS1110@9+1 Type expected."]}
+{"loader":"ts","code":"enum E { 1 }","tsc":[]}
+{"loader":"ts","code":"enum E { + }","tsc":["TS1132@9+1 Enum member expected.","TS1109@11+1 Expression expected."]}
+{"loader":"ts","code":"class A extends B implements { }","tsc":[]}
+{"loader":"ts","code":"class A implements B extends C { }","tsc":[]}
+{"loader":"ts","code":"interface I implements B { }","tsc":[]}
+{"loader":"ts","code":"import { 1 } from 'x'","tsc":["TS1003@9+1 Identifier expected.","TS1128@11+1 Declaration or statement expected.","TS1434@13+4 Unexpected keyword or identifier."]}
+{"loader":"ts","code":"import { a } from 'x' with { 1: 'a' }","tsc":["TS1478@29+1 Identifier or string literal expected.","TS1005@30+1 ';' expected.","TS1128@36+1 Declaration or statement expected."]}
+{"loader":"ts","code":"export { 1 }","tsc":["TS1003@9+1 Identifier expected.","TS1128@11+1 Declaration or statement expected."]}
+{"loader":"ts","code":"let x = a as const as","tsc":["TS1110@21+0 Type expected."]}
+{"loader":"ts","code":"abstract\nclass A {}","tsc":[]}
+{"loader":"ts","code":"export interface\nI {}","tsc":["TS1128@0+6 Declaration or statement expected.","TS1434@17+1 Unexpected keyword or identifier."]}
+{"loader":"ts","code":"export abstract\nclass A {}","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"declare foo","tsc":[]}
+{"loader":"ts","code":"declare type\nT = 1","tsc":["TS1142@13+1 Line break not permitted here."]}
+{"loader":"ts","code":"export default interface = 2","tsc":["TS1003@25+1 Identifier expected."]}
+{"loader":"ts","code":"x = a?.[0]`t`","tsc":[]}
+{"loader":"ts","code":"x = a?.b`t`","tsc":[]}
+{"loader":"ts","code":"x = new a?.b()","tsc":["TS1209@9+2 Invalid optional chain from new expression. Did you mean to call 'a()'?"]}
+{"loader":"ts","code":"class A { 'constructor'() {} get constructor() {} }","tsc":[]}
+{"loader":"ts","code":"class A { async constructor() {} }","tsc":[]}
+{"loader":"ts","code":"class A { *constructor() {} }","tsc":[]}
+{"loader":"ts","code":"class A { static prototype() {} }","tsc":[]}
+{"loader":"ts","code":"class A { #constructor() {} }","tsc":[]}
+{"loader":"ts","code":"class A { #constructor = 1 }","tsc":[]}
+{"loader":"ts","code":"x = { get a(b) {} , set c() {} }","tsc":[]}
+{"loader":"ts","code":"function f() { return\n1 }","tsc":[]}
+{"loader":"ts","code":"x = async\n() => 1","tsc":["TS1005@13+2 ';' expected."]}
+{"loader":"ts","code":"export async\nfunction f() {}","tsc":["TS1128@0+6 Declaration or statement expected."]}
+{"loader":"ts","code":"for (let of x) {}","tsc":[]}
+{"loader":"ts","code":"for (let in x) {}","tsc":[]}
+{"loader":"ts","code":"x = a => {}\n()","tsc":["TS1109@13+1 Expression expected."]}
+{"loader":"ts","code":"label: function* g() {}","tsc":[]}
+{"loader":"ts","code":"function f(a = super.b) {}","tsc":[]}
+{"loader":"ts","code":"x = this","tsc":[]}
+{"loader":"ts","code":"class A { [this.x] = 1 }","tsc":[]}
+{"loader":"ts","code":"x = await => 1; async function f() { let await = 1 }","tsc":[]}
+{"loader":"ts","code":"function* g() { let yield = 1 }","tsc":[]}
+{"loader":"ts","code":"async function f() { function g(a = await 1) {} }","tsc":[]}
+{"loader":"ts","code":"async function f(a = await 1) {}","tsc":[]}
+{"loader":"ts","code":"function* g(a = yield 1) {}","tsc":[]}
+{"loader":"ts","code":"x = import(...a)","tsc":[]}
+{"loader":"ts","code":"x = new import('a')","tsc":["TS1109@8+6 Expression expected."]}
+{"loader":"ts","code":"import('a') = 1","tsc":[]}
+{"loader":"ts","code":"function f(...a,) {}","tsc":[]}
+{"loader":"ts","code":"function f(...a, b) {}","tsc":[]}
+{"loader":"ts","code":"let [...a,] = x","tsc":[]}
+{"loader":"ts","code":"let {...a,} = x","tsc":[]}
+{"loader":"ts","code":"[...a,] = x","tsc":[]}
+{"loader":"ts","code":"({...a,} = x)","tsc":[]}
+{"loader":"ts","code":"using x = 1, {a} = b","tsc":[]}
+{"loader":"ts","code":"export using x = 1","tsc":[]}
+{"loader":"ts","code":"declare using x: any","tsc":[]}
+{"loader":"ts","code":"class A { declare x = 1 }","tsc":[]}
+{"loader":"ts","code":"class A { accessor x() {} }","tsc":[]}
+{"loader":"ts","code":"class A { @dec constructor() {} }","tsc":[]}
+{"loader":"ts","code":"x = @dec.a?.b class {}","tsc":[]}
+{"loader":"ts","code":"x = @dec().b class {}","tsc":[]}
+{"loader":"ts","code":"x = delete this.#a","tsc":[]}
+{"loader":"ts","code":"class A { #a; m() { delete this.#a } }","tsc":[]}
+{"loader":"ts","code":"const x","tsc":[]}
+{"loader":"ts","code":"let x, y: number\nconst z","tsc":[]}
+{"loader":"ts","code":"for (var x = 1 in y) {}","tsc":[]}
+{"loader":"ts","code":"for (let x, y of z) {}","tsc":[]}
+{"loader":"ts","code":"switch (x) { default: default: }","tsc":[]}
+{"loader":"ts","code":"break","tsc":[]}
+{"loader":"ts","code":"continue","tsc":[]}
+{"loader":"ts","code":"a: a: x","tsc":[]}
+{"loader":"ts","code":"return","tsc":[]}
+{"loader":"ts","code":"let x = 08; let y = 0o8; let z = 1_000_; let w = 0_1","tsc":["TS1489@8+2 Decimals with leading zeros are not allowed.","TS1178@22+0 Octal digit expected.","TS6188@38+1 Numeric separators are not allowed here.","TS6188@50+1 Numeric separators are not allowed here."]}
+{"loader":"ts","code":"let x = \"\\08\"","tsc":["TS1487@9+2 Octal escape sequences are not allowed. Use the syntax '\\x00'."]}
+{"loader":"ts","code":"x = a ? (b) : c => d : e","tsc":[]}
+{"loader":"ts","code":"if (x) function f() {}","tsc":[]}
+{"loader":"ts","code":"while (x) const y = 1","tsc":[]}
+{"loader":"ts","code":"x = {a: 1, a: 2, __proto__: 1, __proto__: 2}","tsc":[]}
+{"loader":"ts","code":"function f(a, a) { 'use strict' }","tsc":[]}
+{"loader":"ts","code":"let a; let a;","tsc":[]}
+{"loader":"ts","code":"export { x }; export { x }","tsc":[]}
+{"loader":"ts","code":"x = 1 = 2","tsc":[]}
+{"loader":"ts","code":"1++","tsc":[]}
+{"loader":"ts","code":"for (1 of x) {}","tsc":[]}
+{"loader":"ts","code":"[a + 1] = x","tsc":[]}
+{"loader":"ts","code":"({a: 1} = x)","tsc":[]}
+{"loader":"ts","code":"x = class { static { await } }","tsc":["TS1109@27+1 Expression expected."]}
+{"loader":"ts","code":"x = 0777; 'use strict'","tsc":["TS1121@4+4 Octal literals are not allowed. Use the syntax '0o777'."]}
+{"loader":"ts","code":"with (a) b","tsc":[]}
+{"loader":"ts","code":"x = yield","tsc":[]}
+{"loader":"ts","code":"let x: import('a', { with: { a: 1 } })","tsc":[]}
+{"loader":"ts","code":"let x: import('a').b<>","tsc":[]}
+{"loader":"ts","code":"type T<> = 1","tsc":[]}
+{"loader":"ts","code":"class A<> {}","tsc":[]}
+{"loader":"ts","code":"new A<>()","tsc":[]}
+{"loader":"ts","code":"f<>()","tsc":[]}
+{"loader":"ts","code":"function f(): asserts {}","tsc":[]}
+{"loader":"ts","code":"function f(x): x is {}","tsc":[]}
+{"loader":"ts","code":"let x: asserts y","tsc":[]}
+{"loader":"ts","code":"let x: y is z","tsc":["TS1005@9+2 ',' expected.","TS1005@12+1 ',' expected."]}
+{"loader":"ts","code":"let a: abstract () => void","tsc":["TS1005@16+1 ',' expected.","TS1109@26+0 Expression expected."]}
+{"loader":"ts","code":"let a: new","tsc":["TS1005@10+0 '(' expected."]}
+{"loader":"ts","code":"let a: keyof","tsc":["TS1110@12+0 Type expected."]}
+{"loader":"ts","code":"let a: A | ","tsc":["TS1110@10+0 Type expected."]}
+{"loader":"ts","code":"let a: A & ","tsc":["TS1110@10+0 Type expected."]}
+{"loader":"ts","code":"let a: A[][","tsc":["TS1005@11+0 ']' expected."]}
+{"loader":"ts","code":"let a: A[1","tsc":["TS1005@10+0 ']' expected."]}
+{"loader":"ts","code":"let a: { [K in ] }","tsc":["TS1110@15+1 Type expected."]}
+{"loader":"ts","code":"let a: { [K in B as ]: 1 }","tsc":["TS1110@20+1 Type expected."]}
+{"loader":"ts","code":"let a: { readonly [K in B]-: 1 }","tsc":["TS1005@27+1 '?' expected."]}
+{"loader":"ts","code":"let a: { -x: 1 }","tsc":["TS1131@9+1 Property or signature expected.","TS1005@11+1 ';' expected.","TS1128@15+1 Declaration or statement expected."]}
+{"loader":"ts","code":"let a: { get }","tsc":[]}
+{"loader":"ts","code":"let a: { get x }","tsc":["TS1005@15+1 '(' expected."]}
+{"loader":"ts","code":"let a: { new }","tsc":[]}
+{"loader":"ts","code":"let a: { (): }","tsc":["TS1110@13+1 Type expected."]}
+{"loader":"ts","code":"let a: { <T>: 1 }","tsc":["TS1005@12+1 '(' expected."]}

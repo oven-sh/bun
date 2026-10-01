@@ -1,0 +1,111 @@
+# escaped keywords
+type T = \u006Beyof A
+type T = k\u0065yof A
+type T = str\u0069ng
+type T = str\u0069ng.a
+type T = \u0076oid
+type T = A.\u0076oid
+type T = \u0069nfer U
+type T = readonl\u0079 A[]
+type T = un\u0069que symbol
+type T = unique s\u0079mbol
+type T = A extends B ? \u006Eever : 1
+type T = \u0074his
+type T = typ\u0065of a
+type T = \u0061sserts a
+type T = this \u0069s A
+function f(a: any): a \u0069s string { return true }
+function f(a: any): \u0061sserts a {}
+function f(a: any): asserts a \u0069s string {}
+type T = \u0061bstract new () => A
+type T = abstract n\u0065w () => A
+type T = n\u0065w () => A
+type T = \u0069mport("x")
+type T = A \u0065xtends B ? 1 : 2
+type T = \u0041
+type T = \u{41}
+type T = A.\u0042
+type T = typeof \u0061
+type T = infer \u0055
+let v = x as \u0063onst
+let v = x as c\u006Fnst
+type T = [\u0061: string]
+type T = { [\u006B in A]: B }
+# postfix with newline
+type T = A\n[]
+type T = A\n[0]
+type T = A[\n]
+type T = A[\n0\n]
+type T = A[]\n[]
+type T = A\n!
+type T = A\n?
+type T = A[,]
+type T = A[0,1]
+type T = A[0][1]
+type T = A[B extends C ? D : E]
+type T = A[() => void]
+type T = A[...B]
+type T = A[-1]
+type T = A[- a]
+type T = A[const]
+type T = A[if]
+type T = A[function]
+type T = A[(]
+type T = A[(B)]
+type T = A[(1)]
+type T = A[(a: B) => C]
+type T = A[(a = 1) => C]
+type T = A[keyof B]
+type T = A[infer U]
+type T = A[asserts b]
+type T = A[*]
+type T = A[?]
+type T = A[!B]
+type T = A[?B]
+type T = A[1 2]
+# postfix ?
+type T = A?
+type T = A??
+type T = A?[]
+type T = A[]?
+type T = A? | B
+type T = A | B?
+type T = (A | B)?
+type T = keyof A?
+type T = A?!
+type T = A!?
+type T = A ? B
+type T = A extends B ? C? : D
+type T = A extends B ? C : D?
+type T = A extends B? ? C : D
+type T = A extends B ?? C : D
+type T = A? extends B ? C : D
+type T = [A?, B]
+type T = [A?[]]
+type T = [A? | B]
+type T = [(A?)]
+type T = [A ? B : C]
+type T = [A?\n]
+type T = [A\n?]
+let x: A? = 1
+let x: A?\nlet y
+function f(a: A?) {}
+function f(a: A?, b: B?) {}
+function f(a?: A?) {}
+function f(): A? {}
+let f = (a: A?) => a
+let f = (a: A?): B? => a
+let v = x as A?
+let v = x as A ? y : z
+let v = x as A? ? y : z
+let v = c ? x as A : z
+let v = c ? (x as A?) : z
+class C { p: A?; }
+class C { p?: A?; }
+interface I { p: A? }
+interface I { p: A?, q: B? }
+type T = { p: A? }
+type T = { p: A?; q: B }
+type T = A<B?>
+type T = A<B?, C?>
+type T = (a: A?) => B?

@@ -1,0 +1,38 @@
+file q4.ts bytes=131 statements=5
+s_local @0
+  b_object @6
+    e_identifier @8 k
+    b_identifier @12 v
+    e_number @16
+    e_string @19
+    b_identifier @24 w
+    e_number @27
+    b_identifier @30 z
+    e_missing @40
+    b_identifier @36 rest
+  e_identifier @44 o
+  b_array @47
+    b_array @48
+      b_identifier @49 a
+    b_object @53
+      e_string @54
+      b_identifier @54 b
+  e_identifier @60 p
+s_expr @63
+  e_call @63
+    e_identifier @63 f
+    e_number @65
+    e_number @68
+s_expr @74
+  e_binary @74
+    e_object @78
+      e_string @80
+      e_identifier @80 a
+    e_identifier @74 x
+s_switch @86
+  e_identifier @94 s
+  e_number @104
+  s_empty @-1
+s_label @111
+  s_block @116
+    s_break @118

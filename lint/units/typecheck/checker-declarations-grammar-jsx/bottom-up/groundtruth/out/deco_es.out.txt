@@ -1,0 +1,7 @@
+PARSE deco.ts parse=[] js=[] bind=[]
+deco.ts(5,5)+4: error TS1329: 'bad' accepts too few arguments to be used as a decorator here. Did you mean to call it first and write '@bad()'?
+deco.ts(7,17)+1: error TS1206: Decorators are not valid here.
+deco.ts(9,1)+1: error TS1206: Decorators are not valid here.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=8 Options=1 SourceFiles=1
+COUNTS TypeCount=151 SymbolCount=67 SignatureCount=17 TotalInstantiationCount=2

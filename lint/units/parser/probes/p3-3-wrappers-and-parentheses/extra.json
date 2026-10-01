@@ -1,0 +1,7 @@
+[
+  {"name":"type-parameter-named-as-a-type-operator","path":"/a.ts","text":"<keyof>(x) => x;\n<readonly>(x) => (x);\n<infer>(x) => x!;\n"},
+  {"name":"type-assertion-without-a-type","path":"/a.ts","text":"<keyof>(x);\n"},
+  {"name":"readonly-cast","path":"/a.ts","text":"<readonly>(x);\n"},
+  {"name":"infer-cast","path":"/a.ts","text":"<infer>(x);\n"},
+  {"name":"unique-cast","path":"/a.ts","text":"<unique>(x);\n<abstract>(x);\n<asserts>(x);\n<any>(x);\n<out>(x);\n"}
+]

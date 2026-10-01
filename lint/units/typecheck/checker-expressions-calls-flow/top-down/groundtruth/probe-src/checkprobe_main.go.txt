@@ -1,0 +1,13 @@
+// Research probe: runs typescript-go's own checker on parsed and bound files and prints the diagnostics and the state counters.
+// usage: checkprobe [-strict|-nostrict] [-unreachable-error] [-suggestions] [-maxstack N] <virtual-name>=<path>...
+package main
+
+import (
+	"os"
+
+	"github.com/microsoft/typescript-go/internal/zzprobe"
+)
+
+func main() {
+	zzprobe.Run(os.Args[1:])
+}

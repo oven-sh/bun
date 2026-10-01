@@ -1,0 +1,209 @@
+i	dialect	tsc count and [code,start,length] from the second on	go count and the same	source
+3459	ts	4 [[1005,14,1],[1005,16,2],[1109,23,1]]	4 [[1110,14,1],[1005,16,2],[1109,23,1]]	let x: (a: A??) => void;
+3459	tsx	4 [[1005,14,1],[1005,16,2],[1109,23,1]]	4 [[1110,14,1],[1005,16,2],[1109,23,1]]	let x: (a: A??) => void;
+3459	dts	4 [[1005,14,1],[1005,16,2],[1109,23,1]]	4 [[1110,14,1],[1005,16,2],[1109,23,1]]	let x: (a: A??) => void;
+3551	ts	1 []	2 [[1110,11,1]]	let x: [A? | B];
+3551	tsx	1 []	2 [[1110,11,1]]	let x: [A? | B];
+3551	dts	1 []	2 [[1110,11,1]]	let x: [A? | B];
+20911	ts	3 [[1005,15,1],[1005,17,2]]	3 [[1110,15,1],[1005,17,2]]	let x: new (a??) => A;
+20911	tsx	3 [[1005,15,1],[1005,17,2]]	3 [[1110,15,1],[1005,17,2]]	let x: new (a??) => A;
+20911	dts	3 [[1005,15,1],[1005,17,2]]	3 [[1110,15,1],[1005,17,2]]	let x: new (a??) => A;
+21270	ts	3 [[1005,24,1],[1005,26,2]]	3 [[1110,24,1],[1005,26,2]]	let x: abstract new (a??) => A;
+21270	tsx	3 [[1005,24,1],[1005,26,2]]	3 [[1110,24,1],[1005,26,2]]	let x: abstract new (a??) => A;
+21270	dts	3 [[1005,24,1],[1005,26,2]]	3 [[1110,24,1],[1005,26,2]]	let x: abstract new (a??) => A;
+21630	ts	3 [[1005,14,1],[1005,16,2]]	3 [[1110,14,1],[1005,16,2]]	let x: <T>(a??) => T;
+21630	tsx	3 [[1005,14,1],[1005,16,2]]	3 [[1110,14,1],[1005,16,2]]	let x: <T>(a??) => T;
+21630	dts	3 [[1005,14,1],[1005,16,2]]	3 [[1110,14,1],[1005,16,2]]	let x: <T>(a??) => T;
+109210	ts	4 [[1005,15,1],[1109,19,1],[1005,21,5]]	7 [[1005,12,1],[1109,13,1],[1005,15,1],[1109,17,1],[1109,19,1]]	@d<function () {}>() class C {}
+109210	dts	4 [[1005,15,1],[1109,19,1],[1005,21,5]]	7 [[1005,12,1],[1109,13,1],[1005,15,1],[1109,17,1],[1109,19,1]]	@d<function () {}>() class C {}
+120038	ts	1 []	2 [[1110,13,1]]	type T = [A? | B]
+120038	tsx	1 []	2 [[1110,13,1]]	type T = [A? | B]
+120038	dts	1 []	2 [[1110,13,1]]	type T = [A? | B]
+216488	ts	2 [[1003,19,0]]	1 []	type X = typeof .#b;
+216488	tsx	2 [[1003,19,0]]	1 []	type X = typeof .#b;
+216488	dts	2 [[1003,19,0]]	1 []	type X = typeof .#b;
+216489	ts	2 [[1003,17,0]]	1 []	let x: typeof .#b;
+216489	tsx	2 [[1003,17,0]]	1 []	let x: typeof .#b;
+216489	dts	2 [[1003,17,0]]	1 []	let x: typeof .#b;
+216490	ts	2 [[1003,26,0]]	1 []	class C { @d x: typeof .#b; }
+216490	tsx	2 [[1003,26,0]]	1 []	class C { @d x: typeof .#b; }
+216490	dts	2 [[1003,26,0]]	1 []	class C { @d x: typeof .#b; }
+216491	ts	2 [[1003,28,0]]	1 []	class C { @d m(a: typeof .#b) {} }
+216491	tsx	2 [[1003,28,0]]	1 []	class C { @d m(a: typeof .#b) {} }
+216491	dts	2 [[1003,28,0]]	1 []	class C { @d m(a: typeof .#b) {} }
+216492	ts	2 [[1003,38,0]]	1 []	@d class C { constructor(a: typeof .#b) {} }
+216492	tsx	2 [[1003,38,0]]	1 []	@d class C { constructor(a: typeof .#b) {} }
+216492	dts	2 [[1003,38,0]]	1 []	@d class C { constructor(a: typeof .#b) {} }
+216493	ts	2 [[1003,28,0]]	1 []	class C { @d m(): typeof .#b { return x; } }
+216493	tsx	2 [[1003,28,0]]	1 []	class C { @d m(): typeof .#b { return x; } }
+216493	dts	2 [[1003,28,0]]	1 []	class C { @d m(): typeof .#b { return x; } }
+216494	ts	2 [[1003,24,0]]	1 []	function f(a: typeof .#b) {}
+216494	tsx	2 [[1003,24,0]]	1 []	function f(a: typeof .#b) {}
+216494	dts	2 [[1003,24,0]]	1 []	function f(a: typeof .#b) {}
+216495	ts	2 [[1003,24,0]]	1 []	function f(): typeof .#b { return x; }
+216495	tsx	2 [[1003,24,0]]	1 []	function f(): typeof .#b { return x; }
+216495	dts	2 [[1003,24,0]]	1 []	function f(): typeof .#b { return x; }
+216496	ts	2 [[1003,22,0]]	1 []	let f = (a: typeof .#b) => a;
+216496	tsx	2 [[1003,22,0]]	1 []	let f = (a: typeof .#b) => a;
+216496	dts	2 [[1003,22,0]]	1 []	let f = (a: typeof .#b) => a;
+216497	ts	2 [[1003,23,0]]	1 []	let f = (a): typeof .#b => a;
+216497	tsx	2 [[1003,23,0]]	1 []	let f = (a): typeof .#b => a;
+216497	dts	2 [[1003,23,0]]	1 []	let f = (a): typeof .#b => a;
+216498	ts	2 [[1003,27,0]]	1 []	let v = a ? (b): typeof .#b => c : d;
+216498	tsx	2 [[1003,27,0]]	1 []	let v = a ? (b): typeof .#b => c : d;
+216498	dts	2 [[1003,27,0]]	1 []	let v = a ? (b): typeof .#b => c : d;
+216499	ts	2 [[1003,23,0]]	1 []	let v = x as typeof .#b;
+216499	tsx	2 [[1003,23,0]]	1 []	let v = x as typeof .#b;
+216499	dts	2 [[1003,23,0]]	1 []	let v = x as typeof .#b;
+216500	ts	2 [[1003,30,0]]	1 []	let v = x satisfies typeof .#b;
+216500	tsx	2 [[1003,30,0]]	1 []	let v = x satisfies typeof .#b;
+216500	dts	2 [[1003,30,0]]	1 []	let v = x satisfies typeof .#b;
+216501	ts	2 [[1003,19,0]]	1 []	let v = <typeof .#b>x;
+216501	dts	2 [[1003,19,0]]	1 []	let v = <typeof .#b>x;
+216502	ts	2 [[1003,12,0]]	1 []	f<typeof .#b>(x);
+216502	tsx	2 [[1003,12,0]]	1 []	f<typeof .#b>(x);
+216502	dts	2 [[1003,12,0]]	1 []	f<typeof .#b>(x);
+216503	ts	2 [[1003,31,0]]	1 []	function f<U extends typeof .#b>() {}
+216503	tsx	2 [[1003,31,0]]	1 []	function f<U extends typeof .#b>() {}
+216503	dts	2 [[1003,31,0]]	1 []	function f<U extends typeof .#b>() {}
+220551	ts	1 []	2 [[2880,22,6]]	type X = import'x', { assert: { 'resolution-mode': 'import' } });
+220551	tsx	1 []	2 [[2880,22,6]]	type X = import'x', { assert: { 'resolution-mode': 'import' } });
+220551	dts	1 []	2 [[2880,22,6]]	type X = import'x', { assert: { 'resolution-mode': 'import' } });
+220552	ts	1 []	2 [[2880,20,6]]	let x: import'x', { assert: { 'resolution-mode': 'import' } });
+220552	tsx	1 []	2 [[2880,20,6]]	let x: import'x', { assert: { 'resolution-mode': 'import' } });
+220552	dts	1 []	2 [[2880,20,6]]	let x: import'x', { assert: { 'resolution-mode': 'import' } });
+220553	ts	1 []	2 [[2880,29,6]]	class C { @d x: import'x', { assert: { 'resolution-mode': 'import' } }); }
+220553	tsx	1 []	2 [[2880,29,6]]	class C { @d x: import'x', { assert: { 'resolution-mode': 'import' } }); }
+220553	dts	1 []	2 [[2880,29,6]]	class C { @d x: import'x', { assert: { 'resolution-mode': 'import' } }); }
+220554	ts	1 []	2 [[2880,31,6]]	class C { @d m(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220554	tsx	1 []	2 [[2880,31,6]]	class C { @d m(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220554	dts	1 []	2 [[2880,31,6]]	class C { @d m(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220555	ts	1 []	2 [[2880,41,6]]	@d class C { constructor(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220555	tsx	1 []	2 [[2880,41,6]]	@d class C { constructor(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220555	dts	1 []	2 [[2880,41,6]]	@d class C { constructor(a: import'x', { assert: { 'resolution-mode': 'import' } })) {} }
+220556	ts	1 []	2 [[2880,31,6]]	class C { @d m(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220556	tsx	1 []	2 [[2880,31,6]]	class C { @d m(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220556	dts	1 []	2 [[2880,31,6]]	class C { @d m(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220557	ts	1 []	2 [[2880,27,6]]	function f(a: import'x', { assert: { 'resolution-mode': 'import' } })) {}
+220557	tsx	1 []	2 [[2880,27,6]]	function f(a: import'x', { assert: { 'resolution-mode': 'import' } })) {}
+220557	dts	1 []	2 [[2880,27,6]]	function f(a: import'x', { assert: { 'resolution-mode': 'import' } })) {}
+220558	ts	1 []	2 [[2880,27,6]]	function f(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+220558	tsx	1 []	2 [[2880,27,6]]	function f(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+220558	dts	1 []	2 [[2880,27,6]]	function f(): import'x', { assert: { 'resolution-mode': 'import' } }) { return x; }
+220559	ts	1 []	2 [[2880,25,6]]	let f = (a: import'x', { assert: { 'resolution-mode': 'import' } })) => a;
+220559	tsx	1 []	2 [[2880,25,6]]	let f = (a: import'x', { assert: { 'resolution-mode': 'import' } })) => a;
+220559	dts	1 []	2 [[2880,25,6]]	let f = (a: import'x', { assert: { 'resolution-mode': 'import' } })) => a;
+220560	ts	1 []	2 [[2880,26,6]]	let f = (a): import'x', { assert: { 'resolution-mode': 'import' } }) => a;
+220560	tsx	1 []	2 [[2880,26,6]]	let f = (a): import'x', { assert: { 'resolution-mode': 'import' } }) => a;
+220560	dts	1 []	2 [[2880,26,6]]	let f = (a): import'x', { assert: { 'resolution-mode': 'import' } }) => a;
+220561	ts	1 []	2 [[2880,30,6]]	let v = a ? (b): import'x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+220561	tsx	1 []	2 [[2880,30,6]]	let v = a ? (b): import'x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+220561	dts	1 []	2 [[2880,30,6]]	let v = a ? (b): import'x', { assert: { 'resolution-mode': 'import' } }) => c : d;
+220562	ts	1 []	2 [[2880,26,6]]	let v = x as import'x', { assert: { 'resolution-mode': 'import' } });
+220562	tsx	1 []	2 [[2880,26,6]]	let v = x as import'x', { assert: { 'resolution-mode': 'import' } });
+220562	dts	1 []	2 [[2880,26,6]]	let v = x as import'x', { assert: { 'resolution-mode': 'import' } });
+220563	ts	1 []	2 [[2880,33,6]]	let v = x satisfies import'x', { assert: { 'resolution-mode': 'import' } });
+220563	tsx	1 []	2 [[2880,33,6]]	let v = x satisfies import'x', { assert: { 'resolution-mode': 'import' } });
+220563	dts	1 []	2 [[2880,33,6]]	let v = x satisfies import'x', { assert: { 'resolution-mode': 'import' } });
+220564	ts	1 []	2 [[2880,22,6]]	let v = <import'x', { assert: { 'resolution-mode': 'import' } })>x;
+220564	dts	1 []	2 [[2880,22,6]]	let v = <import'x', { assert: { 'resolution-mode': 'import' } })>x;
+220565	ts	1 []	2 [[2880,15,6]]	f<import'x', { assert: { 'resolution-mode': 'import' } })>(x);
+220565	tsx	1 []	2 [[2880,15,6]]	f<import'x', { assert: { 'resolution-mode': 'import' } })>(x);
+220565	dts	1 []	2 [[2880,15,6]]	f<import'x', { assert: { 'resolution-mode': 'import' } })>(x);
+220566	ts	1 []	2 [[2880,34,6]]	function f<U extends import'x', { assert: { 'resolution-mode': 'import' } })>() {}
+220566	tsx	1 []	2 [[2880,34,6]]	function f<U extends import'x', { assert: { 'resolution-mode': 'import' } })>() {}
+220566	dts	1 []	2 [[2880,34,6]]	function f<U extends import'x', { assert: { 'resolution-mode': 'import' } })>() {}
+220569	ts	1 []	2 [[2880,20,6]]	type X = import(, { assert: { 'resolution-mode': 'import' } });
+220569	tsx	1 []	2 [[2880,20,6]]	type X = import(, { assert: { 'resolution-mode': 'import' } });
+220569	dts	1 []	2 [[2880,20,6]]	type X = import(, { assert: { 'resolution-mode': 'import' } });
+220570	ts	1 []	2 [[2880,18,6]]	let x: import(, { assert: { 'resolution-mode': 'import' } });
+220570	tsx	1 []	2 [[2880,18,6]]	let x: import(, { assert: { 'resolution-mode': 'import' } });
+220570	dts	1 []	2 [[2880,18,6]]	let x: import(, { assert: { 'resolution-mode': 'import' } });
+220571	ts	1 []	2 [[2880,27,6]]	class C { @d x: import(, { assert: { 'resolution-mode': 'import' } }); }
+220571	tsx	1 []	2 [[2880,27,6]]	class C { @d x: import(, { assert: { 'resolution-mode': 'import' } }); }
+220571	dts	1 []	2 [[2880,27,6]]	class C { @d x: import(, { assert: { 'resolution-mode': 'import' } }); }
+220572	ts	1 []	2 [[2880,29,6]]	class C { @d m(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220572	tsx	1 []	2 [[2880,29,6]]	class C { @d m(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220572	dts	1 []	2 [[2880,29,6]]	class C { @d m(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220573	ts	1 []	2 [[2880,39,6]]	@d class C { constructor(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220573	tsx	1 []	2 [[2880,39,6]]	@d class C { constructor(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220573	dts	1 []	2 [[2880,39,6]]	@d class C { constructor(a: import(, { assert: { 'resolution-mode': 'import' } })) {} }
+220574	ts	1 []	2 [[2880,29,6]]	class C { @d m(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220574	tsx	1 []	2 [[2880,29,6]]	class C { @d m(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220574	dts	1 []	2 [[2880,29,6]]	class C { @d m(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; } }
+220575	ts	1 []	2 [[2880,25,6]]	function f(a: import(, { assert: { 'resolution-mode': 'import' } })) {}
+220575	tsx	1 []	2 [[2880,25,6]]	function f(a: import(, { assert: { 'resolution-mode': 'import' } })) {}
+220575	dts	1 []	2 [[2880,25,6]]	function f(a: import(, { assert: { 'resolution-mode': 'import' } })) {}
+220576	ts	1 []	2 [[2880,25,6]]	function f(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; }
+220576	tsx	1 []	2 [[2880,25,6]]	function f(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; }
+220576	dts	1 []	2 [[2880,25,6]]	function f(): import(, { assert: { 'resolution-mode': 'import' } }) { return x; }
+220577	ts	1 []	2 [[2880,23,6]]	let f = (a: import(, { assert: { 'resolution-mode': 'import' } })) => a;
+220577	tsx	1 []	2 [[2880,23,6]]	let f = (a: import(, { assert: { 'resolution-mode': 'import' } })) => a;
+220577	dts	1 []	2 [[2880,23,6]]	let f = (a: import(, { assert: { 'resolution-mode': 'import' } })) => a;
+220578	ts	1 []	2 [[2880,24,6]]	let f = (a): import(, { assert: { 'resolution-mode': 'import' } }) => a;
+220578	tsx	1 []	2 [[2880,24,6]]	let f = (a): import(, { assert: { 'resolution-mode': 'import' } }) => a;
+220578	dts	1 []	2 [[2880,24,6]]	let f = (a): import(, { assert: { 'resolution-mode': 'import' } }) => a;
+220579	ts	1 []	2 [[2880,28,6]]	let v = a ? (b): import(, { assert: { 'resolution-mode': 'import' } }) => c : d;
+220579	tsx	1 []	2 [[2880,28,6]]	let v = a ? (b): import(, { assert: { 'resolution-mode': 'import' } }) => c : d;
+220579	dts	1 []	2 [[2880,28,6]]	let v = a ? (b): import(, { assert: { 'resolution-mode': 'import' } }) => c : d;
+220580	ts	1 []	2 [[2880,24,6]]	let v = x as import(, { assert: { 'resolution-mode': 'import' } });
+220580	tsx	1 []	2 [[2880,24,6]]	let v = x as import(, { assert: { 'resolution-mode': 'import' } });
+220580	dts	1 []	2 [[2880,24,6]]	let v = x as import(, { assert: { 'resolution-mode': 'import' } });
+220581	ts	1 []	2 [[2880,31,6]]	let v = x satisfies import(, { assert: { 'resolution-mode': 'import' } });
+220581	tsx	1 []	2 [[2880,31,6]]	let v = x satisfies import(, { assert: { 'resolution-mode': 'import' } });
+220581	dts	1 []	2 [[2880,31,6]]	let v = x satisfies import(, { assert: { 'resolution-mode': 'import' } });
+220582	ts	1 []	2 [[2880,20,6]]	let v = <import(, { assert: { 'resolution-mode': 'import' } })>x;
+220582	dts	1 []	2 [[2880,20,6]]	let v = <import(, { assert: { 'resolution-mode': 'import' } })>x;
+220583	ts	1 []	2 [[2880,13,6]]	f<import(, { assert: { 'resolution-mode': 'import' } })>(x);
+220583	tsx	1 []	2 [[2880,13,6]]	f<import(, { assert: { 'resolution-mode': 'import' } })>(x);
+220583	dts	1 []	2 [[2880,13,6]]	f<import(, { assert: { 'resolution-mode': 'import' } })>(x);
+220584	ts	1 []	2 [[2880,32,6]]	function f<U extends import(, { assert: { 'resolution-mode': 'import' } })>() {}
+220584	tsx	1 []	2 [[2880,32,6]]	function f<U extends import(, { assert: { 'resolution-mode': 'import' } })>() {}
+220584	dts	1 []	2 [[2880,32,6]]	function f<U extends import(, { assert: { 'resolution-mode': 'import' } })>() {}
+242664	ts	1 []	2 [[1005,35,2]]	let v = a ? (b): function (: A): B => c : d;
+242664	tsx	1 []	2 [[1005,35,2]]	let v = a ? (b): function (: A): B => c : d;
+242664	dts	1 []	2 [[1005,35,2]]	let v = a ? (b): function (: A): B => c : d;
+242682	ts	1 []	2 [[1005,35,2]]	let v = a ? (b): function (a A): B => c : d;
+242682	tsx	1 []	2 [[1005,35,2]]	let v = a ? (b): function (a A): B => c : d;
+242682	dts	1 []	2 [[1005,35,2]]	let v = a ? (b): function (a A): B => c : d;
+242686	ts	1 []	2 [[1005,19,1]]	f<function (a A): B>(x);
+242686	tsx	1 []	2 [[1005,19,1]]	f<function (a A): B>(x);
+242686	dts	1 []	2 [[1005,19,1]]	f<function (a A): B>(x);
+283855	ts	3 [[1005,16,1],[1128,20,1]]	4 [[1110,15,1],[1005,16,1],[1128,20,1]]	type X =  new?(): A };
+283855	tsx	3 [[1005,16,1],[1128,20,1]]	4 [[1110,15,1],[1005,16,1],[1128,20,1]]	type X =  new?(): A };
+283855	dts	3 [[1005,16,1],[1128,20,1]]	4 [[1110,15,1],[1005,16,1],[1128,20,1]]	type X =  new?(): A };
+283856	ts	3 [[1005,14,1],[1128,18,1]]	4 [[1110,13,1],[1005,14,1],[1128,18,1]]	let x:  new?(): A };
+283856	tsx	3 [[1005,14,1],[1128,18,1]]	4 [[1110,13,1],[1005,14,1],[1128,18,1]]	let x:  new?(): A };
+283856	dts	3 [[1005,14,1],[1128,18,1]]	4 [[1110,13,1],[1005,14,1],[1128,18,1]]	let x:  new?(): A };
+283857	ts	3 [[1005,23,1],[1128,30,1]]	4 [[1110,22,1],[1442,23,1],[1128,30,1]]	class C { @d x:  new?(): A }; }
+283857	tsx	3 [[1005,23,1],[1128,30,1]]	4 [[1110,22,1],[1442,23,1],[1128,30,1]]	class C { @d x:  new?(): A }; }
+283857	dts	3 [[1005,23,1],[1128,30,1]]	4 [[1110,22,1],[1442,23,1],[1128,30,1]]	class C { @d x:  new?(): A }; }
+283858	ts	5 [[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	6 [[1110,24,1],[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	class C { @d m(a:  new?(): A }) {} }
+283858	tsx	5 [[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	6 [[1110,24,1],[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	class C { @d m(a:  new?(): A }) {} }
+283858	dts	5 [[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	6 [[1110,24,1],[1005,25,1],[1005,29,1],[1128,30,1],[1128,35,1]]	class C { @d m(a:  new?(): A }) {} }
+283859	ts	5 [[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	6 [[1110,34,1],[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	@d class C { constructor(a:  new?(): A }) {} }
+283859	tsx	5 [[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	6 [[1110,34,1],[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	@d class C { constructor(a:  new?(): A }) {} }
+283859	dts	5 [[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	6 [[1110,34,1],[1005,35,1],[1005,39,1],[1128,40,1],[1128,45,1]]	@d class C { constructor(a:  new?(): A }) {} }
+283860	ts	3 [[1005,25,1],[1128,45,1]]	4 [[1110,24,1],[1144,25,1],[1128,45,1]]	class C { @d m():  new?(): A } { return x; } }
+283860	tsx	3 [[1005,25,1],[1128,45,1]]	4 [[1110,24,1],[1144,25,1],[1128,45,1]]	class C { @d m():  new?(): A } { return x; } }
+283860	dts	3 [[1005,25,1],[1128,45,1]]	4 [[1110,24,1],[1144,25,1],[1128,45,1]]	class C { @d m():  new?(): A } { return x; } }
+283861	ts	3 [[1005,21,1],[1005,25,1]]	4 [[1110,20,1],[1005,21,1],[1005,25,1]]	function f(a:  new?(): A }) {}
+283861	tsx	3 [[1005,21,1],[1005,25,1]]	4 [[1110,20,1],[1005,21,1],[1005,25,1]]	function f(a:  new?(): A }) {}
+283861	dts	3 [[1005,21,1],[1005,25,1]]	4 [[1110,20,1],[1005,21,1],[1005,25,1]]	function f(a:  new?(): A }) {}
+283862	ts	3 [[1005,21,1],[1128,25,1]]	4 [[1110,20,1],[1144,21,1],[1128,25,1]]	function f():  new?(): A } { return x; }
+283862	tsx	3 [[1005,21,1],[1128,25,1]]	4 [[1110,20,1],[1144,21,1],[1128,25,1]]	function f():  new?(): A } { return x; }
+283862	dts	3 [[1005,21,1],[1128,25,1]]	4 [[1110,20,1],[1144,21,1],[1128,25,1]]	function f():  new?(): A } { return x; }
+283863	ts	5 [[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	6 [[1110,18,1],[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	let f = (a:  new?(): A }) => a;
+283863	tsx	5 [[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	6 [[1110,18,1],[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	let f = (a:  new?(): A }) => a;
+283863	dts	5 [[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	6 [[1110,18,1],[1005,19,1],[1005,23,1],[1128,24,1],[1128,26,2]]	let f = (a:  new?(): A }) => a;
+283866	ts	3 [[1005,20,1],[1128,24,1]]	4 [[1110,19,1],[1005,20,1],[1128,24,1]]	let v = x as  new?(): A };
+283866	tsx	3 [[1005,20,1],[1128,24,1]]	4 [[1110,19,1],[1005,20,1],[1128,24,1]]	let v = x as  new?(): A };
+283866	dts	3 [[1005,20,1],[1128,24,1]]	4 [[1110,19,1],[1005,20,1],[1128,24,1]]	let v = x as  new?(): A };
+283867	ts	3 [[1005,27,1],[1128,31,1]]	4 [[1110,26,1],[1005,27,1],[1128,31,1]]	let v = x satisfies  new?(): A };
+283867	tsx	3 [[1005,27,1],[1128,31,1]]	4 [[1110,26,1],[1005,27,1],[1128,31,1]]	let v = x satisfies  new?(): A };
+283867	dts	3 [[1005,27,1],[1128,31,1]]	4 [[1110,26,1],[1005,27,1],[1128,31,1]]	let v = x satisfies  new?(): A };
+283868	ts	4 [[1005,16,1],[1128,20,1],[1109,21,1]]	5 [[1110,15,1],[1005,16,1],[1128,20,1],[1109,21,1]]	let v = < new?(): A }>x;
+283868	dts	4 [[1005,16,1],[1128,20,1],[1109,21,1]]	5 [[1110,15,1],[1005,16,1],[1128,20,1],[1109,21,1]]	let v = < new?(): A }>x;
+283870	ts	3 [[1005,28,1],[1005,32,1]]	4 [[1110,27,1],[1005,28,1],[1005,32,1]]	function f<U extends  new?(): A }>() {}
+283870	tsx	3 [[1005,28,1],[1005,32,1]]	4 [[1110,27,1],[1005,28,1],[1005,32,1]]	function f<U extends  new?(): A }>() {}
+283870	dts	3 [[1005,28,1],[1005,32,1]]	4 [[1110,27,1],[1005,28,1],[1005,32,1]]	function f<U extends  new?(): A }>() {}

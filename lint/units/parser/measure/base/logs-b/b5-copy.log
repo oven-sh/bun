@@ -1,0 +1,8 @@
+62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552  build/release/bun
+96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc  build/release/bun-profile
+62ee58fa8a4c4ccefed447e8a540aac9a980b6b19a2029ec105b72b71a0b4552  /workspace/notes/lint/units/parser/measure/base/bin/bun
+96d44d1f99dd6d6bb2998ee3ef50aa05d3d4b05b2b459b09f39343df35fbeddc  /workspace/notes/lint/units/parser/measure/base/bin/bun-profile
+-rwxr-xr-x 1 root root  80832072 Sep 29 16:58 build/release/bun
+-rwxr-xr-x 1 root root 169916968 Sep 29 16:58 build/release/bun-profile
+1.4.3-canary.1+e3566be88
+e3566be889995ffff8b08823b9233617f979c889

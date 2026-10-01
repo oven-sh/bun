@@ -1,0 +1,51 @@
+file /module-keyword-nested-namespace.ts scriptKind=3 variant=0 dts=false textLen=97
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=28 identifiers=6 text=8 reparsedClones=0
+ambientModuleName "m"
+ambientModuleName "global"
+root KindSourceFile [0,97) f=0x0
+  .Statements: list [0,96) n=4
+    - KindModuleDeclaration [0,39) f=0x0 Keyword=KindNamespaceKeyword
+      .Body: KindModuleDeclaration [12,39) f=0x0 Keyword=KindNamespaceKeyword
+        .Body: KindModuleDeclaration [14,39) f=0x0 Keyword=KindNamespaceKeyword
+          .Body: KindModuleBlock [15,39) f=0x0
+            .Statements: list [17,37) n=1
+              - KindVariableStatement [17,37) f=0x0
+                .DeclarationList: KindVariableDeclarationList [24,36) f=0x2
+                  .Declarations: list [30,36) n=1
+                    - KindVariableDeclaration [30,36) f=0x0
+                      .Initializer: KindNumericLiteral [34,36) f=0x0 Text="1" TokenFlags=0x0
+                      .name: KindIdentifier [30,32) f=0x0 Text="x"
+                .modifiers.flags=0x20
+                .modifiers: list [17,24) n=1
+                  - KindExportKeyword [17,24) f=0x0
+          .modifiers.flags=0x20
+          .modifiers: list [14,14) n=1
+            - KindExportKeyword [14,14) f=0x8
+          .name: KindIdentifier [14,15) f=0x0 Text="c"
+        .modifiers.flags=0x20
+        .modifiers: list [12,12) n=1
+          - KindExportKeyword [12,12) f=0x8
+        .name: KindIdentifier [12,13) f=0x0 Text="b"
+      .name: KindIdentifier [9,11) f=0x0 Text="a"
+    - KindModuleDeclaration [39,62) f=0x800000 Keyword=KindModuleKeyword
+      .Body: KindModuleBlock [58,62) f=0x800000
+        .Statements: list [60,60) n=0
+      .modifiers.flags=0x80
+      .modifiers: list [39,47) n=1
+        - KindDeclareKeyword [39,47) f=0x800000
+      .name: KindStringLiteral [54,58) f=0x800000 Text="m" TokenFlags=0x0
+    - KindModuleDeclaration [62,81) f=0x800000 Keyword=KindGlobalKeyword
+      .Body: KindModuleBlock [77,81) f=0x800000
+        .Statements: list [79,79) n=0
+      .modifiers.flags=0x80
+      .modifiers: list [62,70) n=1
+        - KindDeclareKeyword [62,70) f=0x800000
+      .name: KindIdentifier [70,77) f=0x800000 Text="global"
+    - KindModuleDeclaration [81,96) f=0x0 Keyword=KindModuleKeyword
+      .Body: KindModuleBlock [92,96) f=0x0
+        .Statements: list [94,94) n=0
+      .name: KindIdentifier [88,92) f=0x0 Text="old"
+  .EndOfFileToken: KindEndOfFile [96,97) f=0x0

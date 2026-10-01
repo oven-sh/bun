@@ -1,0 +1,38 @@
+Checker data model of the research pass "checker-data-model-contract" (top-down). Nothing here is part of the repository.
+
+run.sh       generator check, assemble, rustfmt, cargo check, cargo clippy --all-targets, cargo test, layer table check.
+assemble.sh  builds the one package in a work directory (default /tmp/cdm-td/crate) from three sources:
+             ../../node-table-id-contract/bottom-up/crate   tscore, ast (with the generated files), testimport, bindprobe, its tests
+             ../../diagnostics-scratch/crate                message table, Diagnostic and collection, writer, sort and dedupe, its tests
+             crate/                                         the files of this pass (below)
+py/adapt.py  the edits that the foreign files need to live in one package: each edit names its pattern and fails when it is absent.
+             They are the list of what the node table prototype and the diagnostics scratch adapt to.
+py/genflags.py  21 integer flag and enum types of internal/checker as define_flags! blocks (crate/src/checker/flags_generated.rs).
+py/claims.py    which layer tables of the sibling research units claim each function of checker.go (data/layer-claims.tsv).
+
+crate/src/tscore/arena.rs            core.Arena: records addressed by ids
+crate/src/tscore/internal.rs         the one fault sink (replaces the node table's file of the same name) and the stand-in log
+crate/src/tscore/gomore.rs           Set, Memo, TextList, compare_f64, writes to a SliceBuf
+crate/src/tscore/compileroptions.rs  the part of core.CompilerOptions that the scratch reads
+crate/src/checker/checker.rs         Checker (one list of fields makes the struct and its zero value), Fallback, fail, stand_in, list
+crate/src/checker/types.rs           types.go: Type and its data, Signature, IndexInfo, TypePredicate, links records, the casts
+crate/src/checker/links.rs           core.LinkStore with handles, the symbol link store keyed by ast.GetSymbolId
+crate/src/checker/mapper.rs          mapper.go whole: nine mappers as one Copy enum, targets as a list or as cells
+crate/src/checker/keys.rs            checker.go 17471-17775 whole: CacheHashKey, keyBuilder, the key functions
+crate/src/checker/relater.rs         Relater as a pooled record, TypeComparer and ErrorReporter as data, seven functions whole
+crate/src/checker/inference.rs       inference records, the pooled state, contexts, getInferredType whole
+crate/src/checker/program.rs         the 24 methods of Program and Host that the checker calls, ResolvedProgram, ProgramFiles
+crate/src/checker/utilities.rs       compareSymbols, compareNodes, compareTypes, compareTypeMappers, getNamedMembers, core helpers
+crate/src/checker/c21..c43, flow.rs  one translated function per decision: deferred callbacks, a bounded loop, the resolution stack,
+                                     getUnionSignatures, fillMissingTypeArguments, instantiateType, getDeclaredTypeOfTypeAlias,
+                                     mapType, filterType, getExplicitTypeOfSymbol (defer)
+crate/src/tests_checker.rs           21 tests, one or more per decision
+crate/tests/program.rs               a test target without the libtest harness
+py/settled.py   the merged layer table with the six overrides of this pass in front (data/layer-settled.tsv).
+data/        layer-claims.tsv (26 functions claimed twice, 1 claimed by none), layer-settled.tsv (12 functions change layer),
+             checker-fields-census.txt (the 319 fields by cost, the 79 record and key types they need), decisions.tsv,
+             sizes.txt, run.log (last full run of run.sh, rc=0)
+
+About 35 stand-ins of the scratch record their name and then return a scripted or passed-through value (identity, nil, a stored
+constraint, a made union) so that the tests can drive the translated functions. In the crate a stand-in is
+`self.stand_in("upstreamName")` and nothing else.

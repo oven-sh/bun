@@ -1,0 +1,96 @@
+# G type parameter constraint that is an expression
+type A<T extends -x> = T
+type A<T extends +1> = T
+type A<T extends ~x> = T
+type A<T extends !x> = T
+type A<T extends (1)> = T
+type A<T extends (1 + 2)> = T
+type A<T extends super.x> = T
+type A<T extends class {}> = T
+type A<T extends function () {}> = T
+type A<T extends /re/> = T
+type A<T extends delete x> = T
+type A<T extends ++x> = T
+type A<T extends await x> = T
+type A<T extends yield> = T
+type A<T extends #x> = T
+type A<T extends @dec class {}> = T
+type A<T extends -x, U> = T
+type A<T extends -x = 1> = T
+type A<T extends > = T
+function f<T extends -x>() {}
+class C<T extends +1> {}
+interface I<T extends ~x> {}
+let f = <T extends -x>(a: T) => a
+let f = <T extends -x,>(a: T) => a
+let g: <T extends -x>() => void
+type A = { m<T extends -x>(): void }
+type A<T extends x > y> = T
+type A<T extends (x) > = T
+type A<T extends -1> = T
+type A<T extends 1 + 2> = T
+# I index signature parameter
+type A = { [k: string]: 1 }
+type A = { [k: string = "a"]: 1 }
+type A = { [k?: string]: 1 }
+type A = { [...k: string[]]: 1 }
+type A = { [public k: string]: 1 }
+type A = { [readonly k: string]: 1 }
+type A = { [k: string, j: number]: 1 }
+type A = { [k, j]: 1 }
+type A = { [k: string,]: 1 }
+type A = { [@dec k: string]: 1 }
+type A = { [k: string = () => { let a }]: 1 }
+type A = { []: 1 }
+type A = { [k: string] }
+type A = { [{a}: string]: 1 }
+type A = { [k?]: 1 }
+type A = { [k]: 1 }
+type A = { readonly [k: string]: 1; static [j: string]: 2 }
+class C { [k: string = "a"]: 1 }
+# J heritage clauses
+interface I extends A, B.C<D> {}
+interface I extends foo().bar {}
+interface I extends foo<T>().bar<U> {}
+interface I extends (a) {}
+interface I extends a[0] {}
+interface I extends a?.b {}
+interface I extends new X {}
+interface I extends class {} {}
+interface I extends function () {} {}
+interface I extends this {}
+interface I extends typeof x {}
+interface I extends A | B {}
+interface I extends a! {}
+interface I extends `x` {}
+interface I extends "x".y {}
+interface I extends {} {}
+interface I extends A[] {}
+interface I extends import("x").Y {}
+interface I extends a.b\n<T> {}
+interface I implements A {}
+class C implements A.B<C>, foo().bar {}
+class C implements (a) {}
+class C extends foo().bar<T> implements new X {}
+declare class C extends foo().bar<T> implements I {}
+# H2 decorators in signatures that need no lookahead
+type A = { (@dec a): void }
+type A = { new (@dec a): X }
+let g: new (@dec a) => X
+let g: <T>(@dec a) => void
+let g: <T>(@dec() a: T, @e.f b) => void
+type A = { m(@(x => x) a): void }
+type A = { m(@dec @dec2 a, public b, @d readonly c = 1): void }
+type A = { set x(@dec v) }
+type A = { m(@dec this): void }
+type A = { m(@dec ...a): void }
+type A = { m(@dec {a}: X): void }
+type A = { m(@await a): void }
+type A = { m(@dec\na): void }
+type A = { m(@new X() a): void }
+type A = { m(@class {} a): void }
+type A = { m(@a.b<T>() c): void }
+type A = { m(@a[0] c): void }
+type A = { m(@a`x` c): void }
+type A = { m(@a!.b c): void }
+type A = { m(@a?.b c): void }

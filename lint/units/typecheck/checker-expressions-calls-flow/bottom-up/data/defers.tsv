@@ -1,0 +1,2 @@
+E-CORE	checker.go:7649	c.checkExpressionEx	defer tr.Push(tracing.PhaseCheck, "checkExpression", map[string]any{"kind": node.Kind, "pos": node.Pos(), "end": node.End(), "path": ast.GetSourceFileOfNode(node).FileName()}, false)()
+F-NARROW	flow.go:2160	c.getExplicitTypeOfSymbol	defer c.resolvingExplicitTypeOfSymbol.Delete(symbol)

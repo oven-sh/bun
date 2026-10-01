@@ -1,0 +1,9 @@
+PARSE ambient.d.ts parse=[] js=[] bind=[]
+ambient.d.ts(1,1)+8: error TS1046: Top-level declarations in .d.ts files must start with either a 'declare' or 'export' modifier.
+ambient.d.ts(2,29)+1: error TS1183: An implementation cannot be declared in ambient contexts.
+ambient.d.ts(4,27)+1: error TS1039: Initializers are not allowed in ambient contexts.
+ambient.d.ts(5,24)+7: error TS1038: A 'declare' modifier cannot be used in an already ambient context.
+ambient.d.ts(5,53)+2: error TS1036: Statements are not allowed in ambient contexts.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=9 Options=1 SourceFiles=1
+COUNTS TypeCount=92 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0

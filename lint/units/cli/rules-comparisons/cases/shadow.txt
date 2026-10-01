@@ -1,0 +1,97 @@
+function f(undefined) { typeof x === undefined }
+----
+function f(undefined) {} typeof x === undefined
+----
+var undefined; typeof x === undefined
+----
+let undefined$ = 1; typeof x === undefined
+----
+typeof x === undefined; var undefined;
+----
+{ let undefined = 1; } typeof x === undefined
+----
+{ let undefined = 1; typeof x === undefined }
+----
+function f() { var undefined; } typeof x === undefined
+----
+function f() { typeof x === undefined; var undefined; }
+----
+(undefined) => typeof x === undefined
+----
+try {} catch (undefined) { typeof x === undefined }
+----
+try {} catch (undefined) {} typeof x === undefined
+----
+undefined = 1; typeof x === undefined
+----
+class undefined {} typeof x === undefined
+----
+function undefined() {} typeof x === undefined
+----
+(function undefined() { typeof x === undefined })
+----
+(function undefined() {}); typeof x === undefined
+----
+(class undefined { m() { typeof x === undefined } })
+----
+import undefined from "a"; typeof x === undefined
+----
+import { a as undefined } from "a"; typeof x === undefined
+----
+import * as undefined from "a"; typeof x === undefined
+----
+undefined: for (;;) { typeof x === undefined; break undefined; }
+----
+var o = { undefined: 1 }; typeof x === undefined
+----
+a.undefined = 1; typeof x === undefined
+----
+var { undefined } = o; typeof x === undefined
+----
+var { a: undefined } = o; typeof x === undefined
+----
+var [undefined] = o; typeof x === undefined
+----
+function f({ undefined }) { typeof x === undefined }
+----
+function f(...undefined) { typeof x === undefined }
+----
+for (var undefined in o) {} typeof x === undefined
+----
+for (let undefined of o) { typeof x === undefined }
+----
+let NaN = 1; x === NaN
+----
+x === NaN; function g(NaN) {}
+----
+function g(NaN) { x === NaN }
+----
+function g(Number) { x === Number.NaN }
+----
+function g(Number) {} x === Number.NaN
+----
+let Number = 1; x === Number.NaN
+----
+import NaN from "x"; y == NaN
+----
+NaN = 1; x == NaN
+----
+try {} catch (NaN) { x == NaN }
+----
+NaN: for(;;){ x == NaN; break NaN; }
+----
+var o = { NaN: 1 }; x == NaN
+----
+function g(NaN) { switch (NaN) { case NaN: } }
+----
+function g(NaN) {} switch (NaN) { case NaN: }
+----
+class NaN {} x == NaN
+----
+(function NaN() { x == NaN })
+----
+(function NaN() {}); x == NaN
+----
+(class NaN { m() { return x == NaN } })
+----
+(class NaN {}); x == NaN

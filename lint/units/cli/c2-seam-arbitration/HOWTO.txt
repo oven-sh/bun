@@ -1,0 +1,43 @@
+Research artefacts of the C2 seam arbitration, pass 1a (bottom-up). Worktree /workspace/wt/cli at e3566be889, nothing applied there.
+
+The directory final/ holds the artefacts of pass 1b (top-down). Both passes have the same patch of src/ast/lib.rs, the same three
+arms and the same printed bytes. Their patches of src/lint differ in shape only, and ONE of the two is applied, never both:
+  here (lint-c2-final.patch)                                        final/03-bun_lint-diagnostics.patch
+  Files { add, get } in source_file.rs, FileId opaque               &[SourceFile], FileId(pub u32), SourceFile::new in diagnostic.rs
+  the printed name is stored once per file (names_of)               it is computed for each diagnostic from FormattingOptions
+  log::diagnostics_from_msgs reads msg.code()                       Diagnostic::from_msg matches msg.metadata
+  write_code_frames writes into any fmt::Write                      it writes into a Vec<u8>
+  chains and related information: recursion, 200 levels at most     explicit stacks
+  the word internal-stand-in is kept free                           Code::INTERNAL_STAND_IN is defined
+
+The three patches that carry every ruling of this pass, each passes `git apply --check` at e3566be889:
+bun_ast-msg-code.patch   src/ast/lib.rs: Metadata::Code(u32), Msg::code, Log::add_range_error_with_code, the size assertion, three tests.
+forced-arms.patch        the three arms that the new variant forces (src/jsc/VirtualMachine.rs, src/jsc/lib.rs, src/runtime/server/DevErrorPage.rs).
+lint-c2-final.patch      src/lint: the diagnostic, its order, both writers, the line map, the names, the file table, the conversion
+                         from a Log, tests, UPSTREAM_PORTED, and the hunk of Cargo.lock. It replaces lint-prototype.patch of the earlier pass.
+Apply: cd /workspace/wt/cli && git apply <this dir>/bun_ast-msg-code.patch <this dir>/forced-arms.patch <this dir>/lint-c2-final.patch
+
+ALTERNATIVE-msg-code-field.patch   the fallback for the first two: a `code: u32` field on Msg, no file outside src/ast.
+                                   With it src/lint/log.rs reads `match msg.code { 0 => Code::SYNTAX, number => Code::Ts(number) }`.
+
+What was run (a copy of the workspace with the three patches, outside the worktree; cargo through /workspace/tools/lk):
+  cargo check -p bun_ast -p bun_jsc -p bun_runtime           logs/shadow-check2.log; without the arms: logs/shadow-neg1.log, logs/shadow-neg2.log
+  cargo check, clippy --no-deps --all-targets, fmt --check   for bun_lint (and bun_ast): exit 0
+  cargo miri test -p bun_ast --lib msg_code_tests            logs/final-miri-ast.log    3 passed   (MIRIFLAGS=-Zmiri-tree-borrows)
+  cargo miri test -p bun_lint --lib                          logs/final-miri-lint.log   7 passed
+  probes/glue/lint_c2_probe.rs as a module of src/runtime/cli, cargo check -p bun_runtime      logs/final-glue.log   exit 0
+  the fallback with the final src/lint, cargo check -p bun_ast -p bun_lint --all-targets       logs/final-alt-field.log
+  logs/shadow-alt.log: the fallback in the whole workspace (earlier pass).
+
+Probes that need no build of Bun and no lock:
+  sh probes/native/run.sh <directory with the src/lint sources> <scratch>
+        the modules of src/lint that need no real bun_ast, with plain rustc against stand-ins: 6 tests (logs/final-native.log)
+  sh probes/linemap/run.sh <scratch>
+        the line map of scanner.rs against the functions of typescript-go, run with Go: identical on 4000 inputs, 60,810 positions
+  node probes/paths.cjs                      the names TypeScript 6.0.2 computes: the table NAMES of tests.rs (logs/final-paths-typescript.log)
+  node probes/tsc-plain.cjs                  in a directory with sample files: the plain format of TypeScript 6.0.2 (logs/final-tsc-plain.log)
+  python3 probes/order_probe.py <dir>        the order of the oracle baselines (logs/final-order-probe.log): 7027 files, 1212 adjacent
+                                             pairs at one line and column, 77 with the codes in falling order, 151 with one code
+  node probes/eslint-dedupe.cjs              what ESLint 10.11.0 reports twice (logs/final-eslint-dedupe.log); needs /tmp/eslint-oracle
+  bun-debug probes/pty_probe.ts              a child of Bun.spawn({ terminal }) sees a terminal on stderr, the output has CR LF
+  probes/line_map_reference.go               expected values of the line map tests (earlier pass)

@@ -1,0 +1,911 @@
+checker/types.go:204	AliasSymbolLinks	0	immediateTarget	*ast.Symbol	
+checker/types.go:204	AliasSymbolLinks	1	aliasTarget	*ast.Symbol	
+checker/types.go:204	AliasSymbolLinks	2	referenced	bool	
+checker/types.go:204	AliasSymbolLinks	3	typeOnlyDeclaration	*ast.Node	
+checker/types.go:276	ArrayLiteralLinks	0	indicesComputed	bool	
+checker/types.go:276	ArrayLiteralLinks	1	firstSpreadIndex	int	
+checker/types.go:276	ArrayLiteralLinks	2	lastSpreadIndex	int	
+checker/mapper.go:172	ArrayToSingleTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:172	ArrayToSingleTypeMapper	1	sources	[]*checker.Type	
+checker/mapper.go:172	ArrayToSingleTypeMapper	2	target	*checker.Type	
+checker/mapper.go:139	ArrayTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:139	ArrayTypeMapper	1	sources	[]*checker.Type	
+checker/mapper.go:139	ArrayTypeMapper	2	targets	[]*checker.Type	
+checker/types.go:398	AssertionLinks	0	exprType	*checker.Type	
+checker/checker.go:193	AssignmentReducedKey	0	id1	checker.TypeId	
+checker/checker.go:193	AssignmentReducedKey	1	id2	checker.TypeId	
+checker/utilities.go:88	AssignmentTarget	0	Kind	ast.Kind	
+checker/utilities.go:88	AssignmentTarget	1	Flags	ast.NodeFlags	
+checker/utilities.go:88	AssignmentTarget	2	Loc	core.TextRange	
+checker/utilities.go:88	AssignmentTarget	3	id	atomic.Uint64	
+checker/utilities.go:88	AssignmentTarget	4	Parent	*ast.Node	
+checker/utilities.go:88	AssignmentTarget	5	data	ast.nodeData	
+checker/checker.go:171	CachedSignatureKey	0	sig	*checker.Signature	
+checker/checker.go:171	CachedSignatureKey	1	key	checker.CacheHashKey	
+checker/checker.go:146	CachedTypeKey	0	kind	checker.CachedTypeKind	
+checker/checker.go:146	CachedTypeKey	1	typeId	checker.TypeId	
+checker/checker.go:8920	CallState	0	node	*ast.Node	
+checker/checker.go:8920	CallState	1	typeArguments	[]*ast.Node	
+checker/checker.go:8920	CallState	2	args	[]*ast.Node	
+checker/checker.go:8920	CallState	3	candidates	[]*checker.Signature	
+checker/checker.go:8920	CallState	4	argCheckMode	checker.CheckMode	
+checker/checker.go:8920	CallState	5	isSingleNonGenericCandidate	bool	
+checker/checker.go:8920	CallState	6	signatureHelpTrailingComma	bool	
+checker/checker.go:8920	CallState	7	candidatesForArgumentError	[]*checker.Signature	
+checker/checker.go:8920	CallState	8	candidateForArgumentArityError	*checker.Signature	
+checker/checker.go:8920	CallState	9	candidateForTypeArgumentError	*checker.Signature	
+checker/checker.go:585	Checker	0	id	uint32	
+checker/checker.go:585	Checker	1	program	checker.Program	
+checker/checker.go:585	Checker	2	compilerOptions	*core.CompilerOptions	
+checker/checker.go:585	Checker	3	files	[]*ast.SourceFile	
+checker/checker.go:585	Checker	4	fileIndexMap	map[*ast.SourceFile]int	
+checker/checker.go:585	Checker	5	compareSymbols	func(*ast.Symbol, *ast.Symbol) int	
+checker/checker.go:585	Checker	6	compareSymbolChains	func([]*ast.Symbol, []*ast.Symbol) int	
+checker/checker.go:585	Checker	7	TypeCount	uint32	
+checker/checker.go:585	Checker	8	SymbolCount	uint32	
+checker/checker.go:585	Checker	9	SignatureCount	uint32	
+checker/checker.go:585	Checker	10	TotalInstantiationCount	uint32	
+checker/checker.go:585	Checker	11	instantiationCount	uint32	
+checker/checker.go:585	Checker	12	instantiationDepth	uint32	
+checker/checker.go:585	Checker	13	conditionalConstraintDepth	uint32	
+checker/checker.go:585	Checker	14	inlineLevel	int	
+checker/checker.go:585	Checker	15	serializationLevel	int	
+checker/checker.go:585	Checker	16	currentNode	*ast.Node	
+checker/checker.go:585	Checker	17	varianceTypeParameter	*checker.Type	
+checker/checker.go:585	Checker	18	languageVersion	core.ScriptTarget	
+checker/checker.go:585	Checker	19	moduleKind	core.ModuleKind	
+checker/checker.go:585	Checker	20	moduleResolutionKind	core.ModuleResolutionKind	
+checker/checker.go:585	Checker	21	isInferencePartiallyBlocked	bool	
+checker/checker.go:585	Checker	22	legacyDecorators	bool	
+checker/checker.go:585	Checker	23	emitStandardClassFields	bool	
+checker/checker.go:585	Checker	24	strictNullChecks	bool	
+checker/checker.go:585	Checker	25	strictFunctionTypes	bool	
+checker/checker.go:585	Checker	26	strictBindCallApply	bool	
+checker/checker.go:585	Checker	27	strictPropertyInitialization	bool	
+checker/checker.go:585	Checker	28	strictBuiltinIteratorReturn	bool	
+checker/checker.go:585	Checker	29	noImplicitAny	bool	
+checker/checker.go:585	Checker	30	noImplicitThis	bool	
+checker/checker.go:585	Checker	31	useUnknownInCatchVariables	bool	
+checker/checker.go:585	Checker	32	exactOptionalPropertyTypes	bool	
+checker/checker.go:585	Checker	33	canCollectSymbolAliasAccessibilityData	bool	
+checker/checker.go:585	Checker	34	wasCanceled	bool	
+checker/checker.go:585	Checker	35	arrayVariances	[]checker.VarianceFlags	
+checker/checker.go:585	Checker	36	globals	ast.SymbolTable	
+checker/checker.go:585	Checker	37	evaluate	evaluator.Evaluator	
+checker/checker.go:585	Checker	38	stringLiteralTypes	map[string]*checker.Type	
+checker/checker.go:585	Checker	39	numberLiteralTypes	map[jsnum.Number]*checker.Type	
+checker/checker.go:585	Checker	40	nanType	*checker.Type	
+checker/checker.go:585	Checker	41	bigintLiteralTypes	map[jsnum.PseudoBigInt]*checker.Type	
+checker/checker.go:585	Checker	42	enumLiteralTypes	map[checker.EnumLiteralKey]*checker.Type	
+checker/checker.go:585	Checker	43	enumNaNLiteralTypes	map[*ast.Symbol]*checker.Type	
+checker/checker.go:585	Checker	44	indexedAccessTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	45	templateLiteralTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	46	stringMappingTypes	map[checker.StringMappingKey]*checker.Type	
+checker/checker.go:585	Checker	47	uniqueESSymbolTypes	map[*ast.Symbol]*checker.Type	
+checker/checker.go:585	Checker	48	thisExpandoKinds	map[*ast.Symbol]checker.thisAssignmentDeclarationKind	
+checker/checker.go:585	Checker	49	thisExpandoLocations	map[*ast.Symbol]*ast.Node	
+checker/checker.go:585	Checker	50	subtypeReductionCache	map[checker.CacheHashKey][]*checker.Type	
+checker/checker.go:585	Checker	51	cachedTypes	map[checker.CachedTypeKey]*checker.Type	
+checker/checker.go:585	Checker	52	cachedSignatures	map[checker.CachedSignatureKey]*checker.Signature	
+checker/checker.go:585	Checker	53	undefinedProperties	map[string]*ast.Symbol	
+checker/checker.go:585	Checker	54	narrowedTypes	map[checker.NarrowedTypeKey]*checker.Type	
+checker/checker.go:585	Checker	55	assignmentReducedTypes	map[checker.AssignmentReducedKey]*checker.Type	
+checker/checker.go:585	Checker	56	discriminatedContextualTypes	map[checker.DiscriminatedContextualTypeKey]*checker.Type	
+checker/checker.go:585	Checker	57	instantiationExpressionTypes	map[checker.InstantiationExpressionKey]*checker.Type	
+checker/checker.go:585	Checker	58	substitutionTypes	map[checker.SubstitutionTypeKey]*checker.Type	
+checker/checker.go:585	Checker	59	reverseMappedCache	map[checker.ReverseMappedTypeKey]*checker.Type	
+checker/checker.go:585	Checker	60	reverseHomomorphicMappedCache	map[checker.ReverseMappedTypeKey]*checker.Type	
+checker/checker.go:585	Checker	61	iterationTypesCache	map[checker.IterationTypesKey]checker.IterationTypes	
+checker/checker.go:585	Checker	62	markerTypes	collections.Set[*checker.Type]	
+checker/checker.go:585	Checker	63	resolvingExplicitTypeOfSymbol	collections.Set[*ast.Symbol]	
+checker/checker.go:585	Checker	64	undefinedSymbol	*ast.Symbol	
+checker/checker.go:585	Checker	65	argumentsSymbol	*ast.Symbol	
+checker/checker.go:585	Checker	66	requireSymbol	*ast.Symbol	
+checker/checker.go:585	Checker	67	unknownSymbol	*ast.Symbol	
+checker/checker.go:585	Checker	68	unresolvedSymbols	map[string]*ast.Symbol	
+checker/checker.go:585	Checker	69	errorTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	70	moduleSymbols	map[*ast.Node]*ast.Symbol	
+checker/checker.go:585	Checker	71	globalThisSymbol	*ast.Symbol	
+checker/checker.go:585	Checker	72	symbolTableAliasCache	map[checker.symbolTableID][]*ast.Symbol	
+checker/checker.go:585	Checker	73	classExpressionNameTables	map[ast.NodeId]ast.SymbolTable	
+checker/checker.go:585	Checker	74	resolveName	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	
+checker/checker.go:585	Checker	75	resolveNameForSymbolSuggestion	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	
+checker/checker.go:585	Checker	76	tupleTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	77	unionTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	78	unionOfUnionTypes	map[checker.UnionOfUnionKey]*checker.Type	
+checker/checker.go:585	Checker	79	intersectionTypes	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	80	propertiesTypes	map[checker.PropertiesTypesKey]*checker.Type	
+checker/checker.go:585	Checker	81	diagnostics	ast.DiagnosticsCollection	
+checker/checker.go:585	Checker	82	suggestionDiagnostics	ast.DiagnosticsCollection	
+checker/checker.go:585	Checker	83	symbolArena	core.Arena[ast.Symbol]	
+checker/checker.go:585	Checker	84	signatureArena	core.Arena[checker.Signature]	
+checker/checker.go:585	Checker	85	indexInfoArena	core.Arena[checker.IndexInfo]	
+checker/checker.go:585	Checker	86	mergedSymbols	map[*ast.Symbol]*ast.Symbol	
+checker/checker.go:585	Checker	87	factory	ast.NodeFactory	
+checker/checker.go:585	Checker	88	nodeLinks	core.LinkStore[*ast.Node, checker.NodeLinks]	
+checker/checker.go:585	Checker	89	signatureLinks	core.LinkStore[*ast.Node, checker.SignatureLinks]	
+checker/checker.go:585	Checker	90	symbolNodeLinks	checker.nodeLinkStore[checker.SymbolNodeLinks]	
+checker/checker.go:585	Checker	91	typeNodeLinks	core.LinkStore[*ast.Node, checker.TypeNodeLinks]	
+checker/checker.go:585	Checker	92	enumMemberLinks	core.LinkStore[*ast.Node, checker.EnumMemberLinks]	
+checker/checker.go:585	Checker	93	assertionLinks	core.LinkStore[*ast.Node, checker.AssertionLinks]	
+checker/checker.go:585	Checker	94	arrayLiteralLinks	core.LinkStore[*ast.Node, checker.ArrayLiteralLinks]	
+checker/checker.go:585	Checker	95	switchStatementLinks	core.LinkStore[*ast.Node, checker.SwitchStatementLinks]	
+checker/checker.go:585	Checker	96	jsxElementLinks	core.LinkStore[*ast.Node, checker.JsxElementLinks]	
+checker/checker.go:585	Checker	97	computedNameLinks	core.LinkStore[*ast.Node, checker.ComputedNameNodeLinks]	
+checker/checker.go:585	Checker	98	symbolReferenceLinks	core.LinkStore[*ast.Symbol, checker.SymbolReferenceLinks]	
+checker/checker.go:585	Checker	99	valueSymbolLinks	checker.symbolArenaLinkStore[checker.ValueSymbolLinks]	
+checker/checker.go:585	Checker	100	mappedSymbolLinks	core.LinkStore[*ast.Symbol, checker.MappedSymbolLinks]	
+checker/checker.go:585	Checker	101	deferredSymbolLinks	core.LinkStore[*ast.Symbol, checker.DeferredSymbolLinks]	
+checker/checker.go:585	Checker	102	aliasSymbolLinks	core.LinkStore[*ast.Symbol, checker.AliasSymbolLinks]	
+checker/checker.go:585	Checker	103	moduleSymbolLinks	core.LinkStore[*ast.Symbol, checker.ModuleSymbolLinks]	
+checker/checker.go:585	Checker	104	lateBoundLinks	core.LinkStore[*ast.Symbol, checker.LateBoundLinks]	
+checker/checker.go:585	Checker	105	exportTypeLinks	core.LinkStore[*ast.Symbol, checker.ExportTypeLinks]	
+checker/checker.go:585	Checker	106	membersAndExportsLinks	core.LinkStore[*ast.Symbol, checker.MembersAndExportsLinks]	
+checker/checker.go:585	Checker	107	typeAliasLinks	core.LinkStore[*ast.Symbol, checker.TypeAliasLinks]	
+checker/checker.go:585	Checker	108	declaredTypeLinks	core.LinkStore[*ast.Symbol, checker.DeclaredTypeLinks]	
+checker/checker.go:585	Checker	109	spreadLinks	core.LinkStore[*ast.Symbol, checker.SpreadLinks]	
+checker/checker.go:585	Checker	110	varianceLinks	core.LinkStore[*ast.Symbol, checker.VarianceLinks]	
+checker/checker.go:585	Checker	111	ReverseMappedSymbolLinks	core.LinkStore[*ast.Symbol, checker.ReverseMappedSymbolLinks]	
+checker/checker.go:585	Checker	112	markedAssignmentSymbolLinks	core.LinkStore[*ast.Symbol, checker.MarkedAssignmentSymbolLinks]	
+checker/checker.go:585	Checker	113	symbolContainerLinks	core.LinkStore[*ast.Symbol, checker.ContainingSymbolLinks]	
+checker/checker.go:585	Checker	114	sourceFileLinks	core.LinkStore[*ast.SourceFile, checker.SourceFileLinks]	
+checker/checker.go:585	Checker	115	regExpScanner	*scanner.Scanner	
+checker/checker.go:585	Checker	116	patternForType	map[*checker.Type]*ast.Node	
+checker/checker.go:585	Checker	117	contextFreeTypes	map[*ast.Node]*checker.Type	
+checker/checker.go:585	Checker	118	anyType	*checker.Type	
+checker/checker.go:585	Checker	119	autoType	*checker.Type	
+checker/checker.go:585	Checker	120	wildcardType	*checker.Type	
+checker/checker.go:585	Checker	121	blockedStringType	*checker.Type	
+checker/checker.go:585	Checker	122	errorType	*checker.Type	
+checker/checker.go:585	Checker	123	unresolvedType	*checker.Type	
+checker/checker.go:585	Checker	124	nonInferrableAnyType	*checker.Type	
+checker/checker.go:585	Checker	125	intrinsicMarkerType	*checker.Type	
+checker/checker.go:585	Checker	126	unknownType	*checker.Type	
+checker/checker.go:585	Checker	127	undefinedType	*checker.Type	
+checker/checker.go:585	Checker	128	undefinedWideningType	*checker.Type	
+checker/checker.go:585	Checker	129	missingType	*checker.Type	
+checker/checker.go:585	Checker	130	undefinedOrMissingType	*checker.Type	
+checker/checker.go:585	Checker	131	optionalType	*checker.Type	
+checker/checker.go:585	Checker	132	nullType	*checker.Type	
+checker/checker.go:585	Checker	133	nullWideningType	*checker.Type	
+checker/checker.go:585	Checker	134	stringType	*checker.Type	
+checker/checker.go:585	Checker	135	numberType	*checker.Type	
+checker/checker.go:585	Checker	136	bigintType	*checker.Type	
+checker/checker.go:585	Checker	137	regularFalseType	*checker.Type	
+checker/checker.go:585	Checker	138	falseType	*checker.Type	
+checker/checker.go:585	Checker	139	regularTrueType	*checker.Type	
+checker/checker.go:585	Checker	140	trueType	*checker.Type	
+checker/checker.go:585	Checker	141	booleanType	*checker.Type	
+checker/checker.go:585	Checker	142	esSymbolType	*checker.Type	
+checker/checker.go:585	Checker	143	voidType	*checker.Type	
+checker/checker.go:585	Checker	144	neverType	*checker.Type	
+checker/checker.go:585	Checker	145	silentNeverType	*checker.Type	
+checker/checker.go:585	Checker	146	implicitNeverType	*checker.Type	
+checker/checker.go:585	Checker	147	unreachableNeverType	*checker.Type	
+checker/checker.go:585	Checker	148	nonPrimitiveType	*checker.Type	
+checker/checker.go:585	Checker	149	stringOrNumberType	*checker.Type	
+checker/checker.go:585	Checker	150	stringNumberSymbolType	*checker.Type	
+checker/checker.go:585	Checker	151	numberOrBigIntType	*checker.Type	
+checker/checker.go:585	Checker	152	templateConstraintType	*checker.Type	
+checker/checker.go:585	Checker	153	numericStringType	*checker.Type	
+checker/checker.go:585	Checker	154	uniqueLiteralType	*checker.Type	
+checker/checker.go:585	Checker	155	uniqueLiteralMapper	*checker.TypeMapper	
+checker/checker.go:585	Checker	156	reliabilityFlags	checker.RelationComparisonResult	
+checker/checker.go:585	Checker	157	reportUnreliableMapper	*checker.TypeMapper	
+checker/checker.go:585	Checker	158	reportUnmeasurableMapper	*checker.TypeMapper	
+checker/checker.go:585	Checker	159	restrictiveMapper	*checker.TypeMapper	
+checker/checker.go:585	Checker	160	permissiveMapper	*checker.TypeMapper	
+checker/checker.go:585	Checker	161	emptyObjectType	*checker.Type	
+checker/checker.go:585	Checker	162	emptyJsxObjectType	*checker.Type	
+checker/checker.go:585	Checker	163	emptyFreshJsxObjectType	*checker.Type	
+checker/checker.go:585	Checker	164	emptyTypeLiteralType	*checker.Type	
+checker/checker.go:585	Checker	165	unknownEmptyObjectType	*checker.Type	
+checker/checker.go:585	Checker	166	unknownUnionType	*checker.Type	
+checker/checker.go:585	Checker	167	emptyGenericType	*checker.Type	
+checker/checker.go:585	Checker	168	anyFunctionType	*checker.Type	
+checker/checker.go:585	Checker	169	noConstraintType	*checker.Type	
+checker/checker.go:585	Checker	170	circularConstraintType	*checker.Type	
+checker/checker.go:585	Checker	171	resolvingDefaultType	*checker.Type	
+checker/checker.go:585	Checker	172	markerSuperType	*checker.Type	
+checker/checker.go:585	Checker	173	markerSubType	*checker.Type	
+checker/checker.go:585	Checker	174	markerOtherType	*checker.Type	
+checker/checker.go:585	Checker	175	markerSuperTypeForCheck	*checker.Type	
+checker/checker.go:585	Checker	176	markerSubTypeForCheck	*checker.Type	
+checker/checker.go:585	Checker	177	noTypePredicate	*checker.TypePredicate	
+checker/checker.go:585	Checker	178	anySignature	*checker.Signature	
+checker/checker.go:585	Checker	179	unknownSignature	*checker.Signature	
+checker/checker.go:585	Checker	180	resolvingSignature	*checker.Signature	
+checker/checker.go:585	Checker	181	silentNeverSignature	*checker.Signature	
+checker/checker.go:585	Checker	182	cachedArgumentsReferenced	map[*ast.Node]bool	
+checker/checker.go:585	Checker	183	enumNumberIndexInfo	*checker.IndexInfo	
+checker/checker.go:585	Checker	184	anyBaseTypeIndexInfo	*checker.IndexInfo	
+checker/checker.go:585	Checker	185	patternAmbientModules	[]*ast.PatternAmbientModule	
+checker/checker.go:585	Checker	186	patternAmbientModuleAugmentations	ast.SymbolTable	
+checker/checker.go:585	Checker	187	globalObjectType	*checker.Type	
+checker/checker.go:585	Checker	188	globalFunctionType	*checker.Type	
+checker/checker.go:585	Checker	189	globalCallableFunctionType	*checker.Type	
+checker/checker.go:585	Checker	190	globalNewableFunctionType	*checker.Type	
+checker/checker.go:585	Checker	191	globalArrayType	*checker.Type	
+checker/checker.go:585	Checker	192	globalReadonlyArrayType	*checker.Type	
+checker/checker.go:585	Checker	193	globalStringType	*checker.Type	
+checker/checker.go:585	Checker	194	globalNumberType	*checker.Type	
+checker/checker.go:585	Checker	195	globalBooleanType	*checker.Type	
+checker/checker.go:585	Checker	196	globalRegExpType	*checker.Type	
+checker/checker.go:585	Checker	197	globalThisType	*checker.Type	
+checker/checker.go:585	Checker	198	anyArrayType	*checker.Type	
+checker/checker.go:585	Checker	199	autoArrayType	*checker.Type	
+checker/checker.go:585	Checker	200	anyReadonlyArrayType	*checker.Type	
+checker/checker.go:585	Checker	201	deferredGlobalImportMetaExpressionType	*checker.Type	
+checker/checker.go:585	Checker	202	contextualBindingPatterns	[]*ast.Node	
+checker/checker.go:585	Checker	203	emptyStringType	*checker.Type	
+checker/checker.go:585	Checker	204	zeroType	*checker.Type	
+checker/checker.go:585	Checker	205	zeroBigIntType	*checker.Type	
+checker/checker.go:585	Checker	206	typeofType	*checker.Type	
+checker/checker.go:585	Checker	207	typeResolutions	[]checker.TypeResolution	
+checker/checker.go:585	Checker	208	resolutionStart	int	
+checker/checker.go:585	Checker	209	varianceStack	[]checker.VarianceStackEntry	
+checker/checker.go:585	Checker	210	apparentArgumentCount	*int	
+checker/checker.go:585	Checker	211	lastGetCombinedNodeFlagsNode	*ast.Node	
+checker/checker.go:585	Checker	212	lastGetCombinedNodeFlagsResult	ast.NodeFlags	
+checker/checker.go:585	Checker	213	lastGetCombinedModifierFlagsNode	*ast.Node	
+checker/checker.go:585	Checker	214	lastGetCombinedModifierFlagsResult	ast.ModifierFlags	
+checker/checker.go:585	Checker	215	freeinferenceState	*checker.InferenceState	
+checker/checker.go:585	Checker	216	freeFlowState	*checker.FlowState	
+checker/checker.go:585	Checker	217	flowLoopCache	map[checker.FlowLoopKey]*checker.Type	
+checker/checker.go:585	Checker	218	flowLoopStack	[]checker.FlowLoopInfo	
+checker/checker.go:585	Checker	219	sharedFlows	[]checker.SharedFlow	
+checker/checker.go:585	Checker	220	antecedentTypes	[]*checker.Type	
+checker/checker.go:585	Checker	221	flowAnalysisDisabled	bool	
+checker/checker.go:585	Checker	222	flowInvocationCount	int	
+checker/checker.go:585	Checker	223	flowTypeCache	map[*ast.Node]*checker.Type	
+checker/checker.go:585	Checker	224	lastFlowNode	*ast.FlowNode	
+checker/checker.go:585	Checker	225	lastFlowNodeReachable	bool	
+checker/checker.go:585	Checker	226	flowNodeReachable	map[*ast.FlowNode]bool	
+checker/checker.go:585	Checker	227	flowNodePostSuper	map[*ast.FlowNode]bool	
+checker/checker.go:585	Checker	228	renamedBindingElementsInTypes	[]*ast.Node	
+checker/checker.go:585	Checker	229	contextualInfos	[]checker.ContextualInfo	
+checker/checker.go:585	Checker	230	inferenceContextInfos	[]checker.InferenceContextInfo	
+checker/checker.go:585	Checker	231	awaitedTypeStack	[]*checker.Type	
+checker/checker.go:585	Checker	232	reverseMappedSourceStack	[]*checker.Type	
+checker/checker.go:585	Checker	233	reverseMappedTargetStack	[]*checker.Type	
+checker/checker.go:585	Checker	234	reverseExpandingFlags	checker.ExpandingFlags	
+checker/checker.go:585	Checker	235	freeRelater	*checker.Relater	
+checker/checker.go:585	Checker	236	subtypeRelation	*checker.Relation	
+checker/checker.go:585	Checker	237	strictSubtypeRelation	*checker.Relation	
+checker/checker.go:585	Checker	238	assignableRelation	*checker.Relation	
+checker/checker.go:585	Checker	239	comparableRelation	*checker.Relation	
+checker/checker.go:585	Checker	240	identityRelation	*checker.Relation	
+checker/checker.go:585	Checker	241	enumRelation	map[checker.EnumRelationKey]checker.RelationComparisonResult	
+checker/checker.go:585	Checker	242	getGlobalESSymbolType	func() *checker.Type	
+checker/checker.go:585	Checker	243	getGlobalBigIntType	func() *checker.Type	
+checker/checker.go:585	Checker	244	getGlobalImportMetaType	func() *checker.Type	
+checker/checker.go:585	Checker	245	getGlobalImportAttributesType	func() *checker.Type	
+checker/checker.go:585	Checker	246	getGlobalImportAttributesTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	247	getGlobalNonNullableTypeAliasOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	248	getGlobalExtractSymbol	func() *ast.Symbol	
+checker/checker.go:585	Checker	249	getGlobalDisposableType	func() *checker.Type	
+checker/checker.go:585	Checker	250	getGlobalAsyncDisposableType	func() *checker.Type	
+checker/checker.go:585	Checker	251	getGlobalAwaitedSymbol	func() *ast.Symbol	
+checker/checker.go:585	Checker	252	getGlobalAwaitedSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	253	getGlobalNaNSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	254	getGlobalRecordSymbol	func() *ast.Symbol	
+checker/checker.go:585	Checker	255	getGlobalTemplateStringsArrayType	func() *checker.Type	
+checker/checker.go:585	Checker	256	getGlobalESSymbolConstructorSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	257	getGlobalESSymbolConstructorTypeSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	258	getGlobalImportCallOptionsType	func() *checker.Type	
+checker/checker.go:585	Checker	259	getGlobalImportCallOptionsTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	260	getGlobalPromiseType	func() *checker.Type	
+checker/checker.go:585	Checker	261	getGlobalPromiseTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	262	getGlobalPromiseLikeType	func() *checker.Type	
+checker/checker.go:585	Checker	263	getGlobalPromiseConstructorSymbol	func() *ast.Symbol	
+checker/checker.go:585	Checker	264	getGlobalPromiseConstructorSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	265	getGlobalOmitSymbol	func() *ast.Symbol	
+checker/checker.go:585	Checker	266	getGlobalNoInferSymbolOrNil	func() *ast.Symbol	
+checker/checker.go:585	Checker	267	getGlobalIteratorType	func() *checker.Type	
+checker/checker.go:585	Checker	268	getGlobalIterableType	func() *checker.Type	
+checker/checker.go:585	Checker	269	getGlobalIterableTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	270	getGlobalIterableIteratorType	func() *checker.Type	
+checker/checker.go:585	Checker	271	getGlobalIterableIteratorTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	272	getGlobalIteratorObjectType	func() *checker.Type	
+checker/checker.go:585	Checker	273	getGlobalGeneratorType	func() *checker.Type	
+checker/checker.go:585	Checker	274	getGlobalAsyncIteratorType	func() *checker.Type	
+checker/checker.go:585	Checker	275	getGlobalAsyncIterableType	func() *checker.Type	
+checker/checker.go:585	Checker	276	getGlobalAsyncIterableTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	277	getGlobalAsyncIterableIteratorType	func() *checker.Type	
+checker/checker.go:585	Checker	278	getGlobalAsyncIterableIteratorTypeChecked	func() *checker.Type	
+checker/checker.go:585	Checker	279	getGlobalAsyncIteratorObjectType	func() *checker.Type	
+checker/checker.go:585	Checker	280	getGlobalAsyncGeneratorType	func() *checker.Type	
+checker/checker.go:585	Checker	281	getGlobalIteratorYieldResultType	func() *checker.Type	
+checker/checker.go:585	Checker	282	getGlobalIteratorReturnResultType	func() *checker.Type	
+checker/checker.go:585	Checker	283	getGlobalTypedPropertyDescriptorType	func() *checker.Type	
+checker/checker.go:585	Checker	284	getGlobalClassDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	285	getGlobalClassMethodDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	286	getGlobalClassGetterDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	287	getGlobalClassSetterDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	288	getGlobalClassAccessorDecoratorContxtType	func() *checker.Type	
+checker/checker.go:585	Checker	289	getGlobalClassAccessorDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	290	getGlobalClassAccessorDecoratorTargetType	func() *checker.Type	
+checker/checker.go:585	Checker	291	getGlobalClassAccessorDecoratorResultType	func() *checker.Type	
+checker/checker.go:585	Checker	292	getGlobalClassFieldDecoratorContextType	func() *checker.Type	
+checker/checker.go:585	Checker	293	syncIterationTypesResolver	*checker.IterationTypesResolver	
+checker/checker.go:585	Checker	294	asyncIterationTypesResolver	*checker.IterationTypesResolver	
+checker/checker.go:585	Checker	295	isPrimitiveOrObjectOrEmptyType	func(*checker.Type) bool	
+checker/checker.go:585	Checker	296	containsMissingType	func(*checker.Type) bool	
+checker/checker.go:585	Checker	297	couldContainTypeVariables	func(*checker.Type) bool	
+checker/checker.go:585	Checker	298	isStringIndexSignatureOnlyType	func(*checker.Type) bool	
+checker/checker.go:585	Checker	299	markNodeAssignments	func(*ast.Node) bool	
+checker/checker.go:585	Checker	300	compareTypesAssignable	checker.TypeComparer	
+checker/checker.go:585	Checker	301	emitResolver	*checker.EmitResolver	
+checker/checker.go:585	Checker	302	emitResolverOnce	sync.Once	
+checker/checker.go:585	Checker	303	_jsxNamespace	string	
+checker/checker.go:585	Checker	304	_jsxFactoryEntity	*ast.Node	
+checker/checker.go:585	Checker	305	skipDirectInferenceNodes	collections.Set[*ast.Node]	
+checker/checker.go:585	Checker	306	ctx	context.Context	
+checker/checker.go:585	Checker	307	packagesMap	map[string]bool	
+checker/checker.go:585	Checker	308	activeMappers	[]*checker.TypeMapper	
+checker/checker.go:585	Checker	309	activeTypeMappersCaches	[]map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:585	Checker	310	ambientModulesOnce	sync.Once	
+checker/checker.go:585	Checker	311	ambientModules	[]*ast.Symbol	
+checker/checker.go:585	Checker	312	withinUnreachableCode	bool	
+checker/checker.go:585	Checker	313	reportedUnreachableNodes	collections.Set[*ast.Node]	
+checker/checker.go:585	Checker	314	nonExistentProperties	collections.Set[checker.NonExistentPropertyKey]	
+checker/checker.go:585	Checker	315	deferredDiagnosticCallbacks	[]func()	
+checker/checker.go:585	Checker	316	typeToStringNodebuilder	*checker.NodeBuilder	
+checker/checker.go:585	Checker	317	mu	sync.Mutex	
+checker/checker.go:585	Checker	318	tracer	*checker.Tracer	
+checker/types.go:1344	CompositeSignature	0	isUnion	bool	
+checker/types.go:1344	CompositeSignature	1	signatures	[]*checker.Signature	
+checker/nodebuilderimpl.go:24	CompositeSymbolIdentity	0	isConstructorNode	bool	
+checker/nodebuilderimpl.go:24	CompositeSymbolIdentity	1	symbolId	ast.SymbolId	
+checker/nodebuilderimpl.go:24	CompositeSymbolIdentity	2	nodeId	ast.NodeId	
+checker/nodebuilderimpl.go:43	CompositeTypeCacheIdentity	0	typeId	checker.TypeId	
+checker/nodebuilderimpl.go:43	CompositeTypeCacheIdentity	1	flags	nodebuilder.Flags	
+checker/nodebuilderimpl.go:43	CompositeTypeCacheIdentity	2	internalFlags	nodebuilder.InternalFlags	
+checker/mapper.go:270	CompositeTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:270	CompositeTypeMapper	1	c	*checker.Checker	
+checker/mapper.go:270	CompositeTypeMapper	2	m1	*checker.TypeMapper	
+checker/mapper.go:270	CompositeTypeMapper	3	m2	*checker.TypeMapper	
+checker/types.go:385	ComputedNameNodeLinks	0	hasName	*bool	
+checker/types.go:385	ComputedNameNodeLinks	1	name	string	
+checker/types.go:1237	ConditionalRoot	0	node	*ast.ConditionalTypeNode	
+checker/types.go:1237	ConditionalRoot	1	checkType	*checker.Type	
+checker/types.go:1237	ConditionalRoot	2	extendsType	*checker.Type	
+checker/types.go:1237	ConditionalRoot	3	isDistributive	bool	
+checker/types.go:1237	ConditionalRoot	4	inferTypeParameters	[]*checker.Type	
+checker/types.go:1237	ConditionalRoot	5	outerTypeParameters	[]*checker.Type	
+checker/types.go:1237	ConditionalRoot	6	instantiations	map[checker.CacheHashKey]*checker.Type	
+checker/types.go:1237	ConditionalRoot	7	alias	*checker.TypeAlias	
+checker/types.go:1248	ConditionalType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1248	ConditionalType	1	root	*checker.ConditionalRoot	
+checker/types.go:1248	ConditionalType	2	checkType	*checker.Type	
+checker/types.go:1248	ConditionalType	3	extendsType	*checker.Type	
+checker/types.go:1248	ConditionalType	4	resolvedTrueType	*checker.Type	
+checker/types.go:1248	ConditionalType	5	resolvedFalseType	*checker.Type	
+checker/types.go:1248	ConditionalType	6	resolvedInferredTrueType	*checker.Type	
+checker/types.go:1248	ConditionalType	7	resolvedDefaultConstraint	*checker.Type	
+checker/types.go:1248	ConditionalType	8	resolvedConstraintOfDistributive	*checker.Type	
+checker/types.go:1248	ConditionalType	9	mapper	*checker.TypeMapper	
+checker/types.go:1248	ConditionalType	10	combinedMapper	*checker.TypeMapper	
+checker/types.go:923	ConstrainedType	0	TypeBase	checker.TypeBase	embedded
+checker/types.go:923	ConstrainedType	1	resolvedBaseConstraint	*checker.Type	
+checker/types.go:331	ContainingSymbolLinks	0	extendedContainersByFile	map[ast.NodeId][]*ast.Symbol	
+checker/types.go:331	ContainingSymbolLinks	1	extendedContainers	*[]*ast.Symbol	
+checker/types.go:331	ContainingSymbolLinks	2	accessibleChainCache	map[checker.accessibleChainCacheKey][]*ast.Symbol	
+checker/checker.go:77	ContextualInfo	0	node	*ast.Node	
+checker/checker.go:77	ContextualInfo	1	t	*checker.Type	
+checker/checker.go:77	ContextualInfo	2	isCache	bool	
+checker/emitresolver.go:30	DeclarationFileLinks	0	aliasesMarked	bool	
+checker/emitresolver.go:26	DeclarationLinks	0	isVisible	core.Tristate	
+checker/types.go:249	DeclaredTypeLinks	0	declaredType	*checker.Type	
+checker/types.go:249	DeclaredTypeLinks	1	interfaceChecked	bool	
+checker/types.go:249	DeclaredTypeLinks	2	indexSignaturesChecked	bool	
+checker/types.go:249	DeclaredTypeLinks	3	typeParametersChecked	bool	
+checker/types.go:249	DeclaredTypeLinks	4	enumChecked	bool	
+checker/types.go:196	DeferredSymbolLinks	0	parent	*checker.Type	
+checker/types.go:196	DeferredSymbolLinks	1	constituents	[]*checker.Type	
+checker/types.go:196	DeferredSymbolLinks	2	writeConstituents	[]*checker.Type	
+checker/mapper.go:199	DeferredTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:199	DeferredTypeMapper	1	sources	[]*checker.Type	
+checker/mapper.go:199	DeferredTypeMapper	2	targets	[]func() *checker.Type	
+checker/relater.go:77	DiagnosticAndArguments	0	message	*diagnostics.Message	
+checker/relater.go:77	DiagnosticAndArguments	1	arguments	[]any	
+checker/utilities.go:1777	DiagnosticDetails	0	Message	*diagnostics.Message	
+checker/utilities.go:1777	DiagnosticDetails	1	Args	[]any	
+checker/checker.go:200	DiscriminatedContextualTypeKey	0	nodeId	ast.NodeId	
+checker/checker.go:200	DiscriminatedContextualTypeKey	1	typeId	checker.TypeId	
+checker/emitresolver.go:34	EmitResolver	0	checker	*checker.Checker	
+checker/emitresolver.go:34	EmitResolver	1	checkerMu	*sync.Mutex	
+checker/emitresolver.go:34	EmitResolver	2	isValueAliasDeclaration	func(node *ast.Node) bool	
+checker/emitresolver.go:34	EmitResolver	3	aliasMarkingVisitor	func(node *ast.Node) bool	
+checker/emitresolver.go:34	EmitResolver	4	referenceResolver	binder.ReferenceResolver	
+checker/emitresolver.go:34	EmitResolver	5	jsxLinks	core.LinkStore[*ast.Node, checker.JSXLinks]	
+checker/emitresolver.go:34	EmitResolver	6	declarationLinks	core.LinkStore[*ast.Node, checker.DeclarationLinks]	
+checker/emitresolver.go:34	EmitResolver	7	declarationFileLinks	core.LinkStore[*ast.Node, checker.DeclarationFileLinks]	
+checker/checker.go:103	EnumLiteralKey	0	enumSymbol	*ast.Symbol	
+checker/checker.go:103	EnumLiteralKey	1	value	any	
+checker/types.go:392	EnumMemberLinks	0	value	evaluator.Result	
+checker/checker.go:110	EnumRelationKey	0	sourceId	ast.SymbolId	
+checker/checker.go:110	EnumRelationKey	1	targetId	ast.SymbolId	
+checker/relater.go:2574	ErrorChain	0	next	*checker.ErrorChain	
+checker/relater.go:2574	ErrorChain	1	message	*diagnostics.Message	
+checker/relater.go:2574	ErrorChain	2	args	[]any	
+checker/relater.go:82	ErrorOutputContainer	0	errors	[]*ast.Diagnostic	
+checker/relater.go:82	ErrorOutputContainer	1	skipLogging	bool	
+checker/types.go:1125	EvolvingArrayType	0	ObjectType	checker.ObjectType	embedded
+checker/types.go:1125	EvolvingArrayType	1	elementType	*checker.Type	
+checker/types.go:1125	EvolvingArrayType	2	finalArrayType	*checker.Type	
+checker/checker.go:16235	ExportCollision	0	specifierText	string	
+checker/checker.go:16235	ExportCollision	1	exportsWithDuplicate	[]*ast.Node	
+checker/types.go:233	ExportTypeLinks	0	target	*ast.Symbol	
+checker/types.go:233	ExportTypeLinks	1	originatingImport	*ast.Node	
+checker/utilities.go:1288	FeatureMapEntry	0	lib	string	
+checker/utilities.go:1288	FeatureMapEntry	1	props	[]string	
+checker/checker.go:258	FlowLoopInfo	0	key	checker.FlowLoopKey	
+checker/checker.go:258	FlowLoopInfo	1	types	[]*checker.Type	
+checker/checker.go:253	FlowLoopKey	0	flowNode	*ast.FlowNode	
+checker/checker.go:253	FlowLoopKey	1	refKey	checker.CacheHashKey	
+checker/flow.go:40	FlowState	0	reference	*ast.Node	
+checker/flow.go:40	FlowState	1	declaredType	*checker.Type	
+checker/flow.go:40	FlowState	2	initialType	*checker.Type	
+checker/flow.go:40	FlowState	3	flowContainer	*ast.Node	
+checker/flow.go:40	FlowState	4	refKey	checker.CacheHashKey	
+checker/flow.go:40	FlowState	5	depth	int	
+checker/flow.go:40	FlowState	6	sharedFlowStart	int	
+checker/flow.go:40	FlowState	7	reduceLabels	[]*ast.FlowReduceLabelData	
+checker/flow.go:40	FlowState	8	next	*checker.FlowState	
+checker/flow.go:19	FlowType	0	t	*checker.Type	
+checker/flow.go:19	FlowType	1	incomplete	bool	
+checker/mapper.go:228	FunctionTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:228	FunctionTypeMapper	1	fn	func(*checker.Type) *checker.Type	
+checker/types.go:1383	IndexInfo	0	keyType	*checker.Type	
+checker/types.go:1383	IndexInfo	1	valueType	*checker.Type	
+checker/types.go:1383	IndexInfo	2	isReadonly	bool	
+checker/types.go:1383	IndexInfo	3	declaration	*ast.Node	
+checker/types.go:1383	IndexInfo	4	indexSymbol	*ast.Symbol	
+checker/types.go:1383	IndexInfo	5	components	[]*ast.Node	
+checker/types.go:1192	IndexType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1192	IndexType	1	target	*checker.Type	
+checker/types.go:1192	IndexType	2	indexFlags	checker.IndexFlags	
+checker/types.go:1202	IndexedAccessType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1202	IndexedAccessType	1	objectType	*checker.Type	
+checker/types.go:1202	IndexedAccessType	2	indexType	*checker.Type	
+checker/types.go:1202	IndexedAccessType	3	accessFlags	checker.AccessFlags	
+checker/checker.go:276	InferenceContext	0	inferences	[]*checker.InferenceInfo	
+checker/checker.go:276	InferenceContext	1	signature	*checker.Signature	
+checker/checker.go:276	InferenceContext	2	flags	checker.InferenceFlags	
+checker/checker.go:276	InferenceContext	3	compareTypes	checker.TypeComparer	
+checker/checker.go:276	InferenceContext	4	mapper	*checker.TypeMapper	
+checker/checker.go:276	InferenceContext	5	nonFixingMapper	*checker.TypeMapper	
+checker/checker.go:276	InferenceContext	6	returnMapper	*checker.TypeMapper	
+checker/checker.go:276	InferenceContext	7	outerReturnMapper	*checker.TypeMapper	
+checker/checker.go:276	InferenceContext	8	inferredTypeParameters	[]*checker.Type	
+checker/checker.go:276	InferenceContext	9	intraExpressionInferenceSites	[]checker.IntraExpressionInferenceSite	
+checker/checker.go:85	InferenceContextInfo	0	node	*ast.Node	
+checker/checker.go:85	InferenceContextInfo	1	context	*checker.InferenceContext	
+checker/checker.go:289	InferenceInfo	0	typeParameter	*checker.Type	
+checker/checker.go:289	InferenceInfo	1	candidates	[]*checker.Type	
+checker/checker.go:289	InferenceInfo	2	contraCandidates	[]*checker.Type	
+checker/checker.go:289	InferenceInfo	3	inferredType	*checker.Type	
+checker/checker.go:289	InferenceInfo	4	priority	checker.InferencePriority	
+checker/checker.go:289	InferenceInfo	5	topLevel	bool	
+checker/checker.go:289	InferenceInfo	6	isFixed	bool	
+checker/checker.go:289	InferenceInfo	7	impliedArity	int	
+checker/inference.go:11	InferenceKey	0	s	checker.TypeId	
+checker/inference.go:11	InferenceKey	1	t	checker.TypeId	
+checker/inference.go:16	InferenceState	0	inferences	[]*checker.InferenceInfo	
+checker/inference.go:16	InferenceState	1	originalSource	*checker.Type	
+checker/inference.go:16	InferenceState	2	originalTarget	*checker.Type	
+checker/inference.go:16	InferenceState	3	priority	checker.InferencePriority	
+checker/inference.go:16	InferenceState	4	inferencePriority	checker.InferencePriority	
+checker/inference.go:16	InferenceState	5	contravariant	bool	
+checker/inference.go:16	InferenceState	6	bivariant	bool	
+checker/inference.go:16	InferenceState	7	expandingFlags	checker.ExpandingFlags	
+checker/inference.go:16	InferenceState	8	propagationType	*checker.Type	
+checker/inference.go:16	InferenceState	9	visited	map[checker.InferenceKey]checker.InferencePriority	
+checker/inference.go:16	InferenceState	10	sourceStack	[]*checker.Type	
+checker/inference.go:16	InferenceState	11	targetStack	[]*checker.Type	
+checker/inference.go:16	InferenceState	12	next	*checker.InferenceState	
+checker/mapper.go:296	InferenceTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:296	InferenceTypeMapper	1	c	*checker.Checker	
+checker/mapper.go:296	InferenceTypeMapper	2	n	*checker.InferenceContext	
+checker/mapper.go:296	InferenceTypeMapper	3	fixing	bool	
+checker/checker.go:5107	InheritanceInfo	0	prop	*ast.Symbol	
+checker/checker.go:5107	InheritanceInfo	1	containingType	*checker.Type	
+checker/checker.go:207	InstantiationExpressionKey	0	nodeId	ast.NodeId	
+checker/checker.go:207	InstantiationExpressionKey	1	typeId	checker.TypeId	
+checker/types.go:1095	InstantiationExpressionType	0	ObjectType	checker.ObjectType	embedded
+checker/types.go:1095	InstantiationExpressionType	1	node	*ast.Node	
+checker/types.go:1011	InterfaceType	0	TypeReference	checker.TypeReference	embedded
+checker/types.go:1011	InterfaceType	1	allTypeParameters	[]*checker.Type	
+checker/types.go:1011	InterfaceType	2	outerTypeParameterCount	int	
+checker/types.go:1011	InterfaceType	3	thisType	*checker.Type	
+checker/types.go:1011	InterfaceType	4	baseTypesResolved	bool	
+checker/types.go:1011	InterfaceType	5	declaredMembersResolved	bool	
+checker/types.go:1011	InterfaceType	6	resolvedBaseConstructorType	*checker.Type	
+checker/types.go:1011	InterfaceType	7	resolvedBaseTypes	[]*checker.Type	
+checker/types.go:1011	InterfaceType	8	declaredMembers	ast.SymbolTable	
+checker/types.go:1011	InterfaceType	9	declaredCallSignatures	[]*checker.Signature	
+checker/types.go:1011	InterfaceType	10	declaredConstructSignatures	[]*checker.Signature	
+checker/types.go:1011	InterfaceType	11	declaredIndexInfos	[]*checker.IndexInfo	
+checker/types.go:1160	IntersectionType	0	UnionOrIntersectionType	checker.UnionOrIntersectionType	embedded
+checker/types.go:1160	IntersectionType	1	resolvedApparentType	*checker.Type	
+checker/types.go:1160	IntersectionType	2	uniqueLiteralFilledInstantiation	*checker.Type	
+checker/checker.go:321	IntraExpressionInferenceSite	0	node	*ast.Node	
+checker/checker.go:321	IntraExpressionInferenceSite	1	t	*checker.Type	
+checker/types.go:882	IntrinsicType	0	TypeBase	checker.TypeBase	embedded
+checker/types.go:882	IntrinsicType	1	intrinsicName	string	
+checker/checker.go:507	IterationTypes	0	yieldType	*checker.Type	
+checker/checker.go:507	IterationTypes	1	returnType	*checker.Type	
+checker/checker.go:507	IterationTypes	2	nextType	*checker.Type	
+checker/checker.go:229	IterationTypesKey	0	typeId	checker.TypeId	
+checker/checker.go:229	IterationTypesKey	1	use	checker.IterationUse	
+checker/checker.go:521	IterationTypesResolver	0	iteratorSymbolName	string	
+checker/checker.go:521	IterationTypesResolver	1	getGlobalIteratorType	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	2	getGlobalIterableType	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	3	getGlobalIterableTypeChecked	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	4	getGlobalIterableIteratorType	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	5	getGlobalIterableIteratorTypeChecked	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	6	getGlobalIteratorObjectType	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	7	getGlobalGeneratorType	func() *checker.Type	
+checker/checker.go:521	IterationTypesResolver	8	getGlobalBuiltinIteratorTypes	func() []*checker.Type	
+checker/checker.go:521	IterationTypesResolver	9	resolveIterationType	func(t *checker.Type, errorNode *ast.Node) *checker.Type	
+checker/checker.go:521	IterationTypesResolver	10	mustHaveANextMethodDiagnostic	*diagnostics.Message	
+checker/checker.go:521	IterationTypesResolver	11	mustBeAMethodDiagnostic	*diagnostics.Message	
+checker/checker.go:521	IterationTypesResolver	12	mustHaveAValueDiagnostic	*diagnostics.Message	
+checker/emitresolver.go:20	JSXLinks	0	importRef	*ast.Node	
+checker/jsx.go:369	JsxElaborationElement	0	errorNode	*ast.Node	
+checker/jsx.go:369	JsxElaborationElement	1	innerExpression	*ast.Node	
+checker/jsx.go:369	JsxElaborationElement	2	nameType	*checker.Type	
+checker/jsx.go:369	JsxElaborationElement	3	createDiagnostic	func(prop *ast.Node) *ast.Diagnostic	
+checker/jsx.go:34	JsxElementLinks	0	jsxFlags	checker.JsxFlags	
+checker/jsx.go:34	JsxElementLinks	1	resolvedJsxElementAttributesType	*checker.Type	
+checker/jsx.go:34	JsxElementLinks	2	jsxNamespace	*ast.Symbol	
+checker/jsx.go:34	JsxElementLinks	3	jsxImplicitImportContainer	*ast.Symbol	
+checker/jsx.go:34	JsxElementLinks	4	firstJSXTagInFile	*ast.Node	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	0	Exponentiation	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	1	AsyncFunctions	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	2	ForAwaitOf	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	3	AsyncGenerators	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	4	AsyncIteration	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	5	ObjectSpreadRest	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	6	RegularExpressionFlagsDotAll	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	7	BindinglessCatch	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	8	BigInt	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	9	NullishCoalesce	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	10	OptionalChaining	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	11	LogicalAssignment	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	12	TopLevelAwait	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	13	ClassFields	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	14	PrivateNamesAndClassStaticBlocks	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	15	RegularExpressionFlagsHasIndices	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	16	ShebangComments	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	17	UsingAndAwaitUsing	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	18	ClassAndClassElementDecorators	core.ScriptTarget	
+checker/types.go:1427	LanguageFeatureMinimumTargetMap	19	RegularExpressionFlagsUnicodeSets	core.ScriptTarget	
+checker/types.go:227	LateBoundLinks	0	lateSymbol	*ast.Symbol	
+checker/types.go:891	LiteralType	0	TypeBase	checker.TypeBase	embedded
+checker/types.go:891	LiteralType	1	value	any	
+checker/types.go:891	LiteralType	2	freshType	*checker.Type	
+checker/types.go:891	LiteralType	3	regularType	*checker.Type	
+checker/types.go:189	MappedSymbolLinks	0	keyType	*checker.Type	
+checker/types.go:189	MappedSymbolLinks	1	syntheticOrigin	*ast.Symbol	
+checker/types.go:1102	MappedType	0	ObjectType	checker.ObjectType	embedded
+checker/types.go:1102	MappedType	1	declaration	*ast.MappedTypeNode	
+checker/types.go:1102	MappedType	2	typeParameter	*checker.Type	
+checker/types.go:1102	MappedType	3	constraintType	*checker.Type	
+checker/types.go:1102	MappedType	4	nameType	*checker.Type	
+checker/types.go:1102	MappedType	5	templateType	*checker.Type	
+checker/types.go:1102	MappedType	6	modifiersType	*checker.Type	
+checker/types.go:1102	MappedType	7	resolvedApparentType	*checker.Type	
+checker/types.go:1102	MappedType	8	containsError	bool	
+checker/types.go:320	MarkedAssignmentSymbolLinks	0	lastAssignmentPos	int32	
+checker/types.go:320	MarkedAssignmentSymbolLinks	1	hasDefiniteAssignment	bool	
+checker/mapper.go:246	MergedTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:246	MergedTypeMapper	1	m1	*checker.TypeMapper	
+checker/mapper.go:246	MergedTypeMapper	2	m2	*checker.TypeMapper	
+checker/types.go:213	ModuleSymbolLinks	0	resolvedExports	ast.SymbolTable	
+checker/types.go:213	ModuleSymbolLinks	1	typeOnlyExportStarMap	map[string]*ast.Node	
+checker/types.go:213	ModuleSymbolLinks	2	exportsChecked	bool	
+checker/checker.go:153	NarrowedTypeKey	0	t	*checker.Type	
+checker/checker.go:153	NarrowedTypeKey	1	candidate	*checker.Type	
+checker/checker.go:153	NarrowedTypeKey	2	assumeTrue	bool	
+checker/checker.go:153	NarrowedTypeKey	3	checkDerived	bool	
+checker/nodebuilder.go:10	NodeBuilder	0	ctxStack	[]*checker.NodeBuilderContext	
+checker/nodebuilder.go:10	NodeBuilder	1	host	checker.Host	
+checker/nodebuilder.go:10	NodeBuilder	2	impl	*checker.NodeBuilderImpl	
+checker/nodebuilder.go:10	NodeBuilder	3	verbosity	*checker.VerbosityContext	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	0	host	checker.Host	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	1	tracker	nodebuilder.SymbolTracker	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	2	approximateLength	int	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	3	maxTruncationLength	int	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	4	encounteredError	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	5	truncating	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	6	reportedDiagnostic	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	7	flags	nodebuilder.Flags	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	8	internalFlags	nodebuilder.InternalFlags	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	9	depth	int	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	10	maxExpansionDepth	int	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	11	typeStack	[]*checker.Type	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	12	canIncreaseExpansionDepth	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	13	expansionTruncated	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	14	enclosingDeclaration	*ast.Node	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	15	enclosingFile	*ast.SourceFile	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	16	inferTypeParameters	[]*checker.Type	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	17	visitedTypes	collections.Set[checker.TypeId]	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	18	symbolDepth	map[checker.CompositeSymbolIdentity]int	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	19	trackedSymbols	[]*checker.TrackedSymbolArgs	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	20	mapper	*checker.TypeMapper	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	21	reverseMappedStack	[]*ast.Symbol	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	22	enclosingSymbolTypes	map[ast.SymbolId]*checker.Type	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	23	suppressReportInferenceFallback	bool	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	24	remappedSymbolReferences	map[ast.SymbolId]*ast.Symbol	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	25	typeParameterNames	collections.CopyOnWriteMap[checker.TypeId, *ast.Identifier]	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	26	typeParameterNamesByText	collections.CopyOnWriteSet[string]	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	27	typeParameterNamesByTextNextNameCount	collections.CopyOnWriteMap[string, int]	
+checker/nodebuilderimpl.go:57	NodeBuilderContext	28	typeParameterSymbolList	collections.CopyOnWriteSet[ast.SymbolId]	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	0	f	*ast.NodeFactory	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	1	ch	*checker.Checker	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	2	e	*printer.EmitContext	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	3	pc	*pseudochecker.PseudoChecker	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	4	links	core.LinkStore[*ast.Node, checker.NodeBuilderLinks]	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	5	symbolLinks	core.LinkStore[*ast.Symbol, checker.NodeBuilderSymbolLinks]	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	6	ctx	*checker.NodeBuilderContext	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	7	cloneBindingNameVisitor	*ast.NodeVisitor	
+checker/nodebuilderimpl.go:91	NodeBuilderImpl	8	idToSymbol	map[*ast.IdentifierNode]*ast.Symbol	
+checker/nodebuilderimpl.go:49	NodeBuilderLinks	0	serializedTypes	map[checker.CompositeTypeCacheIdentity]*checker.SerializedTypeEntry	
+checker/nodebuilderimpl.go:49	NodeBuilderLinks	1	fakeScopeForSignatureDeclaration	*string	
+checker/nodebuilderimpl.go:54	NodeBuilderSymbolLinks	0	specifierCache	module.ModeAwareCache[string]	
+checker/types.go:370	NodeLinks	0	flags	checker.NodeCheckFlags	
+checker/types.go:370	NodeLinks	1	declarationRequiresScopeChange	core.Tristate	
+checker/types.go:370	NodeLinks	2	hasReportedStatementInAmbientContext	bool	
+checker/checker.go:245	NonExistentPropertyKey	0	propNode	*ast.Node	
+checker/checker.go:245	NonExistentPropertyKey	1	containingType	*checker.Type	
+checker/checker.go:245	NonExistentPropertyKey	2	isUncheckedJS	bool	
+checker/checker.go:30836	ObjectLiteralDiscriminator	0	c	*checker.Checker	
+checker/checker.go:30836	ObjectLiteralDiscriminator	1	props	[]*ast.Node	
+checker/checker.go:30836	ObjectLiteralDiscriminator	2	members	[]*ast.Symbol	
+checker/types.go:990	ObjectType	0	StructuredType	checker.StructuredType	embedded
+checker/types.go:990	ObjectType	1	target	*checker.Type	
+checker/types.go:990	ObjectType	2	mapper	*checker.TypeMapper	
+checker/types.go:990	ObjectType	3	instantiations	map[checker.CacheHashKey]*checker.Type	
+checker/checker.go:236	PropertiesTypesKey	0	typeId	checker.TypeId	
+checker/checker.go:236	PropertiesTypesKey	1	include	checker.TypeFlags	
+checker/checker.go:236	PropertiesTypesKey	2	includeOrigin	bool	
+checker/checker.go:236	PropertiesTypesKey	3	unresolvedMembers	bool	
+checker/relater.go:89	RecursionId	0	value	any	
+checker/relater.go:2580	Relater	0	c	*checker.Checker	
+checker/relater.go:2580	Relater	1	relation	*checker.Relation	
+checker/relater.go:2580	Relater	2	errorNode	*ast.Node	
+checker/relater.go:2580	Relater	3	errorChain	*checker.ErrorChain	
+checker/relater.go:2580	Relater	4	relatedInfo	[]*ast.Diagnostic	
+checker/relater.go:2580	Relater	5	maybeKeys	[]checker.CacheHashKey	
+checker/relater.go:2580	Relater	6	maybeKeysSet	collections.Set[checker.CacheHashKey]	
+checker/relater.go:2580	Relater	7	sourceStack	[]*checker.Type	
+checker/relater.go:2580	Relater	8	targetStack	[]*checker.Type	
+checker/relater.go:2580	Relater	9	maybeCount	int	
+checker/relater.go:2580	Relater	10	sourceDepth	int	
+checker/relater.go:2580	Relater	11	targetDepth	int	
+checker/relater.go:2580	Relater	12	expandingFlags	checker.ExpandingFlags	
+checker/relater.go:2580	Relater	13	overflow	bool	
+checker/relater.go:2580	Relater	14	relationCount	int	
+checker/relater.go:2580	Relater	15	next	*checker.Relater	
+checker/relater.go:98	Relation	0	results	map[checker.CacheHashKey]checker.RelationComparisonResult	
+checker/types.go:219	ReverseMappedSymbolLinks	0	propertyType	*checker.Type	
+checker/types.go:219	ReverseMappedSymbolLinks	1	mappedType	*checker.Type	
+checker/types.go:219	ReverseMappedSymbolLinks	2	constraintType	*checker.Type	
+checker/types.go:1116	ReverseMappedType	0	ObjectType	checker.ObjectType	embedded
+checker/types.go:1116	ReverseMappedType	1	source	*checker.Type	
+checker/types.go:1116	ReverseMappedType	2	mappedType	*checker.Type	
+checker/types.go:1116	ReverseMappedType	3	constraintType	*checker.Type	
+checker/checker.go:221	ReverseMappedTypeKey	0	sourceId	checker.TypeId	
+checker/checker.go:221	ReverseMappedTypeKey	1	targetId	checker.TypeId	
+checker/checker.go:221	ReverseMappedTypeKey	2	constraintId	checker.TypeId	
+checker/nodebuilderimpl.go:36	SerializedTypeEntry	0	node	*ast.Node	
+checker/nodebuilderimpl.go:36	SerializedTypeEntry	1	truncating	bool	
+checker/nodebuilderimpl.go:36	SerializedTypeEntry	2	addedLength	int	
+checker/nodebuilderimpl.go:36	SerializedTypeEntry	3	trackedSymbols	[]*checker.TrackedSymbolArgs	
+checker/flow.go:35	SharedFlow	0	flow	*ast.FlowNode	
+checker/flow.go:35	SharedFlow	1	flowType	checker.FlowType	
+checker/types.go:1291	Signature	0	id	checker.SignatureId	
+checker/types.go:1291	Signature	1	flags	checker.SignatureFlags	
+checker/types.go:1291	Signature	2	minArgumentCount	int32	
+checker/types.go:1291	Signature	3	resolvedMinArgumentCount	int32	
+checker/types.go:1291	Signature	4	declaration	*ast.Node	
+checker/types.go:1291	Signature	5	typeParameters	[]*checker.Type	
+checker/types.go:1291	Signature	6	parameters	[]*ast.Symbol	
+checker/types.go:1291	Signature	7	thisParameter	*ast.Symbol	
+checker/types.go:1291	Signature	8	resolvedReturnType	*checker.Type	
+checker/types.go:1291	Signature	9	resolvedTypePredicate	*checker.TypePredicate	
+checker/types.go:1291	Signature	10	target	*checker.Signature	
+checker/types.go:1291	Signature	11	mapper	*checker.TypeMapper	
+checker/types.go:1291	Signature	12	isolatedSignatureType	*checker.Type	
+checker/types.go:1291	Signature	13	composite	*checker.CompositeSignature	
+checker/types.go:420	SignatureLinks	0	resolvedSignature	*checker.Signature	
+checker/types.go:420	SignatureLinks	1	effectsSignature	*checker.Signature	
+checker/types.go:420	SignatureLinks	2	decoratorSignature	*checker.Signature	
+checker/nodebuilderimpl.go:1786	SignatureToSignatureDeclarationOptions	0	modifiers	[]*ast.Node	
+checker/nodebuilderimpl.go:1786	SignatureToSignatureDeclarationOptions	1	name	*ast.PropertyName	
+checker/nodebuilderimpl.go:1786	SignatureToSignatureDeclarationOptions	2	questionToken	*ast.Node	
+checker/mapper.go:108	SimpleTypeMapper	0	TypeMapperBase	checker.TypeMapperBase	embedded
+checker/mapper.go:108	SimpleTypeMapper	1	source	*checker.Type	
+checker/mapper.go:108	SimpleTypeMapper	2	target	*checker.Type	
+checker/types.go:404	SourceFileLinks	0	typeChecked	bool	
+checker/types.go:404	SourceFileLinks	1	unusedChecked	bool	
+checker/types.go:404	SourceFileLinks	2	externalHelpersModule	*ast.Symbol	
+checker/types.go:404	SourceFileLinks	3	requestedExternalEmitHelpers	checker.ExternalEmitHelpers	
+checker/types.go:404	SourceFileLinks	4	deferredNodes	collections.OrderedSet[*ast.Node]	
+checker/types.go:404	SourceFileLinks	5	identifierCheckNodes	[]*ast.Node	
+checker/types.go:404	SourceFileLinks	6	localJsxNamespace	string	
+checker/types.go:404	SourceFileLinks	7	localJsxFragmentNamespace	string	
+checker/types.go:404	SourceFileLinks	8	localJsxFactory	*ast.EntityName	
+checker/types.go:404	SourceFileLinks	9	localJsxFragmentFactory	*ast.EntityName	
+checker/types.go:404	SourceFileLinks	10	jsxFragmentType	*checker.Type	
+checker/types.go:295	SpreadLinks	0	leftSpread	*ast.Symbol	
+checker/types.go:295	SpreadLinks	1	rightSpread	*ast.Symbol	
+checker/types.go:1474	StringLiteralType	0	flags	checker.TypeFlags	
+checker/types.go:1474	StringLiteralType	1	objectFlags	checker.ObjectFlags	
+checker/types.go:1474	StringLiteralType	2	id	checker.TypeId	
+checker/types.go:1474	StringLiteralType	3	symbol	*ast.Symbol	
+checker/types.go:1474	StringLiteralType	4	alias	*checker.TypeAlias	
+checker/types.go:1474	StringLiteralType	5	checker	*checker.Checker	
+checker/types.go:1474	StringLiteralType	6	data	checker.TypeData	
+checker/checker.go:186	StringMappingKey	0	s	*ast.Symbol	
+checker/checker.go:186	StringMappingKey	1	t	*checker.Type	
+checker/types.go:1221	StringMappingType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1221	StringMappingType	1	target	*checker.Type	
+checker/types.go:932	StructuredType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:932	StructuredType	1	members	ast.SymbolTable	
+checker/types.go:932	StructuredType	2	properties	[]*ast.Symbol	
+checker/types.go:932	StructuredType	3	signatures	[]*checker.Signature	
+checker/types.go:932	StructuredType	4	callSignatureCount	int	
+checker/types.go:932	StructuredType	5	indexInfos	[]*checker.IndexInfo	
+checker/types.go:932	StructuredType	6	objectTypeWithoutAbstractConstructSignatures	*checker.Type	
+checker/types.go:1228	SubstitutionType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1228	SubstitutionType	1	baseType	*checker.Type	
+checker/types.go:1228	SubstitutionType	2	constraint	*checker.Type	
+checker/checker.go:214	SubstitutionTypeKey	0	baseId	checker.TypeId	
+checker/checker.go:214	SubstitutionTypeKey	1	constraintId	checker.TypeId	
+checker/types.go:268	SwitchStatementLinks	0	exhaustiveState	checker.ExhaustiveState	
+checker/types.go:268	SwitchStatementLinks	1	switchTypesComputed	bool	
+checker/types.go:268	SwitchStatementLinks	2	witnessesComputed	bool	
+checker/types.go:268	SwitchStatementLinks	3	switchTypes	[]*checker.Type	
+checker/types.go:268	SwitchStatementLinks	4	witnesses	[]string	
+checker/types.go:376	SymbolNodeLinks	0	resolvedSymbol	*ast.Symbol	
+checker/types.go:171	SymbolReferenceLinks	0	referenceKinds	ast.SymbolFlags	
+checker/symboltracker.go:8	SymbolTrackerImpl	0	context	*checker.NodeBuilderContext	
+checker/symboltracker.go:8	SymbolTrackerImpl	1	inner	nodebuilder.SymbolTracker	
+checker/symboltracker.go:8	SymbolTrackerImpl	2	DisableTrackSymbol	bool	
+checker/types.go:1212	TemplateLiteralType	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1212	TemplateLiteralType	1	texts	[]string	
+checker/types.go:1212	TemplateLiteralType	2	types	[]*checker.Type	
+checker/tracer.go:13	Tracer	0	tracing	*tracing.Tracing	
+checker/tracer.go:13	Tracer	1	recorder	tracing.Tracer	
+checker/tracer.go:13	Tracer	2	checkerIndex	int	
+checker/nodebuilderimpl.go:30	TrackedSymbolArgs	0	symbol	*ast.Symbol	
+checker/nodebuilderimpl.go:30	TrackedSymbolArgs	1	enclosingDeclaration	*ast.Node	
+checker/nodebuilderimpl.go:30	TrackedSymbolArgs	2	meaning	ast.SymbolFlags	
+checker/types.go:1065	TupleElementInfo	0	flags	checker.ElementFlags	
+checker/types.go:1065	TupleElementInfo	1	labeledDeclaration	*ast.Node	
+checker/checker.go:23469	TupleNormalizer	0	c	*checker.Checker	
+checker/checker.go:23469	TupleNormalizer	1	types	[]*checker.Type	
+checker/checker.go:23469	TupleNormalizer	2	infos	[]checker.TupleElementInfo	
+checker/checker.go:23469	TupleNormalizer	3	lastRequiredIndex	int	
+checker/checker.go:23469	TupleNormalizer	4	firstRestIndex	int	
+checker/checker.go:23469	TupleNormalizer	5	lastOptionalOrRestIndex	int	
+checker/types.go:1073	TupleType	0	InterfaceType	checker.InterfaceType	embedded
+checker/types.go:1073	TupleType	1	elementInfos	[]checker.TupleElementInfo	
+checker/types.go:1073	TupleType	2	minLength	int	
+checker/types.go:1073	TupleType	3	fixedLength	int	
+checker/types.go:1073	TupleType	4	combinedFlags	checker.ElementFlags	
+checker/types.go:1073	TupleType	5	readonly	bool	
+checker/types.go:681	Type	0	flags	checker.TypeFlags	
+checker/types.go:681	Type	1	objectFlags	checker.ObjectFlags	
+checker/types.go:681	Type	2	id	checker.TypeId	
+checker/types.go:681	Type	3	symbol	*ast.Symbol	
+checker/types.go:681	Type	4	alias	*checker.TypeAlias	
+checker/types.go:681	Type	5	checker	*checker.Checker	
+checker/types.go:681	Type	6	data	checker.TypeData	
+checker/types.go:660	TypeAlias	0	symbol	*ast.Symbol	
+checker/types.go:660	TypeAlias	1	typeArguments	[]*checker.Type	
+checker/types.go:240	TypeAliasLinks	0	declaredType	*checker.Type	
+checker/types.go:240	TypeAliasLinks	1	typeParameters	[]*checker.Type	
+checker/types.go:240	TypeAliasLinks	2	instantiations	map[checker.CacheHashKey]*checker.Type	
+checker/types.go:240	TypeAliasLinks	3	isConstructorDeclaredProperty	bool	
+checker/types.go:868	TypeBase	0	Type	checker.Type	embedded
+checker/relater.go:1030	TypeDiscriminator	0	c	*checker.Checker	
+checker/relater.go:1030	TypeDiscriminator	1	props	[]*ast.Symbol	
+checker/relater.go:1030	TypeDiscriminator	2	isRelatedTo	func(*checker.Type, *checker.Type) checker.Ternary	
+checker/mapper.go:22	TypeMapper	0	data	checker.TypeMapperData	
+checker/mapper.go:98	TypeMapperBase	0	TypeMapper	checker.TypeMapper	embedded
+checker/types.go:380	TypeNodeLinks	0	resolvedType	*checker.Type	
+checker/types.go:380	TypeNodeLinks	1	outerTypeParameters	[]*checker.Type	
+checker/types.go:1168	TypeParameter	0	ConstrainedType	checker.ConstrainedType	embedded
+checker/types.go:1168	TypeParameter	1	constraint	*checker.Type	
+checker/types.go:1168	TypeParameter	2	target	*checker.Type	
+checker/types.go:1168	TypeParameter	3	mapper	*checker.TypeMapper	
+checker/types.go:1168	TypeParameter	4	isThisType	bool	
+checker/types.go:1168	TypeParameter	5	resolvedDefaultType	*checker.Type	
+checker/types.go:1358	TypePredicate	0	kind	checker.TypePredicateKind	
+checker/types.go:1358	TypePredicate	1	parameterIndex	int32	
+checker/types.go:1358	TypePredicate	2	parameterName	string	
+checker/types.go:1358	TypePredicate	3	t	*checker.Type	
+checker/types.go:1001	TypeReference	0	ObjectType	checker.ObjectType	embedded
+checker/types.go:1001	TypeReference	1	node	*ast.Node	
+checker/types.go:1001	TypeReference	2	resolvedTypeArguments	[]*checker.Type	
+checker/checker.go:69	TypeResolution	0	target	checker.TypeSystemEntity	
+checker/checker.go:69	TypeResolution	1	propertyName	checker.TypeSystemPropertyName	
+checker/checker.go:69	TypeResolution	2	result	bool	
+checker/checker.go:162	UnionOfUnionKey	0	id1	checker.TypeId	
+checker/checker.go:162	UnionOfUnionKey	1	id2	checker.TypeId	
+checker/checker.go:162	UnionOfUnionKey	2	r	checker.UnionReduction	
+checker/checker.go:162	UnionOfUnionKey	3	a	checker.CacheHashKey	
+checker/types.go:1133	UnionOrIntersectionType	0	StructuredType	checker.StructuredType	embedded
+checker/types.go:1133	UnionOrIntersectionType	1	types	[]*checker.Type	
+checker/types.go:1133	UnionOrIntersectionType	2	propertyCache	ast.SymbolTable	
+checker/types.go:1133	UnionOrIntersectionType	3	propertyCacheWithoutFunctionPropertyAugment	ast.SymbolTable	
+checker/types.go:1133	UnionOrIntersectionType	4	resolvedProperties	[]*ast.Symbol	
+checker/types.go:1149	UnionType	0	UnionOrIntersectionType	checker.UnionOrIntersectionType	embedded
+checker/types.go:1149	UnionType	1	resolvedReducedType	*checker.Type	
+checker/types.go:1149	UnionType	2	regularType	*checker.Type	
+checker/types.go:1149	UnionType	3	origin	*checker.Type	
+checker/types.go:1149	UnionType	4	keyPropertyName	string	
+checker/types.go:1149	UnionType	5	constituentMap	map[*checker.Type]*checker.Type	
+checker/types.go:916	UniqueESSymbolType	0	TypeBase	checker.TypeBase	embedded
+checker/types.go:916	UniqueESSymbolType	1	name	string	
+checker/types.go:177	ValueSymbolLinks	0	resolvedType	*checker.Type	
+checker/types.go:177	ValueSymbolLinks	1	writeType	*checker.Type	
+checker/types.go:177	ValueSymbolLinks	2	target	*ast.Symbol	
+checker/types.go:177	ValueSymbolLinks	3	mapper	*checker.TypeMapper	
+checker/types.go:177	ValueSymbolLinks	4	nameType	*checker.Type	
+checker/types.go:177	ValueSymbolLinks	5	containingType	*checker.Type	
+checker/types.go:177	ValueSymbolLinks	6	functionOrConstructorChecked	bool	
+checker/types.go:302	VarianceLinks	0	variances	[]checker.VarianceFlags	
+checker/checker.go:546	VarianceStackEntry	0	symbol	*ast.Symbol	
+checker/checker.go:546	VarianceStackEntry	1	typeParameters	[]*checker.Type	
+checker/nodebuilder.go:21	VerbosityContext	0	Level	int	
+checker/nodebuilder.go:21	VerbosityContext	1	MaxTruncationLength	int	
+checker/nodebuilder.go:21	VerbosityContext	2	CanIncreaseVerbosity	bool	
+checker/nodebuilder.go:21	VerbosityContext	3	Truncated	bool	
+checker/checker.go:537	WideningContext	0	parent	*checker.WideningContext	
+checker/checker.go:537	WideningContext	1	propertyName	string	
+checker/checker.go:537	WideningContext	2	siblings	[]*checker.Type	
+checker/checker.go:537	WideningContext	3	resolvedProperties	[]*ast.Symbol	
+checker/checker.go:537	WideningContext	4	childContexts	map[string]*checker.WideningContext	
+checker/checker.go:537	WideningContext	5	widenedTypes	map[*checker.Type]*checker.Type	
+checker/types.go:325	accessibleChainCacheKey	0	useOnlyExternalAliasing	bool	
+checker/types.go:325	accessibleChainCacheKey	1	location	*ast.Node	
+checker/types.go:325	accessibleChainCacheKey	2	meaning	ast.SymbolFlags	
+checker/symbolaccessibility.go:391	accessibleSymbolChainContext	0	symbol	*ast.Symbol	
+checker/symbolaccessibility.go:391	accessibleSymbolChainContext	1	enclosingDeclaration	*ast.Node	
+checker/symbolaccessibility.go:391	accessibleSymbolChainContext	2	meaning	ast.SymbolFlags	
+checker/symbolaccessibility.go:391	accessibleSymbolChainContext	3	useOnlyExternalAliasing	bool	
+checker/symbolaccessibility.go:391	accessibleSymbolChainContext	4	visitedSymbolTablesMap	map[ast.SymbolId]map[checker.symbolTableID]struct{}	
+checker/relater.go:2569	errorState	0	errorChain	*checker.ErrorChain	
+checker/relater.go:2569	errorState	1	relatedInfo	[]*ast.Diagnostic	
+checker/checker.go:17477	keyBuilder	0	inlineLength	int	
+checker/checker.go:17477	keyBuilder	1	overflowBuffer	[]byte	
+checker/checker.go:17477	keyBuilder	2	inlineBuffer	[192]byte	
+checker/nodebuilderscopes.go:35	localsRecord	0	name	string	
+checker/nodebuilderscopes.go:35	localsRecord	1	oldSymbol	*ast.Symbol	
+checker/links.go:10	nodeLinkStore	0	store	core.PagedLinkStore[V]	
+checker/utilities.go:836	orderedSet	0	valuesByKey	map[T]struct{}	
+checker/utilities.go:836	orderedSet	1	values	[]T	
+checker/nodecopy.go:116	originalRecoveryScopeState	0	trackedSymbolsTop	int	
+checker/nodecopy.go:116	originalRecoveryScopeState	1	unreportedErrorsTop	int	
+checker/nodecopy.go:116	originalRecoveryScopeState	2	hadError	bool	
+checker/nodecopy.go:98	recoveryBoundary	0	ctx	*checker.NodeBuilderContext	
+checker/nodecopy.go:98	recoveryBoundary	1	hadError	bool	
+checker/nodecopy.go:98	recoveryBoundary	2	deferredReports	[]func()	
+checker/nodecopy.go:98	recoveryBoundary	3	oldTracker	nodebuilder.SymbolTracker	
+checker/nodecopy.go:98	recoveryBoundary	4	oldTrackedSymbols	[]*checker.TrackedSymbolArgs	
+checker/nodecopy.go:98	recoveryBoundary	5	trackedSymbols	[]*checker.TrackedSymbolArgs	
+checker/nodecopy.go:98	recoveryBoundary	6	oldEncounteredError	bool	
+checker/nodecopy.go:98	recoveryBoundary	7	oldApproximateLength	int	
+checker/nodebuilderimpl.go:1081	sortedSymbolNamePair	0	sym	*ast.Symbol	
+checker/nodebuilderimpl.go:1081	sortedSymbolNamePair	1	name	string	
+checker/links.go:28	symbolArenaLinkStore	0	store	core.PagedLinkStore[*V]	
+checker/links.go:28	symbolArenaLinkStore	1	arena	core.Arena[V]	
+checker/tracer.go:74	tracedTypeAdapter	0	t	*checker.Type	
+checker/tracer.go:74	tracedTypeAdapter	1	checker	*checker.Checker	
+checker/nodecopy.go:134	wrappingTracker	0	wrapped	nodebuilder.SymbolTracker	
+checker/nodecopy.go:134	wrappingTracker	1	bound	*checker.recoveryBoundary	

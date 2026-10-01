@@ -1,0 +1,17 @@
+PARSE jsx1.tsx parse=[] js=[] bind=[]
+jsx1.tsx(4,12)+3: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(4,16)+2: error TS2322: Type 'number' is not assignable to type 'string'.
+  related jsx1.tsx(1,89)+2: message TS6500: The expected type comes from property 'id' which is declared here on type '{ id?: string | undefined; }'
+jsx1.tsx(5,12)+4: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(5,17)+1: error TS2322: Type 'string' is not assignable to type 'number'.
+  related jsx1.tsx(3,32)+1: message TS6500: The expected type comes from property 'n' which is declared here on type '{ n: number; }'
+jsx1.tsx(6,11)+8: error TS2339: Property 'span' does not exist on type 'JSX.IntrinsicElements'.
+jsx1.tsx(6,12)+4: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(7,11)+2: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(7,11)+2: error TS2879: Using JSX fragments requires fragment factory 'React' to be in scope, but it could not be found.
+jsx1.tsx(7,14)+3: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(8,12)+3: error TS2874: This JSX tag requires 'React' to be in scope, but it could not be found.
+jsx1.tsx(8,23)+2: error TS17001: JSX elements cannot have multiple attributes with the same name.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=18 GetJSXRuntimeImportSpecifier=16 IsSourceFileDefaultLibrary=2 Options=1 SourceFiles=1
+COUNTS TypeCount=114 SymbolCount=52 SignatureCount=9 TotalInstantiationCount=2

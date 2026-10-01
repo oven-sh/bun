@@ -1,0 +1,50 @@
+file /top-level-await.ts scriptKind=3 variant=0 dts=false textLen=130
+externalModuleIndicator KindExportDeclaration[0,10)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=43 identifiers=13 text=16 reparsedClones=0
+root KindSourceFile [0,130) f=0x0
+  .Statements: list [0,129) n=7
+    - KindExportDeclaration [0,10) f=0x0
+      .ExportClause: KindNamedExports [6,9) f=0x2000
+        .Elements: list [8,8) n=0
+    - KindVariableStatement [10,42) f=0x0
+      .DeclarationList: KindVariableDeclarationList [10,41) f=0x2
+        .Declarations: list [16,41) n=1
+          - KindVariableDeclaration [16,41) f=0x0
+            .Initializer: KindClassExpression [21,41) f=0x0
+              .Members: list [29,39) n=1
+                - KindPropertyDeclaration [29,39) f=0x0
+                  .Initializer: KindNumericLiteral [37,39) f=0x0 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [29,35) f=0x0 Text="await"
+            .name: KindIdentifier [16,19) f=0x0 Text="C1"
+    - KindExpressionStatement [42,62) f=0x2000
+      .Expression: KindPropertyAccessExpression [42,61) f=0x2000
+        .Expression: KindPropertyAccessExpression [42,55) f=0x2000
+          .Expression: KindIdentifier [42,45) f=0x2000 Text="C1"
+          .name: KindIdentifier [46,55) f=0x2000 Text="prototype"
+        .name: KindIdentifier [56,61) f=0x2000 Text="await"
+    - KindExpressionStatement [62,71) f=0x0
+      .Expression: KindAwaitExpression [62,70) f=0x0
+        .Expression: KindNumericLiteral [68,70) f=0x0 Text="1" TokenFlags=0x0
+    - KindVariableStatement [71,93) f=0x0
+      .DeclarationList: KindVariableDeclarationList [71,92) f=0x0
+        .Declarations: list [75,92) n=1
+          - KindVariableDeclaration [75,92) f=0x0
+            .Initializer: KindObjectLiteralExpression [79,92) f=0x0
+              .Properties: list [81,90) n=1
+                - KindPropertyAssignment [81,90) f=0x0
+                  .Initializer: KindNumericLiteral [88,90) f=0x0 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [81,87) f=0x0 Text="await"
+            .name: KindIdentifier [75,77) f=0x0 Text="v"
+    - KindFunctionDeclaration [93,114) f=0x0
+      .Body: KindBlock [111,114) f=0x0
+        .Statements: list [113,113) n=0
+      .Parameters: list [105,110) n=1
+        - KindParameter [105,110) f=0x0
+          .name: KindIdentifier [105,110) f=0x0 Text="await"
+      .name: KindIdentifier [102,104) f=0x0 Text="f"
+    - KindClassDeclaration [114,129) f=0x0
+      .Members: list [128,128) n=0
+      .name: KindIdentifier [120,126) f=0x0 Text="await"
+  .EndOfFileToken: KindEndOfFile [129,130) f=0x0

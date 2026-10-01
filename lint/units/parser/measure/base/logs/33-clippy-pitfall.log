@@ -1,0 +1,11 @@
+# HEAD e3566be889 dirty: []
+== 1: clippy -p bun_js_parser --no-deps (fresh target dir)
+   Compiling thiserror v2.0.18
+   Compiling thiserror-impl v2.0.18
+    Checking bun_ast v0.0.0 (/workspace/wt/parser/src/ast)
+    Checking bun_js_parser v0.0.0 (/workspace/wt/parser/src/js_parser)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.14s
+== 2: clippy -p bun_ast --no-deps (same target dir)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+== 3: clippy -p bun_ast -p bun_js_parser --no-deps (same target dir)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s

@@ -1,0 +1,62 @@
+
+## N import elision around expressions inside types
+valid / bun ok           | import { x } from "y"; export {}
+    tsc parse=[] check=[]
+    tsc emit: export {};
+    bun: import { x } from "y"; export {};
+valid / bun ok           | import { x } from "y"; let v: x; export {}
+    tsc parse=[] check=[]
+    tsc emit: let v; export {};
+    bun: import { x } from "y"; let v; export {};
+valid / bun ok           | import { x } from "y"; type A = { [x]: 1 }; export {}
+    tsc parse=[] check=[]
+    tsc emit: import { x } from "y";
+    bun: import { x } from "y"; export {};
+valid / bun ok           | import { x } from "y"; type A = { [x.y]: 1 }; export {}
+    tsc parse=[] check=[]
+    tsc emit: import { x } from "y";
+    bun: import { x } from "y"; export {};
+valid / bun ok           | import { x } from "y"; interface I { [x](): void }; export {}
+    tsc parse=[] check=[]
+    tsc emit: import { x } from "y"; ;
+    bun: import { x } from "y"; export {};
+valid / bun ok           | import { x } from "y"; let v: typeof x; export {}
+    tsc parse=[] check=[]
+    tsc emit: let v; export {};
+    bun: import { x } from "y"; let v; export {};
+P-ok/C-err / bun REJ     | import { x } from "y"; let g: (a = x) => void; export {}
+    tsc parse=[] check=[TS2371@31]
+    tsc emit: import { x } from "y"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "x"
+P-ok/C-err / bun REJ     | import { x } from "y"; type A = { a: number = x }; export {}
+    tsc parse=[] check=[TS1247@46]
+    tsc emit: import { x } from "y";
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | import { x } from "y"; type A = { get p() { return x } }; export {}
+    tsc parse=[] check=[TS1183@42]
+    tsc emit: import { x } from "y";
+    bun: Unexpected {
+P-ok/C-err / bun REJ     | import { x } from "y"; type A = { m(@x a): void }; export {}
+    tsc parse=[] check=[TS1206@36]
+    tsc emit: import { x } from "y";
+    bun: Unexpected @
+P-ok/C-err / bun REJ     | import { x } from "y"; type A<T extends -x> = T; export {}
+    tsc parse=[] check=[TS1110@40]
+    tsc emit: import { x } from "y";
+    bun: Expected number but found "x"
+valid / bun ok           | import { x } from "y"; interface I extends x.y {}; export {}
+    tsc parse=[] check=[]
+    tsc emit: ; export {};
+    bun: import { x } from "y"; export {};
+valid / bun ok           | import { x } from "y"; class C implements x.y {}; export {}
+    tsc parse=[] check=[]
+    tsc emit: class C { } ; export {};
+    bun: import { x } from "y"; class C { } export {};
+P-ok/C-err / bun REJ     | import { x } from "y"; type A = { [x + 1]: 1 }; export {}
+    tsc parse=[] check=[TS1170@34]
+    tsc emit: import { x } from "y";
+    bun: Expected "]" but found "+" | Unexpected 1
+valid / bun REJ          | import { x } from "y"; let g: ({ [x]: v }: any) => typeof v; export {}
+    tsc parse=[] check=[]
+    tsc emit: import { x } from "y"; let g;
+    bun: Expected ")" but found ":" | Expected ";" but found "any"

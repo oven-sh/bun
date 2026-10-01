@@ -1,0 +1,98 @@
+[
+ [
+  "err   pos KindIdentifier",
+  [
+   "c01026u11_type-clause-bad-import.ts:9",
+   "c01026u13_type-clause-no-as.ts:8",
+   "c01026u14_type-clause-type-as-as.ts:9",
+   "c01026u1_values-bad-import.ts:9",
+   "c01026u3_values-no-as.ts:8",
+   "c01026u4_values-type-as.ts:9",
+   "c01026u6_type-decls-bad-import.ts:9",
+   "c01026u8_type-decls-no-as.ts:8",
+   "c01026u9_type-decls-type-as.ts:9"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Comment:> ts<.Comment:>",
+  [
+   "c02845u0_fixSignatureCaching.ts:2899",
+   "c03290u1_ts.ts:15",
+   "c03361u0_seeTag2.ts:13",
+   "c06883u0_commentsCommentParsing.ts:416",
+   "c07290u0_controlFlowPropertyDeclarations.ts:145",
+   "c09752u0_jsxComplexSignatureHasApplicabilityError.tsx:1717"
+  ]
+ ],
+ [
+  "CLEAN fields KindJSDocText",
+  [
+   "c06881u0_commentsClass.ts:171",
+   "c06882u0_commentsClassMembers.ts:843",
+   "c11120u0_recursiveConditionalCrash3.ts:31",
+   "c11407u0_sourceMap-FileWithComments.ts:101",
+   "c12390u0_variableDeclaratorResolvedDuringContextualTyping.ts:649"
+  ]
+ ],
+ [
+  "err   flags KindIdentifier xor=0x8000",
+  [
+   "c03430u0_jsxAndTypeAssertion.tsx:137",
+   "c05420u0_objectSpreadNegativeParse.ts:14",
+   "c07093u0_constructorWithIncompleteTypeAnnotation.ts:1127",
+   "c11689u0_superWithTypeArgument2.ts:29"
+  ]
+ ],
+ [
+  "err   flags KindCallExpression xor=0x8000",
+  [
+   "c02459u0_errorSuperCalls.ts:125",
+   "c11688u0_superWithTypeArgument.ts:17",
+   "c11690u0_superWithTypeArgument3.ts:39"
+  ]
+ ],
+ [
+  "err   pos KindJsxAttributes",
+  [
+   "c03431u0_a.tsx:64",
+   "c09741u0_jsxAttributeMissingInitializer.tsx:12"
+  ]
+ ],
+ [
+  "err   flags KindNumericLiteral xor=0x8000",
+  [
+   "c04425u0_parserSuperExpression2.ts:11",
+   "c05240u0_objectTypeWithStringNamedNumericProperty.ts:172"
+  ]
+ ],
+ [
+  "err   shape go<.Statements:> ts<.Statements:>",
+  [
+   "c03255u0_jsdocDisallowedInTypescript.ts:2"
+  ]
+ ],
+ [
+  "err   fields KindJsxText",
+  [
+   "c03442u0_jsxParserRecovery.tsx:113"
+  ]
+ ],
+ [
+  "err   fields KindJSDocText",
+  [
+   "c04239u0_parserharness.ts:7883"
+  ]
+ ],
+ [
+  "err   kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>",
+  [
+   "c08510u0_expressionWithJSDocTypeArguments.ts:43"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Comment:> ts<.TagName: KindIdentifier>",
+  [
+   "c09719u0_jsdocInTypeScript.ts:208"
+  ]
+ ]
+]

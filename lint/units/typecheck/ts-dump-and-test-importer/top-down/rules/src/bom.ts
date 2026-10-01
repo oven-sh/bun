@@ -1,0 +1,1 @@
+﻿const bom = 1;

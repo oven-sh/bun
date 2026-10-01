@@ -1,0 +1,3147 @@
+group 01-type-forms  dialect ts  config plain  inputs 17608
+counts A1=752 A1c=530 A1s=222 A2=1243 AA=9424 AAg=1348 B=1698 RR=3143
+
+calls of Bun that differ from transformSync without tsconfig: 2 inputs
+  "f<--1>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "f<A |= B>(x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family kw  (494 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:276-283,297-308,489-538
+  ref: parser.go:2802-2811 parseNonArrayType keyword arm, 2870 parseKeywordTypeNode, 2877 parseThisTypeNode
+  counts AA=395 AAg=1 B=42 RR=56
+  -- B: 8 distinct
+    "void.b"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+4 len 1 "';' expected."
+        tsc x6: TS1005 @form+4 len 1 "',' expected."
+        tsc x1: TS1144 @form+4 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+4 len 1 "Expression expected."
+        tsc x1: TS1442 @form+4 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+4 len 1 "'>' expected."
+    "null.b"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+4 len 1 "';' expected."
+        tsc x6: TS1005 @form+4 len 1 "',' expected."
+        tsc x1: TS1144 @form+4 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+4 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+4 len 1 "'>' expected."
+    "this.b"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+4 len 1 "';' expected."
+        tsc x6: TS1005 @form+4 len 1 "',' expected."
+        tsc x1: TS1144 @form+4 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+4 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+4 len 1 "'>' expected."
+    "string<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+9 len 1 "Expression expected."
+    "any<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+6 len 1 "Expression expected."
+    "void<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "this<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "object<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+9 len 1 "Expression expected."
+  -- AAg: 1 distinct
+    "null.b"
+        contexts (1 of 13): callArg
+        tsc x1: TS18050 @form+0 len 4 "The value 'null' cannot be used here."
+
+==== family lit  (507 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:260-275,309-321
+  ref: parser.go:2826-2833, 2924 parseLiteralTypeNode
+  counts A1=1 A2=12 AA=321 AAg=2 RR=171
+  -- A1: 1 distinct
+    "--1"
+        contexts (1 of 13): callArg
+        bun x1: Invalid assignment target @form+2
+  -- A2: 1 distinct
+    "!1"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write '1'?"
+  -- AAg: 2 distinct
+    "-null"
+        contexts (1 of 13): callArg
+        tsc x1: TS18050 @form+1 len 4 "The value 'null' cannot be used here."
+    "!1"
+        contexts (1 of 13): callArg
+        tsc x1: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write '1'?"
+
+==== family ref  (1365 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:539-546 (name), 730-748 (dot), 556-559 (type arguments), 651-669 (default arm rejects reserved words)
+  ref: parser.go:2941 parseTypeReference, 2950 parseEntityName, 2969 parseRightSideOfDot
+  counts A1=293 A2=13 AA=660 AAg=118 B=70 RR=211
+  -- A1: 29 distinct
+    "if"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected if @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "class"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x7: Unexpected class @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected class @form+13
+        bun x1: Expected ")" but found ":" @form-2
+    "function"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x7: Unexpected function @form+0
+        bun x2: Unexpected function @form+14
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "(" but found ">" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected ":" but found "]" @form+8
+    "delete"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected delete @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "in"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected in @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "var"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected var @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "with"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected with @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "enum"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected enum @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "default"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected default @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "super"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected super @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "instanceof"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected instanceof @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "extends"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected extends @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "export"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected export @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "return"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected return @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "switch"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected switch @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "while"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected while @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "do"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected do @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "for"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected for @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "try"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected try @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "catch"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected catch @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "throw"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected throw @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "else"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected else @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "case"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected case @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "break"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected break @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "continue"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected continue @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "debugger"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected debugger @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "finally"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected finally @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "if.x"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected if @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "class<T>"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected class @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 1 distinct
+    "A.<B>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected identifier but found "<" @form+2
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS8020 @form+1 len 1 "JSDoc types can only be used inside documentation comments."
+  -- B: 10 distinct
+    "A<B>.C"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+4 len 1 "';' expected."
+        tsc x6: TS1005 @form+4 len 1 "',' expected."
+        tsc x1: TS1144 @form+4 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1477 @form+1 len 3 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1442 @form+4 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+4 len 1 "'>' expected."
+    "const"
+        contexts (3 of 13): callArg typeArg tupleEl
+        tsc x1: TS1109 @form+0 len 5 "Expression expected."
+        tsc x1: TS1005 @form+0 len 5 "'>' expected."
+        tsc x1: TS1110 @form+0 len 5 "Type expected."
+    "infer"
+        contexts (1 of 13): callArg
+        tsc x1: TS1003 @form+5 len 1 "Identifier expected."
+    "keyof"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+8 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+6 len 2 "Type expected."
+        tsc x2: TS1110 @form+5 len 1 "Type expected."
+    "readonly"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+11 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+9 len 2 "Type expected."
+        tsc x2: TS1110 @form+8 len 1 "Type expected."
+    "unique"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x10: TS1110 @form+6 len 1 "Type expected."
+        tsc x1: TS1131 @form+9 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+7 len 2 "Type expected."
+        tsc x1: TS1110 @form+7 len 1 "Type expected."
+    "unique.x"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+6 len 1 "Type expected."
+    "keyof.x"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+5 len 1 "Type expected."
+    "readonly.x"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+8 len 1 "Type expected."
+    "unique<T>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+6 len 1 "Type expected."
+  -- AAg: 10 distinct
+    "yield"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "let"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x7: TS1212 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+7 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1212 @form+9 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+11 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+8 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1212 @form+12 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "static"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "const"
+        contexts (1 of 13): as
+        tsc x1: TS1355 @form+10 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "package"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "implements"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "interface"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "private"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "public"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "protected"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+0 len 9 "Identifier expected. 'protected' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+
+==== family targs  (580 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:1183-1230 skip_type_script_type_arguments
+  ref: parser.go:3056 parseTypeArgumentsOfTypeReference, 3063 parseTypeArguments
+  counts A2=59 AA=300 AAg=45 B=34 RR=142
+  -- A2: 5 distinct
+    "A<B,>"
+        contexts (10 of 13): alias var param ret arrowParam as field typeArg tupleEl member
+        bun x9: Unexpected > @form+4
+        bun x1: Unexpected >> @form+4
+        tsc x10: TS1009 @form+3 len 1 "Trailing comma not allowed."
+    "A<>"
+        contexts (10 of 13): alias var param ret arrowParam as field typeArg tupleEl member
+        bun x9: Unexpected > @form+2
+        bun x1: Unexpected >> @form+2
+        tsc x10: TS1099 @form+1 len 2 "Type argument list cannot be empty."
+    "A<asserts a>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected ">" but found "a" @form+10
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "a" @form+10
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS1228 @form+2 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "A<B?>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected ">" but found "?" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected >> @form+4
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17019 @form+2 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "A<?B>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+2
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+2 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+  -- B: 7 distinct
+    "A<B,,C>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+4 len 1 "Type expected."
+    "A<,B>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+2 len 1 "Type expected."
+    "A\n<B>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+5 len 1 "Expression expected."
+    "A<<B>>"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+5 len 1 "'(' expected."
+    "A<B><C>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "A<a is B>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+4 len 2 "'>' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+    "A<const>"
+        contexts (12 of 12): alias param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x10: TS1005 @form+2 len 5 "'>' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+2 len 5 "Expression expected."
+  -- AAg: 5 distinct
+    "A<infer B>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+2 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "A<B,>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1009 @form+3 len 1 "Trailing comma not allowed."
+    "A<>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1099 @form+1 len 2 "Type argument list cannot be empty."
+    "A<unique symbol>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+2 len 13 "'unique symbol' types are not allowed here."
+    "A<B!>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+2 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'B'?"
+
+==== family arr  (403 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:749-763
+  ref: parser.go:2778-2787 parsePostfixTypeOrHigher
+  counts A2=15 AA=283 AAg=13 B=13 RR=79
+  -- A2: 2 distinct
+    "A\n[]"
+        contexts (2 of 13): field member
+        bun x2: Unexpected ] @form+3
+        tsc x1: TS1096 @form+2 len 3 "An index signature must have exactly one parameter."
+        tsc x1: TS1096 @form+2 len 2 "An index signature must have exactly one parameter."
+    "A[B?]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected "]" but found "?" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ] @form+4
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17019 @form+2 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+  -- B: 1 distinct
+    "A[a is B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1005 @form+4 len 2 "']' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+  -- AAg: 1 distinct
+    "A[infer U]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+2 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+
+==== family jsdoc  (559 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:718-729 (postfix !), 651-669 (prefix ? ! * fall in the default arm)
+  ref: parser.go:2768-2777 (postfix ! ?), 2812-2825 (prefix * ? !), 2888-2905
+  counts A2=290 AA=7 AAg=108 B=14 RR=140
+  -- A2: 24 distinct
+    "?A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "A?"
+        contexts (11 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        bun x3: Expected ";" but found "?" @form+1
+        bun x2: Expected ")" but found "?" @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ; @form+2
+        bun x1: Unexpected > @form+2
+        bun x1: Expected ">" but found "?" @form+1
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected ? @form+1
+        tsc x11: TS17019 @form+0 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "!A"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "*"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected * @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS8020 @form+0 len 1 "JSDoc types can only be used inside documentation comments."
+    "?"
+        contexts (6 of 13): param arrowParam callArg typeArg fnTypeParam member
+        bun x5: Unexpected ? @form+0
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x6: TS8020 @form+0 len 1 "JSDoc types can only be used inside documentation comments."
+    "?A[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 4 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{} | null | undefined'?"
+    "!A[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ] @form+3
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "!A | B"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "??A"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected ?? @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x10: TS17020 @form+0 len 3 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x10: TS17020 @form+1 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "!!A"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS17020 @form+0 len 3 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x12: TS17020 @form+1 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "?!A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 3 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x13: TS17020 @form+1 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A!?"
+        contexts (11 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        bun x3: Expected ";" but found "?" @form+2
+        bun x2: Expected ")" but found "?" @form+2
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ; @form+3
+        bun x1: Unexpected > @form+3
+        bun x1: Expected ">" but found "?" @form+2
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected ? @form+2
+        tsc x11: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x11: TS17019 @form+0 len 3 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "function(A): B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x9: Unexpected function @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "{" but found ">" @form+14
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected ":" but found "(" @form+8
+        tsc x13: TS8020 @form+0 len 14 "JSDoc types can only be used inside documentation comments."
+    "function(new: A)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x9: Unexpected function @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected identifier but found "new" @form+9
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected ":" but found "(" @form+8
+        tsc x13: TS8020 @form+0 len 16 "JSDoc types can only be used inside documentation comments."
+    "function(this: A)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x9: Unexpected function @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "{" but found ">" @form+17
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected ":" but found "(" @form+8
+        tsc x13: TS8020 @form+0 len 17 "JSDoc types can only be used inside documentation comments."
+    "function()"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x9: Unexpected function @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "{" but found ">" @form+10
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected ":" but found "(" @form+8
+        tsc x13: TS8020 @form+0 len 10 "JSDoc types can only be used inside documentation comments."
+    "Array.<string>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected identifier but found "<" @form+6
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS8020 @form+5 len 1 "JSDoc types can only be used inside documentation comments."
+    "[A]?"
+        contexts (11 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        bun x3: Expected ";" but found "?" @form+3
+        bun x2: Expected ")" but found "?" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ; @form+4
+        bun x1: Unexpected > @form+4
+        bun x1: Expected ">" but found "?" @form+3
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected ? @form+3
+        tsc x11: TS17019 @form+0 len 4 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '[A] | undefined'?"
+    "(A)?"
+        contexts (11 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        bun x3: Expected ";" but found "?" @form+3
+        bun x2: Expected ")" but found "?" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ; @form+4
+        bun x1: Unexpected > @form+4
+        bun x1: Expected ">" but found "?" @form+3
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected ? @form+3
+        tsc x11: TS17019 @form+0 len 4 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "?(A)"
+        contexts (12 of 13): alias var param ret arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+0
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS17020 @form+0 len 4 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "!(() => void)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ) @form+12
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 13 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write '() => void'?"
+    "?() => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected ? @form+0
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+0 len 11 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '(() => void) | null | undefined'?"
+    "keyof !A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ! @form+6
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "A" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+6 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A extends ?B ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ? @form+10
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "extends" @form+2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS17020 @form+10 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+  -- B: 3 distinct
+    "A\n?"
+        contexts (1 of 13): tupleEl
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "A!.B"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+2 len 1 "';' expected."
+        tsc x6: TS1005 @form+2 len 1 "',' expected."
+        tsc x1: TS1144 @form+2 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+2 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 1 "'>' expected."
+    "A!<B>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+5 len 1 "Expression expected."
+  -- AAg: 12 distinct
+    "!A"
+        contexts (1 of 13): callArg
+        tsc x1: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A!!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x13: TS17019 @form+0 len 3 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A![]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "!A | B"
+        contexts (1 of 13): callArg
+        tsc x1: TS17020 @form+0 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A! | B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "!!A"
+        contexts (1 of 13): callArg
+        tsc x1: TS17020 @form+0 len 3 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x1: TS17020 @form+1 len 2 "'!' at the start of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A!?"
+        contexts (1 of 13): tupleEl
+        tsc x1: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "[A]!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 4 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write '[A]'?"
+    "(A)!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 4 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "keyof A!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+6 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "A extends B! ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+10 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'B'?"
+
+==== family tuple  (983 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:602-631
+  ref: parser.go:3662 parseTupleType, 3667 parseTupleElementNameOrTupleElementType, 3694 parseTupleElementType
+  counts A1=26 A2=13 AA=541 AAg=91 B=112 RR=200
+  -- A1: 2 distinct
+    "[a: A?]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected "]" but found "?" @form+5
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "]" but found ":" @form+2
+        bun x1: Expected ")" but found ":" @form-2
+    "[a: ...A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected ... @form+4
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "]" but found ":" @form+2
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 1 distinct
+    "[asserts a]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected "]" but found "a" @form+9
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS1228 @form+1 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- B: 14 distinct
+    "[,]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+1 len 1 "Type expected."
+    "[,A]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+1 len 1 "Type expected."
+    "[A,,B]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+3 len 1 "Type expected."
+    "[...]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+4 len 1 "Type expected."
+    "[a!: A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+3 len 1 "',' expected."
+    "[a:]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+3 len 1 "Type expected."
+    "[a?:]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+4 len 1 "Type expected."
+    "[: A]"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x2: TS1110 @form+1 len 1 "Type expected."
+        tsc x1: TS1137 @form+1 len 1 "Expression or comma expected."
+    "[\"a\": A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+4 len 1 "',' expected."
+    "[1: A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+2 len 1 "',' expected."
+    "[a.b: A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+4 len 1 "',' expected."
+    "[a<T>: A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+5 len 1 "',' expected."
+    "[a[]: A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1005 @form+4 len 1 "',' expected."
+        tsc x1: TS1011 @form+3 len 0 "An element access expression should take an argument."
+    "[a is B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+3 len 2 "',' expected."
+  -- AAg: 7 distinct
+    "[A?, B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1257 @form+5 len 1 "A required element cannot follow an optional element."
+    "[...A?]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+4 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "[readonly A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+1 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "[infer A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+1 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "[unique symbol]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+1 len 13 "'unique symbol' types are not allowed here."
+    "[this is B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1228 @form+1 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "[a?: A, b: B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1257 @form+8 len 4 "A required element cannot follow an optional element."
+
+==== family label  (976 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:284-295 (const), 327-337 (import), 357-368 (new), 393-412 (keyof), 418-428 (readonly), 434-457 (infer), 561-570 (typeof), 651-666 (function and other keywords), 618-624 (? and : after the label)
+  ref: parser.go:3683 scanStartOfNamedTupleElement, 3690 nextTokenIsColonOrQuestionColon
+  counts A1=32 AA=712 AAg=52 B=88 RR=92
+  -- A1: 15 distinct
+    "[...const: A[]]"
+        contexts (4 of 4): alias param arrowRet callArg
+        bun x4: Unexpected "const" @form+4
+    "[...in: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected in @form+4
+    "[...class: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected class @form+4
+    "[...if: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected if @form+4
+    "[...var: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected var @form+4
+    "[...default: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected default @form+4
+    "[...delete: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected delete @form+4
+    "[...enum: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected enum @form+4
+    "[...export: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected export @form+4
+    "[...extends: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected extends @form+4
+    "[...super: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected super @form+4
+    "[...switch: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected switch @form+4
+    "[...instanceof: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected instanceof @form+4
+    "[...with: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected with @form+4
+    "[...return: A[]]"
+        contexts (2 of 4): alias param
+        bun x2: Unexpected return @form+4
+  -- B: 43 distinct
+    "[const?: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x2: TS1110 @form+1 len 5 "Type expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 5 "Expression or comma expected."
+    "[in: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+1 len 2 "Expression expected."
+    "[in?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+1 len 2 "Expression expected."
+    "[a: A, in: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[class: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 1 "'{' expected."
+    "[class?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 1 "'{' expected."
+    "[a: A, class: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[if: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 2 "Expression or comma expected."
+    "[if?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 2 "Expression or comma expected."
+    "[a: A, if: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[var: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 3 "Expression or comma expected."
+    "[var?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 3 "Expression or comma expected."
+    "[a: A, var: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[default: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 7 "Type expected."
+        tsc x1: TS1137 @form+1 len 7 "Expression or comma expected."
+    "[default?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 7 "Type expected."
+        tsc x1: TS1137 @form+1 len 7 "Expression or comma expected."
+    "[a: A, default: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+7 len 7 "Type expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[delete: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "[delete?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+7 len 1 "Expression expected."
+    "[a: A, delete: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[enum: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 4 "Expression or comma expected."
+    "[enum?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 4 "Expression or comma expected."
+    "[a: A, enum: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[export: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 6 "Type expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[export?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 6 "Type expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[a: A, export: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+7 len 6 "Type expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[extends: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 7 "Type expected."
+        tsc x1: TS1137 @form+1 len 7 "Expression or comma expected."
+    "[extends?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+1 len 7 "Type expected."
+        tsc x1: TS1137 @form+1 len 7 "Expression or comma expected."
+    "[a: A, extends: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1110 @form+7 len 7 "Type expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[super: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1034 @form+6 len 1 "'super' must be followed by an argument list or member access."
+    "[super?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1034 @form+6 len 1 "'super' must be followed by an argument list or member access."
+    "[a: A, super: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[switch: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[switch?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[a: A, switch: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[instanceof: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+1 len 10 "Expression expected."
+    "[instanceof?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+1 len 10 "Expression expected."
+    "[a: A, instanceof: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[with: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 4 "Expression or comma expected."
+    "[with?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 4 "Expression or comma expected."
+    "[a: A, with: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+    "[return: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[return?: A]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1137 @form+1 len 6 "Expression or comma expected."
+    "[a: A, return: B]"
+        contexts (2 of 4): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 1 "',' expected."
+  -- AAg: 13 distinct
+    "[let: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "[let?: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "[...let: A[]]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+4 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "[a: A, let: B]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+7 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "[yield: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "[yield?: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "[...yield: A[]]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+4 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "[a: A, yield: B]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+7 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "[static: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "[static?: A]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "[...static: A[]]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+4 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "[a: A, static: B]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1212 @form+7 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+    "[unique: unique symbol]"
+        contexts (4 of 4): alias param arrowRet callArg
+        tsc x4: TS1335 @form+9 len 13 "'unique symbol' types are not allowed here."
+
+==== family union  (923 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:322-326 (leading operator), 676-717
+  ref: parser.go:2688 parseUnionOrIntersectionType, 3796 parseFunctionOrConstructorTypeToError
+  counts A1=39 A2=11 AA=497 AAg=28 B=276 RR=72
+  -- A1: 3 distinct
+    "| if"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected if @form+2
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected | @form+0
+        bun x1: Expected ")" but found ":" @form-2
+    "A | if"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected if @form+4
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "A & class"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected class @form+4
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected "{" but found ">" @form+9
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 1 distinct
+    "A | asserts a"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+12
+        bun x2: Expected ")" but found "a" @form+12
+        bun x1: Expected ">" but found "a" @form+12
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+12
+        bun x1: Unexpected a @form+12
+        tsc x11: TS1228 @form+4 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- B: 24 distinct
+    "& | A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+2 len 1 "Type expected."
+    "| | A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+2 len 1 "Type expected."
+    "& & A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+2 len 1 "Type expected."
+    "| & | A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+4 len 1 "Type expected."
+    "A | | B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+4 len 1 "Type expected."
+    "A & & B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+4 len 1 "Type expected."
+    "A & | B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+4 len 1 "Type expected."
+    "A |"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+6 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+4 len 2 "Type expected."
+        tsc x2: TS1110 @form+3 len 1 "Type expected."
+    "A &"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+6 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+4 len 2 "Type expected."
+        tsc x2: TS1110 @form+3 len 1 "Type expected."
+    "|"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+4 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+2 len 2 "Type expected."
+        tsc x2: TS1110 @form+1 len 1 "Type expected."
+    "&"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+4 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+2 len 2 "Type expected."
+        tsc x2: TS1110 @form+1 len 1 "Type expected."
+    "A | () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1385 @form+3 len 11 "Function type notation must be parenthesized when used in a union type."
+    "A & () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1387 @form+3 len 11 "Function type notation must be parenthesized when used in an intersection type."
+    "A | new () => B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1386 @form+3 len 12 "Constructor type notation must be parenthesized when used in a union type."
+    "A & new () => B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1388 @form+3 len 12 "Constructor type notation must be parenthesized when used in an intersection type."
+    "| () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1385 @form+1 len 11 "Function type notation must be parenthesized when used in a union type."
+    "& () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1387 @form+1 len 11 "Function type notation must be parenthesized when used in an intersection type."
+    "| new () => A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1386 @form+1 len 12 "Constructor type notation must be parenthesized when used in a union type."
+    "A | <T>() => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1385 @form+3 len 14 "Function type notation must be parenthesized when used in a union type."
+    "A & <T>() => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1387 @form+3 len 14 "Function type notation must be parenthesized when used in an intersection type."
+    "A | abstract new () => B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1386 @form+3 len 21 "Constructor type notation must be parenthesized when used in a union type."
+    "A | (a: B) => C"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1385 @form+3 len 12 "Function type notation must be parenthesized when used in a union type."
+    "A | (a) => C"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1385 @form+3 len 9 "Function type notation must be parenthesized when used in a union type."
+    "A | a is B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+6 len 2 "';' expected."
+        tsc x6: TS1005 @form+6 len 2 "',' expected."
+        tsc x1: TS1144 @form+6 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+6 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+6 len 2 "'>' expected."
+  -- AAg: 3 distinct
+    "A | infer B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+4 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "A | unique symbol"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+4 len 13 "'unique symbol' types are not allowed here."
+    "A | asserts a"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1228 @form+4 len 9 "A type predicate is only allowed in return type position for functions and methods."
+
+==== family op  (1035 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:393-417 (keyof), 418-433 (readonly), 459-467 (unique)
+  ref: parser.go:2721 parseTypeOperatorOrHigher, 2732 parseTypeOperator
+  counts A1=13 A2=143 AA=443 AAg=246 B=148 RR=42
+  -- A1: 1 distinct
+    "keyof if"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected if @form+6
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "if" @form+6
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 12 distinct
+    "keyof A\n[]"
+        contexts (2 of 13): field member
+        bun x2: Unexpected ] @form+9
+        tsc x1: TS1096 @form+8 len 3 "An index signature must have exactly one parameter."
+        tsc x1: TS1096 @form+8 len 2 "An index signature must have exactly one parameter."
+    "keyof asserts a"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+14
+        bun x2: Expected ")" but found "a" @form+14
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "asserts" @form+6
+        bun x1: Expected ">" but found "a" @form+14
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+14
+        bun x1: Unexpected a @form+14
+        tsc x13: TS1228 @form+6 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "readonly if"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected if @form+9
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "if" @form+9
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "unique A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "A" @form+7
+        bun x2: Expected ")" but found "A" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "A" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "A" @form+7
+        bun x1: Unexpected A @form+7
+        tsc x13: TS1005 @form+7 len 1 "'symbol' expected."
+    "unique unique symbol"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "unique" @form+7
+        bun x2: Expected ")" but found "unique" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "unique" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "unique" @form+7
+        bun x1: Unexpected unique @form+7
+        tsc x13: TS1005 @form+7 len 13 "'symbol' expected."
+        tsc x13: TS1335 @form+7 len 13 "'unique symbol' types are not allowed here."
+    "unique keyof A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "keyof" @form+7
+        bun x2: Expected ")" but found "keyof" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "keyof" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "keyof" @form+7
+        bun x1: Unexpected keyof @form+7
+        tsc x13: TS1005 @form+7 len 7 "'symbol' expected."
+    "unique readonly A[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "readonly" @form+7
+        bun x2: Expected ")" but found "readonly" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "readonly" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "readonly" @form+7
+        bun x1: Unexpected readonly @form+7
+        tsc x13: TS1005 @form+7 len 12 "'symbol' expected."
+    "unique (symbol)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "(" @form+7
+        bun x2: Expected ")" but found "(" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "(" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "(" @form+7
+        bun x1: Unexpected ( @form+7
+        tsc x12: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique typeof a"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "typeof" @form+7
+        bun x2: Expected ")" but found "typeof" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "typeof" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "typeof" @form+7
+        bun x1: Unexpected typeof @form+7
+        tsc x13: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique { a: A }"
+        contexts (12 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "{" @form+7
+        bun x2: Expected ")" but found "{" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "{" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "{" @form+7
+        bun x1: Unexpected { @form+7
+        tsc x12: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique string"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found "string" @form+7
+        bun x2: Expected ")" but found "string" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "string" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "string" @form+7
+        bun x1: Unexpected string @form+7
+        tsc x13: TS1005 @form+7 len 6 "'symbol' expected."
+    "unique \"s\""
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x6: Expected ";" but found ""s"" @form+7
+        bun x2: Expected ")" but found ""s"" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found ""s"" @form+7
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found ""s"" @form+7
+        bun x1: Unexpected "s" @form+7
+        tsc x13: TS1005 @form+7 len 3 "'symbol' expected."
+  -- B: 13 distinct
+    "keyof |"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x4: TS1110 @form+6 len 1 "Type expected."
+    "keyof | A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+6 len 1 "Type expected."
+    "keyof & A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1110 @form+6 len 1 "Type expected."
+    "keyof () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1110 @form+7 len 1 "Type expected."
+        tsc x1: TS1005 @form+9 len 2 "';' expected."
+    "keyof new () => A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+10 len 1 "';' expected."
+        tsc x6: TS1005 @form+10 len 1 "',' expected."
+        tsc x1: TS1144 @form+10 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 3 "';' expected."
+        tsc x1: TS1441 @form+10 len 1 "Cannot start a function call in a type annotation."
+        tsc x1: TS1005 @form+10 len 1 "'>' expected."
+    "keyof <T>() => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1110 @form+6 len 1 "Type expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+12 len 2 "';' expected."
+    "keyof abstract new () => A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+15 len 3 "';' expected."
+        tsc x6: TS1005 @form+15 len 3 "',' expected."
+        tsc x1: TS1144 @form+15 len 3 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 8 "';' expected."
+        tsc x1: TS1442 @form+15 len 3 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+15 len 3 "'>' expected."
+    "keyof (a: A) => B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+8 len 1 "')' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+8 len 1 "',' expected."
+    "keyof a is B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+8 len 2 "';' expected."
+        tsc x6: TS1005 @form+8 len 2 "',' expected."
+        tsc x1: TS1144 @form+8 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 1 "';' expected."
+        tsc x1: TS1442 @form+8 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+8 len 2 "'>' expected."
+    "readonly () => void"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1110 @form+10 len 1 "Type expected."
+        tsc x1: TS1005 @form+12 len 2 "';' expected."
+    "readonly new () => A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+13 len 1 "';' expected."
+        tsc x6: TS1005 @form+13 len 1 "',' expected."
+        tsc x1: TS1144 @form+13 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+9 len 3 "';' expected."
+        tsc x1: TS1441 @form+13 len 1 "Cannot start a function call in a type annotation."
+        tsc x1: TS1005 @form+13 len 1 "'>' expected."
+    "readonly <T>() => T"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1110 @form+9 len 1 "Type expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+15 len 2 "';' expected."
+    "unique symbol<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+16 len 1 "Expression expected."
+  -- AAg: 21 distinct
+    "keyof unique symbol"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+6 len 13 "'unique symbol' types are not allowed here."
+    "keyof infer U"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+6 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "readonly A"
+        contexts (12 of 12): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        tsc x12: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly readonly A[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly keyof A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly (A[])"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly Array<A>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly typeof a"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly unique symbol"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+        tsc x13: TS1335 @form+9 len 13 "'unique symbol' types are not allowed here."
+    "readonly { a: A }"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "readonly A[B]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1354 @form+0 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "unique symbol"
+        contexts (11 of 11): alias var param ret arrowParam arrowRet as callArg field fnTypeParam member
+        tsc x8: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+        tsc x1: TS1332 @form-3 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+        tsc x1: TS1331 @form-3 len 1 "A property of a class whose type is a 'unique symbol' type must be both 'static' and 'readonly'."
+        tsc x1: TS1330 @form-3 len 1 "A property of an interface or type literal whose type is a 'unique symbol' type must be 'readonly'."
+    "unique symbol[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique\nsymbol"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x10: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+        tsc x1: TS1332 @form-3 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+        tsc x1: TS1331 @form-3 len 1 "A property of a class whose type is a 'unique symbol' type must be both 'static' and 'readonly'."
+        tsc x1: TS1330 @form-3 len 1 "A property of an interface or type literal whose type is a 'unique symbol' type must be 'readonly'."
+    "unique symbol | A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+    "unique symbol & A"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+    "unique symbol extends A ? B : C"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+    "unique symbol.x"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique (symbol)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+7 len 8 "'symbol' expected."
+    "unique [A]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+7 len 3 "'symbol' expected."
+    "unique { a: A }"
+        contexts (1 of 13): ret
+        tsc x1: TS1005 @form+7 len 8 "'symbol' expected."
+
+==== family infer  (754 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:434-458, 1302-1320, 1441-1478
+  ref: parser.go:2738 parseInferType, 2744 parseTypeParameterOfInferType, 2751 tryParseConstraintOfInferType
+  counts AA=482 AAg=104 B=65 RR=103
+  -- B: 5 distinct
+    "A extends infer U[] ? U : never"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+17 len 1 "'?' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+    "A extends readonly infer U[] ? U : never"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+26 len 1 "'?' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+    "infer U[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+7 len 1 "';' expected."
+        tsc x6: TS1005 @form+7 len 1 "',' expected."
+        tsc x1: TS1144 @form+7 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+6 len 1 "';' expected."
+        tsc x1: TS1442 @form+7 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+7 len 1 "'>' expected."
+    "A extends infer U extends ? 1 : 2"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+30 len 1 "'?' expected."
+    "A extends infer U.V ? 1 : 2"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+17 len 1 "'?' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+  -- AAg: 8 distinct
+    "infer U"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+0 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "infer U extends B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+0 len 17 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "(infer U)[]"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+1 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "infer U | V"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+0 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "infer U extends B ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+0 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "A extends B ? infer U : never"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+14 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "A extends B ? C : infer U"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+18 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "infer U extends A ? B : C extends D ? E : F"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+0 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+
+==== family cond  (1208 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:764-804
+  ref: parser.go:2655-2678 parseType
+  counts A2=13 AA=922 AAg=26 B=53 RR=194
+  -- A2: 1 distinct
+    "A extends B ? asserts a : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected ":" but found "a" @form+22
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "extends" @form+2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS1228 @form+14 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- B: 8 distinct
+    "A extends B ? : D"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1005 @form+14 len 1 "'?' expected."
+    "A extends ? C : D"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1005 @form+14 len 1 "'?' expected."
+    "A extends B ? C :"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+20 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+18 len 2 "Type expected."
+        tsc x2: TS1110 @form+17 len 1 "Type expected."
+    "A extends B ? C : D : E"
+        contexts (1 of 13): tupleEl
+        tsc x1: TS1005 @form+20 len 1 "',' expected."
+    "extends B ? C : D"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1109 @form+0 len 7 "Expression expected."
+        tsc x1: TS1005 @form+8 len 1 "',' expected."
+    "A extends B ? a is C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+16 len 2 "':' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+    "A extends B ? C : a is D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+20 len 2 "';' expected."
+        tsc x6: TS1005 @form+20 len 2 "',' expected."
+        tsc x1: TS1144 @form+20 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+        tsc x1: TS1442 @form+20 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+20 len 2 "'>' expected."
+    "A extends a is B ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+12 len 2 "'?' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+2 len 7 "';' expected."
+  -- AAg: 2 distinct
+    "unique symbol extends B ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+    "A extends unique symbol ? C : D"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+10 len 13 "'unique symbol' types are not allowed here."
+
+==== family query  (1195 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:561-601
+  ref: parser.go:3160 parseTypeQuery, 2842-2846
+  counts A1=24 A2=32 AA=777 AAg=47 B=68 RR=247
+  -- A1: 2 distinct
+    "typeof #a"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x10: Expected identifier but found "#a" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected #a @form+7
+        bun x1: Expected ")" but found ":" @form-2
+    "typeof import(\"x\")<C>"
+        contexts (11 of 13): alias var param ret arrowParam arrowRet field typeArg fnTypeParam tupleEl member
+        bun x4: Expected ";" but found "<" @form+18
+        bun x2: Expected ")" but found "<" @form+18
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "<" @form+18
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "<" @form+18
+        bun x1: Unexpected < @form+18
+  -- A2: 3 distinct
+    "typeof a<>"
+        contexts (10 of 13): alias var param ret arrowParam as field typeArg tupleEl member
+        bun x9: Unexpected > @form+9
+        bun x1: Unexpected >> @form+9
+        tsc x10: TS1099 @form+8 len 2 "Type argument list cannot be empty."
+    "typeof a<B,>"
+        contexts (10 of 13): alias var param ret arrowParam as field typeArg tupleEl member
+        bun x9: Unexpected > @form+11
+        bun x1: Unexpected >> @form+11
+        tsc x10: TS1009 @form+10 len 1 "Trailing comma not allowed."
+    "typeof import(x)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Expected string but found "x" @form+14
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS1141 @form+14 len 1 "String literal expected."
+  -- B: 9 distinct
+    "typeof a<B>.c"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+11 len 1 "';' expected."
+        tsc x6: TS1005 @form+11 len 1 "',' expected."
+        tsc x1: TS1144 @form+11 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1477 @form+8 len 3 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1442 @form+11 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+11 len 1 "'>' expected."
+    "typeof a<B><C>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+14 len 1 "Expression expected."
+    "typeof a.#b"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1003 @form+11 len 0 "Identifier expected."
+    "typeof a.b.#c"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1003 @form+13 len 0 "Identifier expected."
+    "typeof a.#b.c"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1003 @form+11 len 0 "Identifier expected."
+    "typeof import.meta"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+13 len 1 "'(' expected."
+    "typeof a!.b"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+9 len 1 "';' expected."
+        tsc x6: TS1005 @form+9 len 1 "',' expected."
+        tsc x1: TS1144 @form+9 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+9 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+9 len 1 "'>' expected."
+    "typeof a\n<B>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+12 len 1 "Expression expected."
+    "typeof [a]"
+        contexts (1 of 13): callArg
+        tsc x1: TS1003 @form+7 len 1 "Identifier expected."
+  -- AAg: 7 distinct
+    "typeof a<>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1099 @form+8 len 2 "Type argument list cannot be empty."
+    "typeof a<B,>"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1009 @form+10 len 1 "Trailing comma not allowed."
+    "typeof import(x)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1141 @form+14 len 1 "String literal expected."
+    "typeof a!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 9 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "typeof yield"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+7 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+7 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "typeof let"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1212 @form+7 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+7 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "typeof {a}"
+        contexts (1 of 13): callArg
+        tsc x1: TS18004 @form+8 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+
+==== family import  (844 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:327-356
+  ref: parser.go:3075 parseImportType, 3117 parseImportAttribute, 3134 parseImportAttributes
+  counts A1=60 A2=48 AA=353 AAg=46 B=188 RR=149
+  -- A1: 5 distinct
+    "import(\"x\")<T>"
+        contexts (11 of 13): alias var param ret arrowParam arrowRet field typeArg fnTypeParam tupleEl member
+        bun x4: Expected ";" but found "<" @form+11
+        bun x2: Expected ")" but found "<" @form+11
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "<" @form+11
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "<" @form+11
+        bun x1: Unexpected < @form+11
+    "import(\"x\", { with: { a: \"b\" } })<T>"
+        contexts (11 of 13): alias var param ret arrowParam arrowRet field typeArg fnTypeParam tupleEl member
+        bun x4: Expected ";" but found "<" @form+33
+        bun x2: Expected ")" but found "<" @form+33
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "<" @form+33
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "<" @form+33
+        bun x1: Unexpected < @form+33
+    "import(\"x\", { with: { a: \"b\" + \"c\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Unexpected + @form+29
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "import(\"x\").#a"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected identifier but found "#a" @form+12
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "import(\"x\").A.<T>"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected identifier but found "<" @form+14
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 4 distinct
+    "import(`x`)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Expected string but found "`x`" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS1141 @form+7 len 3 "String literal expected."
+    "import(x)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Expected string but found "x" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS1141 @form+7 len 1 "String literal expected."
+    "import(1)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Expected string but found "1" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS1141 @form+7 len 1 "String literal expected."
+    "import(A | B)"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        bun x10: Expected string but found "A" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x12: TS1141 @form+7 len 5 "String literal expected."
+  -- B: 18 distinct
+    "import(\"x\").A<T>.B"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+16 len 1 "';' expected."
+        tsc x6: TS1005 @form+16 len 1 "',' expected."
+        tsc x1: TS1144 @form+16 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1477 @form+13 len 3 "An instantiation expression cannot be followed by a property access."
+        tsc x1: TS1442 @form+16 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+16 len 1 "'>' expected."
+    "import(\"x\", {})"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+13 len 1 "'with' expected."
+    "import(\"x\", { with: { a: \"b\" } }, )"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+32 len 1 "')' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\",)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+11 len 1 "'{' expected."
+    "import(\"x\", { with: { [a]: \"b\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1478 @form+22 len 1 "Identifier or string literal expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with: { 1: \"b\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1478 @form+22 len 1 "Identifier or string literal expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with: { a: \"b\" }, assert: { c: \"d\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+32 len 6 "'}' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with: y })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+20 len 1 "'{' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+19 len 1 "':' expected."
+    "import(\"x\", { with: { a } })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+24 len 1 "':' expected."
+    "import(\"x\", { with: { a: \"b\"; c: \"d\" } })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1005 @form+28 len 1 "',' expected."
+    "import(\"x\", { a: \"b\" })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+14 len 1 "'with' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { readonly with: { a: \"b\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+14 len 8 "'with' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with?: { a: \"b\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+18 len 1 "':' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { with(): void })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+18 len 1 "':' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import(\"x\", { \"with\": { a: \"b\" } })"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1005 @form+14 len 6 "'with' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "import.meta"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+6 len 1 "'(' expected."
+    "import(\"x\")\n<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+15 len 1 "Expression expected."
+  -- AAg: 10 distinct
+    "import(`x`)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1141 @form+7 len 3 "String literal expected."
+    "import(x)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1141 @form+7 len 1 "String literal expected."
+    "import(1)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1141 @form+7 len 1 "String literal expected."
+    "import(A | B)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1141 @form+7 len 5 "String literal expected."
+    "import(\"x\", { with: {} })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1464 @form+20 len 2 "Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'."
+    "import(\"x\", { with: { a: \"b\", c: \"d\" } })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1464 @form+20 len 18 "Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'."
+    "import(\"x\", { with: { \"a\": \"b\" } })"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1463 @form+22 len 3 "'resolution-mode' is the only valid key for type import attributes."
+    "import(\"x\", { readonly with: { a: \"b\" } })"
+        contexts (1 of 13): callArg
+        tsc x1: TS1042 @form+14 len 8 "'readonly' modifier cannot be used here."
+    "import(\"x\", { with?: { a: \"b\" } })"
+        contexts (1 of 13): callArg
+        tsc x1: TS1162 @form+18 len 1 "An object member cannot be declared optional."
+    "import(\"x\", { with(): void })"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+25 len 1 "'{' expected."
+
+==== family fn  (1722 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:357-385, 219-241 skip_type_script_paren_or_fn_type, 164-198 skip_typescript_fn_args, 67-162 skip_type_script_binding, 468-475 (abstract)
+  ref: parser.go:3818 isStartOfFunctionTypeOrConstructorType, 3825 parseFunctionOrConstructorType, 3860 nextIsUnambiguouslyStartOfFunctionType, 3885 skipParameterStart, 3309 parseParameters
+  counts A1=138 A2=102 AA=752 AAg=144 B=110 RR=476
+  -- A1: 23 distinct
+    "(a = 1) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+8
+    "(a: A = 1) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found ":" @form+2
+        bun x1: Expected ";" but found ":" @form-2
+    "(a = 1, b = 2) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+15
+    "(a = b) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+8
+    "(a = () => 1) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+14
+    "(a = {}) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+9
+    "({ a } = {}) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+13
+    "([a] = []) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+5
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+11
+    "({ a = 1 }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Unexpected = @form+5
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected "=" @form+5
+    "({ a: b = 1 }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Unexpected = @form+8
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+15
+    "([a = 1]) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected "]" but found "=" @form+4
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+10
+    "({ [k]: v }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ";" but found "=>" @form+13
+        bun x1: Expected ")" but found "=>" @form+13
+        bun x1: Unexpected => @form+21
+    "([a, , b]) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Unexpected , @form+5
+        bun x1: Unexpected => @form+19
+        bun x1: Expected ";" but found "=>" @form+11
+    "({ 1n: a }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Unexpected 1n @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+12
+    "(public a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+    "(readonly a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found ":" @form+11
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found "a" @form+10
+    "(private a) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+9
+        bun x1: Expected ";" but found ":" @form-2
+    "(protected a?: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+11
+        bun x1: Expected ";" but found ":" @form-2
+    "(override a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+10
+        bun x1: Expected ";" but found ":" @form-2
+    "(public readonly a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "readonly" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+    "(public readonly) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "readonly" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+    "(readonly readonly) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Unexpected ) @form+18
+        bun x1: Unexpected => @form+28
+        bun x1: Expected ")" but found "readonly" @form+10
+    "(a) => asserts a\nis B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x3: Expected ";" but found "B" @form+20
+        bun x1: Expected ")" but found "is" @form+17
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+4
+  -- A2: 17 distinct
+    "<in T>() => T"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x6: The modifier "in" is not valid here @form+1
+        tsc x6: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+    "<out T>() => T"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x6: The modifier "out" is not valid here @form+1
+        tsc x6: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+    "<>() => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected identifier but found ">" @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected > @form+1
+        tsc x6: TS1098 @form+0 len 2 "Type parameter list cannot be empty."
+    "(...a = []) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Unexpected ... @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1048 @form+4 len 1 "A rest parameter cannot have an initializer."
+    "(a?: A = 1) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "?" @form+2
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected : @form+3
+        tsc x6: TS1015 @form+1 len 1 "Parameter cannot have question mark and initializer."
+    "(static a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1090 @form+1 len 6 "'static' modifier cannot appear on a parameter."
+    "(declare a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+9
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1090 @form+1 len 7 "'declare' modifier cannot appear on a parameter."
+    "(abstract a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+10
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1242 @form+1 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "(async a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+7
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1090 @form+1 len 5 "'async' modifier cannot appear on a parameter."
+    "(export a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Unexpected export @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1090 @form+1 len 6 "'export' modifier cannot appear on a parameter."
+    "(in a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Unexpected in @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1274 @form+1 len 2 "'in' modifier can only appear on a type parameter of a class, interface or type alias"
+    "(out a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+5
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1274 @form+1 len 3 "'out' modifier can only appear on a type parameter of a class, interface or type alias"
+    "(accessor a: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "a" @form+10
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1275 @form+1 len 8 "'accessor' modifier can only appear on a property declaration."
+    "(public = 1) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x4: Expected ")" but found "=" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ";" but found "=>" @form+13
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(public public) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "public" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x5: TS1212 @form+8 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+8 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(public { a }: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found "{" @form+8
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1187 @form+1 len 15 "A parameter property may not be declared using a binding pattern."
+    "(public [a]: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        bun x5: Expected ")" but found ":" @form+11
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x6: TS1187 @form+1 len 13 "A parameter property may not be declared using a binding pattern."
+  -- B: 23 distinct
+    "(this?: A) => B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1005 @form+5 len 1 "',' expected."
+    "(...this: A) => B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1359 @form+4 len 4 "Identifier expected. 'this' is a reserved word that cannot be used here."
+    "<T>"
+        contexts (1 of 6): callArg
+        tsc x1: TS1005 @form+3 len 1 "'(' expected."
+    "new ()"
+        contexts (1 of 6): callArg
+        tsc x1: TS1005 @form+6 len 1 "'=>' expected."
+    "new () =>"
+        contexts (2 of 6): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1110 @form+9 len 1 "Type expected."
+    "new A"
+        contexts (1 of 6): callArg
+        tsc x1: TS1005 @form+4 len 1 "'(' expected."
+    "new (A)"
+        contexts (5 of 6): alias param callArg as field
+        tsc x5: TS1005 @form+7 len 1 "'=>' expected."
+    "() =>"
+        contexts (2 of 6): arrowRet callArg
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1110 @form+5 len 1 "Type expected."
+    "(a: ) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1110 @form+4 len 1 "Type expected."
+    "(a:) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1110 @form+3 len 1 "Type expected."
+    "(a?:) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1110 @form+4 len 1 "Type expected."
+    "({ : a }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1131 @form+3 len 1 "Property or signature expected."
+        tsc x1: TS1136 @form+3 len 1 "Property assignment expected."
+    "({ a }: ) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1110 @form+8 len 1 "Type expected."
+    "([this]) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x3: TS1005 @form+9 len 2 "';' expected."
+        tsc x1: TS1005 @form+9 len 2 "',' expected."
+        tsc x1: TS1109 @form+17 len 2 "Expression expected."
+        tsc x1: TS1442 @form+9 len 2 "Expected '=' for property initializer."
+    "({ a: this }) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x3: TS1005 @form+14 len 2 "';' expected."
+        tsc x1: TS1005 @form+14 len 2 "',' expected."
+        tsc x1: TS1109 @form+22 len 2 "Expression expected."
+        tsc x1: TS1442 @form+14 len 2 "Expected '=' for property initializer."
+    "(a) => a is"
+        contexts (2 of 6): arrowRet callArg
+        tsc x1: TS1110 @form+12 len 2 "Type expected."
+        tsc x1: TS1110 @form+11 len 1 "Type expected."
+    "(a) => asserts a.b"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x1: TS1005 @form+16 len 1 "';' expected."
+        tsc x2: TS1005 @form+16 len 1 "',' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+        tsc x1: TS1442 @form+16 len 1 "Expected '=' for property initializer."
+    "(a) => asserts is"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1110 @form+17 len 1 "Type expected."
+        tsc x1: TS1110 @form+18 len 2 "Type expected."
+    "(a) => asserts is is B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x1: TS1005 @form+21 len 1 "';' expected."
+        tsc x2: TS1005 @form+21 len 1 "',' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+        tsc x1: TS1442 @form+21 len 1 "Expected '=' for property initializer."
+    "(a) => a is b is C"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x1: TS1005 @form+14 len 2 "';' expected."
+        tsc x2: TS1005 @form+14 len 2 "',' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+        tsc x1: TS1442 @form+14 len 2 "Expected '=' for property initializer."
+    "(a) => (a is B)"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x4: TS1005 @form+10 len 2 "')' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+    "(a) => asserts this.x"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x1: TS1005 @form+19 len 1 "';' expected."
+        tsc x2: TS1005 @form+19 len 1 "',' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+        tsc x1: TS1442 @form+19 len 1 "Expected '=' for property initializer."
+    "(a) => asserts a<T>"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x1: TS1005 @form+16 len 1 "';' expected."
+        tsc x1: TS1005 @form+16 len 1 "',' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1005 @form+4 len 2 "';' expected."
+        tsc x1: TS1109 @form+19 len 1 "Expression expected."
+        tsc x1: TS1442 @form+16 len 1 "Expected '=' for property initializer."
+  -- AAg: 24 distinct
+    "new (a) => a is B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+11 len 6 "A type predicate is only allowed in return type position for functions and methods."
+    "() => unique symbol"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1335 @form+6 len 13 "'unique symbol' types are not allowed here."
+    "(...a, b) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1014 @form+1 len 3 "A rest parameter must be last in a parameter list."
+    "(...a: A[], b: B) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1014 @form+1 len 3 "A rest parameter must be last in a parameter list."
+    "(...a?: A[]) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1047 @form+5 len 1 "A rest parameter cannot be optional."
+    "(public) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(public, private) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x5: TS1212 @form+9 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+        tsc x1: TS1213 @form+9 len 7 "Identifier expected. 'private' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(public: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(public?: A) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "new () => a is B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+10 len 6 "A type predicate is only allowed in return type position for functions and methods."
+    "new () => asserts a"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+10 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(a) => asserts a[]"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+7 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(a) => asserts a | B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+7 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(a) => asserts a & B"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+7 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(a) => asserts a extends B ? C : D"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1228 @form+7 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(yield) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(arguments) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1100 @form+1 len 9 "Invalid use of 'arguments' in strict mode."
+        tsc x1: TS1210 @form+1 len 9 "Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode."
+    "(eval) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1100 @form+1 len 4 "Invalid use of 'eval' in strict mode."
+        tsc x1: TS1210 @form+1 len 4 "Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'eval'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode."
+    "(static) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(let) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(implements) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 10 "Identifier expected. 'implements' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 10 "Identifier expected. 'implements' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(interface) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 9 "Identifier expected. 'interface' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 9 "Identifier expected. 'interface' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(package) => void"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x5: TS1212 @form+1 len 7 "Identifier expected. 'package' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+1 len 7 "Identifier expected. 'package' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "(a?: A, b: B) => C"
+        contexts (6 of 6): alias param arrowRet callArg as field
+        tsc x6: TS1016 @form+8 len 1 "A required parameter cannot follow an optional parameter."
+
+==== family paren  (813 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:229-238
+  ref: parser.go:3710 parseParenthesizedType
+  counts A1=20 A2=26 AA=484 AAg=39 B=35 RR=209
+  -- A1: 2 distinct
+    "(if)"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected if @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+    "(class)"
+        contexts (10 of 13): alias var param ret arrowParam arrowRet as field fnTypeParam member
+        bun x8: Unexpected class @form+1
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 3 distinct
+    "(asserts a)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Expected ")" but found "a" @form+9
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+        tsc x13: TS1228 @form+1 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "(a)\n[]"
+        contexts (2 of 13): field member
+        bun x2: Unexpected ] @form+5
+        tsc x1: TS1096 @form+4 len 3 "An index signature must have exactly one parameter."
+        tsc x1: TS1096 @form+4 len 2 "An index signature must have exactly one parameter."
+    "(a)?"
+        contexts (11 of 13): alias var param arrowParam arrowRet as callArg field typeArg fnTypeParam member
+        bun x3: Expected ";" but found "?" @form+3
+        bun x2: Expected ")" but found "?" @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Unexpected ; @form+4
+        bun x1: Unexpected > @form+4
+        bun x1: Expected ">" but found "?" @form+3
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected ? @form+3
+        tsc x11: TS17019 @form+0 len 4 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+  -- B: 8 distinct
+    "()"
+        contexts (2 of 13): callArg fnTypeParam
+        tsc x2: TS1005 @form+2 len 1 "'=>' expected."
+    "(A, B)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+6 len 1 "'=>' expected."
+    "(a is B)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1005 @form+3 len 2 "')' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "(a)<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+6 len 1 "Expression expected."
+    "(a).b"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+3 len 1 "';' expected."
+        tsc x6: TS1005 @form+3 len 1 "',' expected."
+        tsc x1: TS1144 @form+3 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+3 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+3 len 1 "'>' expected."
+    "(a, b)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+6 len 1 "'=>' expected."
+    "(a = 1)"
+        contexts (1 of 13): callArg
+        tsc x1: TS1005 @form+7 len 1 "'=>' expected."
+    "(a: A) =>"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+12 len 5 "Property or signature expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x2: TS1110 @form+9 len 1 "Type expected."
+  -- AAg: 3 distinct
+    "(infer U)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+1 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "(unique symbol)"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x10: TS1335 @form+1 len 13 "'unique symbol' types are not allowed here."
+        tsc x1: TS1332 @form-3 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+        tsc x1: TS1331 @form-3 len 1 "A property of a class whose type is a 'unique symbol' type must be both 'static' and 'readonly'."
+        tsc x1: TS1330 @form-3 len 1 "A property of an interface or type literal whose type is a 'unique symbol' type must be 'readonly'."
+    "(a)!"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS17019 @form+0 len 4 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'a'?"
+
+==== family tmpl  (689 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:268-271 (no substitution), 636-649
+  ref: parser.go:3734 parseTemplateType, 3757 parseTemplateTypeSpans
+  counts A1=13 A2=2 AA=526 AAg=26 B=45 RR=77
+  -- A1: 1 distinct
+    "`${if}`"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x11: Unexpected if @form+3
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 1 distinct
+    "`${A}`\n[]"
+        contexts (2 of 13): field member
+        bun x2: Unexpected ] @form+8
+        tsc x1: TS1096 @form+7 len 3 "An index signature must have exactly one parameter."
+        tsc x1: TS1096 @form+7 len 2 "An index signature must have exactly one parameter."
+  -- B: 6 distinct
+    "`${}`"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+3 len 1 "Type expected."
+    "`${A}\\u`"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1125 @form+7 len 0 "Hexadecimal digit expected."
+    "`${a is B}`"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x12: TS1005 @form+5 len 2 "'}' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "`${A}${}`"
+        contexts (3 of 13): arrowRet callArg fnTypeParam
+        tsc x3: TS1110 @form+7 len 1 "Type expected."
+    "`${A}`.length"
+        contexts (12 of 13): alias var param ret arrowParam arrowRet as field typeArg fnTypeParam tupleEl member
+        tsc x2: TS1005 @form+6 len 1 "';' expected."
+        tsc x6: TS1005 @form+6 len 1 "',' expected."
+        tsc x1: TS1144 @form+6 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+6 len 1 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+6 len 1 "'>' expected."
+    "`${A}`<T>"
+        contexts (1 of 13): as
+        tsc x1: TS1109 @form+9 len 1 "Expression expected."
+  -- AAg: 2 distinct
+    "`${infer U}`"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1338 @form+3 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "`${unique symbol}`"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x13: TS1335 @form+3 len 13 "'unique symbol' types are not allowed here."
+
+==== family pred  (970 inputs)
+  bun: src/js_parser/parse/parse_skip_typescript.rs:300-305 (this is), 476-488 (asserts), 549-554 (x is)
+  ref: parser.go:3452 parseTypeOrTypePredicate, 3718 parseAssertsTypePredicate, 2883 parseThisTypePredicate, 2858-2862
+  counts A1=3 A2=331 AA=25 AAg=80 B=156 RR=375
+  -- A1: 2 distinct
+    "asserts a\nis B"
+        contexts (1 of 13): arrowRet
+        bun x1: Expected ";" but found ":" @form-2
+    "asserts this\nis B"
+        contexts (2 of 13): ret arrowRet
+        bun x1: Expected ";" but found "B" @form+16
+        bun x1: Expected ";" but found ":" @form-2
+  -- A2: 31 distinct
+    "asserts a"
+        contexts (9 of 11): alias var param arrowParam as callArg field fnTypeParam member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Unexpected a @form+8
+        tsc x9: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts this"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "this" @form+8
+        bun x2: Expected ")" but found "this" @form+8
+        bun x1: Expected ">" but found "this" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "this" @form+8
+        bun x1: Unexpected this @form+8
+        tsc x11: TS1228 @form+0 len 12 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts this is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "this" @form+8
+        bun x2: Expected ")" but found "this" @form+8
+        bun x1: Expected ">" but found "this" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "this" @form+8
+        bun x1: Unexpected this @form+8
+        tsc x11: TS1228 @form+0 len 17 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a | B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a[]"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts is"
+        contexts (9 of 13): alias var param arrowParam as field typeArg tupleEl member
+        bun x4: Unexpected ; @form+10
+        bun x2: Unexpected ) @form+10
+        bun x1: Unexpected > @form+10
+        bun x1: Unexpected ] @form+10
+        bun x1: Unexpected } @form+11
+        tsc x9: TS1228 @form+0 len 10 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts is is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x4: Expected ";" but found "B" @form+14
+        bun x2: Expected ")" but found "B" @form+14
+        bun x1: Expected ";" but found "is" @form+8
+        bun x1: Expected ">" but found "B" @form+14
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "B" @form+14
+        bun x1: Unexpected B @form+14
+        tsc x11: TS1228 @form+0 len 15 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts asserts"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "asserts" @form+8
+        bun x2: Expected ")" but found "asserts" @form+8
+        bun x1: Expected ">" but found "asserts" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "asserts" @form+8
+        bun x1: Unexpected asserts @form+8
+        tsc x11: TS1228 @form+0 len 15 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts asserts is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "asserts" @form+8
+        bun x2: Expected ")" but found "asserts" @form+8
+        bun x1: Expected ">" but found "asserts" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "asserts" @form+8
+        bun x1: Unexpected asserts @form+8
+        tsc x11: TS1228 @form+0 len 20 "A type predicate is only allowed in return type position for functions and methods."
+    "keyof is B"
+        contexts (2 of 13): ret arrowRet
+        bun x1: Expected ";" but found "B" @form+9
+        bun x1: Expected ";" but found ":" @form-2
+        tsc x2: TS1225 @form+0 len 5 "Cannot find parameter 'keyof'."
+    "asserts a & B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts this | B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "this" @form+8
+        bun x2: Expected ")" but found "this" @form+8
+        bun x1: Expected ">" but found "this" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "this" @form+8
+        bun x1: Unexpected this @form+8
+        tsc x11: TS1228 @form+0 len 12 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a is this"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 17 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a\nis B"
+        contexts (12 of 13): alias var param ret arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ";" but found "B" @form+13
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+    "asserts this\nis B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "this" @form+8
+        bun x2: Expected ")" but found "this" @form+8
+        bun x1: Expected ">" but found "this" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "this" @form+8
+        bun x1: Unexpected this @form+8
+        tsc x11: TS1228 @form+0 len 17 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a is\nB"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts undefined"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "undefined" @form+8
+        bun x2: Expected ")" but found "undefined" @form+8
+        bun x1: Expected ">" but found "undefined" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "undefined" @form+8
+        bun x1: Unexpected undefined @form+8
+        tsc x11: TS1228 @form+0 len 17 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts any"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "any" @form+8
+        bun x2: Expected ")" but found "any" @form+8
+        bun x1: Expected ">" but found "any" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "any" @form+8
+        bun x1: Unexpected any @form+8
+        tsc x11: TS1228 @form+0 len 11 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts readonly"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "readonly" @form+8
+        bun x2: Expected ")" but found "readonly" @form+8
+        bun x1: Expected ">" but found "readonly" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "readonly" @form+8
+        bun x1: Unexpected readonly @form+8
+        tsc x11: TS1228 @form+0 len 16 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts unique"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "unique" @form+8
+        bun x2: Expected ")" but found "unique" @form+8
+        bun x1: Expected ">" but found "unique" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "unique" @form+8
+        bun x1: Unexpected unique @form+8
+        tsc x11: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts abstract"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "abstract" @form+8
+        bun x2: Expected ")" but found "abstract" @form+8
+        bun x1: Expected ">" but found "abstract" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "abstract" @form+8
+        bun x1: Unexpected abstract @form+8
+        tsc x11: TS1228 @form+0 len 16 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts type"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "type" @form+8
+        bun x2: Expected ")" but found "type" @form+8
+        bun x1: Expected ">" but found "type" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "type" @form+8
+        bun x1: Unexpected type @form+8
+        tsc x11: TS1228 @form+0 len 12 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts of"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "of" @form+8
+        bun x2: Expected ")" but found "of" @form+8
+        bun x1: Expected ">" but found "of" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "of" @form+8
+        bun x1: Unexpected of @form+8
+        tsc x11: TS1228 @form+0 len 10 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts async"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "async" @form+8
+        bun x2: Expected ")" but found "async" @form+8
+        bun x1: Expected ">" but found "async" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "async" @form+8
+        bun x1: Unexpected async @form+8
+        tsc x11: TS1228 @form+0 len 13 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts await"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "await" @form+8
+        bun x2: Expected ")" but found "await" @form+8
+        bun x1: Expected ">" but found "await" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "await" @form+8
+        bun x1: Unexpected await @form+8
+        tsc x11: TS1228 @form+0 len 13 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts yield"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "yield" @form+8
+        bun x2: Expected ")" but found "yield" @form+8
+        bun x1: Expected ">" but found "yield" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "yield" @form+8
+        bun x1: Unexpected yield @form+8
+        tsc x11: TS1228 @form+0 len 13 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x10: TS1212 @form+8 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+8 len 5 "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "asserts let"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "let" @form+8
+        bun x2: Expected ")" but found "let" @form+8
+        bun x1: Expected ">" but found "let" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "let" @form+8
+        bun x1: Unexpected let @form+8
+        tsc x11: TS1228 @form+0 len 11 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x10: TS1212 @form+8 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+8 len 3 "Identifier expected. 'let' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "asserts static"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "static" @form+8
+        bun x2: Expected ")" but found "static" @form+8
+        bun x1: Expected ">" but found "static" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "static" @form+8
+        bun x1: Unexpected static @form+8
+        tsc x11: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x10: TS1212 @form+8 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x1: TS1213 @form+8 len 6 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+    "asserts out"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "out" @form+8
+        bun x2: Expected ")" but found "out" @form+8
+        bun x1: Expected ">" but found "out" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "out" @form+8
+        bun x1: Unexpected out @form+8
+        tsc x11: TS1228 @form+0 len 11 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a is asserts b"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        bun x5: Expected ";" but found "a" @form+8
+        bun x2: Expected ")" but found "a" @form+8
+        bun x1: Expected ";" but found "b" @form+21
+        bun x1: Expected ";" but found ":" @form-2
+        bun x1: Expected ">" but found "a" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+        bun x1: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        tsc x11: TS1228 @form+0 len 22 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+        tsc x2: TS1228 @form+13 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- B: 23 distinct
+    "a is B"
+        contexts (9 of 11): alias var param arrowParam as callArg field fnTypeParam member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x5: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+    "a is"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+7 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+5 len 2 "Type expected."
+        tsc x1: TS1005 @form+2 len 2 "';' expected."
+        tsc x1: TS1005 @form+2 len 2 "',' expected."
+    "a is B | C"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "a is B extends C ? D : E"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "a is b is C"
+        contexts (13 of 13): alias var param ret arrowParam arrowRet as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1144 @form+7 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "asserts a is b is C"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1144 @form+15 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "asserts a.b"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1144 @form+9 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "a is B[]"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "a is (B)"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "a\nis B"
+        contexts (1 of 13): member
+        tsc x1: TS1131 @form+2 len 2 "Property or signature expected."
+    "this\nis B"
+        contexts (1 of 13): member
+        tsc x1: TS1131 @form+5 len 2 "Property or signature expected."
+    "asserts a is"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1131 @form+15 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+13 len 2 "Type expected."
+    "asserts this.x"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1144 @form+12 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "asserts is"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1131 @form+13 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+11 len 2 "Type expected."
+    "asserts is is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1144 @form+14 len 1 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+    "is is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+3 len 2 "';' expected."
+        tsc x6: TS1005 @form+3 len 2 "',' expected."
+        tsc x1: TS1442 @form+3 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+3 len 2 "'>' expected."
+    "this is"
+        contexts (4 of 13): ret arrowRet callArg fnTypeParam
+        tsc x1: TS1131 @form+10 len 5 "Property or signature expected."
+        tsc x1: TS1110 @form+8 len 2 "Type expected."
+        tsc x2: TS1110 @form+7 len 1 "Type expected."
+    "a is this"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "a is\nB"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+2 len 2 "';' expected."
+        tsc x6: TS1005 @form+2 len 2 "',' expected."
+        tsc x1: TS1442 @form+2 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+2 len 2 "'>' expected."
+    "undefined is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+10 len 2 "';' expected."
+        tsc x6: TS1005 @form+10 len 2 "',' expected."
+        tsc x1: TS1442 @form+10 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+10 len 2 "'>' expected."
+    "any is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+4 len 2 "';' expected."
+        tsc x6: TS1005 @form+4 len 2 "',' expected."
+        tsc x1: TS1442 @form+4 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+4 len 2 "'>' expected."
+    "string is B"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x3: TS1005 @form+7 len 2 "';' expected."
+        tsc x6: TS1005 @form+7 len 2 "',' expected."
+        tsc x1: TS1442 @form+7 len 2 "Expected '=' for property initializer."
+        tsc x1: TS1005 @form+7 len 2 "'>' expected."
+    "asserts a is b is c"
+        contexts (2 of 13): ret arrowRet
+        tsc x1: TS1144 @form+15 len 2 "'{' or ';' expected."
+        tsc x1: TS1005 @form-2 len 1 "',' expected."
+  -- AAg: 37 distinct
+    "a is B"
+        contexts (1 of 11): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "this is B"
+        contexts (10 of 12): alias var param arrowParam as callArg field typeArg fnTypeParam member
+        tsc x10: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a"
+        contexts (1 of 11): ret
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+    "asserts a is B"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+    "a is B | C"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "a is B extends C ? D : E"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "asserts a | B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a[]"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "a is B[]"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "a is (B)"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "asserts is"
+        contexts (2 of 13): callArg fnTypeParam
+        tsc x2: TS1228 @form+0 len 10 "A type predicate is only allowed in return type position for functions and methods."
+    "is is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+0 len 2 "Cannot find parameter 'is'."
+    "asserts asserts"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 7 "Cannot find parameter 'asserts'."
+    "asserts asserts is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 7 "Cannot find parameter 'asserts'."
+    "asserts a & B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts this | B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1228 @form+0 len 12 "A type predicate is only allowed in return type position for functions and methods."
+    "this is this"
+        contexts (11 of 13): alias var param arrowParam as callArg field typeArg fnTypeParam tupleEl member
+        tsc x11: TS1228 @form+0 len 12 "A type predicate is only allowed in return type position for functions and methods."
+    "a is this"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "asserts a is this"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+    "a is\nB"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+    "asserts a is\nB"
+        contexts (1 of 13): ret
+        tsc x1: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+    "asserts undefined"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 9 "Cannot find parameter 'undefined'."
+    "asserts any"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 3 "Cannot find parameter 'any'."
+    "undefined is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+0 len 9 "Cannot find parameter 'undefined'."
+    "any is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+0 len 3 "Cannot find parameter 'any'."
+    "string is B"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+0 len 6 "Cannot find parameter 'string'."
+    "asserts readonly"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 8 "Cannot find parameter 'readonly'."
+    "asserts unique"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 6 "Cannot find parameter 'unique'."
+    "asserts abstract"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 8 "Cannot find parameter 'abstract'."
+    "asserts type"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 4 "Cannot find parameter 'type'."
+    "asserts of"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 2 "Cannot find parameter 'of'."
+    "asserts async"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 5 "Cannot find parameter 'async'."
+    "asserts await"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 5 "Cannot find parameter 'await'."
+    "asserts yield"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1212 @form+8 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+        tsc x2: TS1225 @form+8 len 5 "Cannot find parameter 'yield'."
+    "asserts let"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1212 @form+8 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+        tsc x2: TS1225 @form+8 len 3 "Cannot find parameter 'let'."
+    "asserts static"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1212 @form+8 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x2: TS1225 @form+8 len 6 "Cannot find parameter 'static'."
+    "asserts out"
+        contexts (2 of 13): ret arrowRet
+        tsc x2: TS1225 @form+8 len 3 "Cannot find parameter 'out'."
+
+==== family core  (1588 inputs)
+  counts A1=90 A2=133 AA=944 AAg=132 B=181 RR=108
+  -- A1: 3 distinct
+    "if"
+        contexts (22 of 30): satisfies cast method fnTypeRet tupleNamed indexSig mapped unionLeft arrayOf condCheck condExtends condFalse constraint tpDefault catch thisParam template objMethodRet getterRet declareFn ctorParamProp forOf
+        bun x22: Unexpected if @form+0
+    "(a = 1) => void"
+        contexts (34 of 40): var ret arrowParam satisfies cast newArg tagArg inst method typeArg fnTypeParam fnTypeRet tupleEl tupleNamed member indexSig mapped unionLeft arrayOf condCheck condExtends condTrue condFalse constraint tpDefault thisParam classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        bun x30: Expected ")" but found "=" @form+3
+        bun x3: Expected ";" but found "=>" @form+8
+        bun x1: Expected ")" but found ":" @form-2
+    "({ a = 1 }) => void"
+        contexts (34 of 40): var ret arrowParam satisfies cast newArg tagArg inst method typeArg fnTypeParam fnTypeRet tupleEl tupleNamed member indexSig mapped unionLeft arrayOf condCheck condExtends condTrue condFalse constraint tpDefault thisParam classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        bun x30: Unexpected = @form+5
+        bun x3: Unexpected "=" @form+5
+        bun x1: Expected ")" but found ":" @form-2
+  -- A2: 7 distinct
+    "asserts a"
+        contexts (23 of 29): satisfies cast newArg tagArg inst method tupleNamed indexSig mapped unionLeft condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template declareFn ctorParamProp forOf
+        bun x7: Expected ";" but found "a" @form+8
+        bun x4: Expected ">" but found "a" @form+8
+        bun x5: Expected ")" but found "a" @form+8
+        bun x2: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        bun x1: Expected "?" but found "a" @form+8
+        bun x1: Expected ":" but found "a" @form+8
+        bun x1: Expected "}" but found "a" @form+8
+        bun x1: The constant "a" must be initialized @form-3
+        tsc x23: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+12 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1196 @form+0 len 7 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "asserts a is B"
+        contexts (27 of 33): satisfies cast newArg tagArg inst method tupleNamed indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template paren declareFn ctorParamProp forOf
+        bun x10: Expected ";" but found "a" @form+8
+        bun x4: Expected ">" but found "a" @form+8
+        bun x6: Expected ")" but found "a" @form+8
+        bun x2: Expected "]" but found "a" @form+8
+        bun x1: Unexpected a @form+8
+        bun x1: Expected "?" but found "a" @form+8
+        bun x1: Expected ":" but found "a" @form+8
+        bun x1: Expected "}" but found "a" @form+8
+        bun x1: The constant "a" must be initialized @form-3
+        tsc x24: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+17 len 14 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 18 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 16 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 32 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1196 @form+0 len 7 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "?A"
+        contexts (29 of 32): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft keyofArg condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        bun x29: Unexpected ? @form+0
+        tsc x27: TS17020 @form+0 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x3: TS17020 @form+5 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x1: TS17020 @form+0 len 6 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x1: TS17020 @form+0 len 20 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '1 | null | undefined'?"
+    "A?"
+        contexts (22 of 31): satisfies cast newArg tagArg inst fnTypeRet indexSig mapped unionRight keyofArg condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template declareFn ctorParamProp
+        bun x1: Unexpected ; @form+2
+        bun x4: Expected ">" but found "?" @form+1
+        bun x3: Unexpected > @form+2
+        bun x5: Expected ";" but found "?" @form+1
+        bun x1: Unexpected ? @form+1
+        bun x1: Expected "]" but found "?" @form+1
+        bun x1: Unexpected ? @form+3
+        bun x1: Expected ":" but found "?" @form+1
+        bun x4: Expected ")" but found "?" @form+1
+        bun x1: Expected "}" but found "?" @form+1
+        tsc x21: TS17019 @form+0 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x2: TS17019 @form+5 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+        tsc x1: TS17020 @form+3 len 3 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '1 | null | undefined'?"
+    "*"
+        contexts (30 of 33): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        bun x30: Unexpected * @form+0
+        tsc x30: TS8020 @form+0 len 1 "JSDoc types can only be used inside documentation comments."
+        tsc x3: TS8020 @form+4 len 1 "JSDoc types can only be used inside documentation comments."
+    "(a = 1) => void"
+        contexts (1 of 40): catch
+        bun x1: Expected ")" but found "=" @form+3
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "({ a = 1 }) => void"
+        contexts (1 of 40): catch
+        bun x1: Unexpected = @form+5
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+  -- B: 26 distinct
+    "A[]"
+        contexts (2 of 31): ifaceExtends classImplements
+        tsc x2: TS1011 @form+2 len 0 "An element access expression should take an argument."
+    "A | B"
+        contexts (2 of 29): ifaceExtends classImplements
+        tsc x2: TS1005 @form+2 len 1 "',' expected."
+    "A & B"
+        contexts (2 of 31): ifaceExtends classImplements
+        tsc x2: TS1005 @form+2 len 1 "',' expected."
+    "keyof A"
+        contexts (2 of 30): ifaceExtends classImplements
+        tsc x2: TS1005 @form+6 len 1 "',' expected."
+    "readonly A[]"
+        contexts (2 of 29): ifaceExtends classImplements
+        tsc x2: TS1005 @form+9 len 1 "',' expected."
+    "unique symbol"
+        contexts (2 of 28): ifaceExtends classImplements
+        tsc x2: TS1005 @form+7 len 6 "',' expected."
+    "typeof a"
+        contexts (2 of 30): ifaceExtends classImplements
+        tsc x2: TS1109 @form+0 len 6 "Expression expected."
+    "() => void"
+        contexts (2 of 36): ifaceExtends classImplements
+        tsc x2: TS1109 @form+1 len 1 "Expression expected."
+    "(a: A) => B"
+        contexts (3 of 38): unionRight ifaceExtends classImplements
+        tsc x1: TS1385 @form-1 len 12 "Function type notation must be parenthesized when used in a union type."
+        tsc x2: TS1005 @form+2 len 1 "')' expected."
+    "new () => A"
+        contexts (3 of 37): unionRight ifaceExtends classImplements
+        tsc x1: TS1386 @form-1 len 12 "Constructor type notation must be parenthesized when used in a union type."
+        tsc x2: TS1109 @form+5 len 1 "Expression expected."
+    "<T>(a: T) => T"
+        contexts (5 of 40): unionRight keyofArg ifaceExtends classImplements classExtendsArg
+        tsc x1: TS1385 @form-1 len 15 "Function type notation must be parenthesized when used in a union type."
+        tsc x1: TS1110 @form+0 len 1 "Type expected."
+        tsc x2: TS1109 @form+0 len 1 "Expression expected."
+        tsc x1: TS1005 @form-1 len 2 "',' expected."
+    "[a: A, b?: B]"
+        contexts (2 of 46): ifaceExtends classImplements
+        tsc x2: TS1005 @form+2 len 1 "',' expected."
+    "A extends B ? C : D"
+        contexts (2 of 29): ifaceExtends classImplements
+        tsc x2: TS1005 @form+12 len 1 "',' expected."
+    "A extends infer U ? U : never"
+        contexts (2 of 33): ifaceExtends classImplements
+        tsc x2: TS1005 @form+16 len 1 "',' expected."
+    "a is B"
+        contexts (25 of 29): satisfies cast newArg tagArg inst method tupleNamed indexSig mapped unionLeft condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam ifaceExtends classImplements classExtendsArg template declareFn ctorParamProp forOf
+        tsc x13: TS1005 @form+2 len 2 "',' expected."
+        tsc x2: TS1005 @form+2 len 2 "'>' expected."
+        tsc x5: TS1005 @form+2 len 2 "';' expected."
+        tsc x1: TS1005 @form+2 len 2 "']' expected."
+        tsc x1: TS1005 @form+2 len 2 "'?' expected."
+        tsc x1: TS1005 @form+2 len 2 "':' expected."
+        tsc x1: TS1005 @form+2 len 2 "')' expected."
+        tsc x1: TS1005 @form+2 len 2 "'}' expected."
+    "this is B"
+        contexts (2 of 33): ifaceExtends classImplements
+        tsc x2: TS1005 @form+5 len 2 "',' expected."
+    "void"
+        contexts (2 of 30): ifaceExtends classImplements
+        tsc x2: TS1109 @form+0 len 4 "Expression expected."
+    "-1"
+        contexts (2 of 30): ifaceExtends classImplements
+        tsc x2: TS1109 @form+0 len 1 "Expression expected."
+    "| A"
+        contexts (3 of 32): unionRight ifaceExtends classImplements
+        tsc x1: TS1110 @form+0 len 1 "Type expected."
+        tsc x2: TS1109 @form+0 len 1 "Expression expected."
+    "& A"
+        contexts (2 of 32): ifaceExtends classImplements
+        tsc x2: TS1109 @form+0 len 1 "Expression expected."
+    "(a: ) => void"
+        contexts (39 of 40): var ret arrowParam satisfies cast newArg tagArg inst method typeArg fnTypeParam fnTypeRet tupleEl tupleNamed member indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam ifaceExtends classImplements classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x36: TS1110 @form+4 len 1 "Type expected."
+        tsc x3: TS1005 @form+2 len 1 "')' expected."
+    "A |"
+        contexts (4 of 32): newArg tagArg inst getterRet
+        tsc x3: TS1110 @form+3 len 1 "Type expected."
+        tsc x1: TS1131 @form+6 len 5 "Property or signature expected."
+    "keyof () => void"
+        contexts (32 of 33): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam ifaceExtends classImplements classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x26: TS1110 @form+7 len 1 "Type expected."
+        tsc x1: TS1005 @form+6 len 1 "'>' expected."
+        tsc x3: TS1005 @form+9 len 2 "';' expected."
+        tsc x2: TS1005 @form+9 len 2 "',' expected."
+    "A | () => void"
+        contexts (32 of 33): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam ifaceExtends classImplements classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x27: TS1385 @form+3 len 11 "Function type notation must be parenthesized when used in a union type."
+        tsc x1: TS1385 @form+3 len 15 "Function type notation must be parenthesized when used in a union type."
+        tsc x1: TS1385 @form+3 len 13 "Function type notation must be parenthesized when used in a union type."
+        tsc x1: TS1385 @form+3 len 29 "Function type notation must be parenthesized when used in a union type."
+        tsc x2: TS1005 @form+2 len 1 "',' expected."
+    "abstract new () => A"
+        contexts (3 of 38): unionRight ifaceExtends classImplements
+        tsc x1: TS1386 @form-1 len 21 "Constructor type notation must be parenthesized when used in a union type."
+        tsc x2: TS1005 @form+9 len 3 "',' expected."
+    "infer U"
+        contexts (2 of 30): ifaceExtends classImplements
+        tsc x2: TS1005 @form+6 len 1 "',' expected."
+  -- AAg: 23 distinct
+    "A[]"
+        contexts (1 of 31): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "keyof A"
+        contexts (1 of 30): catch
+        tsc x1: TS1196 @form+0 len 5 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "readonly A[]"
+        contexts (1 of 29): catch
+        tsc x1: TS1196 @form+0 len 8 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "unique symbol"
+        contexts (25 of 28): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x23: TS1335 @form+0 len 13 "'unique symbol' types are not allowed here."
+        tsc x3: TS1335 @form+16 len 13 "'unique symbol' types are not allowed here."
+        tsc x1: TS1196 @form+0 len 6 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+        tsc x2: TS1334 @form+0 len 13 "'unique symbol' types are only allowed on variables in a variable statement."
+    "() => void"
+        contexts (1 of 36): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "(a: A) => B"
+        contexts (1 of 38): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "new () => A"
+        contexts (1 of 37): catch
+        tsc x1: TS1196 @form+0 len 3 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "<T>(a: T) => T"
+        contexts (1 of 40): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "[A, B]"
+        contexts (1 of 33): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "[a: A, b?: B]"
+        contexts (1 of 46): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "{ a: A }"
+        contexts (1 of 43): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "{ [K in A]: B }"
+        contexts (1 of 46): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "`a${A}b`"
+        contexts (1 of 33): catch
+        tsc x1: TS1196 @form+0 len 4 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "a is B"
+        contexts (3 of 29): fnTypeRet objMethodRet getterRet
+        tsc x2: TS1225 @form+0 len 1 "Cannot find parameter 'a'."
+        tsc x1: TS1228 @form+0 len 6 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a"
+        contexts (3 of 29): fnTypeRet objMethodRet getterRet
+        tsc x2: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+        tsc x1: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "asserts a is B"
+        contexts (3 of 33): fnTypeRet objMethodRet getterRet
+        tsc x2: TS1225 @form+8 len 1 "Cannot find parameter 'a'."
+        tsc x1: TS1228 @form+0 len 14 "A type predicate is only allowed in return type position for functions and methods."
+    "this is B"
+        contexts (28 of 33): satisfies cast newArg tagArg inst method tupleNamed indexSig mapped unionRight unionLeft keyofArg arrayOf condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template paren getterRet declareFn ctorParamProp forOf
+        tsc x25: TS1228 @form+0 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+12 len 9 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 13 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 11 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1228 @form+0 len 27 "A type predicate is only allowed in return type position for functions and methods."
+        tsc x1: TS1196 @form+0 len 4 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "void"
+        contexts (1 of 30): catch
+        tsc x1: TS1196 @form+0 len 4 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "-1"
+        contexts (1 of 30): catch
+        tsc x1: TS1196 @form+0 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "\"s\""
+        contexts (1 of 30): catch
+        tsc x1: TS1196 @form+0 len 3 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "A!"
+        contexts (28 of 31): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft condCheck condExtends condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template paren objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x28: TS17019 @form+0 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+        tsc x3: TS17019 @form+5 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "abstract new () => A"
+        contexts (1 of 38): catch
+        tsc x1: TS1196 @form+0 len 8 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "infer U"
+        contexts (26 of 30): satisfies cast newArg tagArg inst method fnTypeRet tupleNamed indexSig mapped unionRight unionLeft condCheck condTrue condFalse constraint tpDefault catch thisParam classExtendsArg template objMethodRet getterRet declareFn ctorParamProp forOf
+        tsc x26: TS1338 @form+0 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+        tsc x3: TS1338 @form+10 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+        tsc x1: TS1196 @form+0 len 5 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."

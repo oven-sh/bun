@@ -1,0 +1,13 @@
+==312475== Cachegrind, a high-precision tracing profiler
+==312475== Copyright (C) 2002-2025, and GNU GPL'd, by Nicholas Nethercote et al.
+==312475== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==312475== Command: /workspace/notes/lint/units/parser/measure/base/bin/bun-profile /workspace/notes/lint/benchroot/bench/snippets/transpiler-typescript.mjs --iterations=20 --group=typescript-lib
+==312475== 
+group                    files   input bytes        passes output length            ms
+typescript-lib             108       3784758            20         87708       55615.1
+==312475== 
+==312475== I refs:        1,648,899,253
+==312475== 
+==312475== Branches:        347,442,032  (330,844,816 cond + 16,597,216 ind)
+==312475== Mispredicts:      23,063,616  ( 13,035,036 cond + 10,028,580 ind)
+==312475== Mispred rate:            6.6% (        3.9%     +       60.4%   )

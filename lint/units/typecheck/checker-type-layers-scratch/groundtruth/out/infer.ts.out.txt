@@ -1,0 +1,4 @@
+infer.ts(3,7): error TS2322: Type 'number' is not assignable to type '{ a: 1; b: "x"; c: true; d: null; }'.
+infer.ts(5,7): error TS2322: Type 'number' is not assignable to type 'I'.
+RESOLUTIONDEPTH 0 []
+COUNTS TypeCount=115 SymbolCount=15 SignatureCount=4 TotalInstantiationCount=22

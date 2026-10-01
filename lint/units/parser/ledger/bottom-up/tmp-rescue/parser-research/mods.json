@@ -1,0 +1,23 @@
+[
+  {"name": "M1 member modifiers", "text": "class A { public static readonly x = 1; static public y; private private z; declare readonly w: number; override accessor v = 1; protected async m() {} }"},
+  {"name": "M2 abstract members", "text": "abstract class A { abstract m(): void; protected abstract readonly p: number; abstract get g(): number; }"},
+  {"name": "M3 optional definite members", "text": "class A { a?: number; b!: number; c?(): void; static d?: string; e? = 1; }"},
+  {"name": "M4 parameter properties", "text": "class A { constructor(private readonly x: number, public y?: string, protected override z = 1, readonly private w = 2) {} }"},
+  {"name": "M5 optional params", "text": "function f(a?: number, b?, ...c) {}"},
+  {"name": "M6 arrow optional params", "text": "var g = (a?, b?: number) => 1;"},
+  {"name": "M7 definite var", "text": "let x!: number, y: string, z!: boolean;"},
+  {"name": "M8 const enum", "text": "const enum E { A } export const enum F { B }", "file": "a.ts"},
+  {"name": "M9 abstract class", "text": "abstract class A {} export abstract class B {}"},
+  {"name": "M10 export default abstract", "text": "export default abstract class {}"},
+  {"name": "M11 import type specifiers", "text": "import { type A, B, type C as D, type as, type as as, type as as as, type \"s\" as E, type default as F } from \"m\";"},
+  {"name": "M12 export type specifiers", "text": "export { type A, B, type C as D, type as, type as as, type as as as };"},
+  {"name": "M13 export from type specifiers", "text": "export { type default as X, type A as default, type \"s\" as T } from \"m\";"},
+  {"name": "M14 decorator nonnull", "text": "class A { @a!.b! x; @c!() y; }"},
+  {"name": "M15 object method optional", "text": "var o = { m?() {}, p?: 1 };"},
+  {"name": "M16 member named like modifier", "text": "class A { readonly; public = 1; static() {} declare: number; abstract; static static; async; get; }"},
+  {"name": "M17 index signature modifiers", "text": "class A { static readonly [k: string]: number; }"},
+  {"name": "M18 accessor pairs", "text": "class A { public static get x() { return 1 } private set y(v) {} }"},
+  {"name": "M19 decorated params", "text": "class A { constructor(@d private x: number) {} m(@d a?: number) {} }"},
+  {"name": "M20 this param", "text": "function f(this: Window, a: number) {}"},
+  {"name": "M21 in/out/const type params ignored here", "text": "class A { public constructor() {} private static async *gen() {} }"}
+]

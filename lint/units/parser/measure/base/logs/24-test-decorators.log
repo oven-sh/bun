@@ -1,0 +1,34 @@
+# HEAD e3566be889 dirty: []
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/transpiler/decorators.test.ts --timeout "180000"
+bun test v1.4.3 (e3566be88)
+
+test/bundler/transpiler/decorators.test.ts:
+(pass) decorator order of evaluation [70.65ms]
+(pass) decorator factories order of evaluation [65.70ms]
+(pass) parameter decorators [55.77ms]
+(pass) decorators random [106.47ms]
+(pass) class field order [15.34ms]
+(pass) changing static method [17.05ms]
+(pass) class extending from another class [29.82ms]
+(pass) decorated fields moving to constructor [16.89ms]
+(pass) only class decorator [8.59ms]
+(pass) decorators with different property key types [14.80ms]
+(pass) only property decorators [13.28ms]
+(pass) only argument decorators [6.19ms]
+(pass) no decorators [5.85ms]
+(pass) constructor statements > with parameter properties [14.35ms]
+(pass) constructor statements > class expressions (no decorators) [15.00ms]
+(pass) constructor statements > with parameter properties and statements [7.85ms]
+(pass) constructor statements > with parameter properties, statements, and decorators [11.24ms]
+(pass) constructor statements > with more parameter properties, statements, and decorators [20.21ms]
+(pass) constructor statements > expression with parameter properties and statements [13.28ms]
+(pass) export default class Named works [3.94ms]
+(pass) export default class works (anonymous name) [3.70ms]
+(pass) field with supra-BMP string-literal key and initializer is assigned under the correct key [10.32ms]
+(pass) decorator and declare [8.20ms]
+(pass) lowering many decorated instance fields into a large constructor body stays linear [22163.84ms]
+
+ 24 pass
+ 0 fail
+ 273 expect() calls
+Ran 24 tests across 1 file. [25.16s]

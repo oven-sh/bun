@@ -1,0 +1,12 @@
+== rustc --edition 2024 --crate-type lib a.rs
+error[E0433]: cannot find `mem` in `core`
+ --> a.rs:9:32
+error: aborting due to 1 previous error
+rc=0
+== rustc --edition 2024 --crate-type lib b.rs
+error[E0433]: cannot find `mem` in `core`
+ --> b.rs:7:33
+error: aborting due to 1 previous error
+rc=0
+== rustc --edition 2024 --crate-type lib c.rs
+rc=1

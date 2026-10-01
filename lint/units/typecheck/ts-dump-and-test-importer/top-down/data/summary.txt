@@ -1,0 +1,8 @@
+== ts-family, JSDoc comment lists masked
+units 14935 same 14904 differ 31 (of them without parse errors 8) failed 0; units with parse errors 774; units with JSDoc 167; src 6969615 json 68293843
+== ts-family, no JSDoc subtrees
+units 14935 same 14912 differ 23 (of them without parse errors 0) failed 0; units with parse errors 774; units with JSDoc 167; src 6969615 json 68293843
+== js, masked
+units 1276 same 764 differ 512 (of them without parse errors 500) failed 0; units with parse errors 36; units with JSDoc 570; src 314896 json 4653491
+== libs, tag comments masked
+units 108 same 107 differ 1 (of them without parse errors 1) failed 0; units with parse errors 0; units with JSDoc 66; src 3785075 json 15989865

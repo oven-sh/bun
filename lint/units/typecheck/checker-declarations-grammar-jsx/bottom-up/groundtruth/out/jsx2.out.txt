@@ -1,0 +1,12 @@
+PARSE jsx2.tsx parse=[] js=[] bind=[]
+jsx2.tsx(6,26)+5: error TS2322: Type 'string' is not assignable to type 'number'.
+jsx2.tsx(8,13)+3: error TS2746: This JSX tag's 'children' prop expects a single child of type 'string | undefined', but multiple children were provided.
+jsx2.tsx(9,17)+23: error TS2710: 'children' are specified twice. The attribute named 'children' will be overwritten.
+jsx2.tsx(10,17)+5: error TS2322: Type '{ class: string; id: number; }' is not assignable to type '{ id?: string | undefined; children?: string | undefined; }'.
+  chain TS2339: Property 'class' does not exist on type '{ id?: string | undefined; children?: string | undefined; }'.
+jsx2.tsx(12,17)+1: error TS2339: Property 'x' does not exist on type 'typeof Cls'.
+jsx2.tsx(13,17)+8: error TS2322: Type 'number[]' is not assignable to type 'string'.
+  related jsx2.tsx(2,53)+8: message TS6500: The expected type comes from property 'children' which is declared here on type '{ id?: string | undefined; children?: string | undefined; }'
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=32 GetJSXRuntimeImportSpecifier=33 IsSourceFileDefaultLibrary=1 Options=1 SourceFiles=1
+COUNTS TypeCount=229 SymbolCount=183 SignatureCount=23 TotalInstantiationCount=29

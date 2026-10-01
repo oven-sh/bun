@@ -1,0 +1,6 @@
+bun install v1.4.3-canary.1 (367d939d9)
+
++ bun-plugin-svelte@../packages/bun-plugin-svelte
++ react@../node_modules/react
+
+2 packages installed [1426.00ms]

@@ -1,0 +1,144 @@
+// Scratch root (not part of the repository): type-checks the files of K3 steps 28 to 30 against the real core, collections, stringutil, tspath, jsnum, ast, scanner, module and evaluator of src/typecheck and the real data model of package checker (c01_data, c02_program_checker, types, mapper, links), with stand-ins for what other steps own.
+#![allow(dead_code)]
+#![allow(clippy::all)]
+#[path = "/workspace/wt/typecheck/src/typecheck/collections/mod.rs"]
+pub mod collections;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/mod.rs"]
+mod core_real;
+pub mod tscore {
+    pub mod deps {
+        pub use std::collections::HashMap;
+        // Insertion-ordered map: enough of bun_collections::ArrayHashMap for the contract's golang.rs.
+        pub struct ArrayHashMap<K, V> {
+            keys: Vec<K>,
+            values: Vec<V>,
+        }
+        impl<K: PartialEq, V> ArrayHashMap<K, V> {
+            pub fn new() -> Self {
+                Self { keys: Vec::new(), values: Vec::new() }
+            }
+            pub fn len(&self) -> usize {
+                self.keys.len()
+            }
+            pub fn get(&self, key: &K) -> Option<&V> {
+                let i = self.keys.iter().position(|k| k == key)?;
+                self.values.get(i)
+            }
+            pub fn insert(&mut self, key: K, value: V) {
+                match self.keys.iter().position(|k| *k == key) {
+                    Some(i) => self.values[i] = value,
+                    None => {
+                        self.keys.push(key);
+                        self.values.push(value);
+                    }
+                }
+            }
+            pub fn ordered_remove(&mut self, key: &K) {
+                if let Some(i) = self.keys.iter().position(|k| k == key) {
+                    self.keys.remove(i);
+                    self.values.remove(i);
+                }
+            }
+            pub fn keys(&self) -> &[K] {
+                &self.keys
+            }
+            pub fn values(&self) -> &[V] {
+                &self.values
+            }
+        }
+    }
+    #[path = "/workspace/notes/lint/units/typecheck/checker-data-model-contract/bottom-up/crate/src/tscore/golang.rs"]
+    pub mod golang;
+}
+pub mod core {
+    pub use crate::core_real::*;
+    pub use crate::tscore::golang::{GoIndex, List, LiveList, Map, Memo, SliceBuf, Text};
+}
+#[path = "/workspace/wt/typecheck/src/typecheck/stringutil/mod.rs"]
+pub mod stringutil;
+#[path = "/workspace/wt/typecheck/src/typecheck/tspath/mod.rs"]
+pub mod tspath;
+#[path = "/workspace/wt/typecheck/src/typecheck/jsnum/mod.rs"]
+pub mod jsnum;
+#[path = "@HERE@/stubs/internal.rs"]
+pub mod internal;
+#[path = "@HERE@/stubs/diagnostics.rs"]
+pub mod diagnostics;
+#[path = "/workspace/wt/typecheck/src/typecheck/ast/mod.rs"]
+mod ast_real;
+#[path = "@HERE@/stubs/ast_diag.rs"]
+mod ast_diag;
+pub mod ast {
+    pub use crate::ast_diag::*;
+    pub use crate::ast_real::*;
+}
+pub mod scanner {
+    #[path = "/workspace/wt/typecheck/src/typecheck/scanner/scanner.rs"]
+    pub mod scanner;
+    #[path = "/workspace/wt/typecheck/src/typecheck/scanner/utilities.rs"]
+    pub mod utilities;
+    pub use scanner::*;
+    pub use utilities::*;
+}
+#[path = "/workspace/wt/typecheck/src/typecheck/module/mod.rs"]
+pub mod module;
+pub mod evaluator {
+    #[path = "/workspace/wt/typecheck/src/typecheck/evaluator/evaluator.rs"]
+    pub mod evaluator;
+    pub use evaluator::*;
+}
+pub mod checker {
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c01_data.rs"]
+    pub mod c01_data;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c02_program_checker.rs"]
+    pub mod c02_program_checker;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/types.rs"]
+    pub mod types;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/mapper.rs"]
+    pub mod mapper;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/links.rs"]
+    pub mod links;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/stringer_generated.rs"]
+    pub mod stringer_generated;
+    #[path = "@W@/checker_stub.rs"]
+    pub mod checker_stub;
+    pub mod nodebuilder {
+        pub use super::checker_stub::NodeBuilderState;
+    }
+    pub mod symbolaccessibility {
+        pub type SymbolTableID = u64;
+    }
+    #[path = "@W@/auto_stubs.rs"]
+    pub mod auto_stubs;
+    #[path = "@W@/auto_free.rs"]
+    pub mod auto_free;
+
+    #[path = "@W@/c11_part.rs"]
+    pub mod c11_part;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c12_iteration_types.rs"]
+    pub mod c12_iteration_types;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c15_calls.rs"]
+    pub mod c15_calls;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c17_unary_meta_yield.rs"]
+    pub mod c17_unary_meta_yield;
+    #[path = "@W@/c47_part.rs"]
+    pub mod c47_part;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c48_contextual_types.rs"]
+    pub mod c48_contextual_types;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c49_call_arguments_decorator_signatures.rs"]
+    pub mod c49_call_arguments_decorator_signatures;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/c51_type_facts_awaited.rs"]
+    pub mod c51_type_facts_awaited;
+    #[path = "/workspace/wt/typecheck/src/typecheck/checker/jsx.rs"]
+    pub mod jsx;
+
+    pub use auto_free::*;
+    pub use c01_data::*;
+    pub use c02_program_checker::*;
+    pub use c12_iteration_types::*;
+    pub use checker_stub::*;
+    pub use jsx::*;
+    pub use links::*;
+    pub use mapper::*;
+    pub use types::*;
+}

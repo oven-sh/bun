@@ -1,0 +1,187 @@
+# G1 function and constructor type parameters
+let g: (a = 1) => void
+let g: (a: number = 1) => void
+let g: (a?: number = 1) => void
+let g: (a = 1, b = a) => void
+let g: (a = () => { return 1 }) => void
+let g: (a = function () {}) => void
+let g: (a = class {}) => void
+let g: (a = <T>(x: T) => x) => void
+let g: (a = b ? c : d) => void
+let g: (a = b in c) => void
+let g: (a = /[)]/) => void
+let g: (a = `${b})`) => void
+let g: (...a = []) => void
+let g: (public a: number) => void
+let g: (private a) => void
+let g: (protected a, b) => void
+let g: (readonly a: number) => void
+let g: (override a) => void
+let g: (static a) => void
+let g: (async a) => void
+let g: (declare a) => void
+let g: (abstract a) => void
+let g: (accessor a) => void
+let g: (export a) => void
+let g: (in a) => void
+let g: (out a) => void
+let g: (public static a) => void
+let g: (readonly [a]) => void
+let g: (readonly {a}) => void
+let g: (a, @dec b) => void
+let g: (a, @dec() b: number) => void
+let g: (a: number, @dec public b) => void
+let g: new (a = 1) => Foo
+let g: abstract new (a = 1) => Foo
+let g: new <T>(a: T = x) => Foo<T>
+let g: <T>(a = 1) => void
+let g: ((a = 1) => void)
+let g: A<(a = 1) => void>
+f<(a = 1) => void>(x)
+# G2 binding patterns in signature parameters
+let g: ([a, , b]) => void
+let g: ([a = 1]) => void
+let g: ([a = b => c]) => void
+let g: ([...a = 1]) => void
+let g: ({a = 1}) => void
+let g: ({a: b = 1}) => void
+let g: ({[k]: a}) => void
+let g: ({[k + 1]: a}) => void
+let g: ({[a]: b = c}) => void
+let g: ({1n: y}) => void
+let g: ({#a: b}) => void
+let g: ({a, b}: {a: number, b: string} = {a: 1, b: ""}) => void
+type A = { m([a, , b]): void }
+# G3 tuples
+type A = [a: number?]
+type A = [a?: number?]
+type A = [a: () => void?]
+type A = [a: ...b]
+type A = [a: ...b[]]
+type A = [a?: ...b[]]
+type A = [...if: number]
+# G4 object type members
+type A = { a: number = 1 }
+type A = { a?: number = 1 }
+type A = { get: number = 1 }
+type A = { 1n: number }
+type A = { readonly 1n: number }
+type A = { get a() {} }
+type A = { get a() { return 1 } }
+type A = { set a(v) {} }
+type A = { get a() {} b: number }
+type A = { get a(): number {} }
+type A = { get a<T>() {} }
+type A = { get [a]() {} }
+type A = { get 'a'() {} }
+type A = { (a = 1): void }
+type A = { (public a): void }
+type A = { a(b = 1): void }
+type A = { m(@dec a): void }
+type A = { new (@dec a): void }
+interface A { m(a = 1): void }
+# G5 index signatures and computed property names
+type A = { []: number }
+type A = { [a?]: number }
+type A = { [a?: string]: number }
+type A = { [a, b]: number }
+type A = { [a: string, b: string]: number }
+type A = { [a: string, ]: number }
+type A = { [...a]: number }
+type A = { [...a: string[]]: number }
+type A = { [public a: string]: number }
+type A = { [a: string = 1]: number }
+type A = { ["a" + "b"]: number }
+type A = { [1 + 2]: number }
+type A = { [a ? b : c]: number }
+type A = { [a = 1]: number }
+type A = { [a()]: number }
+type A = { [a as any]: number }
+type A = { [class {}]: number }
+type A = { [function () {}]: number }
+type A = { [new X]: number }
+type A = { [!a]: number }
+type A = { [K as U]: number }
+# G6 mapped types
+type A = { [K in (a = 1) => void]: number }
+type A = { [K in T]: (a = 1) => void }
+# G7 type parameters
+type A<out in T> = T
+type A<in in T> = T
+type A<out out T> = T
+type A<const T> = T
+type A<const in out T> = T
+type A<public T> = T
+type A<readonly T> = T
+type A<static T> = T
+type A<public private T> = T
+type A<in export T> = T
+interface A<const T> {}
+class A<> {}
+function f<>() {}
+function f<in T>() {}
+function f<out T>() {}
+function f<const in out T>() {}
+(function <>() {})
+class C { m<in T>() {} }
+class C { m<>() {} }
+({ m<in T>() {} })
+const f = <out T>(x: T) => x
+const f = <public T>(x: T) => x
+const f = async <out T>(x: T) => x
+const v = <out>x
+const v = <out>(x)
+const v = <out,>(x) => x
+let g: <in T>() => void
+let g: <out T>() => void
+let g: <>() => void
+let g: new <>() => void
+type A = { <out T>(): void }
+type A = { m<>(): void }
+type A<T extends ~a> = T
+type A<T extends -a> = T
+type A<T extends +a> = T
+type A<T extends delete a> = T
+# G8 type arguments
+let x: A<B,>
+let x: A<>
+class A extends B<C,> {}
+class A extends B<> {}
+let x: import("x")<B>
+let x: typeof import("x")<B>
+# G9 import types
+let x: import(x)
+let x: import(A<B>)
+let x: import('x' | 'y')
+let x: import("x", { with: { type: a + b } })
+# G10 heritage
+interface A extends B, C, {}
+interface A extends B, {}
+interface A extends {}
+interface A extends (B)<C> {}
+interface A extends B() {}
+interface A extends B<C>() {}
+interface A extends new B {}
+interface A extends B?.C {}
+interface A extends B`c` {}
+interface A extends function () {} {}
+interface A extends class {} {}
+interface A extends B extends C {}
+interface A extends B\n<C> {}
+class A implements B, C, {}
+class A implements {}
+class A extends B implements {}
+class A implements B() {}
+class A implements new B {}
+class A implements B?.C {}
+class A implements B implements C {}
+class A implements C extends B {}
+class A implements B extends C implements D {}
+# G11 arrow return types
+let x = (y: any): ({[k]: a}) => {} => {};
+let x = (y: any): ({a = 1}) => {} => {};
+let x = (y: any): ([a, , b]) => {} => {};
+let x = (y: any): (a = 1) => {} => {};
+let x = (y: any): (public a) => {} => {};
+let x = a ? (b): ({c = 1}) => d => e : f;
+let x = (y): <T>(a = 1) => z => {};

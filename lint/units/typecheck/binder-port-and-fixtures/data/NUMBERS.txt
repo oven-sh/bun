@@ -1,0 +1,25 @@
+Measured with groundtruth/dumpbind (typescript-go 89d5d5b, TypeScript cases 5848bc5, typescript 6.0.2 for the tree conversion).
+
+usable units (prototype/units.mjs filters)                     10,204  (single-file cases 7,387; units of multi-file cases 2,817)
+panics of the reference binder on them                              0
+statements in internal/binder (binder.go, nameresolver.go, referenceresolver.go)   1,334 + 223 + 99 = 1,656
+statements that the usable units make the reference run         1,573
+statements that the 218 selected units make it run              1,573
+statements added by the 4 synthetic inputs                         11  (total 1,584)
+never run: 5 panics and their unreachable neighbours, 3 functions that nothing calls, FindUseStrictPrologue (called by the probe directly),
+           setReturnFlowNode for functions, JSTypeAliasDeclaration and JSON paths, hook branches of the two resolvers
+
+.symbols baselines, all usable units (before the @ts- filter, 10,226 units):
+  result lines in the baselines                                 (single-file .ts only: 301,764)
+  declaration names checked                                   148,684
+  matched with binder data alone                              148,644
+  mismatches                                                       40 in 15 units (data/bad-units.txt): symbols that the checker merges or renames
+.symbols baselines, the 218 selected units:
+  result lines 9,196; declaration names checked 4,099 (44.6%); names checked 4,002; problems 0
+.errors.txt baselines:
+  binder diagnostics of TypeScript units, all usable units: 766, found in the baseline 764, the other 2 are under a @ts-ignore comment
+  the 218 selected units: 65 binder diagnostics in 23 units, 49 in TypeScript units all found, 16 in JavaScript units not compared
+tree of TypeScript 6.0.2 converted by ../ts-dump-and-test-importer/prototype against the tree of the reference's parser (JSDoc left out):
+  the 218 selected units and the 4 synthetic inputs: all equal
+  400 JavaScript units without a JSDoc comment: 398 equal
+size: selected sources 147,664 bytes; bind dumps 2,634,271 bytes, 0.5 MB gzip

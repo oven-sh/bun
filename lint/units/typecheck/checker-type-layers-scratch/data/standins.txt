@@ -1,0 +1,84 @@
+## K-LIT
+  IN: getBigIntLiteralType, getNumberLiteralType, getStringLiteralType
+  OUT: K-UNION[mapType]; T-DECLARED[getDeclaredTypeOfSymbol]; T-CONSTRAINT[getBaseConstraintOrType]
+## K-PRED
+  IN: IsEmptyAnonymousObjectType, allTypesAssignableToKindEx, isErrorType
+  OUT: K-GENERIC[isGenericMappedType]; K-UNION[getUnionOrIntersectionType, getUnionTypeFromSortedList]; T-TYPENODE[getTypeFromTypeNode]; T-CONSTRAINT[getBaseConstraintOrType]; T-MEMBERS[resolveStructuredTypeMembers]; T-SIGSHAPE[getParameterCount, getReturnTypeOfSignature]; T-INSTANTIATE[instantiateType]; MID:relations[isTypeAssignableTo]; MID:returns[getTypePredicateFromBody]
+## K-GENERIC
+  IN: getUniqueLiteralTypeForTypeParameter, isGenericMappedType
+  OUT: T-TUPLE[isTupleType]; T-APPARENT[getReducedType]; T-INSTANTIATE[instantiateType]; T-MAPPED[getConstraintTypeFromMappedType, getNameTypeFromMappedType, getTypeParameterFromMappedType]
+## K-UNION
+  IN: getUnionOrIntersectionType, getUnionType, getUnionTypeFromSortedList, mapType
+  OUT: K-INTERSECT[getIntersectionType]; T-CONSTRAINT[getBaseConstraintOfType, getBaseConstraintOrType]; T-MEMBERS[resolveStructuredTypeMembers]; T-LOOKUP[getPropertiesOfType, getTypeOfPropertyOfType]; T-SYMTYPE[getTypeOfSymbol]; MID:flow[getTargetType]; MID:relations[isMemberOfStringMapping, isTypeDerivedFrom, isTypeMatchedByTemplateLiteralType, isTypeRelatedTo]
+## K-INTERSECT
+  IN: getIntersectionType
+  OUT: T-CONSTRAINT[getBaseConstraintOfType]; MID:relations[isTypeStrictSubtypeOf, isTypeSubtypeOf]
+## T-TUPLE
+  IN: createArrayType, createTypeFromGenericGlobalType, getGlobalStrictFunctionType, isTupleType
+  OUT: T-TYPENODE[getArrayElementTypeNode, getTypeArguments]; T-LOOKUP[getIndexTypeOfType, getPropertyOfType, getTypeOfPropertyOfType]; T-SYMTYPE[addOptionalityEx]; MID:relations[isTypeAssignableTo]; K-KEYOF[getIndexType]; K-INDEXED[getIndexedAccessType]
+## T-DECLARED
+  IN: getAliasForTypeNode, getDeclaredTypeOfSymbol
+  OUT: T-ENUMVAL[computeEnumMemberValues]; T-TYPENODE[getTypeFromTypeNode]; T-LOOKUP[getSignaturesOfType]; T-SYMTYPE[getTypeOfSymbol]; MID:contextual[isContextSensitive]; MID:printer[symbolToString]; POST:decls[getBuiltinIteratorReturnType]
+## T-ENUMVAL
+  IN: computeEnumMemberValues, evaluateEntity
+  OUT: MID:expr[checkExpression]; MID:printer[symbolToString]; MID:relations[checkTypeAssignableTo]
+## T-TYPENODE
+  IN: getArrayElementTypeNode, getTypeArguments, getTypeFromTypeNode
+  OUT: T-CONSTRAINT[fillMissingTypeArguments, getConstraintOfTypeParameter, getMinTypeArgumentCount]; T-MEMBERS[isValidIndexKeyType]; T-INSTANTIATE[getHomomorphicTypeVariable, instantiateTypeWithAlias, instantiateTypes]; T-SYMTYPE[addOptionality, addOptionalityEx, getNullableType]; T-WIDEN[getWidenedType]; MID:expr[checkExpression, checkExpressionCached, checkExpressionWithTypeArguments]; MID:flow[getActualTypeVariable]; MID:printer[TypeToStringEx, symbolToString]; MID:returns[createPromiseType]; K-KEYOF[getIndexType]; K-INDEXED[getIndexedAccessTypeEx]; K-SUBST[getNoInferType, getSubstitutionType]; K-COND[getTypeFromConditionalTypeNode, getTypeFromInferTypeNode]; T-MAPPED[getConstraintTypeFromMappedType, getTypeParameterFromMappedType]; K-TEMPLATE[getStringMappingType, getTemplateLiteralType]; K-IMPORTTYPE[getTypeFromImportTypeNode]
+## T-CONSTRAINT
+  IN: fillMissingTypeArguments, getBaseConstraintOfType, getBaseConstraintOrType, getConstraintOfTypeParameter, getMinTypeArgumentCount, getResolvedBaseConstraint
+  OUT: T-APPARENT[isMappedTypeGenericIndexedAccess]; T-INSTANTIATE[instantiateType]; MID:printer[TypeToString]; MID:relations[getRecursionIdentity, isTypeIdenticalTo]; K-KEYOF[getIndexTypeForMappedType, getSubstitutionIntersection]; K-INDEXED[getIndexedAccessTypeOrUndefined, getSimplifiedType, getSimplifiedTypeOrConstraint]; K-COND[getConditionalTypeInstantiation, getFalseTypeFromConditionalType, getInferredTrueTypeFromConditionalType]; T-MAPPED[getNameTypeFromMappedType, isMappedTypeWithKeyofConstraintDeclaration, substituteIndexedMappedType]; K-TEMPLATE[getStringMappingType, getTemplateLiteralType]
+## T-BASE
+  IN: -
+  OUT: T-MEMBERS[getTargetType, resolveStructuredTypeMembers]; T-LOOKUP[getSignaturesOfType]; T-APPARENT[elaborateNeverIntersection, getApparentType, getReducedType]; T-SIGSHAPE[getReturnTypeOfSignature, getTypeOfParameter, signatureHasRestParameter]; T-SIGINST[getSignatureInstantiation]; MID:expr[checkExpression]; MID:printer[TypeToString, symbolToString, typeToStringEx]; K-INDEXED[getIndexedAccessType]
+## T-MEMBERS
+  IN: getTargetType, isValidIndexKeyType, resolveStructuredTypeMembers
+  OUT: T-UIMEMBERS[resolveIntersectionTypeMembers, resolveUnionTypeMembers]; T-LOOKUP[getIndexInfosOfType, getPropertiesOfObjectType, getPropertiesOfType, getSignaturesOfType]; T-APPARENT[getApparentType]; T-SIGDECL[getSignaturesOfSymbol, hasLateBindableIndexSignature]; T-SIGINST[cloneSignature, createSignatureInstantiation]; T-INSTANTIATE[createInstantiatedSymbolTable, instantiateIndexInfos, instantiateSignatures, instantiateSymbolTable, instantiateType]; T-SYMTYPE[getTypeOfSymbol]; MID:expr[checkExpressionCached]; MID:inference[resolveReverseMappedTypeMembers]; MID:relations[isTypeAssignableTo]; K-KEYOF[checkComputedPropertyName]; T-MAPPED[resolveMappedTypeMembers]
+## T-UIMEMBERS
+  IN: resolveIntersectionTypeMembers, resolveUnionTypeMembers
+  OUT: T-LOOKUP[createSymbolWithType, getIndexInfosOfType, getSignaturesOfType, getTypeOfPropertyOfType]; T-SIGSHAPE[getMinArgumentCount, getParameterCount, getParameterNameAtPosition, getReturnTypeOfSignature, getTypeAtPosition, hasEffectiveRestParameter, tryGetTypeAtPosition]; T-SIGINST[cloneSignature]; T-INSTANTIATE[instantiateType]; T-SYMTYPE[getTypeOfSymbol]; MID:expr[createUnionSignature, getUnionIndexInfos]; MID:relations[compareSignaturesIdentical, compareTypeParametersIdentical, compareTypesIdentical, findMatchingSignature, findMatchingSignatures]
+## T-LOOKUP
+  IN: createSymbolWithType, getIndexInfosOfType, getIndexTypeOfType, getNamedMembers, getPropertiesOfObjectType, getPropertiesOfType, getPropertyOfType, getPropertyOfTypeEx, getSignaturesOfStructuredType, getSignaturesOfType, getTypeOfPropertyOfType
+  OUT: T-APPARENT[getApparentType, getReducedApparentType]; T-SYMTYPE[getNonMissingTypeOfSymbol, getTypeOfSymbol, getWriteTypeOfSymbol]; MID:expr[isReadonlySymbol]; MID:relations[isTypeAssignableTo]
+## T-APPARENT
+  IN: elaborateNeverIntersection, getApparentType, getReducedApparentType, getReducedType, isMappedTypeGenericIndexedAccess
+  OUT: T-INSTANTIATE[getHomomorphicTypeVariable, instantiateType]; T-SYMTYPE[getTypeOfSymbol]; MID:printer[symbolToString, typeToStringEx]; T-MAPPED[getMappedTypeModifiers, getModifiersTypeFromMappedType]
+## T-SIGDECL
+  IN: getSignatureFromDeclaration, getSignaturesOfSymbol, hasLateBindableIndexSignature, hasLateBindableName
+  OUT: T-SIGSHAPE[getSignatureOfFullSignatureType, hasRestParameter, isRestParameter]; MID:contextual[getContextualType]; MID:expr[checkExpressionCached]; MID:relations[isTypeAssignableTo]; K-KEYOF[checkComputedPropertyName]
+## T-SIGSHAPE
+  IN: getMinArgumentCount, getMinArgumentCountEx, getParameterCount, getParameterNameAtPosition, getReturnTypeOfSignature, getSignatureOfFullSignatureType, getTypeAtPosition, getTypeOfParameter, hasEffectiveRestParameter, hasRestParameter, isRestParameter, signatureHasRestParameter, tryGetTypeAtPosition
+  OUT: T-SIGINST[getSingleCallSignature]; T-INSTANTIATE[instantiateType]; T-SYMTYPE[addOptionalTypeMarker, addOptionalityEx, getOptionalType, getTypeOfSymbol]; MID:returns[getReturnTypeFromBody]; K-INDEXED[getIndexedAccessType]
+## T-SIGINST
+  IN: cloneSignature, createSignatureInstantiation, getSignatureInstantiation, getSingleCallSignature
+  OUT: T-INSTANTIATE[cloneTypeParameter, instantiateSymbol, instantiateSymbols, instantiateType, instantiateTypes]; MID:inference[applyToParameterTypes, applyToReturnTypes, getInferredTypes, inferTypes, newInferenceContext]
+## T-INSTANTIATE
+  IN: cloneTypeParameter, couldContainTypeVariablesWorker, createInstantiatedSymbolTable, getHomomorphicTypeVariable, instantiateIndexInfos, instantiateSignatures, instantiateSymbol, instantiateSymbolTable, instantiateSymbols, instantiateType, instantiateTypeWithAlias, instantiateTypes
+  OUT: T-SYMTYPE[getOptionalType, removeMissingOrUndefinedType]; MID:flow[getActualTypeVariable]; MID:inference[inferTypeForHomomorphicMappedType]; MID:relations[isTypeAssignableTo]; K-KEYOF[getIndexType, isNoInferType]; K-INDEXED[getIndexedAccessTypeEx]; K-SUBST[getNoInferType, getSubstitutionType]; K-COND[getConditionalTypeInstantiation, getRestrictiveInstantiation]; T-MAPPED[getConstraintTypeFromMappedType, getMappedTypeModifiers, getModifiedReadonlyState, getTemplateTypeFromMappedType, getTypeParameterFromMappedType]; K-TEMPLATE[getStringMappingType, getTemplateLiteralType]
+## T-SYMTYPE
+  IN: addOptionalTypeMarker, addOptionality, addOptionalityEx, getCombinedNodeFlagsCached, getDeclarationNodeFlagsFromSymbol, getNonMissingTypeOfSymbol, getNullableType, getOptionalType, getTypeOfSymbol, getWriteTypeOfSymbol, removeMissingOrUndefinedType
+  OUT: T-WIDEN[getWidenedLiteralType, getWidenedType, reportImplicitAny, widenTypeForVariableLikeDeclaration]; MID:contextual[getContextuallyTypedParameterType, isContextSensitiveFunctionOrObjectLiteralMethod]; MID:expr[checkExpression, checkExpressionCached, checkExpressionCachedEx, checkExpressionEx, checkExpressionForMutableLocation, checkExpressionWithContextualType, checkNonNullExpression, checkObjectLiteralMethod, checkPropertyAccessExpression, checkPropertyAssignment, checkShorthandPropertyAssignment, getContextualThisParameterType, getQuickTypeOfExpression, getSpreadSymbol, getTypeOfExpression, getTypeOfPropertyInBaseClass, hasDefaultValue, isSpreadableProperty, isValidSpreadType]; MID:flow[getDestructuringPropertyName, getFlowNodeOfNode, getFlowTypeInConstructor, getFlowTypeInStaticBlocks, getFlowTypeOfReference, getNonUndefinedType, getTypeOfInitializer, isMatchingReference]; MID:inference[getTypeOfReverseMappedSymbol]; MID:printer[symbolToString]; MID:relations[isTypeAssignableTo]; MID:returns[getReturnTypeFromBody]; MID:typefacts[getAdjustedTypeWithFacts, getTypeWithFacts, hasTypeFacts, isZeroBigInt]; K-KEYOF[getExtractStringType, getIndexType, getLiteralTypeFromProperty, getLiteralTypeFromPropertyName]; K-INDEXED[getDeclaringConstructor, getIndexedAccessTypeEx, getIndexedAccessTypeOrUndefined]; T-MAPPED[getTypeOfMappedSymbol]; POST:async[getTypeOfFirstParameterOfSignature]; POST:decls[checkIteratedTypeOrElementType]; POST:jsx[checkJsxAttribute]
+## T-WIDEN
+  IN: getWidenedLiteralType, getWidenedType, reportImplicitAny, widenTypeForVariableLikeDeclaration
+  OUT: MID:contextual[getContextualSignatureForFunctionLikeDeclaration]; MID:printer[TypeToString, symbolToString]; POST:async[getAwaitedTypeNoAlias]; POST:decls[getIterationTypeOfGeneratorFunctionReturnType]
+## K-KEYOF
+  IN: checkComputedPropertyName, getExtractStringType, getIndexType, getIndexTypeEx, getIndexTypeForMappedType, getLiteralTypeFromProperty, getLiteralTypeFromPropertyName, getMappedTypeNameTypeKind, getSubstitutionIntersection, isNoInferType, shouldDeferIndexType
+  OUT: K-SUBST[getNoInferType]; T-MAPPED[forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType, getConstraintTypeFromMappedType, getLowerBoundOfKeyType, getModifiersTypeFromMappedType, getNameTypeFromMappedType, getTypeParameterFromMappedType, isMappedTypeWithKeyofConstraintDeclaration]
+## K-INDEXED
+  IN: distributeIndexOverObjectType, getDeclaringConstructor, getIndexedAccessType, getIndexedAccessTypeEx, getIndexedAccessTypeOrUndefined, getNormalizedType, getPropertyNameFromIndex, getSimplifiedType, getSimplifiedTypeOrConstraint, getSingleBaseForNonAugmentingSubtype, getSuggestedTypeForNonexistentStringLiteralType, getSuggestionForNonexistentProperty, isAssignmentToReadonlyEntity, isAutoTypedProperty, isSelfTypeAccess, isStringIndexSignatureOnlyTypeWorker, isThisPropertyAccessInConstructor, markPropertyAsReferenced, typeHasStaticProperty
+  OUT: K-COND[getFalseTypeFromConditionalType, getRestrictiveInstantiation, getTrueTypeFromConditionalType]; T-MAPPED[substituteIndexedMappedType]
+## K-SUBST
+  IN: getNoInferType, getSubstitutionType
+  OUT: -
+## K-COND
+  IN: getConditionalTypeInstantiation, getFalseTypeFromConditionalType, getInferredTrueTypeFromConditionalType, getPermissiveInstantiation, getRestrictiveInstantiation, getTrueTypeFromConditionalType, getTypeFromConditionalTypeNode, getTypeFromInferTypeNode, permissiveMapperWorker, restrictiveMapperWorker
+  OUT: -
+## T-MAPPED
+  IN: forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType, getApparentMappedTypeKeys, getCombinedMappedTypeOptionality, getConstraintTypeFromMappedType, getLowerBoundOfKeyType, getMappedTypeModifiers, getModifiedReadonlyState, getModifiersTypeFromMappedType, getNameTypeFromMappedType, getTemplateTypeFromMappedType, getTypeOfMappedSymbol, getTypeOfPropertyOrIndexSignatureOfType, getTypeParameterFromMappedType, isMappedTypeWithKeyofConstraintDeclaration, isPartialMappedType, resolveMappedTypeMembers, substituteIndexedMappedType
+  OUT: -
+## K-TEMPLATE
+  IN: applyStringMapping, getStringMappingType, getTemplateLiteralType
+  OUT: -
+## K-IMPORTTYPE
+  IN: getTypeFromImportTypeNode
+  OUT: -

@@ -1,0 +1,76 @@
+## test + src/js (no node_modules), default identifiers
+{
+ "files": 7389,
+ "counts": {
+  "js/ts same": 6680,
+  "jsx/tsx same": 7283,
+  "js/jsx same": 6680,
+  "js/ts both-reject-same": 44,
+  "jsx/tsx both-reject-same": 48,
+  "js/jsx both-reject-same": 100,
+  "skipped-large": 1,
+  "js/ts both-reject-differently": 652,
+  "js/jsx js-rejects-ts-accepts": 603,
+  "js/ts js-rejects-ts-accepts": 13,
+  "jsx/tsx js-rejects-ts-accepts": 27,
+  "jsx/tsx both-reject-differently": 31,
+  "js/jsx both-reject-differently": 6
+ }
+}
+## node_modules under test, default identifiers
+{
+ "files": 32396,
+ "counts": {
+  "js/ts same": 32380,
+  "jsx/tsx same": 32385,
+  "js/jsx same": 32380,
+  "js/ts js-rejects-ts-accepts": 3,
+  "jsx/tsx js-rejects-ts-accepts": 3,
+  "js/jsx both-reject-same": 9,
+  "js/ts both-reject-same": 5,
+  "jsx/tsx both-reject-same": 7,
+  "js/ts both-reject-differently": 8,
+  "jsx/tsx both-reject-differently": 1,
+  "skipped-large": 8,
+  "js/jsx js-rejects-ts-accepts": 5,
+  "js/jsx both-reject-differently": 2
+ }
+}
+## test + src/js, minified identifiers
+{
+ "files": 7389,
+ "counts": {
+  "js/ts same": 6680,
+  "jsx/tsx same": 7283,
+  "js/jsx same": 6680,
+  "js/ts both-reject-same": 44,
+  "jsx/tsx both-reject-same": 48,
+  "js/jsx both-reject-same": 100,
+  "skipped-large": 1,
+  "js/ts both-reject-differently": 652,
+  "js/jsx js-rejects-ts-accepts": 603,
+  "js/ts js-rejects-ts-accepts": 13,
+  "jsx/tsx js-rejects-ts-accepts": 27,
+  "jsx/tsx both-reject-differently": 31,
+  "js/jsx both-reject-differently": 6
+ }
+}
+## node_modules under test, minified identifiers
+{
+ "files": 32396,
+ "counts": {
+  "js/ts same": 32380,
+  "jsx/tsx same": 32385,
+  "js/jsx same": 32380,
+  "js/ts js-rejects-ts-accepts": 3,
+  "jsx/tsx js-rejects-ts-accepts": 3,
+  "js/jsx both-reject-same": 9,
+  "js/ts both-reject-same": 5,
+  "jsx/tsx both-reject-same": 7,
+  "js/ts both-reject-differently": 8,
+  "jsx/tsx both-reject-differently": 1,
+  "skipped-large": 8,
+  "js/jsx js-rejects-ts-accepts": 5,
+  "js/jsx both-reject-differently": 2
+ }
+}

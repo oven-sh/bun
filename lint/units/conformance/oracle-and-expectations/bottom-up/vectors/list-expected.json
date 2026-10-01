@@ -1,0 +1,67 @@
+{
+ "bom-comment": [
+  "compiler/a.errors.txt.diff",
+  "\u00ef\u00bb\u00bf# comment"
+ ],
+ "bom-entry": [
+  "\u00ef\u00bb\u00bfcompiler/a.errors.txt.diff"
+ ],
+ "cr-only": [
+  "compiler/a.errors.txt.diff\rcompiler/b.errors.txt.diff"
+ ],
+ "crlf": [
+  "compiler/a.errors.txt.diff",
+  "conformance/b.errors.txt.diff"
+ ],
+ "duplicates": [
+  "compiler/a.errors.txt.diff"
+ ],
+ "empty": [],
+ "feff-inside": [
+  "x\u00ef\u00bb\u00bf",
+  "\u00ef\u00bb\u00bf"
+ ],
+ "hash-later": [
+  "compiler/#a"
+ ],
+ "inner-space": [
+  "compiler/a b.errors.txt.diff",
+  "compiler/a#b.errors.txt.diff"
+ ],
+ "invalid-utf8": [
+  "x\u00c2",
+  "\u00c2",
+  "\u00e2\u0080compiler/a",
+  "\u00ff"
+ ],
+ "nbsp": [
+  "compiler/a.errors.txt.diff"
+ ],
+ "nel": [
+  "compiler/a.errors.txt.diff"
+ ],
+ "no-trailing-newline": [
+  "compiler/a.errors.txt.diff"
+ ],
+ "nul": [
+  "\u0000",
+  "compiler/a\u0000.diff"
+ ],
+ "only-newline": [],
+ "spaces": [
+  "compiler/a.errors.txt.diff"
+ ],
+ "submoduleAccepted.txt (count)": 1163,
+ "submoduleTriaged.txt": [
+  "compiler/augmentExportEquals2.errors.txt.diff",
+  "compiler/exportAssignmentMembersVisibleInAugmentation.errors.txt.diff"
+ ],
+ "unicode-spaces": [
+  "compiler/a.errors.txt.diff",
+  "\u00e1\u00a0\u008e",
+  "\u00e2\u0080\u008b"
+ ],
+ "vt-ff": [
+  "compiler/a.errors.txt.diff"
+ ]
+}

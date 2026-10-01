@@ -1,0 +1,38 @@
+# HEAD e3566be889 dirty: []
+p dev rc=101 8s
+p release rc=101 26s
+== p dev
+  size_of  P<'static, true, false>                                      = 3888
+  size_of  P<'static, false, false>                                     = 3888
+  size_of  P<'static, true, true>                                       = 3888
+  size_of  P<'static, false, true>                                      = 3888
+  align_of P<'static, true, false>                                      = 8
+  size_of  StartsForParseOnly                                           = 168
+  size_of  Option<Box<StartsForParseOnly>>                              = 8
+== p release
+  size_of  P<'static, true, false>                                      = 3808
+  size_of  P<'static, false, false>                                     = 3808
+  size_of  P<'static, true, true>                                       = 3808
+  size_of  P<'static, false, true>                                      = 3808
+  align_of P<'static, true, false>                                      = 8
+  size_of  StartsForParseOnly                                           = 168
+  size_of  Option<Box<StartsForParseOnly>>                              = 8
+more dev rc=101 2s
+more release rc=101 4s
+== more dev
+  size_of  ParserSnapshot<'static>                                      = 416
+  size_of  js_lexer::Lexer<'static>                                     = 336
+  size_of  js_lexer::LexerSnapshot<'static>                             = 240
+  size_of  js_ast::ts::Metadata                                         = 24
+  size_of  js_ast::Expr                                                 = 16
+  size_of  js_ast::Stmt                                                 = 16
+  size_of  ParserOptions<'static>                                       = 392
+== more release
+  size_of  ParserSnapshot<'static>                                      = 416
+  size_of  js_lexer::Lexer<'static>                                     = 336
+  size_of  js_lexer::LexerSnapshot<'static>                             = 240
+  size_of  js_ast::ts::Metadata                                         = 24
+  size_of  js_ast::Expr                                                 = 16
+  size_of  js_ast::Stmt                                                 = 16
+  size_of  ParserOptions<'static>                                       = 384
+RESTORED-OK

@@ -1,0 +1,99 @@
+# type arguments
+type T = A<>
+type T = A<B,>
+type T = A<,>
+type T = A<B,,C>
+type T = A<B C>
+type T = A<B>>
+type T = A<B<C>>
+type T = A<B<C<D>>>
+type T = A<B<C>>[]
+type T = A<B<C>>=1
+let x: A<B<C>>= 1
+let x: A<B>= 1
+let x: A<B<C<D>>>= 1
+type T = A\n<B>
+type T = A.B\n<C>
+type T = A <B>
+type T = A<B>\n[]
+type T = A<B>\n| C
+type T = A<typeof b>
+type T = A<(B)>
+type T = A<() => void>
+type T = A<new () => B>
+type T = A<<T>() => void>
+type T = A<<T>(x: T) => T>
+let x: A<<T>(x: T) => T> = 1
+type T = A<-1>
+type T = A<- 1>
+type T = A<-a>
+type T = A<...B>
+type T = A<const>
+type T = A<class>
+type T = A<if>
+type T = A<1 + 2>
+type T = A<B = C>
+type T = A<B extends C>
+type T = A<B | >
+type T = A<| B>
+type T = A<B, | C>
+type T = A< >
+type T = string<A>
+type T = number<A>
+type T = any<A>
+type T = void<A>
+type T = null<A>
+type T = undefined<A>
+type T = object<A>
+type T = this<A>
+type T = "a"<A>
+type T = A<B><C>
+type T = A.B<C>
+type T = A<B>.C<D>
+# literals
+type T = -1
+type T = - 1
+type T = -\n1
+type T = -1n
+type T = --1
+type T = -a
+type T = -"a"
+type T = +1
+type T = -0x10
+type T = -1_000
+type T = 1.5e10
+type T = .5
+type T = 0b101n
+type T = -Infinity
+type T = -NaN
+type T = 'a'
+type T = `a`
+type T = `a${B}c`
+type T = `a${B}c${D}e`
+type T = `${A}`
+type T = `${A | B}`
+type T = `${A extends B ? C : D}`
+type T = `${`${A}`}`
+type T = `${infer U}`
+type T = `${infer U extends string}`
+type T = `${() => void}`
+type T = `${}`
+type T = `a${B`
+type T = `a${B}c`[]
+type T = `a${B}c` | D
+type T = `a${B}c`["length"]
+type T = `\u{110000}`
+type T = `\xg`
+type T = `a${B}\xg`
+type T = true
+type T = false
+type T = null
+type T = undefined
+type T = void
+type T = void 0
+type T = null[]
+type T = true | false
+type T = /a/
+type T = 1n
+type T = 1_0n
+type T = 0n[]

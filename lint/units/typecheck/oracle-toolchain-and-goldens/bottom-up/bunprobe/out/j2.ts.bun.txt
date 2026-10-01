@@ -1,0 +1,2 @@
+file j2.ts bytes=39
+error: does not parse (errors=1)

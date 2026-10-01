@@ -1,0 +1,42 @@
+[
+	"debugger",
+	"debugger;",
+	"if (a) debugger",
+	"debugger\n;",
+	"function f() { debugger; }",
+	"x: debugger;",
+	"debugger; debugger;",
+	"/* c */ debugger // c",
+	"\"😀\"; debugger",
+	"a.debugger",
+	"({debugger: 1})",
+	"\"debugger\"",
+	"`debugger`",
+	"`${(() => { debugger })()}`",
+	"class A { m() { debugger } static { debugger } }",
+	"() => { debugger }",
+	"switch (a) { case 1: debugger; default: debugger }",
+	"function f() { return; debugger }",
+	"for (;;) debugger;",
+	"do debugger; while (0)",
+	"with (a) debugger",
+	"#!/usr/bin/env node\ndebugger",
+	"a;\r\ndebugger;\r\n",
+	"\" \"; debugger",
+	"é; debugger",
+	"// debugger\n/* debugger */",
+	"label: { debugger }",
+	"try { debugger } catch { debugger } finally { debugger }",
+	"if (a) { } else debugger",
+	"async function f() { await 0; debugger }",
+	{
+		"code": "export function f() { debugger }",
+		"sourceType": "module"
+	},
+	"var debugger_ = 1",
+	"a debugger",
+	{
+		"code": "<a b={() => { debugger }}>debugger</a>",
+		"jsx": true
+	}
+]

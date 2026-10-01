@@ -1,0 +1,7 @@
+[
+"declare function f(is: any): asserts is;",
+"declare function f(is: any): asserts is is string;",
+"declare function f(asserts: any): asserts is string;",
+"declare function f(asserts: any): asserts asserts is string;",
+"declare function f(is: any): is is string;"
+]

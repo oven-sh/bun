@@ -1,0 +1,6 @@
+pin	stage 1 verdict of the same loader	source
+test/bundler/transpiler/transpiler.test.js:1960 ts transformSync ok	"Observable" has already been declared	import{Observable}from""\nimport{Observable} from "x"
+test/bundler/transpiler/transpiler.test.js:1959 ts transformSync ok	"Foo" has already been declared	import { Foo } from "./x";\nexport class Foo {}
+test/bundler/transpiler/transpiler.test.js:1961 ts transformSync ok	"Foo" has already been declared	import { Foo } from "./x";\nnamespace Foo { export const x = 1 }
+test/js/bun/transpiler/repl-transform.test.ts:103 tsx transformSync ok	Expected ";" but found ":"	{a: 1, b: 2}
+test/js/bun/transpiler/repl-transform.test.ts:198 tsx transformSync ok	Expected ";" but found ":"	{a: 1, b: 2}

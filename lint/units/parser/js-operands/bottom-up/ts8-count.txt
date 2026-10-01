@@ -1,0 +1,59 @@
+/workspace/ref/typescript-go/_submodules/TypeScript/tests/baselines/reference
+  error baselines: 9723; with a .js/.jsx/.mjs/.cjs unit: 667; with any TS8xxx: 103; with a checkJSSyntax code: 72; with only checkJSSyntax codes: 72; with another TS8xxx (JSDoc, checker): 31
+    TS8002 parser baselines=16
+    TS8003 parser baselines=7
+    TS8004 parser baselines=6
+    TS8005 parser baselines=1
+    TS8006 parser baselines=14
+    TS8008 parser baselines=2
+    TS8009 parser baselines=9
+    TS8010 parser baselines=15
+    TS8011 parser baselines=3
+    TS8012 parser baselines=2
+    TS8013 parser baselines=1
+    TS8016 parser baselines=1
+    TS8017 parser baselines=3
+    TS8020 other  baselines=4
+    TS8021 other  baselines=2
+    TS8022 other  baselines=3
+    TS8023 other  baselines=3
+    TS8024 other  baselines=7
+    TS8026 other  baselines=2
+    TS8029 other  baselines=2
+    TS8030 other  baselines=3
+    TS8032 other  baselines=4
+    TS8033 other  baselines=1
+    TS8037 parser baselines=1
+    TS8038 parser baselines=2
+    TS8039 other  baselines=1
+/workspace/ref/typescript-go/testdata/baselines/reference/submodule
+  error baselines: 7027; with a .js/.jsx/.mjs/.cjs unit: 600; with any TS8xxx: 86; with a checkJSSyntax code: 64; with only checkJSSyntax codes: 64; with another TS8xxx (JSDoc, checker): 22
+    TS8002 parser baselines=15
+    TS8003 parser baselines=6
+    TS8004 parser baselines=5
+    TS8005 parser baselines=1
+    TS8006 parser baselines=11
+    TS8008 parser baselines=2
+    TS8009 parser baselines=9
+    TS8010 parser baselines=14
+    TS8011 parser baselines=2
+    TS8012 parser baselines=2
+    TS8017 parser baselines=5
+    TS8020 other  baselines=1
+    TS8023 other  baselines=2
+    TS8024 other  baselines=3
+    TS8026 other  baselines=2
+    TS8029 other  baselines=1
+    TS8030 other  baselines=7
+    TS8032 other  baselines=4
+    TS8033 other  baselines=1
+    TS8038 parser baselines=2
+    TS8039 other  baselines=1
+/workspace/ref/typescript-go/testdata/baselines/reference/compiler
+  error baselines: 151; with a .js/.jsx/.mjs/.cjs unit: 33; with any TS8xxx: 4; with a checkJSSyntax code: 2; with only checkJSSyntax codes: 1; with another TS8xxx (JSDoc, checker): 3
+    TS8011 parser baselines=2
+    TS8023 other  baselines=1
+    TS8026 other  baselines=2
+/workspace/ref/typescript-go/testdata/baselines/reference/conformance
+  error baselines: 11; with a .js/.jsx/.mjs/.cjs unit: 5; with any TS8xxx: 1; with a checkJSSyntax code: 0; with only checkJSSyntax codes: 0; with another TS8xxx (JSDoc, checker): 1
+    TS8024 other  baselines=1

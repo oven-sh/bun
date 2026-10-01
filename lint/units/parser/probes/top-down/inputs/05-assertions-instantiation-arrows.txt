@@ -1,0 +1,4556 @@
+# Assertions, instantiation expressions, generic arrows.
+# Written by a gen-NN.mjs file: change that file, not this one.
+=== file as.001
+x as A
+=== file as.002
+x as A as B
+=== file as.003
+x as any as A
+=== file as.004
+x as const
+=== file as.005
+x as const as A
+=== file as.006
+[1, 2] as const
+=== file as.007
+"a" as const
+=== file as.008
+({ a: 1 } as const)
+=== file as.009
+x as A | B
+=== file as.010
+x as A & B
+=== file as.011
+x as A extends B ? C : D
+=== file as.012
+x as () => void
+=== file as.013
+x as (a: A) => B
+=== file as.014
+x as new () => A
+=== file as.015
+x as typeof y
+=== file as.016
+x as keyof A
+=== file as.017
+x as A[]
+=== file as.018
+x as A[0]
+=== file as.019
+x as A["b"]
+=== file as.020
+x as A.B
+=== file as.021
+x as A<B>
+=== file as.022
+x as A<B<C>>
+=== file as.023
+x as A<B>(c)
+=== file as.024
+x as A<B>
+(c)
+=== file as.025
+x as A < B
+=== file as.026
+x as A > B
+=== file as.027
+x as A >= B
+=== file as.028
+x as A >> B
+=== file as.029
+x as A<B> > C
+=== file as.030
+x as A<B>>C
+=== file as.031
+x as A<B>>=C
+=== file as.032
+x as A + 1
+=== file as.033
+x as A * 2
+=== file as.034
+x as A - 1
+=== file as.035
+x as A / 2
+=== file as.036
+x as A ? b : c
+=== file as.037
+x as A ? 1 : 2
+=== file as.038
+x as A ?? b
+=== file as.039
+x as A || b
+=== file as.040
+x as A && b
+=== file as.041
+x as A | b
+=== file as.042
+x as A == b
+=== file as.043
+x as A === b
+=== file as.044
+x as A in b
+=== file as.045
+x as A instanceof B
+=== file as.046
+x as A, b
+=== file as.047
+x as A;
+=== file as.048
+x as A = b
+=== file as.049
+x as A += b
+=== file as.050
+x as A++
+=== file as.051
+x as A--
+=== file as.052
+x as A!
+=== file as.053
+x as A!.b
+=== file as.054
+x as A!
+.b
+=== file as.055
+x as A?.b
+=== file as.056
+x as A.b.c
+=== file as.057
+x as A
+[0]
+=== file as.058
+x as A
+(b)
+=== file as.059
+x as A
+`t`
+=== file as.060
+x as A
+.b
+=== file as.061
+x as A
+<B>c
+=== file as.062
+x as
+=== file as.063
+x as;
+=== file as.064
+x as 1
+=== file as.065
+x as -1
+=== file as.066
+x as "s"
+=== file as.067
+x as `t`
+=== file as.068
+x as `t${A}`
+=== file as.069
+x as { a: A }
+=== file as.070
+x as {}
+=== file as.071
+x as [A]
+=== file as.072
+x as []
+=== file as.073
+x as this
+=== file as.074
+x as void
+=== file as.075
+x as null
+=== file as.076
+x as undefined
+=== file as.077
+x as import('m')
+=== file as.078
+x as asserts y
+=== file as.079
+x as y is A
+=== file as.080
+x as infer U
+=== file as.081
+x as unique symbol
+=== file as.082
+x as readonly A[]
+=== file as.083
+x as (A)
+=== file as.084
+x as (A)[]
+=== file as.085
+x as ?A
+=== file as.086
+x as A?
+=== file as.087
+x as *
+=== file as.088
+x as any[]
+=== file as.089
+x as as
+=== file as.090
+x as as as as
+=== file as.091
+as as as
+=== file as.092
+as as any
+=== file as.093
+x as satisfies
+=== file as.094
+x
+as A
+=== file as.095
+x as
+A
+=== file as.096
+x as
+const
+=== file as.097
+x
+as
+A
+=== file as.098
+a + b as A
+=== file as.099
+a * b as A
+=== file as.100
+a ? b : c as A
+=== file as.101
+a = b as A
+=== file as.102
+(a) as A
+=== file as.103
+-a as A
+=== file as.104
+!a as A
+=== file as.105
+typeof a as A
+=== file as.106
+void a as A
+=== file as.107
+delete a.b as A
+=== file as.108
+await a as A
+=== file as.109
+new A as B
+=== file as.110
+new A() as B
+=== file as.111
+a++ as A
+=== file as.112
+a.b as A
+=== file as.113
+a() as A
+=== file as.114
+a`t` as A
+=== file as.115
+a[0] as A
+=== file as.116
+[a] as A
+=== file as.117
+({}) as A
+=== file as.118
+(function () {}) as A
+=== file as.119
+(class {}) as A
+=== file as.120
+(() => {}) as A
+=== file as.121
+() => {} as A
+=== file as.122
+() => ({}) as A
+=== file as.123
+a => a as A
+=== file as.124
+async () => {} as A
+=== file as.125
+1 as A
+=== file as.126
+"s" as A
+=== file as.127
+`t` as A
+=== file as.128
+null as A
+=== file as.129
+this as A
+=== file as.130
+super.a as A
+=== file as.131
+/r/ as A
+=== file as.132
+x as A satisfies B
+=== file as.133
+x satisfies A as B
+=== file as.134
+x satisfies A
+=== file as.135
+x satisfies A satisfies B
+=== file as.136
+x satisfies A | B
+=== file as.137
+x satisfies const
+=== file as.138
+x satisfies
+=== file as.139
+x
+satisfies A
+=== file as.140
+x satisfies
+A
+=== file as.141
+satisfies satisfies satisfies
+=== file as.142
+x satisfies A<B>(c)
+=== file as.143
+x satisfies A ? b : c
+=== file as.144
+x satisfies () => void
+=== file as.145
+x satisfies A!
+=== file as.146
+[a] satisfies A
+=== file as.147
+({ a: 1 }) satisfies A
+=== file as.148
+a = b satisfies A
+=== file as.149
+a + b satisfies A
+=== file as.150
+(a as A) = b
+=== file as.151
+(a as A).b = c
+=== file as.152
+(a as A)++
+=== file as.153
+++(a as A)
+=== file as.154
+[a as A] = b
+=== file as.155
+({ a: b as A } = c)
+=== file as.156
+[a as A, b as B] = c
+=== file as.157
+({ a: (b as A) } = c)
+=== file as.158
+for (a as A of b) {}
+=== file as.159
+for (a as A in b) {}
+=== file as.160
+for ((a as A) of b) {}
+=== file as.161
+for (var a = b as A; ;) {}
+=== file as.162
+for (var a = (b as A in c); ;) {}
+=== file as.163
+(a satisfies A) = b
+=== file as.164
+[a satisfies A] = b
+=== file as.165
+(a!) = b
+=== file as.166
+[a!] = b
+=== file as.167
+({ a: b! } = c)
+=== file as.168
+(<A>a) = b
+=== file as.169
+[<A>a] = b
+=== file as.170
+delete (a as A).b
+=== file as.171
+typeof (a as A)
+=== file as.172
+(a as A)`t`
+=== file as.173
+(a as A)()
+=== file as.174
+(a as A)?.b
+=== file as.175
+new (a as A)()
+=== file as.176
+f(a as A, b as B)
+=== file as.177
+f(...a as A)
+=== file as.178
+[...a as A]
+=== file as.179
+({ ...a as A })
+=== file as.180
+({ a: b as A })
+=== file as.181
+({ [a as A]: b })
+=== file as.182
+`t${a as A}`
+=== file as.183
+a?.b as A
+=== file as.184
+a?.[b as A]
+=== file as.185
+a ?? b as A
+=== file as.186
+if (a as A) {}
+=== file as.187
+while (a as A) {}
+=== file as.188
+switch (a as A) { case b as B: }
+=== file as.189
+throw a as A
+=== file as.190
+return_: a as A
+=== file as.191
+var a = b as A, c = d as D
+=== file as.192
+export default a as A
+=== file as.193
+export default a satisfies A
+=== file as.194
+function f() { return a as A }
+=== file as.195
+function* f() { yield a as A }
+=== file as.196
+async function f() { await a as A }
+=== file as.197
+var a = async as A
+=== file as.198
+var a = await as A
+=== file as.199
+var a = yield as A
+=== file as.200
+var a = let as A
+=== file as.201
+var a = type as A
+=== file as.202
+var a = of as A
+=== file nonnull.001
+a!
+=== file nonnull.002
+a!.b
+=== file nonnull.003
+a![0]
+=== file nonnull.004
+a!()
+=== file nonnull.005
+a!!
+=== file nonnull.006
+a!!!
+=== file nonnull.007
+a!
+.b
+=== file nonnull.008
+a
+!b
+=== file nonnull.009
+a
+!
+=== file nonnull.010
+a! as A
+=== file nonnull.011
+a!++
+=== file nonnull.012
+a!--
+=== file nonnull.013
+++a!
+=== file nonnull.014
+a! = 1
+=== file nonnull.015
+a! += 1
+=== file nonnull.016
+a!<A>()
+=== file nonnull.017
+a!<A>
+=== file nonnull.018
+a?.b!
+=== file nonnull.019
+a?.b!.c
+=== file nonnull.020
+a?.b!()
+=== file nonnull.021
+a!?.b
+=== file nonnull.022
+a!?.()
+=== file nonnull.023
+new A!()
+=== file nonnull.024
+new A!
+=== file nonnull.025
+new A()!
+=== file nonnull.026
+a!`t`
+=== file nonnull.027
+-a!
+=== file nonnull.028
+!a!
+=== file nonnull.029
+!!a!
+=== file nonnull.030
+await a!
+=== file nonnull.031
+typeof a!
+=== file nonnull.032
+void a!
+=== file nonnull.033
+delete a!.b
+=== file nonnull.034
+a ! b
+=== file nonnull.035
+a! instanceof B
+=== file nonnull.036
+a! in b
+=== file nonnull.037
+a!
+in b
+=== file nonnull.038
+a!=b
+=== file nonnull.039
+a!==b
+=== file nonnull.040
+a! == b
+=== file nonnull.041
+a! != b
+=== file nonnull.042
+a! === b
+=== file nonnull.043
+a! ! b
+=== file nonnull.044
+(a)!
+=== file nonnull.045
+(a!)
+=== file nonnull.046
+a!;
+=== file nonnull.047
+a.b!.c!.d!
+=== file nonnull.048
+this!
+=== file nonnull.049
+this!.a
+=== file nonnull.050
+super!
+=== file nonnull.051
+super.a!
+=== file nonnull.052
+1!
+=== file nonnull.053
+"s"!
+=== file nonnull.054
+`t`!
+=== file nonnull.055
+null!
+=== file nonnull.056
+undefined!
+=== file nonnull.057
+[a]!
+=== file nonnull.058
+({})!
+=== file nonnull.059
+(() => {})!
+=== file nonnull.060
+function () {}!
+=== file nonnull.061
+(function () {})!
+=== file nonnull.062
+class {}!
+=== file nonnull.063
+a!!.b
+=== file nonnull.064
+a!
+!
+=== file nonnull.065
+a! !
+=== file nonnull.066
+a ! 
+=== file nonnull.067
+a!?b:c
+=== file nonnull.068
+a! ? b : c
+=== file nonnull.069
+a!
+? b : c
+=== file nonnull.070
+a !?. b
+=== file nonnull.071
+f(a!, b!)
+=== file nonnull.072
+[a!, b!]
+=== file nonnull.073
+({ a: b! })
+=== file nonnull.074
+`t${a!}`
+=== file nonnull.075
+a! satisfies A
+=== file nonnull.076
+a as A!
+=== file nonnull.077
+(a as A)!
+=== file nonnull.078
+<A>a!
+=== file nonnull.079
+a![b!]
+=== file nonnull.080
+a!.b = 1
+=== file nonnull.081
+a!.b++
+=== file nonnull.082
+a ?? b!
+=== file nonnull.083
+a! ?? b
+=== file nonnull.084
+a! || b
+=== file nonnull.085
+a!
+(b)
+=== file nonnull.086
+a!
+[b]
+=== file nonnull.087
+a!
+`t`
+=== file nonnull.088
+a!
+<A>b
+=== file nonnull.089
+a!
+++b
+=== file nonnull.090
+a!
+--b
+=== file nonnull.091
+x = a!
+y = b!
+=== file nonnull.092
+import.meta!
+=== file nonnull.093
+import('m')!
+=== file nonnull.094
+new.target!
+=== file nonnull.095
+let a!: A;
+=== file nonnull.096
+let a!: A, b!: B;
+=== file nonnull.097
+var a!: A;
+=== file nonnull.098
+const a!: A = 1;
+=== file nonnull.099
+let a!: A = 1;
+=== file nonnull.100
+let a!;
+=== file nonnull.101
+let a! = 1;
+=== file nonnull.102
+let a!
+: A;
+=== file nonnull.103
+let a
+!: A;
+=== file nonnull.104
+let [a]!: A;
+=== file nonnull.105
+let { a }!: A;
+=== file nonnull.106
+for (let a!: A of b) {}
+=== file nonnull.107
+for (let a!: A in b) {}
+=== file nonnull.108
+for (let a!: A = 1;;) {}
+=== file nonnull.109
+function f(a!: A) {}
+=== file nonnull.110
+function f(a!) {}
+=== file nonnull.111
+(a!: A) => 1
+=== file nonnull.112
+(a!) => 1
+=== file nonnull.113
+try {} catch (e!) {}
+=== file nonnull.114
+try {} catch (e!: any) {}
+=== file nonnull.115
+try {} catch (e: any) {}
+=== file nonnull.116
+try {} catch (e: unknown) {}
+=== file nonnull.117
+try {} catch (e: A) {}
+=== file nonnull.118
+try {} catch (e?: any) {}
+=== file nonnull.119
+try {} catch ({ a }: any) {}
+=== file nonnull.120
+try {} catch ([a]: any) {}
+=== file nonnull.121
+try {} catch (e: any = 1) {}
+=== file nonnull.122
+try {} catch (e = 1) {}
+=== file nonnull.123
+try {} catch (e: ) {}
+=== file nonnull.124
+try {} catch (e,) {}
+=== file nonnull.125
+using a!: A = b;
+=== file nonnull.126
+declare let a!: A;
+=== file nonnull.127
+let a?: A;
+=== file nonnull.128
+let a?;
+=== file nonnull.129
+var a?: A = 1;
+=== file nonnull.130
+let a: A?;
+=== file nonnull.131
+let a: ?A;
+=== file nonnull.132
+let a: A!;
+=== file nonnull.133
+let a: A = 1, b: B;
+=== file nonnull.134
+let a: A, b = 1;
+=== file nonnull.135
+const a: A;
+=== file nonnull.136
+const a;
+=== file nonnull.137
+let [a, b]: A = c;
+=== file nonnull.138
+let { a, b }: A = c;
+=== file nonnull.139
+let [a]: A;
+=== file nonnull.140
+let { a: b }: A = c;
+=== file nonnull.141
+let { a }: { a: A } = c;
+=== file nonnull.142
+let a: A<B>=c;
+=== file nonnull.143
+let a: A<B<C>>=d;
+=== file nonnull.144
+let a: A<B<C<D>>>=e;
+=== file nonnull.145
+let a: A<B>= c;
+=== file nonnull.146
+let a: A<B> =c;
+=== file nonnull.147
+let a: A<B>>=c;
+=== file nonnull.148
+let a: A<B>>>=c;
+=== file nonnull.149
+let a: A<B<C>>>=d;
+=== file nonnull.150
+var a: () => void = b;
+=== file nonnull.151
+var a: (b: B) => C = d;
+=== file nonnull.152
+var a: A | B = c, d: D & E = f;
+=== file nonnull.153
+var a: typeof b = c;
+=== file nonnull.154
+var a: A extends B ? C : D = e;
+=== file nonnull.155
+for (let a: A = 1;;) {}
+=== file nonnull.156
+for (let a: A of b) {}
+=== file nonnull.157
+for (let a: A in b) {}
+=== file nonnull.158
+for (const a: A of b) {}
+=== file nonnull.159
+for (var a: A = 1 in b) {}
+=== file nonnull.160
+for (let a: A, b: B;;) {}
+=== file nonnull.161
+for (let [a, b]: A of c) {}
+=== file nonnull.162
+for (using a: A of b) {}
+=== file nonnull.163
+for await (const a: A of b) {}
+=== file nonnull.164
+using a: A = b;
+=== file nonnull.165
+await using a: A = b;
+=== file nonnull.166
+let a:
+A;
+=== file nonnull.167
+let a
+: A;
+=== file nonnull.168
+let a: A
+= 1;
+=== file nonnull.169
+let a: A
+[b];
+=== file nonnull.170
+let a: A
+(b);
+=== file nonnull.171
+let a: A
+<B>c;
+=== file nonnull.172
+let a: typeof b
+<C>d;
+=== file nonnull.173
+let a: A.B
+<C>d;
+=== file nonnull.174
+let a: A
+.b;
+=== file nonnull.175
+let a: A
+| B;
+=== file nonnull.176
+let a: A |
+B;
+=== file nonnull.177
+let a: A
+& B;
+=== file nonnull.178
+let a: A
+extends B ? C : D;
+=== file nonnull.179
+let a: A
+!;
+=== file nonnull.180
+let a: A
+?;
+=== file nonnull.181
+let a: A
+`t`;
+=== file nonnull.182
+let a: keyof
+A;
+=== file nonnull.183
+let a: typeof
+b;
+=== file nonnull.184
+let a: new
+() => A;
+=== file nonnull.185
+let a: unique
+symbol;
+=== file angle.001
+var v = <A>x;
+=== file angle.002
+var v = <A>x.y;
+=== file angle.003
+var v = <A>x();
+=== file angle.004
+var v = <A>(x);
+=== file angle.005
+var v = <A><B>x;
+=== file angle.006
+var v = <A>-x;
+=== file angle.007
+var v = <A>+x;
+=== file angle.008
+var v = <A>!x;
+=== file angle.009
+var v = <A>~x;
+=== file angle.010
+var v = <A>await x;
+=== file angle.011
+var v = <A>typeof x;
+=== file angle.012
+var v = <A>void x;
+=== file angle.013
+var v = <A>delete x.y;
+=== file angle.014
+var v = <A>new X;
+=== file angle.015
+var v = <A>new X();
+=== file angle.016
+var v = <A>function () {};
+=== file angle.017
+var v = <A>class {};
+=== file angle.018
+var v = <A>[a];
+=== file angle.019
+var v = <A>{};
+=== file angle.020
+var v = <A>{ a: 1 };
+=== file angle.021
+var v = <A>"s";
+=== file angle.022
+var v = <A>1;
+=== file angle.023
+var v = <A>`t`;
+=== file angle.024
+var v = <A>/r/;
+=== file angle.025
+var v = <A>this;
+=== file angle.026
+var v = <A>super.x;
+=== file angle.027
+var v = <A>null;
+=== file angle.028
+var v = <A>x++;
+=== file angle.029
+var v = <A>x--;
+=== file angle.030
+var v = <A>++x;
+=== file angle.031
+var v = <A>--x;
+=== file angle.032
+var v = <A>x ** 2;
+=== file angle.033
+var v = <A>(x ** 2);
+=== file angle.034
+var v = (<A>x) ** 2;
+=== file angle.035
+var v = -<A>x;
+=== file angle.036
+var v = !<A>x;
+=== file angle.037
+var v = typeof <A>x;
+=== file angle.038
+var v = await <A>x;
+=== file angle.039
+var v = 2 ** <A>x;
+=== file angle.040
+var v = <A>x + 1;
+=== file angle.041
+var v = 1 + <A>x;
+=== file angle.042
+var v = <A>x as B;
+=== file angle.043
+var v = <A>x!;
+=== file angle.044
+var v = <A>x = 1;
+=== file angle.045
+var v = <A>x ? y : z;
+=== file angle.046
+var v = <A>(a, b);
+=== file angle.047
+var v = <A>x, y;
+=== file angle.048
+var v = <A>x`t`;
+=== file angle.049
+var v = <A>x?.y;
+=== file angle.050
+var v = <A>x<B>();
+=== file angle.051
+var v = <A>yield;
+=== file angle.052
+var v = <A>async;
+=== file angle.053
+var v = <A>async () => 1;
+=== file angle.054
+var v = <A>() => 1;
+=== file angle.055
+var v = <A>(a) => a;
+=== file angle.056
+var v = <A>a => a;
+=== file angle.057
+var v = <A>
+x;
+=== file angle.058
+var v = <
+A
+>x;
+=== file angle.059
+var v = <A
+>x;
+=== file angle.060
+var v = < A >x;
+=== file angle.061
+var v = <A>;
+=== file angle.062
+var v = <A>;;
+=== file angle.063
+var v = <>x;
+=== file angle.064
+var v = <A,>x;
+=== file angle.065
+var v = <A, B>x;
+=== file angle.066
+var v = <A, B>(x);
+=== file angle.067
+var v = <A B>x;
+=== file angle.068
+var v = <A | B>x;
+=== file angle.069
+var v = <A & B>x;
+=== file angle.070
+var v = <| A>x;
+=== file angle.071
+var v = <A extends B ? C : D>x;
+=== file angle.072
+var v = <() => void>x;
+=== file angle.073
+var v = <(a: A) => B>x;
+=== file angle.074
+var v = <(a = 1) => B>x;
+=== file angle.075
+var v = <<T>() => void>x;
+=== file angle.076
+var v = <<T>(a: T) => T>x;
+=== file angle.077
+var v = <new () => A>x;
+=== file angle.078
+var v = <abstract new () => A>x;
+=== file angle.079
+var v = <A<B>>x;
+=== file angle.080
+var v = <A<B<C>>>x;
+=== file angle.081
+var v = <A<B<C<D>>>>x;
+=== file angle.082
+var v = <A[]>x;
+=== file angle.083
+var v = <A[B]>x;
+=== file angle.084
+var v = <typeof y>x;
+=== file angle.085
+var v = <typeof y.z>x;
+=== file angle.086
+var v = <keyof A>x;
+=== file angle.087
+var v = <readonly A[]>x;
+=== file angle.088
+var v = <unique symbol>x;
+=== file angle.089
+var v = <{ a: A }>x;
+=== file angle.090
+var v = <{}>x;
+=== file angle.091
+var v = <[A, B]>x;
+=== file angle.092
+var v = <"s">x;
+=== file angle.093
+var v = <1>x;
+=== file angle.094
+var v = <-1>x;
+=== file angle.095
+var v = <1n>x;
+=== file angle.096
+var v = <`t`>x;
+=== file angle.097
+var v = <`t${A}`>x;
+=== file angle.098
+var v = <this>x;
+=== file angle.099
+var v = <void>x;
+=== file angle.100
+var v = <null>x;
+=== file angle.101
+var v = <undefined>x;
+=== file angle.102
+var v = <any>x;
+=== file angle.103
+var v = <unknown>x;
+=== file angle.104
+var v = <never>x;
+=== file angle.105
+var v = <string>x;
+=== file angle.106
+var v = <true>x;
+=== file angle.107
+var v = <import('m')>x;
+=== file angle.108
+var v = <import('m').A>x;
+=== file angle.109
+var v = <infer U>x;
+=== file angle.110
+var v = <asserts y>x;
+=== file angle.111
+var v = <y is A>x;
+=== file angle.112
+var v = <A?>x;
+=== file angle.113
+var v = <?A>x;
+=== file angle.114
+var v = <A!>x;
+=== file angle.115
+var v = <*>x;
+=== file angle.116
+var v = <A.B>x;
+=== file angle.117
+var v = <A.B.C<D>>x;
+=== file angle.118
+var v = <(A)>x;
+=== file angle.119
+var v = <(A | B)[]>x;
+=== file angle.120
+var v = <const>x;
+=== file angle.121
+var v = <const>[1, 2];
+=== file angle.122
+var v = <const>{ a: 1 };
+=== file angle.123
+var v = <const>"s";
+=== file angle.124
+var v = <const>(x);
+=== file angle.125
+var v = <const T>x;
+=== file angle.126
+var v = <const T>(a: T) => a;
+=== file angle.127
+var v = <const T,>(a: T) => a;
+=== file angle.128
+var v = <const T extends A>(a: T) => a;
+=== file angle.129
+var v = <const>
+x;
+=== file angle.130
+var v = <const
+>x;
+=== file angle.131
+var v = <const>() => 1;
+=== file angle.132
+var v = <in>x;
+=== file angle.133
+var v = <out>x;
+=== file angle.134
+var v = <type>x;
+=== file angle.135
+var v = <of>x;
+=== file angle.136
+var v = <as>x;
+=== file angle.137
+var v = <is>x;
+=== file angle.138
+var v = <async>x;
+=== file angle.139
+var v = <await>x;
+=== file angle.140
+var v = <yield>x;
+=== file angle.141
+var v = <let>x;
+=== file angle.142
+var v = <static>x;
+=== file angle.143
+var v = <public>x;
+=== file angle.144
+var v = <abstract>x;
+=== file angle.145
+var v = <declare>x;
+=== file angle.146
+var v = <readonly x>x;
+=== file angle.147
+var v = <keyof>x;
+=== file angle.148
+var v = <infer>x;
+=== file angle.149
+var v = <unique>x;
+=== file angle.150
+var v = <asserts>x;
+=== file angle.151
+var v = <if>x;
+=== file angle.152
+var v = <class>x;
+=== file angle.153
+var v = <function>x;
+=== file angle.154
+var v = <new>x;
+=== file angle.155
+var v = <typeof x>x;
+=== file angle.156
+var v = <default>x;
+=== file angle.157
+var v = <import>x;
+=== file angle.158
+var v = <enum>x;
+=== file angle.159
+var v = <var>x;
+=== file angle.160
+var v = <extends>x;
+=== file angle.161
+var v = <satisfies>x;
+=== file angle.162
+var v = <accessor>x;
+=== file angle.163
+var v = <override>x;
+=== file angle.164
+var v = <global>x;
+=== file angle.165
+var v = <module>x;
+=== file angle.166
+var v = <namespace>x;
+=== file angle.167
+var v = <get>x;
+=== file angle.168
+var v = <set>x;
+=== file angle.169
+var v = <from>x;
+=== file angle.170
+var v = <using>x;
+=== file angle.171
+var v = <defer>x;
+=== file angle.172
+var v = <object>x;
+=== file angle.173
+var v = <symbol>x;
+=== file angle.174
+var v = <bigint>x;
+=== file angle.175
+var v = <boolean>x;
+=== file angle.176
+var v = <number>x;
+=== file angle.177
+var v = <intrinsic>x;
+=== file angle.178
+var v = <in T>(a: T) => a;
+=== file angle.179
+var v = <out T>(a: T) => a;
+=== file angle.180
+var v = <in out T>(a: T) => a;
+=== file angle.181
+var v = <const in T>(a: T) => a;
+=== file angle.182
+var v = <public T>(a: T) => a;
+=== file angle.183
+var v = <static T>(a: T) => a;
+=== file angle.184
+var v = <readonly T>(a: T) => a;
+=== file angle.185
+var v = <abstract T>(a: T) => a;
+=== file angle.186
+var v = <async T>(a: T) => a;
+=== file angle.187
+var v = <type T>(a: T) => a;
+=== file angle.188
+var v = <of T>(a: T) => a;
+=== file angle.189
+var v = <as T>(a: T) => a;
+=== file angle.190
+var v = <yield T>(a: T) => a;
+=== file angle.191
+var v = <await T>(a: T) => a;
+=== file angle.192
+var v = <let T>(a: T) => a;
+=== file angle.stmt.001
+<A>x
+=== file angle.stmt.002
+<A>x.y
+=== file angle.stmt.003
+<A>x()
+=== file angle.stmt.004
+<A>(x)
+=== file angle.stmt.005
+<A><B>x
+=== file angle.stmt.006
+<A>-x
+=== file angle.stmt.007
+<A>+x
+=== file angle.stmt.008
+<A>!x
+=== file angle.stmt.009
+<A>~x
+=== file angle.stmt.010
+<A>await x
+=== file angle.stmt.011
+<A>typeof x
+=== file angle.stmt.012
+<A>void x
+=== file angle.stmt.013
+<A>delete x.y
+=== file angle.stmt.014
+<A>new X
+=== file angle.stmt.015
+<A>new X()
+=== file angle.stmt.016
+<A>function () {}
+=== file angle.stmt.017
+<A>class {}
+=== file angle.stmt.018
+<A>[a]
+=== file angle.stmt.019
+<A>{}
+=== file angle.stmt.020
+<A>{ a: 1 }
+=== file angle.stmt.021
+<A>"s"
+=== file angle.stmt.022
+<A>1
+=== file angle.stmt.023
+<A>`t`
+=== file angle.stmt.024
+<A>/r/
+=== file angle.stmt.025
+<A>this
+=== file angle.stmt.026
+<A>super.x
+=== file angle.stmt.027
+<A>null
+=== file angle.stmt.028
+<A>x++
+=== file angle.stmt.029
+<A>x--
+=== file angle.stmt.030
+<A>++x
+=== file angle.stmt.031
+<A>--x
+=== file angle.stmt.032
+<A>x ** 2
+=== file angle.stmt.033
+<A>(x ** 2)
+=== file angle.stmt.034
+(<A>x) ** 2
+=== file angle.stmt.035
+-<A>x
+=== file angle.stmt.036
+!<A>x
+=== file angle.stmt.037
+typeof <A>x
+=== file angle.stmt.038
+await <A>x
+=== file angle.stmt.039
+2 ** <A>x
+=== file angle.stmt.040
+<A>x + 1
+=== file angle.stmt.041
+1 + <A>x
+=== file angle.stmt.042
+<A>x as B
+=== file angle.stmt.043
+<A>x!
+=== file angle.stmt.044
+<A>x = 1
+=== file angle.stmt.045
+<A>x ? y : z
+=== file angle.stmt.046
+<A>(a, b)
+=== file angle.stmt.047
+<A>x, y
+=== file angle.stmt.048
+<A>x`t`
+=== file angle.stmt.049
+<A>x?.y
+=== file angle.stmt.050
+<A>x<B>()
+=== file angle.stmt.051
+<A>yield
+=== file angle.stmt.052
+<A>async
+=== file angle.stmt.053
+<A>async () => 1
+=== file angle.stmt.054
+<A>() => 1
+=== file angle.stmt.055
+<A>(a) => a
+=== file angle.stmt.056
+<A>a => a
+=== file angle.stmt.057
+<A>
+x
+=== file angle.stmt.058
+<
+A
+>x
+=== file angle.stmt.059
+<A
+>x
+=== file angle.stmt.060
+< A >x
+=== file angle.stmt.061
+<A>
+=== file angle.stmt.062
+<A>;
+=== file angle.stmt.063
+<>x
+=== file angle.stmt.064
+<A,>x
+=== file angle.stmt.065
+<A, B>x
+=== file angle.stmt.066
+<A, B>(x)
+=== file angle.stmt.067
+<A B>x
+=== file angle.stmt.068
+<A | B>x
+=== file angle.stmt.069
+<A & B>x
+=== file angle.stmt.070
+<| A>x
+=== file angle.stmt.071
+<A extends B ? C : D>x
+=== file angle.stmt.072
+<() => void>x
+=== file angle.stmt.073
+<(a: A) => B>x
+=== file angle.stmt.074
+<(a = 1) => B>x
+=== file angle.stmt.075
+<<T>() => void>x
+=== file angle.stmt.076
+<<T>(a: T) => T>x
+=== file angle.stmt.077
+<new () => A>x
+=== file angle.stmt.078
+<abstract new () => A>x
+=== file angle.stmt.079
+<A<B>>x
+=== file angle.stmt.080
+<A<B<C>>>x
+=== file angle.stmt.081
+<A<B<C<D>>>>x
+=== file angle.stmt.082
+<A[]>x
+=== file angle.stmt.083
+<A[B]>x
+=== file angle.stmt.084
+<typeof y>x
+=== file angle.stmt.085
+<typeof y.z>x
+=== file angle.stmt.086
+<keyof A>x
+=== file angle.stmt.087
+<readonly A[]>x
+=== file angle.stmt.088
+<unique symbol>x
+=== file angle.stmt.089
+<{ a: A }>x
+=== file angle.stmt.090
+<{}>x
+=== file angle.stmt.091
+<[A, B]>x
+=== file angle.stmt.092
+<"s">x
+=== file angle.stmt.093
+<1>x
+=== file angle.stmt.094
+<-1>x
+=== file angle.stmt.095
+<1n>x
+=== file angle.stmt.096
+<`t`>x
+=== file angle.stmt.097
+<`t${A}`>x
+=== file angle.stmt.098
+<this>x
+=== file angle.stmt.099
+<void>x
+=== file angle.stmt.100
+<null>x
+=== file angle.stmt.101
+<undefined>x
+=== file angle.stmt.102
+<any>x
+=== file angle.stmt.103
+<unknown>x
+=== file angle.stmt.104
+<never>x
+=== file angle.stmt.105
+<string>x
+=== file angle.stmt.106
+<true>x
+=== file angle.stmt.107
+<import('m')>x
+=== file angle.stmt.108
+<import('m').A>x
+=== file angle.stmt.109
+<infer U>x
+=== file angle.stmt.110
+<asserts y>x
+=== file angle.stmt.111
+<y is A>x
+=== file angle.stmt.112
+<A?>x
+=== file angle.stmt.113
+<?A>x
+=== file angle.stmt.114
+<A!>x
+=== file angle.stmt.115
+<*>x
+=== file angle.stmt.116
+<A.B>x
+=== file angle.stmt.117
+<A.B.C<D>>x
+=== file angle.stmt.118
+<(A)>x
+=== file angle.stmt.119
+<(A | B)[]>x
+=== file angle.stmt.120
+<const>x
+=== file angle.stmt.121
+<const>[1, 2]
+=== file angle.stmt.122
+<const>{ a: 1 }
+=== file angle.stmt.123
+<const>"s"
+=== file angle.stmt.124
+<const>(x)
+=== file angle.stmt.125
+<const T>x
+=== file angle.stmt.126
+<const T>(a: T) => a
+=== file angle.stmt.127
+<const T,>(a: T) => a
+=== file angle.stmt.128
+<const T extends A>(a: T) => a
+=== file angle.stmt.129
+<const>
+x
+=== file angle.stmt.130
+<const
+>x
+=== file angle.stmt.131
+<const>() => 1
+=== file angle.stmt.132
+<in>x
+=== file angle.stmt.133
+<out>x
+=== file angle.stmt.134
+<type>x
+=== file angle.stmt.135
+<of>x
+=== file angle.stmt.136
+<as>x
+=== file angle.stmt.137
+<is>x
+=== file angle.stmt.138
+<async>x
+=== file angle.stmt.139
+<await>x
+=== file angle.stmt.140
+<yield>x
+=== file angle.stmt.141
+<let>x
+=== file angle.stmt.142
+<static>x
+=== file angle.stmt.143
+<public>x
+=== file angle.stmt.144
+<abstract>x
+=== file angle.stmt.145
+<declare>x
+=== file angle.stmt.146
+<readonly x>x
+=== file angle.stmt.147
+<keyof>x
+=== file angle.stmt.148
+<infer>x
+=== file angle.stmt.149
+<unique>x
+=== file angle.stmt.150
+<asserts>x
+=== file angle.stmt.151
+<if>x
+=== file angle.stmt.152
+<class>x
+=== file angle.stmt.153
+<function>x
+=== file angle.stmt.154
+<new>x
+=== file angle.stmt.155
+<typeof x>x
+=== file angle.stmt.156
+<default>x
+=== file angle.stmt.157
+<import>x
+=== file angle.stmt.158
+<enum>x
+=== file angle.stmt.159
+<var>x
+=== file angle.stmt.160
+<extends>x
+=== file angle.stmt.161
+<satisfies>x
+=== file angle.stmt.162
+<accessor>x
+=== file angle.stmt.163
+<override>x
+=== file angle.stmt.164
+<global>x
+=== file angle.stmt.165
+<module>x
+=== file angle.stmt.166
+<namespace>x
+=== file angle.stmt.167
+<get>x
+=== file angle.stmt.168
+<set>x
+=== file angle.stmt.169
+<from>x
+=== file angle.stmt.170
+<using>x
+=== file angle.stmt.171
+<defer>x
+=== file angle.stmt.172
+<object>x
+=== file angle.stmt.173
+<symbol>x
+=== file angle.stmt.174
+<bigint>x
+=== file angle.stmt.175
+<boolean>x
+=== file angle.stmt.176
+<number>x
+=== file angle.stmt.177
+<intrinsic>x
+=== file angle.stmt.178
+<in T>(a: T) => a
+=== file angle.stmt.179
+<out T>(a: T) => a
+=== file angle.stmt.180
+<in out T>(a: T) => a
+=== file angle.stmt.181
+<const in T>(a: T) => a
+=== file angle.stmt.182
+<public T>(a: T) => a
+=== file angle.stmt.183
+<static T>(a: T) => a
+=== file angle.stmt.184
+<readonly T>(a: T) => a
+=== file angle.stmt.185
+<abstract T>(a: T) => a
+=== file angle.stmt.186
+<async T>(a: T) => a
+=== file angle.stmt.187
+<type T>(a: T) => a
+=== file angle.stmt.188
+<of T>(a: T) => a
+=== file angle.stmt.189
+<as T>(a: T) => a
+=== file angle.stmt.190
+<yield T>(a: T) => a
+=== file angle.stmt.191
+<await T>(a: T) => a
+=== file angle.stmt.192
+<let T>(a: T) => a
+=== file garrow.001
+var v = <T>(a: T) => a;
+=== file garrow.002
+var v = <T,>(a: T) => a;
+=== file garrow.003
+var v = <T, U>(a: T, b: U) => a;
+=== file garrow.004
+var v = <T extends A>(a: T) => a;
+=== file garrow.005
+var v = <T extends unknown>(a: T) => a;
+=== file garrow.006
+var v = <T = any>(a: T) => a;
+=== file garrow.007
+var v = <T extends A = B>(a: T) => a;
+=== file garrow.008
+var v = <T>() => 1;
+=== file garrow.009
+var v = <T>(a) => a;
+=== file garrow.010
+var v = <T>(a: T): T => a;
+=== file garrow.011
+var v = <T>(a: T): a is T => true;
+=== file garrow.012
+var v = <T>(a: T): asserts a => {};
+=== file garrow.013
+var v = <T>(a: T): asserts a is T => {};
+=== file garrow.014
+var v = <T>({ a }: T) => a;
+=== file garrow.015
+var v = <T>([a]: T[]) => a;
+=== file garrow.016
+var v = <T>(...a: T[]) => a;
+=== file garrow.017
+var v = <T>(a?: T) => a;
+=== file garrow.018
+var v = <T>(a = 1) => a;
+=== file garrow.019
+var v = <T>(a: T = b) => a;
+=== file garrow.020
+var v = <T>(this: A) => 1;
+=== file garrow.021
+var v = <T>() => <U>() => 1;
+=== file garrow.022
+var v = <T>(a: T) => <U>a;
+=== file garrow.023
+var v = <T>(a: T) => <U>(b: U) => a;
+=== file garrow.024
+var v = <T, U extends T[]>(a: T, b: U) => a;
+=== file garrow.025
+var v = <T extends A<B>>(a: T) => a;
+=== file garrow.026
+var v = <T extends A<B<C>>>(a: T) => a;
+=== file garrow.027
+var v = <T = A<B>>(a: T) => a;
+=== file garrow.028
+var v = <T extends (a: A) => B>(f: T) => f;
+=== file garrow.029
+var v = <T = () => void>(f: T) => f;
+=== file garrow.030
+var v = <T extends keyof U, U>(a: T) => a;
+=== file garrow.031
+var v = <T>(a: T) =>
+a;
+=== file garrow.032
+var v = <T>(a: T)
+=> a;
+=== file garrow.033
+var v = <T>
+(a: T) => a;
+=== file garrow.034
+var v = <
+T
+>(a: T) => a;
+=== file garrow.035
+var v = <T>x => x;
+=== file garrow.036
+var v = <T>async (a) => a;
+=== file garrow.037
+var v = <T>async a => a;
+=== file garrow.038
+var v = (<T>(a: T) => a);
+=== file garrow.039
+var v = f(<T>(a: T) => a);
+=== file garrow.040
+var v = [<T>(a: T) => a];
+=== file garrow.041
+var v = ({ a: <T>(b: T) => b });
+=== file garrow.042
+var v = a ? <T>(b: T) => b : c;
+=== file garrow.043
+var v = a ? <T>(b: T): T => b : c;
+=== file garrow.044
+var v = a ? b : <T>(c: T): T => c;
+=== file garrow.045
+var v = a = <T>(b: T) => b;
+=== file garrow.046
+var v = a || <T>(b: T) => b;
+=== file garrow.047
+var v = a, <T>(b: T) => b;
+=== file garrow.048
+var v = `t${<T>(a: T) => a}`;
+=== file garrow.049
+export default <T>(a: T) => a
+=== file garrow.050
+export default <T,>(a: T): T => a
+=== file garrow.051
+export default async <T>(a: T) => a
+=== file garrow.052
+function f() { return <T>(a: T) => a }
+=== file garrow.053
+var v = async <T>(a: T) => a;
+=== file garrow.054
+var v = async <T,>(a: T) => a;
+=== file garrow.055
+var v = async <T>(a: T): Promise<T> => a;
+=== file garrow.056
+var v = async <T>() => {};
+=== file garrow.057
+var v = async <T>(a) => a;
+=== file garrow.058
+var v = async<T>(a);
+=== file garrow.059
+var v = async<T>(a);;
+=== file garrow.060
+var v = async <T>
+(a) => a;
+=== file garrow.061
+var v = async
+<T>(a) => a;
+=== file garrow.062
+var v = async <T>(a)
+=> a;
+=== file garrow.063
+var v = async <const T>(a: T) => a;
+=== file garrow.064
+var v = async <T extends A<B>>(a: T) => a;
+=== file garrow.065
+var v = async <T>(a: T) => await a;
+=== file garrow.066
+var v = async <T>x => x;
+=== file garrow.067
+var v = async < T > (a) => a;
+=== file garrow.068
+var v = async <T>;
+=== file garrow.069
+var v = async <T>();
+=== file garrow.070
+var v = async <>() => 1;
+=== file garrow.071
+var v = <>() => 1;
+=== file garrow.072
+var v = <T>() =>;
+=== file garrow.073
+var v = <T>();
+=== file garrow.074
+var v = <T>() => {};
+=== file garrow.075
+var v = <T>() => ({});
+=== file garrow.076
+var v = <T>() => { return 1 };
+=== file garrow.077
+var v = <T>() => a ? b : c;
+=== file garrow.078
+var v = <T>() => a, b;
+=== file garrow.079
+var v = <T>() => a as A;
+=== file garrow.080
+var v = <T>(a, b,) => a;
+=== file garrow.081
+var v = <T,>(a,) => a;
+=== file garrow.082
+var v = <T>(a: T,) => a;
+=== file garrow.083
+var v = <T>(,) => 1;
+=== file garrow.084
+var v = <T>((a)) => a;
+=== file garrow.085
+var v = <T>(a: ) => a;
+=== file garrow.086
+var v = <T>(): => 1;
+=== file garrow.087
+var v = <T>(a): => a;
+=== tsx garrow.tsx.001
+var v = <T>(a: T) => a;
+=== tsx garrow.tsx.002
+var v = <T,>(a: T) => a;
+=== tsx garrow.tsx.003
+var v = <T, U>(a: T, b: U) => a;
+=== tsx garrow.tsx.004
+var v = <T extends A>(a: T) => a;
+=== tsx garrow.tsx.005
+var v = <T extends unknown>(a: T) => a;
+=== tsx garrow.tsx.006
+var v = <T = any>(a: T) => a;
+=== tsx garrow.tsx.007
+var v = <T extends A = B>(a: T) => a;
+=== tsx garrow.tsx.008
+var v = <T>() => 1;
+=== tsx garrow.tsx.009
+var v = <T>(a) => a;
+=== tsx garrow.tsx.010
+var v = <T>(a: T): T => a;
+=== tsx garrow.tsx.011
+var v = <T>(a: T): a is T => true;
+=== tsx garrow.tsx.012
+var v = <T>(a: T): asserts a => {};
+=== tsx garrow.tsx.013
+var v = <T>(a: T): asserts a is T => {};
+=== tsx garrow.tsx.014
+var v = <T>({ a }: T) => a;
+=== tsx garrow.tsx.015
+var v = <T>([a]: T[]) => a;
+=== tsx garrow.tsx.016
+var v = <T>(...a: T[]) => a;
+=== tsx garrow.tsx.017
+var v = <T>(a?: T) => a;
+=== tsx garrow.tsx.018
+var v = <T>(a = 1) => a;
+=== tsx garrow.tsx.019
+var v = <T>(a: T = b) => a;
+=== tsx garrow.tsx.020
+var v = <T>(this: A) => 1;
+=== tsx garrow.tsx.021
+var v = <T>() => <U>() => 1;
+=== tsx garrow.tsx.022
+var v = <T>(a: T) => <U>a;
+=== tsx garrow.tsx.023
+var v = <T>(a: T) => <U>(b: U) => a;
+=== tsx garrow.tsx.024
+var v = <T, U extends T[]>(a: T, b: U) => a;
+=== tsx garrow.tsx.025
+var v = <T extends A<B>>(a: T) => a;
+=== tsx garrow.tsx.026
+var v = <T extends A<B<C>>>(a: T) => a;
+=== tsx garrow.tsx.027
+var v = <T = A<B>>(a: T) => a;
+=== tsx garrow.tsx.028
+var v = <T extends (a: A) => B>(f: T) => f;
+=== tsx garrow.tsx.029
+var v = <T = () => void>(f: T) => f;
+=== tsx garrow.tsx.030
+var v = <T extends keyof U, U>(a: T) => a;
+=== tsx garrow.tsx.031
+var v = <T>(a: T) =>
+a;
+=== tsx garrow.tsx.032
+var v = <T>(a: T)
+=> a;
+=== tsx garrow.tsx.033
+var v = <T>
+(a: T) => a;
+=== tsx garrow.tsx.034
+var v = <
+T
+>(a: T) => a;
+=== tsx garrow.tsx.035
+var v = <T>x => x;
+=== tsx garrow.tsx.036
+var v = <T>async (a) => a;
+=== tsx garrow.tsx.037
+var v = <T>async a => a;
+=== tsx garrow.tsx.038
+var v = (<T>(a: T) => a);
+=== tsx garrow.tsx.039
+var v = f(<T>(a: T) => a);
+=== tsx garrow.tsx.040
+var v = [<T>(a: T) => a];
+=== tsx garrow.tsx.041
+var v = ({ a: <T>(b: T) => b });
+=== tsx garrow.tsx.042
+var v = a ? <T>(b: T) => b : c;
+=== tsx garrow.tsx.043
+var v = a ? <T>(b: T): T => b : c;
+=== tsx garrow.tsx.044
+var v = a ? b : <T>(c: T): T => c;
+=== tsx garrow.tsx.045
+var v = a = <T>(b: T) => b;
+=== tsx garrow.tsx.046
+var v = a || <T>(b: T) => b;
+=== tsx garrow.tsx.047
+var v = a, <T>(b: T) => b;
+=== tsx garrow.tsx.048
+var v = `t${<T>(a: T) => a}`;
+=== tsx garrow.tsx.049
+export default <T>(a: T) => a
+=== tsx garrow.tsx.050
+export default <T,>(a: T): T => a
+=== tsx garrow.tsx.051
+export default async <T>(a: T) => a
+=== tsx garrow.tsx.052
+function f() { return <T>(a: T) => a }
+=== tsx garrow.tsx.053
+var v = async <T>(a: T) => a;
+=== tsx garrow.tsx.054
+var v = async <T,>(a: T) => a;
+=== tsx garrow.tsx.055
+var v = async <T>(a: T): Promise<T> => a;
+=== tsx garrow.tsx.056
+var v = async <T>() => {};
+=== tsx garrow.tsx.057
+var v = async <T>(a) => a;
+=== tsx garrow.tsx.058
+var v = async<T>(a);
+=== tsx garrow.tsx.059
+var v = async<T>(a);;
+=== tsx garrow.tsx.060
+var v = async <T>
+(a) => a;
+=== tsx garrow.tsx.061
+var v = async
+<T>(a) => a;
+=== tsx garrow.tsx.062
+var v = async <T>(a)
+=> a;
+=== tsx garrow.tsx.063
+var v = async <const T>(a: T) => a;
+=== tsx garrow.tsx.064
+var v = async <T extends A<B>>(a: T) => a;
+=== tsx garrow.tsx.065
+var v = async <T>(a: T) => await a;
+=== tsx garrow.tsx.066
+var v = async <T>x => x;
+=== tsx garrow.tsx.067
+var v = async < T > (a) => a;
+=== tsx garrow.tsx.068
+var v = async <T>;
+=== tsx garrow.tsx.069
+var v = async <T>();
+=== tsx garrow.tsx.070
+var v = async <>() => 1;
+=== tsx garrow.tsx.071
+var v = <>() => 1;
+=== tsx garrow.tsx.072
+var v = <T>() =>;
+=== tsx garrow.tsx.073
+var v = <T>();
+=== tsx garrow.tsx.074
+var v = <T>() => {};
+=== tsx garrow.tsx.075
+var v = <T>() => ({});
+=== tsx garrow.tsx.076
+var v = <T>() => { return 1 };
+=== tsx garrow.tsx.077
+var v = <T>() => a ? b : c;
+=== tsx garrow.tsx.078
+var v = <T>() => a, b;
+=== tsx garrow.tsx.079
+var v = <T>() => a as A;
+=== tsx garrow.tsx.080
+var v = <T>(a, b,) => a;
+=== tsx garrow.tsx.081
+var v = <T,>(a,) => a;
+=== tsx garrow.tsx.082
+var v = <T>(a: T,) => a;
+=== tsx garrow.tsx.083
+var v = <T>(,) => 1;
+=== tsx garrow.tsx.084
+var v = <T>((a)) => a;
+=== tsx garrow.tsx.085
+var v = <T>(a: ) => a;
+=== tsx garrow.tsx.086
+var v = <T>(): => 1;
+=== tsx garrow.tsx.087
+var v = <T>(a): => a;
+=== file arrow.params.001
+var v = () => 1;
+=== file arrow.params.002
+var v = (a) => 1;
+=== file arrow.params.003
+var v = (a: A) => 1;
+=== file arrow.params.004
+var v = (a, b) => 1;
+=== file arrow.params.005
+var v = (a: A, b: B) => 1;
+=== file arrow.params.006
+var v = (a?) => 1;
+=== file arrow.params.007
+var v = (a?: A) => 1;
+=== file arrow.params.008
+var v = (a?, b?) => 1;
+=== file arrow.params.009
+var v = (a?, b) => 1;
+=== file arrow.params.010
+var v = (a??) => 1;
+=== file arrow.params.011
+var v = (a?: A?) => 1;
+=== file arrow.params.012
+var v = (...a) => 1;
+=== file arrow.params.013
+var v = (...a: A[]) => 1;
+=== file arrow.params.014
+var v = (a, ...b) => 1;
+=== file arrow.params.015
+var v = (a: A, ...b: B[]) => 1;
+=== file arrow.params.016
+var v = (...a, b) => 1;
+=== file arrow.params.017
+var v = (...a,) => 1;
+=== file arrow.params.018
+var v = (...a: A[],) => 1;
+=== file arrow.params.019
+var v = (...a?) => 1;
+=== file arrow.params.020
+var v = (...a?: A[]) => 1;
+=== file arrow.params.021
+var v = (...a = []) => 1;
+=== file arrow.params.022
+var v = (...a: A[] = []) => 1;
+=== file arrow.params.023
+var v = (......a) => 1;
+=== file arrow.params.024
+var v = (...) => 1;
+=== file arrow.params.025
+var v = (a,) => 1;
+=== file arrow.params.026
+var v = (a: A,) => 1;
+=== file arrow.params.027
+var v = (,) => 1;
+=== file arrow.params.028
+var v = (,a) => 1;
+=== file arrow.params.029
+var v = (a,,b) => 1;
+=== file arrow.params.030
+var v = (a b) => 1;
+=== file arrow.params.031
+var v = (a: A b: B) => 1;
+=== file arrow.params.032
+var v = (a;) => 1;
+=== file arrow.params.033
+var v = (a: ) => 1;
+=== file arrow.params.034
+var v = (a?: ) => 1;
+=== file arrow.params.035
+var v = (: A) => 1;
+=== file arrow.params.036
+var v = (a: A: B) => 1;
+=== file arrow.params.037
+var v = (a = 1) => 1;
+=== file arrow.params.038
+var v = (a: A = 1) => 1;
+=== file arrow.params.039
+var v = (a?: A = 1) => 1;
+=== file arrow.params.040
+var v = (a? = 1) => 1;
+=== file arrow.params.041
+var v = (a = 1, b = 2) => 1;
+=== file arrow.params.042
+var v = (a = b ? c : d) => 1;
+=== file arrow.params.043
+var v = (a = (b, c)) => 1;
+=== file arrow.params.044
+var v = (a = () => {}) => 1;
+=== file arrow.params.045
+var v = (a = function () {}) => 1;
+=== file arrow.params.046
+var v = (a = class {}) => 1;
+=== file arrow.params.047
+var v = (a = <T>b) => 1;
+=== file arrow.params.048
+var v = (a = b as T) => 1;
+=== file arrow.params.049
+var v = (a = [1, 2]) => 1;
+=== file arrow.params.050
+var v = (a = { b: 1 }) => 1;
+=== file arrow.params.051
+var v = (a = await b) => 1;
+=== file arrow.params.052
+var v = (a = yield) => 1;
+=== file arrow.params.053
+var v = (a = b = c) => 1;
+=== file arrow.params.054
+var v = (a = ) => 1;
+=== file arrow.params.055
+var v = (a == 1) => 1;
+=== file arrow.params.056
+var v = ({ a }) => 1;
+=== file arrow.params.057
+var v = ({ a }: A) => 1;
+=== file arrow.params.058
+var v = ({ a, b }: A) => 1;
+=== file arrow.params.059
+var v = ({ a: b }: A) => 1;
+=== file arrow.params.060
+var v = ({ a: { b } }: A) => 1;
+=== file arrow.params.061
+var v = ({ a = 1 }: A) => 1;
+=== file arrow.params.062
+var v = ({ a: b = 1 }: A) => 1;
+=== file arrow.params.063
+var v = ({ ...a }: A) => 1;
+=== file arrow.params.064
+var v = ({ a, ...b }: A) => 1;
+=== file arrow.params.065
+var v = ({ "a": b }: A) => 1;
+=== file arrow.params.066
+var v = ({ 1: b }: A) => 1;
+=== file arrow.params.067
+var v = ({ [k]: b }: A) => 1;
+=== file arrow.params.068
+var v = ({ [k]: b = 1 }: A) => 1;
+=== file arrow.params.069
+var v = ({ a, }: A) => 1;
+=== file arrow.params.070
+var v = ({ , }: A) => 1;
+=== file arrow.params.071
+var v = ({}: A) => 1;
+=== file arrow.params.072
+var v = ({}) => 1;
+=== file arrow.params.073
+var v = ({ a }?: A) => 1;
+=== file arrow.params.074
+var v = ({ a } = {}) => 1;
+=== file arrow.params.075
+var v = ({ a }: A = {}) => 1;
+=== file arrow.params.076
+var v = ({ a: b.c }: A) => 1;
+=== file arrow.params.077
+var v = ({ a: 1 }) => 1;
+=== file arrow.params.078
+var v = ({ "a" }) => 1;
+=== file arrow.params.079
+var v = ({ 1 }) => 1;
+=== file arrow.params.080
+var v = ({ if }) => 1;
+=== file arrow.params.081
+var v = ({ if: a }) => 1;
+=== file arrow.params.082
+var v = ({ a: if }) => 1;
+=== file arrow.params.083
+var v = ({ ...{ a } }) => 1;
+=== file arrow.params.084
+var v = ({ ...[a] }) => 1;
+=== file arrow.params.085
+var v = ({ ...a, b }) => 1;
+=== file arrow.params.086
+var v = ({ ...a = 1 }) => 1;
+=== file arrow.params.087
+var v = ({ a b }) => 1;
+=== file arrow.params.088
+var v = ({ a: }) => 1;
+=== file arrow.params.089
+var v = ({ a) => 1;
+=== file arrow.params.090
+var v = ([a]) => 1;
+=== file arrow.params.091
+var v = ([a]: A) => 1;
+=== file arrow.params.092
+var v = ([a, b]: A) => 1;
+=== file arrow.params.093
+var v = ([, a]: A) => 1;
+=== file arrow.params.094
+var v = ([a, , b]: A) => 1;
+=== file arrow.params.095
+var v = ([...a]: A) => 1;
+=== file arrow.params.096
+var v = ([a, ...b]: A) => 1;
+=== file arrow.params.097
+var v = ([a = 1]: A) => 1;
+=== file arrow.params.098
+var v = ([[a], { b }]: A) => 1;
+=== file arrow.params.099
+var v = ([]: A) => 1;
+=== file arrow.params.100
+var v = ([]) => 1;
+=== file arrow.params.101
+var v = ([a]?: A) => 1;
+=== file arrow.params.102
+var v = ([a] = []) => 1;
+=== file arrow.params.103
+var v = ([a,]: A) => 1;
+=== file arrow.params.104
+var v = ([...a, b]: A) => 1;
+=== file arrow.params.105
+var v = ([...a,]: A) => 1;
+=== file arrow.params.106
+var v = ([...[a]]: A) => 1;
+=== file arrow.params.107
+var v = ([...{ a }]: A) => 1;
+=== file arrow.params.108
+var v = ([a.b]: A) => 1;
+=== file arrow.params.109
+var v = ([1]) => 1;
+=== file arrow.params.110
+var v = ([a) => 1;
+=== file arrow.params.111
+var v = (...[a, b]: A) => 1;
+=== file arrow.params.112
+var v = (...{ a }: A) => 1;
+=== file arrow.params.113
+var v = (...[a] = []) => 1;
+=== file arrow.params.114
+var v = (this) => 1;
+=== file arrow.params.115
+var v = (this: A) => 1;
+=== file arrow.params.116
+var v = (this: A, b: B) => 1;
+=== file arrow.params.117
+var v = (this, a) => 1;
+=== file arrow.params.118
+var v = (a, this: A) => 1;
+=== file arrow.params.119
+var v = (this?: A) => 1;
+=== file arrow.params.120
+var v = (this?) => 1;
+=== file arrow.params.121
+var v = (this = 1) => 1;
+=== file arrow.params.122
+var v = (this: A = 1) => 1;
+=== file arrow.params.123
+var v = (...this) => 1;
+=== file arrow.params.124
+var v = (...this: A) => 1;
+=== file arrow.params.125
+var v = (this.a) => 1;
+=== file arrow.params.126
+var v = (this: A,) => 1;
+=== file arrow.params.127
+var v = ({ this: a }) => 1;
+=== file arrow.params.128
+var v = ([this]) => 1;
+=== file arrow.params.129
+var v = (public this) => 1;
+=== file arrow.params.130
+var v = (@d this) => 1;
+=== file arrow.params.131
+var v = (this this) => 1;
+=== file arrow.params.132
+var v = (@d a) => 1;
+=== file arrow.params.133
+var v = (@d a: A) => 1;
+=== file arrow.params.134
+var v = (@d() a: A) => 1;
+=== file arrow.params.135
+var v = (@d @e a: A) => 1;
+=== file arrow.params.136
+var v = (@d.e a) => 1;
+=== file arrow.params.137
+var v = (@(d) a) => 1;
+=== file arrow.params.138
+var v = (a @d) => 1;
+=== file arrow.params.139
+var v = (@d ...a) => 1;
+=== file arrow.params.140
+var v = (@d { a }) => 1;
+=== file arrow.params.141
+var v = (@d public a: A) => 1;
+=== file arrow.params.142
+var v = (public @d a: A) => 1;
+=== file arrow.params.143
+var v = (@d) => 1;
+=== file arrow.params.144
+var v = (@ a) => 1;
+=== file arrow.params.145
+var v = (public a: A) => 1;
+=== file arrow.params.146
+var v = (private a: A) => 1;
+=== file arrow.params.147
+var v = (protected a: A) => 1;
+=== file arrow.params.148
+var v = (readonly a: A) => 1;
+=== file arrow.params.149
+var v = (override a: A) => 1;
+=== file arrow.params.150
+var v = (static a: A) => 1;
+=== file arrow.params.151
+var v = (declare a: A) => 1;
+=== file arrow.params.152
+var v = (abstract a: A) => 1;
+=== file arrow.params.153
+var v = (async a: A) => 1;
+=== file arrow.params.154
+var v = (accessor a: A) => 1;
+=== file arrow.params.155
+var v = (export a: A) => 1;
+=== file arrow.params.156
+var v = (default a: A) => 1;
+=== file arrow.params.157
+var v = (const a: A) => 1;
+=== file arrow.params.158
+var v = (in a: A) => 1;
+=== file arrow.params.159
+var v = (out a: A) => 1;
+=== file arrow.params.160
+var v = (public) => 1;
+=== file arrow.params.161
+var v = (private) => 1;
+=== file arrow.params.162
+var v = (protected) => 1;
+=== file arrow.params.163
+var v = (readonly) => 1;
+=== file arrow.params.164
+var v = (override) => 1;
+=== file arrow.params.165
+var v = (static) => 1;
+=== file arrow.params.166
+var v = (declare) => 1;
+=== file arrow.params.167
+var v = (abstract) => 1;
+=== file arrow.params.168
+var v = (async) => 1;
+=== file arrow.params.169
+var v = (accessor) => 1;
+=== file arrow.params.170
+var v = (export) => 1;
+=== file arrow.params.171
+var v = (default) => 1;
+=== file arrow.params.172
+var v = (const) => 1;
+=== file arrow.params.173
+var v = (in) => 1;
+=== file arrow.params.174
+var v = (out) => 1;
+=== file arrow.params.175
+var v = (public: A) => 1;
+=== file arrow.params.176
+var v = (private: A) => 1;
+=== file arrow.params.177
+var v = (protected: A) => 1;
+=== file arrow.params.178
+var v = (readonly: A) => 1;
+=== file arrow.params.179
+var v = (override: A) => 1;
+=== file arrow.params.180
+var v = (static: A) => 1;
+=== file arrow.params.181
+var v = (declare: A) => 1;
+=== file arrow.params.182
+var v = (abstract: A) => 1;
+=== file arrow.params.183
+var v = (async: A) => 1;
+=== file arrow.params.184
+var v = (accessor: A) => 1;
+=== file arrow.params.185
+var v = (public?: A) => 1;
+=== file arrow.params.186
+var v = (private?: A) => 1;
+=== file arrow.params.187
+var v = (readonly?: A) => 1;
+=== file arrow.params.188
+var v = (static?: A) => 1;
+=== file arrow.params.189
+var v = (async?: A) => 1;
+=== file arrow.params.190
+var v = (public = 1) => 1;
+=== file arrow.params.191
+var v = (private = 1) => 1;
+=== file arrow.params.192
+var v = (readonly = 1) => 1;
+=== file arrow.params.193
+var v = (static = 1) => 1;
+=== file arrow.params.194
+var v = (async = 1) => 1;
+=== file arrow.params.195
+var v = (public,b) => 1;
+=== file arrow.params.196
+var v = (readonly,b) => 1;
+=== file arrow.params.197
+var v = (static,b) => 1;
+=== file arrow.params.198
+var v = (async,b) => 1;
+=== file arrow.params.199
+var v = (public readonly a: A) => 1;
+=== file arrow.params.200
+var v = (readonly public a: A) => 1;
+=== file arrow.params.201
+var v = (public private a: A) => 1;
+=== file arrow.params.202
+var v = (public public a: A) => 1;
+=== file arrow.params.203
+var v = (readonly readonly a: A) => 1;
+=== file arrow.params.204
+var v = (public override readonly a: A) => 1;
+=== file arrow.params.205
+var v = (override public a: A) => 1;
+=== file arrow.params.206
+var v = (public a) => 1;
+=== file arrow.params.207
+var v = (public a?) => 1;
+=== file arrow.params.208
+var v = (public a?: A) => 1;
+=== file arrow.params.209
+var v = (public a = 1) => 1;
+=== file arrow.params.210
+var v = (public a: A = 1) => 1;
+=== file arrow.params.211
+var v = (public ...a: A[]) => 1;
+=== file arrow.params.212
+var v = (public { a }: A) => 1;
+=== file arrow.params.213
+var v = (public [a]: A) => 1;
+=== file arrow.params.214
+var v = (public a!: A) => 1;
+=== file arrow.params.215
+var v = (public
+a: A) => 1;
+=== file arrow.params.216
+var v = (public a, private b) => 1;
+=== file arrow.params.217
+var v = (public static a) => 1;
+=== file arrow.params.218
+var v = (public async) => 1;
+=== file arrow.params.219
+var v = (readonly async a) => 1;
+=== file arrow.params.220
+var v = (string: A) => 1;
+=== file arrow.params.221
+var v = (number: A) => 1;
+=== file arrow.params.222
+var v = (any: A) => 1;
+=== file arrow.params.223
+var v = (type: A) => 1;
+=== file arrow.params.224
+var v = (of: A) => 1;
+=== file arrow.params.225
+var v = (as: A) => 1;
+=== file arrow.params.226
+var v = (is: A) => 1;
+=== file arrow.params.227
+var v = (await: A) => 1;
+=== file arrow.params.228
+var v = (yield: A) => 1;
+=== file arrow.params.229
+var v = (let: A) => 1;
+=== file arrow.params.230
+var v = (keyof: A) => 1;
+=== file arrow.params.231
+var v = (infer: A) => 1;
+=== file arrow.params.232
+var v = (unique: A) => 1;
+=== file arrow.params.233
+var v = (asserts: A) => 1;
+=== file arrow.params.234
+var v = (arguments: A) => 1;
+=== file arrow.params.235
+var v = (eval: A) => 1;
+=== file arrow.params.236
+var v = (get: A) => 1;
+=== file arrow.params.237
+var v = (set: A) => 1;
+=== file arrow.params.238
+var v = (from: A) => 1;
+=== file arrow.params.239
+var v = (global: A) => 1;
+=== file arrow.params.240
+var v = (module: A) => 1;
+=== file arrow.params.241
+var v = (namespace: A) => 1;
+=== file arrow.params.242
+var v = (require: A) => 1;
+=== file arrow.params.243
+var v = (undefined: A) => 1;
+=== file arrow.params.244
+var v = (constructor: A) => 1;
+=== file arrow.params.245
+var v = (implements: A) => 1;
+=== file arrow.params.246
+var v = (interface: A) => 1;
+=== file arrow.params.247
+var v = (package: A) => 1;
+=== file arrow.params.248
+var v = (in: A) => 1;
+=== file arrow.params.249
+var v = (class: A) => 1;
+=== file arrow.params.250
+var v = (new: A) => 1;
+=== file arrow.params.251
+var v = (function: A) => 1;
+=== file arrow.params.252
+var v = (void: A) => 1;
+=== file arrow.params.253
+var v = (null: A) => 1;
+=== file arrow.params.254
+var v = (true: A) => 1;
+=== file arrow.params.255
+var v = (typeof: A) => 1;
+=== file arrow.params.256
+var v = (delete: A) => 1;
+=== file arrow.params.257
+var v = (if: A) => 1;
+=== file arrow.params.258
+var v = (var: A) => 1;
+=== file arrow.params.259
+var v = (enum: A) => 1;
+=== file arrow.params.260
+var v = (import: A) => 1;
+=== file arrow.params.261
+var v = (export: A) => 1;
+=== file arrow.params.262
+var v = (super: A) => 1;
+=== file arrow.params.263
+var v = (with: A) => 1;
+=== file arrow.params.264
+var v = (const: A) => 1;
+=== file arrow.params.265
+var v = (default: A) => 1;
+=== file arrow.params.266
+var v = (extends: A) => 1;
+=== file arrow.params.267
+var v = (instanceof: A) => 1;
+=== file arrow.params.268
+var v = (class) => 1;
+=== file arrow.params.269
+var v = (new) => 1;
+=== file arrow.params.270
+var v = (function) => 1;
+=== file arrow.params.271
+var v = (void) => 1;
+=== file arrow.params.272
+var v = (null) => 1;
+=== file arrow.params.273
+var v = (typeof) => 1;
+=== file arrow.params.274
+var v = (enum) => 1;
+=== file arrow.params.275
+var v = (super) => 1;
+=== file arrow.params.276
+var v = (a!) => 1;
+=== file arrow.params.277
+var v = (a!: A) => 1;
+=== file arrow.params.278
+var v = (a: A!) => 1;
+=== file arrow.params.279
+var v = (#a) => 1;
+=== file arrow.params.280
+var v = (#a: A) => 1;
+=== file arrow.params.281
+var v = (a.b) => 1;
+=== file arrow.params.282
+var v = (a.b: A) => 1;
+=== file arrow.params.283
+var v = (a[0]) => 1;
+=== file arrow.params.284
+var v = (a()) => 1;
+=== file arrow.params.285
+var v = ("a") => 1;
+=== file arrow.params.286
+var v = ("a": A) => 1;
+=== file arrow.params.287
+var v = (1) => 1;
+=== file arrow.params.288
+var v = (1: A) => 1;
+=== file arrow.params.289
+var v = (`a`) => 1;
+=== file arrow.params.290
+var v = (-a) => 1;
+=== file arrow.params.291
+var v = (!a) => 1;
+=== file arrow.params.292
+var v = (a | b) => 1;
+=== file arrow.params.293
+var v = (a as A) => 1;
+=== file arrow.params.294
+var v = (a is A) => 1;
+=== file arrow.params.295
+var v = (a: b is A) => 1;
+=== file arrow.params.296
+var v = (a: asserts b) => 1;
+=== file arrow.params.297
+var v = (a extends A) => 1;
+=== file arrow.params.298
+var v = (a: A extends B ? C : D) => 1;
+=== file arrow.params.299
+var v = (a: A | B) => 1;
+=== file arrow.params.300
+var v = (a: () => void) => 1;
+=== file arrow.params.301
+var v = (a: (b: B) => C) => 1;
+=== file arrow.params.302
+var v = (a: (b = 1) => C) => 1;
+=== file arrow.params.303
+var v = (a: new () => A) => 1;
+=== file arrow.params.304
+var v = (a: typeof b) => 1;
+=== file arrow.params.305
+var v = (a: A<B>) => 1;
+=== file arrow.params.306
+var v = (a: A<B<C>>) => 1;
+=== file arrow.params.307
+var v = (a: A<B>=c) => 1;
+=== file arrow.params.308
+var v = (a: A<B<C>>=d) => 1;
+=== file arrow.params.309
+var v = (a: { b: B }) => 1;
+=== file arrow.params.310
+var v = (a: [A, B]) => 1;
+=== file arrow.params.311
+var v = (a: A[]) => 1;
+=== file arrow.params.312
+var v = (a: this) => 1;
+=== file arrow.params.313
+var v = (a: void) => 1;
+=== file arrow.params.314
+var v = (a: unique symbol) => 1;
+=== file arrow.params.315
+var v = (a: `t${A}`) => 1;
+=== file arrow.params.316
+var v = (a: import('m').A) => 1;
+=== file arrow.params.317
+var v = async () => 1;
+=== file arrow.params.318
+var v = async (a) => 1;
+=== file arrow.params.319
+var v = async (a: A) => 1;
+=== file arrow.params.320
+var v = async (a, b) => 1;
+=== file arrow.params.321
+var v = async (a: A, b: B) => 1;
+=== file arrow.params.322
+var v = async (a?) => 1;
+=== file arrow.params.323
+var v = async (a?: A) => 1;
+=== file arrow.params.324
+var v = async (a?, b?) => 1;
+=== file arrow.params.325
+var v = async (a?, b) => 1;
+=== file arrow.params.326
+var v = async (a??) => 1;
+=== file arrow.params.327
+var v = async (a?: A?) => 1;
+=== file arrow.params.328
+var v = async (...a) => 1;
+=== file arrow.params.329
+var v = async (...a: A[]) => 1;
+=== file arrow.params.330
+var v = async (a, ...b) => 1;
+=== file arrow.params.331
+var v = async (a: A, ...b: B[]) => 1;
+=== file arrow.params.332
+var v = async (...a, b) => 1;
+=== file arrow.params.333
+var v = async (...a,) => 1;
+=== file arrow.params.334
+var v = async (...a: A[],) => 1;
+=== file arrow.params.335
+var v = async (...a?) => 1;
+=== file arrow.params.336
+var v = async (...a?: A[]) => 1;
+=== file arrow.params.337
+var v = async (...a = []) => 1;
+=== file arrow.params.338
+var v = async (...a: A[] = []) => 1;
+=== file arrow.params.339
+var v = async (......a) => 1;
+=== file arrow.params.340
+var v = async (...) => 1;
+=== file arrow.params.341
+var v = async (a,) => 1;
+=== file arrow.params.342
+var v = async (a: A,) => 1;
+=== file arrow.params.343
+var v = async (,) => 1;
+=== file arrow.params.344
+var v = async (,a) => 1;
+=== file arrow.params.345
+var v = async (a,,b) => 1;
+=== file arrow.params.346
+var v = async (a b) => 1;
+=== file arrow.params.347
+var v = async (a: A b: B) => 1;
+=== file arrow.params.348
+var v = async (a;) => 1;
+=== file arrow.params.349
+var v = async (a: ) => 1;
+=== file arrow.params.350
+var v = async (a?: ) => 1;
+=== file arrow.params.351
+var v = async (: A) => 1;
+=== file arrow.params.352
+var v = async (a: A: B) => 1;
+=== file arrow.params.353
+var v = async (a = 1) => 1;
+=== file arrow.params.354
+var v = async (a: A = 1) => 1;
+=== file arrow.params.355
+var v = async (a?: A = 1) => 1;
+=== file arrow.params.356
+var v = async (a? = 1) => 1;
+=== file arrow.params.357
+var v = async (a = 1, b = 2) => 1;
+=== file arrow.params.358
+var v = async (a = b ? c : d) => 1;
+=== file arrow.params.359
+var v = async (a = (b, c)) => 1;
+=== file arrow.params.360
+var v = async (a = () => {}) => 1;
+=== file arrow.params.361
+var v = async (a = function () {}) => 1;
+=== file arrow.params.362
+var v = async (a = class {}) => 1;
+=== file arrow.params.363
+var v = async (a = <T>b) => 1;
+=== file arrow.params.364
+var v = async (a = b as T) => 1;
+=== file arrow.params.365
+var v = async (a = [1, 2]) => 1;
+=== file arrow.params.366
+var v = async (a = { b: 1 }) => 1;
+=== file arrow.params.367
+var v = async (a = await b) => 1;
+=== file arrow.params.368
+var v = async (a = yield) => 1;
+=== file arrow.params.369
+var v = async (a = b = c) => 1;
+=== file arrow.params.370
+var v = async (a = ) => 1;
+=== file arrow.params.371
+var v = async (a == 1) => 1;
+=== file arrow.params.372
+var v = async ({ a }) => 1;
+=== file arrow.params.373
+var v = async ({ a }: A) => 1;
+=== file arrow.params.374
+var v = async ({ a, b }: A) => 1;
+=== file arrow.params.375
+var v = async ({ a: b }: A) => 1;
+=== file arrow.params.376
+var v = async ({ a: { b } }: A) => 1;
+=== file arrow.params.377
+var v = async ({ a = 1 }: A) => 1;
+=== file arrow.params.378
+var v = async ({ a: b = 1 }: A) => 1;
+=== file arrow.params.379
+var v = async ({ ...a }: A) => 1;
+=== file arrow.params.380
+var v = async ({ a, ...b }: A) => 1;
+=== file arrow.params.381
+var v = async ({ "a": b }: A) => 1;
+=== file arrow.params.382
+var v = async ({ 1: b }: A) => 1;
+=== file arrow.params.383
+var v = async ({ [k]: b }: A) => 1;
+=== file arrow.params.384
+var v = async ({ [k]: b = 1 }: A) => 1;
+=== file arrow.params.385
+var v = async ({ a, }: A) => 1;
+=== file arrow.params.386
+var v = async ({ , }: A) => 1;
+=== file arrow.params.387
+var v = async ({}: A) => 1;
+=== file arrow.params.388
+var v = async ({}) => 1;
+=== file arrow.params.389
+var v = async ({ a }?: A) => 1;
+=== file arrow.params.390
+var v = async ({ a } = {}) => 1;
+=== file arrow.params.391
+var v = async ({ a }: A = {}) => 1;
+=== file arrow.params.392
+var v = async ({ a: b.c }: A) => 1;
+=== file arrow.params.393
+var v = async ({ a: 1 }) => 1;
+=== file arrow.params.394
+var v = async ({ "a" }) => 1;
+=== file arrow.params.395
+var v = async ({ 1 }) => 1;
+=== file arrow.params.396
+var v = async ({ if }) => 1;
+=== file arrow.params.397
+var v = async ({ if: a }) => 1;
+=== file arrow.params.398
+var v = async ({ a: if }) => 1;
+=== file arrow.params.399
+var v = async ({ ...{ a } }) => 1;
+=== file arrow.params.400
+var v = async ({ ...[a] }) => 1;
+=== file arrow.params.401
+var v = async ({ ...a, b }) => 1;
+=== file arrow.params.402
+var v = async ({ ...a = 1 }) => 1;
+=== file arrow.params.403
+var v = async ({ a b }) => 1;
+=== file arrow.params.404
+var v = async ({ a: }) => 1;
+=== file arrow.params.405
+var v = async ({ a) => 1;
+=== file arrow.params.406
+var v = async ([a]) => 1;
+=== file arrow.params.407
+var v = async ([a]: A) => 1;
+=== file arrow.params.408
+var v = async ([a, b]: A) => 1;
+=== file arrow.params.409
+var v = async ([, a]: A) => 1;
+=== file arrow.params.410
+var v = async ([a, , b]: A) => 1;
+=== file arrow.params.411
+var v = async ([...a]: A) => 1;
+=== file arrow.params.412
+var v = async ([a, ...b]: A) => 1;
+=== file arrow.params.413
+var v = async ([a = 1]: A) => 1;
+=== file arrow.params.414
+var v = async ([[a], { b }]: A) => 1;
+=== file arrow.params.415
+var v = async ([]: A) => 1;
+=== file arrow.params.416
+var v = async ([]) => 1;
+=== file arrow.params.417
+var v = async ([a]?: A) => 1;
+=== file arrow.params.418
+var v = async ([a] = []) => 1;
+=== file arrow.params.419
+var v = async ([a,]: A) => 1;
+=== file arrow.params.420
+var v = async ([...a, b]: A) => 1;
+=== file arrow.params.421
+var v = async ([...a,]: A) => 1;
+=== file arrow.params.422
+var v = async ([...[a]]: A) => 1;
+=== file arrow.params.423
+var v = async ([...{ a }]: A) => 1;
+=== file arrow.params.424
+var v = async ([a.b]: A) => 1;
+=== file arrow.params.425
+var v = async ([1]) => 1;
+=== file arrow.params.426
+var v = async ([a) => 1;
+=== file arrow.params.427
+var v = async (...[a, b]: A) => 1;
+=== file arrow.params.428
+var v = async (...{ a }: A) => 1;
+=== file arrow.params.429
+var v = async (...[a] = []) => 1;
+=== file arrow.params.430
+var v = async (this) => 1;
+=== file arrow.params.431
+var v = async (this: A) => 1;
+=== file arrow.params.432
+var v = async (this: A, b: B) => 1;
+=== file arrow.params.433
+var v = async (this, a) => 1;
+=== file arrow.params.434
+var v = async (a, this: A) => 1;
+=== file arrow.params.435
+var v = async (this?: A) => 1;
+=== file arrow.params.436
+var v = async (this?) => 1;
+=== file arrow.params.437
+var v = async (this = 1) => 1;
+=== file arrow.params.438
+var v = async (this: A = 1) => 1;
+=== file arrow.params.439
+var v = async (...this) => 1;
+=== file arrow.params.440
+var v = async (...this: A) => 1;
+=== file arrow.params.441
+var v = async (this.a) => 1;
+=== file arrow.params.442
+var v = async (this: A,) => 1;
+=== file arrow.params.443
+var v = async ({ this: a }) => 1;
+=== file arrow.params.444
+var v = async ([this]) => 1;
+=== file arrow.params.445
+var v = async (public this) => 1;
+=== file arrow.params.446
+var v = async (@d this) => 1;
+=== file arrow.params.447
+var v = async (this this) => 1;
+=== file arrow.params.448
+var v = async (@d a) => 1;
+=== file arrow.params.449
+var v = async (@d a: A) => 1;
+=== file arrow.params.450
+var v = async (@d() a: A) => 1;
+=== file arrow.params.451
+var v = async (@d @e a: A) => 1;
+=== file arrow.params.452
+var v = async (@d.e a) => 1;
+=== file arrow.params.453
+var v = async (@(d) a) => 1;
+=== file arrow.params.454
+var v = async (a @d) => 1;
+=== file arrow.params.455
+var v = async (@d ...a) => 1;
+=== file arrow.params.456
+var v = async (@d { a }) => 1;
+=== file arrow.params.457
+var v = (a: any): void => a;
+=== file arrow.params.458
+var v = (a: any): A => a;
+=== file arrow.params.459
+var v = (a: any): A | B => a;
+=== file arrow.params.460
+var v = (a: any): A & B => a;
+=== file arrow.params.461
+var v = (a: any): A[] => a;
+=== file arrow.params.462
+var v = (a: any): A extends B ? C : D => a;
+=== file arrow.params.463
+var v = (a: any): keyof A => a;
+=== file arrow.params.464
+var v = (a: any): typeof a => a;
+=== file arrow.params.465
+var v = (a: any): () => void => a;
+=== file arrow.params.466
+var v = (a: any): (a: A) => (b: B) => C => a;
+=== file arrow.params.467
+var v = (a: any): new () => A => a;
+=== file arrow.params.468
+var v = (a: any): { a: A } => a;
+=== file arrow.params.469
+var v = (a: any): {} => a;
+=== file arrow.params.470
+var v = (a: any): [A] => a;
+=== file arrow.params.471
+var v = (a: any): (A) => a;
+=== file arrow.params.472
+var v = (a: any): (A | B) => a;
+=== file arrow.params.473
+var v = (a: any): this => a;
+=== file arrow.params.474
+var v = (a: any): a is A => a;
+=== file arrow.params.475
+var v = (a: any): a is A | B => a;
+=== file arrow.params.476
+var v = (a: any): this is A => a;
+=== file arrow.params.477
+var v = (a: any): asserts a => a;
+=== file arrow.params.478
+var v = (a: any): asserts a is A => a;
+=== file arrow.params.479
+var v = (a: any): asserts this => a;
+=== file arrow.params.480
+var v = (a: any): asserts this is A => a;
+=== file arrow.params.481
+var v = (a: any): asserts => a;
+=== file arrow.params.482
+var v = (a: any): asserts | A => a;
+=== file arrow.params.483
+var v = (a: any): a is => a;
+=== file arrow.params.484
+var v = (a: any): asserts a is => a;
+=== file arrow.params.485
+var v = (a: any): is A => a;
+=== file arrow.params.486
+var v = (a: any): a
+is A => a;
+=== file arrow.params.487
+var v = (a: any): asserts
+a => a;
+=== file arrow.params.488
+var v = (a: any): unique symbol => a;
+=== file arrow.params.489
+var v = (a: any): `t${A}` => a;
+=== file arrow.params.490
+var v = (a: any): import('m') => a;
+=== file arrow.params.491
+var v = (a: any): -1 => a;
+=== file arrow.params.492
+var v = (a: any): A<B> => a;
+=== file arrow.params.493
+var v = (a: any): A<B<C>> => a;
+=== file arrow.params.494
+var v = (a: any): infer A => a;
+=== file arrow.params.495
+var v = (a: any): A? => a;
+=== file arrow.params.496
+var v = (a: any): ?A => a;
+=== file arrow.params.497
+var v = (a: any): A! => a;
+=== file arrow.params.498
+var v = (a: any):  => a;
+=== file arrow.params.499
+var v = (a: any): ; => a;
+=== file arrow.params.500
+var v = (a: any): => A => a;
+=== file arrow.params.501
+var v = (a): void => a;
+=== file arrow.params.502
+var v = (a): A => a;
+=== file arrow.params.503
+var v = (a): A | B => a;
+=== file arrow.params.504
+var v = (a): A & B => a;
+=== file arrow.params.505
+var v = (a): A[] => a;
+=== file arrow.params.506
+var v = (a): A extends B ? C : D => a;
+=== file arrow.params.507
+var v = (a): keyof A => a;
+=== file arrow.params.508
+var v = (a): typeof a => a;
+=== file arrow.params.509
+var v = (a): () => void => a;
+=== file arrow.params.510
+var v = (a): (a: A) => (b: B) => C => a;
+=== file arrow.params.511
+var v = (a): new () => A => a;
+=== file arrow.params.512
+var v = (a): { a: A } => a;
+=== file arrow.params.513
+var v = (a): {} => a;
+=== file arrow.params.514
+var v = (a): [A] => a;
+=== file arrow.params.515
+var v = (a): (A) => a;
+=== file arrow.params.516
+var v = (a): (A | B) => a;
+=== file arrow.params.517
+var v = (a): this => a;
+=== file arrow.params.518
+var v = (a): a is A => a;
+=== file arrow.params.519
+var v = (a): a is A | B => a;
+=== file arrow.params.520
+var v = (a): this is A => a;
+=== file arrow.params.521
+var v = (a): asserts a => a;
+=== file arrow.params.522
+var v = (a): asserts a is A => a;
+=== file arrow.params.523
+var v = (a): asserts this => a;
+=== file arrow.params.524
+var v = (a): asserts this is A => a;
+=== file arrow.params.525
+var v = (a): asserts => a;
+=== file arrow.params.526
+var v = (a): asserts | A => a;
+=== file arrow.params.527
+var v = (a): a is => a;
+=== file arrow.params.528
+var v = (a): asserts a is => a;
+=== file arrow.params.529
+var v = (a): is A => a;
+=== file arrow.params.530
+var v = (a): a
+is A => a;
+=== file arrow.params.531
+var v = (a): asserts
+a => a;
+=== file arrow.params.532
+var v = (a): unique symbol => a;
+=== file arrow.params.533
+var v = (a): `t${A}` => a;
+=== file arrow.params.534
+var v = (a): import('m') => a;
+=== file arrow.params.535
+var v = (a): -1 => a;
+=== file arrow.params.536
+var v = (a): A<B> => a;
+=== file arrow.params.537
+var v = (a): A<B<C>> => a;
+=== file arrow.params.538
+var v = (a): infer A => a;
+=== file arrow.params.539
+var v = (a): A? => a;
+=== file arrow.params.540
+var v = (a): ?A => a;
+=== file arrow.params.541
+var v = (a): A! => a;
+=== file arrow.params.542
+var v = (a):  => a;
+=== file arrow.params.543
+var v = (a): ; => a;
+=== file arrow.params.544
+var v = (a): => A => a;
+=== file arrow.params.545
+var v = (): void => 1;
+=== file arrow.params.546
+var v = (): A => 1;
+=== file arrow.params.547
+var v = (): A | B => 1;
+=== file arrow.params.548
+var v = (): A & B => 1;
+=== file arrow.params.549
+var v = (): A[] => 1;
+=== file arrow.params.550
+var v = (): A extends B ? C : D => 1;
+=== file arrow.params.551
+var v = (): keyof A => 1;
+=== file arrow.params.552
+var v = (): typeof a => 1;
+=== file arrow.params.553
+var v = (): () => void => 1;
+=== file arrow.params.554
+var v = (): (a: A) => (b: B) => C => 1;
+=== file arrow.params.555
+var v = (): new () => A => 1;
+=== file arrow.params.556
+var v = (): { a: A } => 1;
+=== file arrow.params.557
+var v = (): {} => 1;
+=== file arrow.params.558
+var v = (): [A] => 1;
+=== file arrow.params.559
+var v = (): (A) => 1;
+=== file arrow.params.560
+var v = (): (A | B) => 1;
+=== file arrow.params.561
+var v = (): this => 1;
+=== file arrow.params.562
+var v = (): a is A => 1;
+=== file arrow.params.563
+var v = (): a is A | B => 1;
+=== file arrow.params.564
+var v = (): this is A => 1;
+=== file arrow.params.565
+var v = (): asserts a => 1;
+=== file arrow.params.566
+var v = (): asserts a is A => 1;
+=== file arrow.params.567
+var v = (): asserts this => 1;
+=== file arrow.params.568
+var v = (): asserts this is A => 1;
+=== file arrow.params.569
+var v = (): asserts => 1;
+=== file arrow.params.570
+var v = (): asserts | A => 1;
+=== file arrow.params.571
+var v = (): a is => 1;
+=== file arrow.params.572
+var v = (): asserts a is => 1;
+=== file arrow.params.573
+var v = (): is A => 1;
+=== file arrow.params.574
+var v = (): a
+is A => 1;
+=== file arrow.params.575
+var v = (): asserts
+a => 1;
+=== file arrow.params.576
+var v = (): unique symbol => 1;
+=== file arrow.params.577
+var v = (): `t${A}` => 1;
+=== file arrow.params.578
+var v = (): import('m') => 1;
+=== file arrow.params.579
+var v = (): -1 => 1;
+=== file arrow.params.580
+var v = (): A<B> => 1;
+=== file arrow.params.581
+var v = (): A<B<C>> => 1;
+=== file arrow.params.582
+var v = (): infer A => 1;
+=== file arrow.params.583
+var v = (): A? => 1;
+=== file arrow.params.584
+var v = (): ?A => 1;
+=== file arrow.params.585
+var v = (): A! => 1;
+=== file arrow.params.586
+var v = ():  => 1;
+=== file arrow.params.587
+var v = (): ; => 1;
+=== file arrow.params.588
+var v = (): => A => 1;
+=== file arrow.params.589
+var v = async (a: any): void => a;
+=== file arrow.params.590
+var v = async (a: any): A => a;
+=== file arrow.params.591
+var v = async (a: any): A | B => a;
+=== file arrow.params.592
+var v = async (a: any): A & B => a;
+=== file arrow.params.593
+var v = async (a: any): A[] => a;
+=== file arrow.params.594
+var v = async (a: any): A extends B ? C : D => a;
+=== file arrow.params.595
+var v = async (a: any): keyof A => a;
+=== file arrow.params.596
+var v = async (a: any): typeof a => a;
+=== file arrow.params.597
+var v = async (a: any): () => void => a;
+=== file arrow.params.598
+var v = async (a: any): (a: A) => (b: B) => C => a;
+=== file arrow.params.599
+var v = async (a: any): new () => A => a;
+=== file arrow.params.600
+var v = async (a: any): { a: A } => a;
+=== file arrow.params.601
+var v = async (a: any): {} => a;
+=== file arrow.params.602
+var v = async (a: any): [A] => a;
+=== file arrow.params.603
+var v = async (a: any): (A) => a;
+=== file arrow.params.604
+var v = async (a: any): (A | B) => a;
+=== file arrow.params.605
+var v = async (a: any): this => a;
+=== file arrow.params.606
+var v = async (a: any): a is A => a;
+=== file arrow.params.607
+var v = async (a: any): a is A | B => a;
+=== file arrow.params.608
+var v = async (a: any): this is A => a;
+=== file arrow.params.609
+var v = async (a: any): asserts a => a;
+=== file arrow.params.610
+var v = async (a: any): asserts a is A => a;
+=== file arrow.params.611
+var v = async (a: any): asserts this => a;
+=== file arrow.params.612
+var v = async (a: any): asserts this is A => a;
+=== file arrow.params.613
+var v = async (a: any): asserts => a;
+=== file arrow.params.614
+var v = async (a: any): asserts | A => a;
+=== file arrow.params.615
+var v = async (a: any): a is => a;
+=== file arrow.params.616
+var v = async (a: any): asserts a is => a;
+=== file arrow.params.617
+var v = async (a: any): is A => a;
+=== file arrow.params.618
+var v = async (a: any): a
+is A => a;
+=== file arrow.params.619
+var v = async (a: any): asserts
+a => a;
+=== file arrow.params.620
+var v = async (a: any): unique symbol => a;
+=== file arrow.params.621
+var v = async (a: any): `t${A}` => a;
+=== file arrow.params.622
+var v = async (a: any): import('m') => a;
+=== file arrow.params.623
+var v = async (a: any): -1 => a;
+=== file arrow.params.624
+var v = async (a: any): A<B> => a;
+=== file arrow.params.625
+var v = async (a: any): A<B<C>> => a;
+=== file arrow.params.626
+var v = async (a: any): infer A => a;
+=== file arrow.params.627
+var v = async (a: any): A? => a;
+=== file arrow.params.628
+var v = async (a: any): ?A => a;
+=== file arrow.params.629
+var v = async (a: any): A! => a;
+=== file arrow.params.630
+var v = async (a: any):  => a;
+=== file arrow.params.631
+var v = async (a: any): ; => a;
+=== file arrow.params.632
+var v = async (a: any): => A => a;
+=== file arrow.params.633
+var v = (a: any): void => { return a };
+=== file arrow.params.634
+var v = (a: any): A => { return a };
+=== file arrow.params.635
+var v = (a: any): A | B => { return a };
+=== file arrow.params.636
+var v = (a: any): A & B => { return a };
+=== file arrow.params.637
+var v = (a: any): A[] => { return a };
+=== file arrow.params.638
+var v = (a: any): A extends B ? C : D => { return a };
+=== file arrow.params.639
+var v = (a: any): keyof A => { return a };
+=== file arrow.params.640
+var v = (a: any): typeof a => { return a };
+=== file arrow.params.641
+var v = (a: any): () => void => { return a };
+=== file arrow.params.642
+var v = (a: any): (a: A) => (b: B) => C => { return a };
+=== file arrow.params.643
+var v = (a: any): new () => A => { return a };
+=== file arrow.params.644
+var v = (a: any): { a: A } => { return a };
+=== file arrow.params.645
+var v = (a: any): {} => { return a };
+=== file arrow.params.646
+var v = (a: any): [A] => { return a };
+=== file arrow.params.647
+var v = (a: any): (A) => { return a };
+=== file arrow.params.648
+var v = (a: any): (A | B) => { return a };
+=== file arrow.params.649
+var v = (a: any): this => { return a };
+=== file arrow.params.650
+var v = (a: any): a is A => { return a };
+=== file arrow.params.651
+var v = (a: any): a is A | B => { return a };
+=== file arrow.params.652
+var v = (a: any): this is A => { return a };
+=== file arrow.params.653
+var v = (a: any): asserts a => { return a };
+=== file arrow.params.654
+var v = (a: any): asserts a is A => { return a };
+=== file arrow.params.655
+var v = (a: any): asserts this => { return a };
+=== file arrow.params.656
+var v = (a: any): asserts this is A => { return a };
+=== file arrow.params.657
+var v = (a: any): asserts => { return a };
+=== file arrow.params.658
+var v = (a: any): asserts | A => { return a };
+=== file arrow.params.659
+var v = (a: any): a is => { return a };
+=== file arrow.params.660
+var v = (a: any): asserts a is => { return a };
+=== file arrow.params.661
+var v = (a: any): is A => { return a };
+=== file arrow.params.662
+var v = (a: any): a
+is A => { return a };
+=== file arrow.params.663
+var v = (a: any): asserts
+a => { return a };
+=== file arrow.params.664
+var v = (a: any): unique symbol => { return a };
+=== file arrow.params.665
+var v = (a: any): `t${A}` => { return a };
+=== file arrow.params.666
+var v = (a: any): import('m') => { return a };
+=== file arrow.params.667
+var v = (a: any): -1 => { return a };
+=== file arrow.params.668
+var v = (a: any): A<B> => { return a };
+=== file arrow.params.669
+var v = (a: any): A<B<C>> => { return a };
+=== file arrow.params.670
+var v = (a: any): infer A => { return a };
+=== file arrow.params.671
+var v = (a: any): A? => { return a };
+=== file arrow.params.672
+var v = (a: any): ?A => { return a };
+=== file arrow.params.673
+var v = (a: any): A! => { return a };
+=== file arrow.params.674
+var v = (a: any):  => { return a };
+=== file arrow.params.675
+var v = (a: any): ; => { return a };
+=== file arrow.params.676
+var v = (a: any): => A => { return a };
+=== file arrow.params.677
+var v = c ? (a): void => a : d;
+=== file arrow.params.678
+var v = c ? (a): A => a : d;
+=== file arrow.params.679
+var v = c ? (a): A | B => a : d;
+=== file arrow.params.680
+var v = c ? (a): A & B => a : d;
+=== file arrow.params.681
+var v = c ? (a): A[] => a : d;
+=== file arrow.params.682
+var v = c ? (a): A extends B ? C : D => a : d;
+=== file arrow.params.683
+var v = c ? (a): keyof A => a : d;
+=== file arrow.params.684
+var v = c ? (a): typeof a => a : d;
+=== file arrow.params.685
+var v = c ? (a): () => void => a : d;
+=== file arrow.params.686
+var v = c ? (a): (a: A) => (b: B) => C => a : d;
+=== file arrow.params.687
+var v = c ? (a): new () => A => a : d;
+=== file arrow.params.688
+var v = c ? (a): { a: A } => a : d;
+=== file arrow.params.689
+var v = c ? (a): {} => a : d;
+=== file arrow.params.690
+var v = c ? (a): [A] => a : d;
+=== file arrow.params.691
+var v = c ? (a): (A) => a : d;
+=== file arrow.params.692
+var v = c ? (a): (A | B) => a : d;
+=== file arrow.params.693
+var v = c ? (a): this => a : d;
+=== file arrow.params.694
+var v = c ? (a): a is A => a : d;
+=== file arrow.params.695
+var v = c ? (a): a is A | B => a : d;
+=== file arrow.params.696
+var v = c ? (a): this is A => a : d;
+=== file arrow.params.697
+var v = c ? (a): asserts a => a : d;
+=== file arrow.params.698
+var v = c ? (a): asserts a is A => a : d;
+=== file arrow.params.699
+var v = c ? (a): asserts this => a : d;
+=== file arrow.params.700
+var v = c ? (a): asserts this is A => a : d;
+=== file arrow.params.701
+var v = c ? (a): asserts => a : d;
+=== file arrow.params.702
+var v = c ? (a): asserts | A => a : d;
+=== file arrow.params.703
+var v = c ? (a): a is => a : d;
+=== file arrow.params.704
+var v = c ? (a): asserts a is => a : d;
+=== file arrow.params.705
+var v = c ? (a): is A => a : d;
+=== file arrow.params.706
+var v = c ? (a): a
+is A => a : d;
+=== file arrow.params.707
+var v = c ? (a): asserts
+a => a : d;
+=== file arrow.params.708
+var v = c ? (a): unique symbol => a : d;
+=== file arrow.params.709
+var v = c ? (a): `t${A}` => a : d;
+=== file arrow.params.710
+var v = c ? (a): import('m') => a : d;
+=== file arrow.params.711
+var v = c ? (a): -1 => a : d;
+=== file arrow.params.712
+var v = c ? (a): A<B> => a : d;
+=== file arrow.params.713
+var v = c ? (a): A<B<C>> => a : d;
+=== file arrow.params.714
+var v = c ? (a): infer A => a : d;
+=== file arrow.params.715
+var v = c ? (a): A? => a : d;
+=== file arrow.params.716
+var v = c ? (a): ?A => a : d;
+=== file arrow.params.717
+var v = c ? (a): A! => a : d;
+=== file arrow.params.718
+var v = c ? (a):  => a : d;
+=== file arrow.params.719
+var v = c ? (a): ; => a : d;
+=== file arrow.params.720
+var v = c ? (a): => A => a : d;
+=== file arrow.params.721
+var v = c ? (a: any): void => a : d;
+=== file arrow.params.722
+var v = c ? (a: any): A => a : d;
+=== file arrow.params.723
+var v = c ? (a: any): A | B => a : d;
+=== file arrow.params.724
+var v = c ? (a: any): A & B => a : d;
+=== file arrow.params.725
+var v = c ? (a: any): A[] => a : d;
+=== file arrow.params.726
+var v = c ? (a: any): A extends B ? C : D => a : d;
+=== file arrow.params.727
+var v = c ? (a: any): keyof A => a : d;
+=== file arrow.params.728
+var v = c ? (a: any): typeof a => a : d;
+=== file arrow.params.729
+var v = c ? (a: any): () => void => a : d;
+=== file arrow.params.730
+var v = c ? (a: any): (a: A) => (b: B) => C => a : d;
+=== file arrow.params.731
+var v = c ? (a: any): new () => A => a : d;
+=== file arrow.params.732
+var v = c ? (a: any): { a: A } => a : d;
+=== file arrow.params.733
+var v = c ? (a: any): {} => a : d;
+=== file arrow.params.734
+var v = c ? (a: any): [A] => a : d;
+=== file arrow.params.735
+var v = c ? (a: any): (A) => a : d;
+=== file arrow.params.736
+var v = c ? (a: any): (A | B) => a : d;
+=== file arrow.params.737
+var v = c ? (a: any): this => a : d;
+=== file arrow.params.738
+var v = c ? (a: any): a is A => a : d;
+=== file arrow.params.739
+var v = c ? (a: any): a is A | B => a : d;
+=== file arrow.params.740
+var v = c ? (a: any): this is A => a : d;
+=== file arrow.params.741
+var v = c ? (a: any): asserts a => a : d;
+=== file arrow.params.742
+var v = c ? (a: any): asserts a is A => a : d;
+=== file arrow.params.743
+var v = c ? (a: any): asserts this => a : d;
+=== file arrow.params.744
+var v = c ? (a: any): asserts this is A => a : d;
+=== file arrow.params.745
+var v = c ? (a: any): asserts => a : d;
+=== file arrow.params.746
+var v = c ? (a: any): asserts | A => a : d;
+=== file arrow.params.747
+var v = c ? (a: any): a is => a : d;
+=== file arrow.params.748
+var v = c ? (a: any): asserts a is => a : d;
+=== file arrow.params.749
+var v = c ? (a: any): is A => a : d;
+=== file arrow.params.750
+var v = c ? (a: any): a
+is A => a : d;
+=== file arrow.params.751
+var v = c ? (a: any): asserts
+a => a : d;
+=== file arrow.params.752
+var v = c ? (a: any): unique symbol => a : d;
+=== file arrow.params.753
+var v = c ? (a: any): `t${A}` => a : d;
+=== file arrow.params.754
+var v = c ? (a: any): import('m') => a : d;
+=== file arrow.params.755
+var v = c ? (a: any): -1 => a : d;
+=== file arrow.params.756
+var v = c ? (a: any): A<B> => a : d;
+=== file arrow.params.757
+var v = c ? (a: any): A<B<C>> => a : d;
+=== file arrow.params.758
+var v = c ? (a: any): infer A => a : d;
+=== file arrow.params.759
+var v = c ? (a: any): A? => a : d;
+=== file arrow.params.760
+var v = c ? (a: any): ?A => a : d;
+=== file arrow.params.761
+var v = c ? (a: any): A! => a : d;
+=== file arrow.params.762
+var v = c ? (a: any):  => a : d;
+=== file arrow.params.763
+var v = c ? (a: any): ; => a : d;
+=== file arrow.params.764
+var v = c ? (a: any): => A => a : d;
+=== file arrow.001
+a => a
+=== file arrow.002
+(a) => a
+=== file arrow.003
+async a => a
+=== file arrow.004
+async (a) => a
+=== file arrow.005
+(a: A) =>
+a
+=== file arrow.006
+(a: A)
+=> a
+=== file arrow.007
+(a): A
+=> a
+=== file arrow.008
+(a):
+A => a
+=== file arrow.009
+(a)
+: A => a
+=== file arrow.010
+(a): A => { return a }
+=== file arrow.011
+(a): A => ({})
+=== file arrow.012
+(a: A) => {}
+=== file arrow.013
+(a: A) => ({})
+=== file arrow.014
+(a): (b: B) => C => a
+=== file arrow.015
+(a): () => void => a
+=== file arrow.016
+(a): (() => void) => a
+=== file arrow.017
+(a): (A) => a
+=== file arrow.018
+(a): (A) => { return 1 }
+=== file arrow.019
+(a): (A | B) => a
+=== file arrow.020
+(a): (A[]) => a
+=== file arrow.021
+(a): (A)[] => a
+=== file arrow.022
+(a): ((A)) => a
+=== file arrow.023
+(a): (a) => b => c
+=== file arrow.024
+(a): (b) => c
+=== file arrow.025
+(a): (b: B) => c
+=== file arrow.026
+(a): (b?: B) => C => a
+=== file arrow.027
+(a): (...b: B[]) => C => a
+=== file arrow.028
+(a): ({ b }: B) => C => a
+=== file arrow.029
+(a): <T>(b: T) => T => a
+=== file arrow.030
+(a): new () => A => a
+=== file arrow.031
+(a): abstract new () => A => a
+=== file arrow.032
+(a): asserts a is (b) => c => {}
+=== file arrow.033
+(a): asserts a is (b: B) => C => {}
+=== file arrow.034
+(a): a is (b: B) => C => true
+=== file arrow.035
+(a): { b: B } => a
+=== file arrow.036
+(a): { b: B } => ({ b: a })
+=== file arrow.037
+(a): {} => a
+=== file arrow.038
+(a): {} => {}
+=== file arrow.039
+(a): [A] => a
+=== file arrow.040
+(a): typeof b => a
+=== file arrow.041
+(a): A<B> => a
+=== file arrow.042
+(a): A<B<C>> => a
+=== file arrow.043
+(a): A<B>=> a
+=== file arrow.044
+(a): A<B<C>>=> a
+=== file arrow.045
+(a): A.B => a
+=== file arrow.046
+(a): A[B] => a
+=== file arrow.047
+(a): A | B => a
+=== file arrow.048
+(a): void => {}
+=== file arrow.049
+(a): never => { throw a }
+=== file arrow.050
+(a): A extends B ? C : D => a
+=== file arrow.051
+(a): A extends B ? (c) => D : E => a
+=== file arrow.052
+(a, b): A => a
+=== file arrow.053
+(a = 1): A => a
+=== file arrow.054
+({ a }): A => a
+=== file arrow.055
+([a]): A => a
+=== file arrow.056
+(...a): A => a
+=== file arrow.057
+(a?): A => a
+=== file arrow.058
+(a?: A): B => a
+=== file arrow.059
+a ? (b) : c => d
+=== file arrow.060
+a ? (b) : c => d : e
+=== file arrow.061
+a ? (b): c => d : e
+=== file arrow.062
+a ? (b): c => d
+=== file arrow.063
+a ? (b, c) : d => e
+=== file arrow.064
+a ? (b, c) : d => e : f
+=== file arrow.065
+a ? (b): (c) => d : e
+=== file arrow.066
+a ? (b): (c) => d => e : f
+=== file arrow.067
+a ? (b): c : d
+=== file arrow.068
+a ? b : (c): d => e
+=== file arrow.069
+a ? (b: B): c => d : e
+=== file arrow.070
+a ? (b: B) : c => d
+=== file arrow.071
+a ? (b?: B) => c : d
+=== file arrow.072
+a ? (b?) => c : d
+=== file arrow.073
+a ? (b?) : c
+=== file arrow.074
+a ? (b) => c : d
+=== file arrow.075
+a ? b => c : d
+=== file arrow.076
+a ? async (b): c => d : e
+=== file arrow.077
+a ? async (b) : c => d
+=== file arrow.078
+a ? (b) : (c) : d => e
+=== file arrow.079
+a ? (b) : (c) : d
+=== file arrow.080
+a ? (b) : c ? (d) : e => f : g
+=== file arrow.081
+a ? (b): c => (d): e => f : g
+=== file arrow.082
+a ? ({ b }) : c => d : e
+=== file arrow.083
+a ? ({ b }): c => d : e
+=== file arrow.084
+a ? ([b]): c => d : e
+=== file arrow.085
+a ? ([b]) : c
+=== file arrow.086
+a ? ({ b }) : c
+=== file arrow.087
+a ? (b = 1) : c => d : e
+=== file arrow.088
+a ? (b = 1) : c
+=== file arrow.089
+a ? (...b): c => d : e
+=== file arrow.090
+a ? () : b => c
+=== file arrow.091
+a ? (): b => c : d
+=== file arrow.092
+a ? (): b => c
+=== file arrow.093
+a ? function (b): c {} : d
+=== file arrow.094
+a ? (b): c => { return d } : e
+=== file arrow.095
+a ? (b): c => { return d }
+=== file arrow.096
+a ? (b)
+: c => d : e
+=== file arrow.097
+a ? (b) :
+c => d : e
+=== file arrow.098
+a ? (b): c<d> => e : f
+=== file arrow.099
+a ? (b): c.d => e : f
+=== file arrow.100
+a ? (b): c[] => d : e
+=== file arrow.101
+a ? (b): c | d => e : f
+=== file arrow.102
+a ? (b): typeof c => d : e
+=== file arrow.103
+a ? (b): { c: d } => e : f
+=== file arrow.104
+a ? (b): [c] => d : e
+=== file arrow.105
+a ? (b): void => c : d
+=== file arrow.106
+a ? (b): c is d => e : f
+=== file arrow.107
+a ? (b): asserts b => c : d
+=== file arrow.108
+a ? (b) : c => d ? e : f
+=== file arrow.109
+a ? (b): c => d ? e : f : g
+=== file arrow.110
+a ? (b) ? c : d : e
+=== file arrow.111
+a ? b ? (c): d => e : f : g
+=== file arrow.112
+a ? b : c ? (d): e => f : g
+=== file arrow.113
+a ? (b as B) : c
+=== file arrow.114
+a ? (<B>b) : c
+=== file arrow.115
+a ? (b!) : c
+=== file arrow.116
+a ? (b satisfies B) : c
+=== file arrow.117
+a ? (b: B) : c
+=== file arrow.118
+a ? (b, c: C) : d
+=== file arrow.119
+({ a: (b): c => d })
+=== file arrow.120
+({ a: b ? (c): d => e : f })
+=== file arrow.121
+[a ? (b): c => d : e]
+=== file arrow.122
+f(a ? (b): c => d : e)
+=== file arrow.123
+x = y ? (z): w => v : u
+=== file arrow.124
+x = y ? (z) : w => v
+=== file arrow.125
+var v = a ? (b) : c => d;
+=== file arrow.126
+var v = a ? (b): c => d : e;
+=== file arrow.127
+a ? (b) : c => d, e
+=== file arrow.128
+a ? ((b)): c => d : e
+=== file arrow.129
+a ? ((b): c => d) : e
+=== file arrow.130
+a ? (b) : (c): d => e
+=== file arrow.131
+a ? (b): c => d : (e): f => g
+=== file arrow.132
+a ? `t${(b): c => d}` : e
+=== file arrow.133
+a ? (b) : c => d : e => f
+=== file arrow.134
+async () => a ? (b): c => d : e
+=== file arrow.135
+class C { m = a ? (b): c => d : e }
+=== file arrow.136
+switch (a) { case (b): c => d; }
+=== file arrow.137
+switch (a) { case b ? (c): d => e : f: g }
+=== file arrow.138
+({ a: b ? (c) : d => e })
+=== file inst.001
+a<b>
+=== file inst.002
+a<b>;
+=== file inst.003
+const c = a<b>;
+=== file inst.004
+a<b>.c
+=== file inst.005
+a<b>?.c
+=== file inst.006
+a<b>?.()
+=== file inst.007
+a<b>?.[c]
+=== file inst.008
+a<b>[c]
+=== file inst.009
+a<b>()
+=== file inst.010
+a<b>``
+=== file inst.011
+a<b>`t${c}`
+=== file inst.012
+a<b>!
+=== file inst.013
+a<b>!.c
+=== file inst.014
+a<b> as C
+=== file inst.015
+a<b> satisfies C
+=== file inst.016
+a<b>
+c
+=== file inst.017
+a<b> c
+=== file inst.018
+a<b>, c
+=== file inst.019
+a<b> ? c : d
+=== file inst.020
+a<b> || c
+=== file inst.021
+a<b> && c
+=== file inst.022
+a<b> ?? c
+=== file inst.023
+a<b> | c
+=== file inst.024
+a<b> & c
+=== file inst.025
+a<b> ^ c
+=== file inst.026
+a<b> == c
+=== file inst.027
+a<b> === c
+=== file inst.028
+a<b> != c
+=== file inst.029
+a<b> !== c
+=== file inst.030
+a<b> < c
+=== file inst.031
+a<b> > c
+=== file inst.032
+a<b> <= c
+=== file inst.033
+a<b> >= c
+=== file inst.034
+a<b> >> c
+=== file inst.035
+a<b> >>> c
+=== file inst.036
+a<b> << c
+=== file inst.037
+a<b> + c
+=== file inst.038
+a<b> - c
+=== file inst.039
+a<b> * c
+=== file inst.040
+a<b> / c
+=== file inst.041
+a<b> % c
+=== file inst.042
+a<b> ** c
+=== file inst.043
+a<b> in c
+=== file inst.044
+a<b> instanceof c
+=== file inst.045
+a<b> = c
+=== file inst.046
+a<b> += c
+=== file inst.047
+a<b>++
+=== file inst.048
+a<b>--
+=== file inst.049
+a<b>
+++c
+=== file inst.050
+(a<b>)
+=== file inst.051
+(a<b>)()
+=== file inst.052
+(a<b>).c
+=== file inst.053
+[a<b>]
+=== file inst.054
+[a<b>, c<d>]
+=== file inst.055
+({ a: b<c> })
+=== file inst.056
+({ a: b<c>, d })
+=== file inst.057
+f(a<b>)
+=== file inst.058
+f(a<b>, c)
+=== file inst.059
+f(a<b>(c))
+=== file inst.060
+f(a < b, c > (d))
+=== file inst.061
+f(a < b, c > d)
+=== file inst.062
+f(a<b, c>(d))
+=== file inst.063
+f(a<b, c>)
+=== file inst.064
+new a<b>
+=== file inst.065
+new a<b>()
+=== file inst.066
+new a<b>.c()
+=== file inst.067
+new a.b<c>()
+=== file inst.068
+new a<b>;
+=== file inst.069
+new a<b>
+()
+=== file inst.070
+new a<b>`t`
+=== file inst.071
+new a<b>[c]
+=== file inst.072
+new new a<b>()()
+=== file inst.073
+a.b<c>
+=== file inst.074
+a.b<c>.d
+=== file inst.075
+a?.b<c>
+=== file inst.076
+a?.b<c>()
+=== file inst.077
+a?.b<c>.d
+=== file inst.078
+a?.<b>()
+=== file inst.079
+a?.<b>`t`
+=== file inst.080
+a?.<b>
+=== file inst.081
+a[b]<c>
+=== file inst.082
+a()<b>
+=== file inst.083
+a`t`<b>
+=== file inst.084
+a<b><c>
+=== file inst.085
+a<b><c>()
+=== file inst.086
+a<b>()<c>()
+=== file inst.087
+a<b>(c)<d>(e)
+=== file inst.088
+(a<b>)<c>
+=== file inst.089
+typeof a<b>
+=== file inst.090
+void a<b>
+=== file inst.091
+delete a<b>
+=== file inst.092
+await a<b>
+=== file inst.093
+!a<b>
+=== file inst.094
+-a<b>
+=== file inst.095
+a<b<c>>
+=== file inst.096
+a<b<c>>()
+=== file inst.097
+a<b<c<d>>>()
+=== file inst.098
+a<b<c>>>d
+=== file inst.099
+a<b, c>(d)
+=== file inst.100
+a < b > (c)
+=== file inst.101
+a < b > c
+=== file inst.102
+a<b>c
+=== file inst.103
+a < b >= c
+=== file inst.104
+a<b>>c
+=== file inst.105
+a<b>>>c
+=== file inst.106
+a<b>>=c
+=== file inst.107
+a<b>=c
+=== file inst.108
+a<<b>(c) => d>(e)
+=== file inst.109
+a<<b>() => c>
+=== file inst.110
+a<<b>(c)>(d)
+=== file inst.111
+a << b
+=== file inst.112
+a <<= b
+=== file inst.113
+a<b>>(c)
+=== file inst.114
+a<b> > (c)
+=== file inst.115
+a<b>
+(c)
+=== file inst.116
+a<b>
+`c`
+=== file inst.117
+a<b>
+[c]
+=== file inst.118
+a<b>
+.c
+=== file inst.119
+a<b>
+?.c
+=== file inst.120
+a<b>
+<c>d
+=== file inst.121
+a<b>
+!
+=== file inst.122
+a<b>
++c
+=== file inst.123
+a<b>
+-c
+=== file inst.124
+a < b > -c
+=== file inst.125
+a < b > +c
+=== file inst.126
+a < b > !c
+=== file inst.127
+a < b > ~c
+=== file inst.128
+a < b > typeof c
+=== file inst.129
+a < b > await c
+=== file inst.130
+a < b > new C
+=== file inst.131
+a < b > this
+=== file inst.132
+a < b > 1
+=== file inst.133
+a < b > "s"
+=== file inst.134
+a < b > [c]
+=== file inst.135
+a < b > {}
+=== file inst.136
+a < b > function () {}
+=== file inst.137
+a < b > class {}
+=== file inst.138
+a < b > /r/
+=== file inst.139
+a < b > <C>d
+=== file inst.140
+a < b > @d class {}
+=== file inst.141
+a < b > #c in d
+=== file inst.142
+a < b > c => c
+=== file inst.143
+a < b > async () => 1
+=== file inst.144
+a < b > yield
+=== file inst.145
+a < b > (c) => c
+=== file inst.146
+this<A>
+=== file inst.147
+this<A>()
+=== file inst.148
+super<A>()
+=== file inst.149
+super<A>.b
+=== file inst.150
+class C extends D { m() { super.m<A>() } }
+=== file inst.151
+import<A>('m')
+=== file inst.152
+import.meta<A>
+=== file inst.153
+new.target<A>
+=== file inst.154
+a<>
+=== file inst.155
+a<>()
+=== file inst.156
+a<,>()
+=== file inst.157
+a<b,>()
+=== file inst.158
+a<b,>
+=== file inst.159
+a<b c>()
+=== file inst.160
+a<b | >(c)
+=== file inst.161
+a<b & >(c)
+=== file inst.162
+a<| b>(c)
+=== file inst.163
+a<b[]>(c)
+=== file inst.164
+a<b.c>(d)
+=== file inst.165
+a<typeof b>(c)
+=== file inst.166
+a<() => void>(b)
+=== file inst.167
+a<(b: B) => C>(d)
+=== file inst.168
+a<{ b: B }>(c)
+=== file inst.169
+a<[B, C]>(d)
+=== file inst.170
+a<"s">(b)
+=== file inst.171
+a<1>(b)
+=== file inst.172
+a<-1>(b)
+=== file inst.173
+a<`t`>(b)
+=== file inst.174
+a<b extends c ? d : e>(f)
+=== file inst.175
+a<keyof b>(c)
+=== file inst.176
+a<new () => b>(c)
+=== file inst.177
+a<b>(c) as D
+=== file inst.178
+a<b>(c)!
+=== file inst.179
+a<b>(c)<d>
+=== file inst.180
+a<b>.c<d>()
+=== file inst.181
+a<b>?.c<d>()
+=== file inst.182
+if (a < b && c > d) {}
+=== file inst.183
+if (a < b || c > (d)) {}
+=== file inst.184
+if (a<b>(c)) {}
+=== file inst.185
+while (a < b > c) {}
+=== file inst.186
+for (var i = 0; i < n > m; i++) {}
+=== file inst.187
+a < b ? c : d > e
+=== file inst.188
+(a < b) > c
+=== file inst.189
+a < (b > c)
+=== file inst.190
+a<b>
+class C {}
+=== file inst.191
+a<b>
+function f() {}
+=== file inst.192
+a<b>
+if (c) {}
+=== file inst.193
+a<b>
+var c;
+=== file inst.194
+a<b>
+let c;
+=== file inst.195
+a<b>
+import c from 'm'
+=== file inst.196
+a<b>
+export {}
+=== file inst.197
+a<b>
+interface I {}
+=== file inst.198
+a<b>
+type X = 1
+=== file inst.199
+a<b> instanceof
+c
+=== file inst.200
+x = a<b>
+y = c<d>
+=== file inst.201
+return_: a<b>
+=== file inst.202
+var v = a<b>, w = c<d>;
+=== file inst.203
+var v = a<b>
+var w;
+=== file inst.204
+export default a<b>;
+=== file inst.205
+export default a<b>
+=== file inst.206
+export default a<b>(c);
+=== file inst.207
+var v = class extends a<b> {};
+=== file inst.208
+var v = class extends a<b>(c) {};
+=== file inst.209
+var v = class extends a<b>.c {};
+=== file inst.210
+var v = { a<b>(c) {} };
+=== file inst.211
+var v = `t${a<b>}`;
+=== file inst.212
+var v = a<b> ? c<d> : e<f>;
+=== file inst.213
+var v = [a<b>
+];
+=== file inst.214
+var v = a<b
+>;
+=== file inst.215
+var v = a<
+b>;
+=== file inst.216
+var v = a
+<b>;
+=== file inst.217
+var v = a
+<b>(c);
+=== file inst.218
+var v = a<b>/c/;
+=== file inst.219
+var v = a<b>/c;
+=== file inst.220
+var v = a<b>>/c/;
+=== tsx inst.tsx.001
+a<b>
+=== tsx inst.tsx.002
+a<b>;
+=== tsx inst.tsx.003
+const c = a<b>;
+=== tsx inst.tsx.004
+a<b>.c
+=== tsx inst.tsx.005
+a<b>?.c
+=== tsx inst.tsx.006
+a<b>?.()
+=== tsx inst.tsx.007
+a<b>?.[c]
+=== tsx inst.tsx.008
+a<b>[c]
+=== tsx inst.tsx.009
+a<b>()
+=== tsx inst.tsx.010
+a<b>``
+=== tsx inst.tsx.011
+a<b>`t${c}`
+=== tsx inst.tsx.012
+a<b>!
+=== tsx inst.tsx.013
+a<b>!.c
+=== tsx inst.tsx.014
+a<b> as C
+=== tsx inst.tsx.015
+a<b> satisfies C
+=== tsx inst.tsx.016
+a<b>
+c
+=== tsx inst.tsx.017
+a<b> c
+=== tsx inst.tsx.018
+a<b>, c
+=== tsx inst.tsx.019
+a<b> ? c : d
+=== tsx inst.tsx.020
+a<b> || c
+=== tsx inst.tsx.021
+a<b> && c
+=== tsx inst.tsx.022
+a<b> ?? c
+=== tsx inst.tsx.023
+a<b> | c
+=== tsx inst.tsx.024
+a<b> & c
+=== tsx inst.tsx.025
+a<b> ^ c
+=== tsx inst.tsx.026
+a<b> == c
+=== tsx inst.tsx.027
+a<b> === c
+=== tsx inst.tsx.028
+a<b> != c
+=== tsx inst.tsx.029
+a<b> !== c
+=== tsx inst.tsx.030
+a<b> < c
+=== tsx inst.tsx.031
+a<b> > c
+=== tsx inst.tsx.032
+a<b> <= c
+=== tsx inst.tsx.033
+a<b> >= c
+=== tsx inst.tsx.034
+a<b> >> c
+=== tsx inst.tsx.035
+a<b> >>> c
+=== tsx inst.tsx.036
+a<b> << c
+=== tsx inst.tsx.037
+a<b> + c
+=== tsx inst.tsx.038
+a<b> - c
+=== tsx inst.tsx.039
+a<b> * c
+=== tsx inst.tsx.040
+a<b> / c
+=== tsx inst.tsx.041
+a<b> % c
+=== tsx inst.tsx.042
+a<b> ** c
+=== tsx inst.tsx.043
+a<b> in c
+=== tsx inst.tsx.044
+a<b> instanceof c
+=== tsx inst.tsx.045
+a<b> = c
+=== tsx inst.tsx.046
+a<b> += c
+=== tsx inst.tsx.047
+a<b>++
+=== tsx inst.tsx.048
+a<b>--
+=== tsx inst.tsx.049
+a<b>
+++c
+=== tsx inst.tsx.050
+(a<b>)
+=== tsx inst.tsx.051
+(a<b>)()
+=== tsx inst.tsx.052
+(a<b>).c
+=== tsx inst.tsx.053
+[a<b>]
+=== tsx inst.tsx.054
+[a<b>, c<d>]
+=== tsx inst.tsx.055
+({ a: b<c> })
+=== tsx inst.tsx.056
+({ a: b<c>, d })
+=== tsx inst.tsx.057
+f(a<b>)
+=== tsx inst.tsx.058
+f(a<b>, c)
+=== tsx inst.tsx.059
+f(a<b>(c))
+=== tsx inst.tsx.060
+f(a < b, c > (d))
+=== tsx inst.tsx.061
+f(a < b, c > d)
+=== tsx inst.tsx.062
+f(a<b, c>(d))
+=== tsx inst.tsx.063
+f(a<b, c>)
+=== tsx inst.tsx.064
+new a<b>
+=== tsx inst.tsx.065
+new a<b>()
+=== tsx inst.tsx.066
+new a<b>.c()
+=== tsx inst.tsx.067
+new a.b<c>()
+=== tsx inst.tsx.068
+new a<b>;
+=== tsx inst.tsx.069
+new a<b>
+()
+=== tsx inst.tsx.070
+new a<b>`t`
+=== tsx inst.tsx.071
+new a<b>[c]
+=== tsx inst.tsx.072
+new new a<b>()()
+=== tsx inst.tsx.073
+a.b<c>
+=== tsx inst.tsx.074
+a.b<c>.d
+=== tsx inst.tsx.075
+a?.b<c>
+=== tsx inst.tsx.076
+a?.b<c>()
+=== tsx inst.tsx.077
+a?.b<c>.d
+=== tsx inst.tsx.078
+a?.<b>()
+=== tsx inst.tsx.079
+a?.<b>`t`
+=== tsx inst.tsx.080
+a?.<b>
+=== tsx inst.tsx.081
+a[b]<c>
+=== tsx inst.tsx.082
+a()<b>
+=== tsx inst.tsx.083
+a`t`<b>
+=== tsx inst.tsx.084
+a<b><c>
+=== tsx inst.tsx.085
+a<b><c>()
+=== tsx inst.tsx.086
+a<b>()<c>()
+=== tsx inst.tsx.087
+a<b>(c)<d>(e)
+=== tsx inst.tsx.088
+(a<b>)<c>
+=== tsx inst.tsx.089
+typeof a<b>
+=== tsx inst.tsx.090
+void a<b>
+=== tsx inst.tsx.091
+delete a<b>
+=== tsx inst.tsx.092
+await a<b>
+=== tsx inst.tsx.093
+!a<b>
+=== tsx inst.tsx.094
+-a<b>
+=== tsx inst.tsx.095
+a<b<c>>
+=== tsx inst.tsx.096
+a<b<c>>()
+=== tsx inst.tsx.097
+a<b<c<d>>>()
+=== tsx inst.tsx.098
+a<b<c>>>d
+=== tsx inst.tsx.099
+a<b, c>(d)
+=== tsx inst.tsx.100
+a < b > (c)
+=== tsx inst.tsx.101
+a < b > c
+=== tsx inst.tsx.102
+a<b>c
+=== tsx inst.tsx.103
+a < b >= c
+=== tsx inst.tsx.104
+a<b>>c
+=== tsx inst.tsx.105
+a<b>>>c
+=== tsx inst.tsx.106
+a<b>>=c
+=== tsx inst.tsx.107
+a<b>=c
+=== tsx inst.tsx.108
+a<<b>(c) => d>(e)
+=== tsx inst.tsx.109
+a<<b>() => c>
+=== tsx inst.tsx.110
+a<<b>(c)>(d)
+=== tsx inst.tsx.111
+a << b
+=== tsx inst.tsx.112
+a <<= b
+=== tsx inst.tsx.113
+a<b>>(c)
+=== tsx inst.tsx.114
+a<b> > (c)
+=== tsx inst.tsx.115
+a<b>
+(c)
+=== tsx inst.tsx.116
+a<b>
+`c`
+=== tsx inst.tsx.117
+a<b>
+[c]
+=== tsx inst.tsx.118
+a<b>
+.c
+=== tsx inst.tsx.119
+a<b>
+?.c
+=== tsx inst.tsx.120
+a<b>
+<c>d
+=== tsx inst.tsx.121
+a<b>
+!
+=== tsx inst.tsx.122
+a<b>
++c
+=== tsx inst.tsx.123
+a<b>
+-c
+=== tsx inst.tsx.124
+a < b > -c
+=== tsx inst.tsx.125
+a < b > +c
+=== tsx inst.tsx.126
+a < b > !c
+=== tsx inst.tsx.127
+a < b > ~c
+=== tsx inst.tsx.128
+a < b > typeof c
+=== tsx inst.tsx.129
+a < b > await c
+=== tsx inst.tsx.130
+a < b > new C
+=== tsx inst.tsx.131
+a < b > this
+=== tsx inst.tsx.132
+a < b > 1
+=== tsx inst.tsx.133
+a < b > "s"
+=== tsx inst.tsx.134
+a < b > [c]
+=== tsx inst.tsx.135
+a < b > {}
+=== tsx inst.tsx.136
+a < b > function () {}
+=== tsx inst.tsx.137
+a < b > class {}
+=== tsx inst.tsx.138
+a < b > /r/
+=== tsx inst.tsx.139
+a < b > <C>d
+=== tsx inst.tsx.140
+a < b > @d class {}

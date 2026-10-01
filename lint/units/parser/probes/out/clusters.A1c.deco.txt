@@ -1,0 +1,122 @@
+class A1c  dialect ts  config deco: 175 inputs in 23 clusters
+
+[03-signatures / arrowSig]  bun Cannot use "…" here   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x2
+    "{ await }"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+
+[03-signatures / arrowSig]  bun Unexpected …   (20 inputs, 4 distinct)
+    tsc also: TS2304 x11, TS7031 x10, TS7006 x5
+    "[await]"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "{ a: await }"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "await"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+    "await: A"  [arrow,arrowRet,genericArrow,arrowInCond,arrowInCondRet]
+
+[03-signatures / declSig]  bun Expected "…" but found "…"   (4 inputs, 2 distinct)
+    tsc also: TS7019 x2, TS2304 x2
+    "...a,"  [declareMethod,declareCtor]
+    "...a: A[],"  [declareMethod,declareCtor]
+
+[03-signatures / memberSig]  bun Backtrack   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x1
+    "[a, , b]"  [callSig,constructSig,methodSig,ifaceMethod,ifaceCall]
+
+[03-signatures / typeSig]  bun Expected "…" but found "…"   (2 inputs, 1 distinct)
+    tsc also: TS7031 x2, TS2304 x1, TS2322 x1
+    "[a, , b]"  [fnTypeAsArg,fnTypeArrowRet]
+
+[03-signatures / typeSig]  bun Unexpected …   (5 inputs, 1 distinct)
+    tsc also: TS7031 x5, TS2304 x3
+    "[a, , b]"  [fnType,ctorType,abstractCtorType,genericFnType,fnTypeInUnion]
+
+[06-class-members / classHead]  bun Cannot use "…" as an identifier here   (1 inputs, 1 distinct)
+    "class await {}"  [-]
+
+[06-class-members / classHead]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "abstract declare class C {}"  [-]
+
+[06-class-members / member]  bun Expected "…" but found "…"   (34 inputs, 12 distinct)
+    tsc also: TS2304 x23, TS4112 x4, TS7008 x4
+    "public accessor x: T;"  [class,abstractClass,declareClass,classExpr]
+    "override accessor x: T;"  [class,abstractClass,declareClass,classExpr]
+    "static accessor x = 1;"  [class,abstractClass,classExpr]
+    "accessor #x = 1;"  [class,abstractClass,classExpr]
+    "accessor [x] = 1;"  [class,abstractClass,classExpr]
+    "accessor 1 = 1;"  [class,abstractClass,classExpr]
+    "accessor static;"  [class,abstractClass,declareClass,classExpr]
+    "accessor x\n= 1;"  [class,abstractClass,classExpr]
+    "[k: string]: T, "  [class,abstractClass,declareClass,classExpr]
+    "static accessor x: T;"  [abstractClass]
+    "abstract accessor x: T;"  [abstractClass]
+    "accessor x!: T;"  [abstractClass]
+
+[06-class-members / member]  bun Expected "…" but found "…"x"…"   (3 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "accessor \"x\" = 1;"  [class,abstractClass,classExpr]
+
+[06-class-members / member]  bun Unexpected …   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "[await: string]: T;"  [class,abstractClass,declareClass,classExpr]
+
+[06-class-members / modifier]  bun Expected "…" but found "…"   (34 inputs, 9 distinct)
+    tsc also: TS2304 x23, TS7008 x8
+    "accessor x: T;"  [class,abstractClass,declareClass,classExpr]
+    "accessor x = 1;"  [class,abstractClass,classExpr]
+    "accessor x;"  [class,abstractClass,declareClass,classExpr]
+    "accessor x!: T;"  [class,abstractClass,classExpr]
+    "accessor 1: T;"  [class,abstractClass,declareClass,classExpr]
+    "accessor [x]: T;"  [class,abstractClass,declareClass,classExpr]
+    "accessor #x: T;"  [class,abstractClass,declareClass,classExpr]
+    "accessor accessor;"  [class,abstractClass,declareClass,classExpr]
+    "static accessor x: T;"  [class,abstractClass,declareClass,classExpr]
+
+[06-class-members / modifier]  bun Expected "…" but found "…"x"…"   (4 inputs, 1 distinct)
+    tsc also: TS2304 x4
+    "accessor \"x\": T;"  [class,abstractClass,declareClass,classExpr]
+
+[09-decorators / classPos]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "export default @d abstract class C {}"  [-]
+
+[09-decorators / expr]  bun "…" is a reserved word and cannot be used in strict mode   (1 inputs, 1 distinct)
+    tsc also: TS2304 x1
+    "@await"  [staticField]
+
+[09-decorators / expr]  bun Expected "…" but found end of file   (2 inputs, 1 distinct)
+    tsc also: TS2304 x2
+    "@await"  [classDecl,classDeclNewline]
+
+[09-decorators / expr]  bun Expected identifier but found "…"   (5 inputs, 1 distinct)
+    tsc also: TS2304 x5, TS7008 x2
+    "@await"  [field,fieldNewline,method,computed,computedField]
+
+[09-decorators / expr]  bun Private name "…" must be declared in an enclosing class   (21 inputs, 3 distinct)
+    tsc also: TS2304 x18, TS2339 x18, TS7008 x6, TS7006 x3
+    "@d.#e"  [field,fieldNewline,method,computed,computedField,staticField,param]
+    "@d.#e()"  [field,fieldNewline,method,computed,computedField,staticField,param]
+    "@d.e.#f"  [field,fieldNewline,method,computed,computedField,staticField,param]
+
+[09-decorators / memberPos]  bun Expected "…" but found "…"   (13 inputs, 4 distinct)
+    tsc also: TS2304 x13
+    "@d accessor x: T;"  [class,abstractClass,declareClass,decoratedClass]
+    "@d static accessor x = 1;"  [class,abstractClass,decoratedClass]
+    "@d accessor x = 1;"  [class,abstractClass,decoratedClass]
+    "@d accessor [x] = 1;"  [class,abstractClass,decoratedClass]
+
+[09-decorators / memberPos]  bun Expected "…" but found "…"x"…"   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "@d accessor \"x\" = 1;"  [class,abstractClass,decoratedClass]
+
+[09-decorators / otherPos]  bun Cannot use a declaration in a single-statement context   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "if (a) @d class C {}"  [-]
+    "for (;;) @d class C {}"  [-]
+
+[10-declaration-files / bodyless]  bun Expected "…" but found "…"   (3 inputs, 3 distinct)
+    tsc also: TS2304 x3
+    "export class C { accessor x: T; }"  [-]
+    "export class C { static accessor x: T; }"  [-]
+    "export class C { accessor #x: T; }"  [-]
+
+[10-declaration-files / directive]  bun The constant "…" must be initialized   (2 inputs, 2 distinct)
+    "// @ts-ignore\nexport const x: T;"  [-]
+    "// @ts-expect-error\nexport const x: T;"  [-]

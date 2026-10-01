@@ -1,0 +1,1382 @@
+[
+	{
+		"code": "x === 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 === x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x == 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 == x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x === '0'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'0' === x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x == '0'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'0' == x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x === '-0'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'-0' === x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x == '-0'",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "'-0' == x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x === -1",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "-1 === x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x < 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 < x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x <= 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 <= x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x > 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 > x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x >= 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 >= x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x != 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 != x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x !== 0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "0 !== x",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "Object.is(x, -0)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": [],
+		"eslintTest": true
+	},
+	{
+		"code": "x === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 === x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x !== -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 !== x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x == -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 == x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x != -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '!=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '!=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 != x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '!=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '!=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x > -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Do not use the '>' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '>' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 > x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Do not use the '>' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '>' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x >= -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '>=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '>=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 >= x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '>=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '>=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x < -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Do not use the '<' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '<' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 < x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 7,
+				"message": "Do not use the '<' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '<' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x <= -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '<=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '<=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 <= x",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 8,
+				"message": "Do not use the '<=' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '<=' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "(a + b) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "(a, b) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 14,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 == -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "if (x !== -0) {}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "x === /* keep */ -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "function f(Object) { return x === -0; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"start": 28,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "function f(Object) { return x !== -0; }",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 29,
+				"endLine": 1,
+				"endColumn": 37,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 29,
+				"start": 28,
+				"length": 1,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"eslintTest": true
+	},
+	{
+		"code": "-0 === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === - 0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -(0)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === (-0)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0.0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0x0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0e5",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -.0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0b0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0o0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -0n",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === - -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === +0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -\"0\"",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x + -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x = -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x && -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x instanceof -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x in -0",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "f(-0)",
+		"sourceType": "script",
+		"eslint": [],
+		"expect": []
+	},
+	{
+		"code": "x === -0 === y",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "a === -0 || b === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			},
+			{
+				"line": 1,
+				"column": 13,
+				"endLine": 1,
+				"endColumn": 21,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 13,
+				"start": 12,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			},
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "if (x === -0) {\n  y = z !== -0;\n}",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 5,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Do not use the '===' operator to compare against -0."
+			},
+			{
+				"line": 2,
+				"column": 7,
+				"endLine": 2,
+				"endColumn": 15,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"start": 4,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			},
+			{
+				"line": 2,
+				"column": 7,
+				"start": 22,
+				"length": 1,
+				"message": "Do not use the '!==' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "(x) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 11,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "(x + 1) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "((x)) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 13,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "(x === -0)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 2,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 2,
+				"start": 1,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "( x) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 12,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "(/* c */ x) === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 19,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 10,
+				"start": 9,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"differs": "moved"
+	},
+	{
+		"code": "x ===\n  -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 2,
+				"endColumn": 5,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "var s = `${x === -0}`",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 12,
+				"endLine": 1,
+				"endColumn": 20,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 12,
+				"start": 11,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "<a b={x === -0} />",
+		"sourceType": "script",
+		"jsx": true,
+		"eslint": [
+			{
+				"line": 1,
+				"column": 7,
+				"endLine": 1,
+				"endColumn": 15,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 7,
+				"start": 6,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "é === -0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 9,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 2,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "\"😀\" + (y === -0)",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 9,
+				"endLine": 1,
+				"endColumn": 17,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 9,
+				"start": 10,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -/* c */0",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 16,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	},
+	{
+		"code": "x === -00",
+		"sourceType": "script",
+		"eslint": [
+			{
+				"line": 1,
+				"column": 1,
+				"endLine": 1,
+				"endColumn": 10,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		],
+		"expect": [
+			{
+				"line": 1,
+				"column": 1,
+				"start": 0,
+				"length": 1,
+				"message": "Do not use the '===' operator to compare against -0."
+			}
+		]
+	}
+]

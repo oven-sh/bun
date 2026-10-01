@@ -1,0 +1,107 @@
+[
+ [
+  "CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>",
+  [
+   "c00045u0_file.js:11",
+   "c03090u0_0.js:46",
+   "c03097u0_0.js:57",
+   "c03098u0_0.js:36",
+   "c03165u0_file.js:32",
+   "c03181u0_bug38550.js:10",
+   "c03256u0_functions.js:10",
+   "c03257u0_a.js:6",
+   "c03291u0_a.js:21",
+   "c03293u0_paren.js:18",
+   "c03295u0_paren.js:17",
+   "c03309u0_forgot.js:58",
+   "c03319u1_a.js:157",
+   "c03335u0_a.js:19",
+   "c03336u0_a.js:14",
+   "c03338u0_a.js:18",
+   "c09722u0_example.js:7"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Comment:> ts<.Comment:>",
+  [
+   "c03216u1_foo.js:24",
+   "c03289u0_0.js:65",
+   "c03311u0_a.js:96",
+   "c03317u0_file.js:21",
+   "c03388u0_a.js:55",
+   "c03393u0_a.js:96"
+  ]
+ ],
+ [
+  "err   pos KindJSTypeAliasDeclaration",
+  [
+   "c03342u0_bug26693.js:3",
+   "c03395u0_mod1.js:3",
+   "c03395u2_mod3.js:3",
+   "c03395u3_mod4.js:3"
+  ]
+ ],
+ [
+  "CLEAN kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>",
+  [
+   "c03089u0_0.js:57",
+   "c03182u0_index.js:8"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Tags:> ts<.Tags:>",
+  [
+   "c03261u1_a.js:59",
+   "c09618u0_jsFileAlternativeUseOfOverloadTag.js:109"
+  ]
+ ],
+ [
+  "err   flags KindCommaToken xor=0x10000",
+  [
+   "c03432u1_file.jsx:26",
+   "c09672u0_a.jsx:35"
+  ]
+ ],
+ [
+  "CLEAN kind go<KindTypeReference> ts<KindJSDocNamepathType>",
+  [
+   "c03166u0_index.js:18"
+  ]
+ ],
+ [
+  "CLEAN pos KindJSDocTypeExpression",
+  [
+   "c03290u0_a.js:29"
+  ]
+ ],
+ [
+  "CLEAN label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken>",
+  [
+   "c03296u0_a.js:54"
+  ]
+ ],
+ [
+  "CLEAN kind go<KindJSDocNonNullableType> ts<KindArrayType>",
+  [
+   "c03298u0_prefixPostfix.js:13"
+  ]
+ ],
+ [
+  "CLEAN pos KindJSDocText",
+  [
+   "c03339u1_linkTagEmit1.js:85"
+  ]
+ ],
+ [
+  "CLEAN shape go<.Statements:> ts<.Statements:>",
+  [
+   "c03365u0_templateInsideCallback.js:2"
+  ]
+ ],
+ [
+  "CLEAN pos KindJSTypeAliasDeclaration",
+  [
+   "c03386u0_typedefDuplicateTypeDeclaration.js:3"
+  ]
+ ]
+]

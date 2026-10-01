@@ -1,0 +1,20 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+tuple.ts(8,1): error TS2322: Type '[number]' is not assignable to type '[number, string]'.
+  Source has 1 element(s) but target requires 2.
+tuple.ts(8,10): error TS2322: Type '[number, string, boolean]' is not assignable to type '[number, string]'.
+  Source has 3 element(s) but target allows only 2.
+tuple.ts(8,19): error TS4104: The type 'readonly [number, string]' is 'readonly' and cannot be assigned to the mutable type '[number, string]'.
+tuple.ts(8,28): error TS2322: Type '[number, ...string[]]' is not assignable to type '[number, string]'.
+  Target requires 2 element(s) but source may have fewer.
+tuple.ts(8,46): error TS2322: Type 'number[]' is not assignable to type '[number, string]'.
+  Target requires 2 element(s) but source may have fewer.
+tuple.ts(8,55): error TS2322: Type '[number, string]' is not assignable to type 'number[]'.
+  Type 'string | number' is not assignable to type 'number'.
+    Type 'string' is not assignable to type 'number'.
+tuple.ts(8,64): error TS4104: The type 'readonly number[]' is 'readonly' and cannot be assigned to the mutable type 'number[]'.
+tuple.ts(10,1): error TS2322: Type '[a: number, b: string]' is not assignable to type '[a: string, b: number]'.
+  Type at position 0 in source is not compatible with type at position 0 in target.
+    Type 'number' is not assignable to type 'string'.
+tuple.ts(11,36): error TS2322: Type '[number, (string | undefined)?]' is not assignable to type '[number, string]'.
+  Source provides no match for required element at position 1 in target.
+SIZES after check: identity=0 assignable=12 comparable=0 subtype=0 strictSubtype=0 enum=0 types=161

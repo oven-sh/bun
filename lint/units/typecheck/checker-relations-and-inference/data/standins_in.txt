@@ -1,0 +1,147 @@
+== R-REL
+  before TYPES: Type.AsLiteralType@typ706 Type.AsMappedType@typ712 Type.AsReverseMappedType@typ713 Type.AsTypeParameter@typ715 Type.AsUnionType@typ716 Type.AsIntersectionType@typ717 Type.AsIndexType@typ718 Type.AsIndexedAccessType@typ719 Type.AsTemplateLiteralType@typ720 Type.AsStringMappingType@typ721 Type.AsSubstitutionType@typ722 Type.AsConditionalType@typ723 Type.AsTypeReference@typ730 Type.AsInterfaceType@typ731 Type.Distributed@typ736 Type.Target@typ748 Type.Types@typ776 Type.TargetTupleType@typ790 Type.Symbol@typ794 InterfaceType.TypeParameters@typ1042
+  before LINKS: symbolArenaLinkStore.Get@lin33
+  before MAPPER: newTypeMapper@map40 newSimpleTypeMapper@map114
+  before UTIL: NewDiagnosticForNode@uti22 isStaticPrivateIdentifierProperty@uti72 getDeclarationModifierFlagsFromSymbol@uti713 isObjectLiteralType@uti824 isNumericLiteralName@uti898 isLateBoundName@uti986
+  before T-KEYS: getRelationKey@17723
+  before K-OBJ: c.createTypeReference@25226
+  before D-SINK: c.addDiagnostic@14086
+  before S-MERGE: createDiagnosticForNode@14358 c.getParentOfSymbol@14459
+  before M-MODULE: c.getMembersOfSymbol@16218
+  before K-LIT: c.getRegularTypeOfLiteralType@25396 isFreshLiteralType@25424 isLiteralType@25516 isUnitType@25533 c.getBaseTypeOfLiteralType@25557 c.getBaseTypeOfEnumLikeType@25593
+  before K-PRED: c.IsEmptyAnonymousObjectType@26599 c.isEmptyObjectType@26608 someType@26660 everyType@26667 c.filterType@26681 containsType@26739 c.isErrorType@26761 c.maybeTypeOfKind@27729 c.isUnknownLikeUnionType@27926 c.typeHasCallOrConstructSignatures@27984 c.extractTypesOfKind@28278 c.getTargetType@31607
+  before K-GENERIC: c.isGenericObjectType@24995 c.isGenericIndexType@24999 c.isGenericTupleType@25027 c.isGenericMappedType@25031
+  before K-UNION: c.getUnionType@25740
+  before K-INTERSECT: c.intersectTypes@26147 c.getIntersectionType@26175 c.getIntersectionTypeEx@26179
+  before T-TUPLE: c.createNormalizedTupleType@23465 getStartElementCount@23559 getEndElementCount@23569 c.getElementTypes@23582 c.getTypeReferenceArity@23591 c.isArrayType@23595 c.isReadonlyArrayType@23599 isTupleType@23603 isMutableTupleType@23607 isSingleElementGenericTupleType@23615 c.isArrayOrTupleType@23619 c.isMutableArrayOrTuple@23623 c.isEmptyArrayLiteralType@23646 c.createArrayType@24824 c.getKnownKeysOfTupleType@rel1930
+  before T-DECLARED: c.getDeclaredTypeOfSymbol@23784
+  before T-ENUMVAL: c.getEnumMemberValue@24035
+  before T-CONSTRAINT: c.getConstraintOfType@17141 c.getConstraintOfTypeParameter@17153 c.hasNonCircularBaseConstraint@17160 c.getDefaultConstraintOfConditionalType@17357 c.getConstraintOfDistributiveConditionalType@17378 c.getMinTypeArgumentCount@22052 c.fillMissingTypeArguments@22068 c.getBaseConstraintOrType@27551 c.getBaseConstraintOfType@27559 getRecursionIdentityTarget@rel820 getRecursionIdentityFromTarget@rel840
+  before T-BASE: c.getBaseTypes@19281 getBaseTypeNodeOfClass@19381 c.hasBaseType@19665 c.getTypeWithThisArgument@19687
+  before T-MEMBERS: c.resolveStructuredTypeMembers@19176
+  before T-UIMEMBERS: c.getPropertyOfUnionOrIntersectionType@21528 c.compareProperties@27795
+  before T-LOOKUP: c.getPropertiesOfType@18960 c.getPropertiesOfObjectType@18968 c.getPropertiesOfUnionOrIntersectionType@18975 c.getPropertyOfType@19001 c.getTypeOfPropertyOfType@19065 c.getSignaturesOfType@19073 c.getSignaturesOfStructuredType@19077 c.getIndexInfosOfType@19088 c.getIndexInfoOfType@19101 c.getIndexTypeOfTypeEx@19115 c.getApplicableIndexInfo@19122 c.getApplicableIndexInfoForName@19126 c.isApplicableIndexType@19168 c.getPropertyOfObjectType@21517
+  before T-APPARENT: c.isMappedTypeGenericIndexedAccess@21829 c.getApparentType@21843 c.getReducedType@21933 c.isDiscriminantWithNeverType@21996 isConflictingPrivateProperty@22002
+  before T-SIGDECL: c.getReturnTypeOfSignature@20115
+  before T-INSTANTIATE: c.getTypeArguments@22007 c.instantiateType@22214 c.isTypeParameterPossiblyReferenced@22517 c.cloneTypeParameter@22632 c.getPermissiveInstantiation@24602 c.getRestrictiveInstantiation@24615
+  before T-SYMTYPE: c.getTypeOfSymbol@16587 c.getNonMissingTypeOfSymbol@16618 c.addOptionalityEx@18747 c.removeMissingType@29215
+  before T-WIDEN: c.getRegularTypeOfObjectLiteral@28282
+  AFTER (type layer that lands after inference) K-KEYOF: c.getIndexType@26803 c.getIndexTypeEx@26807 c.getLiteralTypeFromProperty@26869 c.shouldDeferIndexType@26957
+  AFTER (type layer that lands after inference) K-INDEXED: c.getIndexedAccessType@27046 c.getIndexedAccessTypeOrUndefined@27058 c.getSuggestionForNonexistentProperty@27346 c.getSuggestedTypeForNonexistentStringLiteralType@27375 c.getSimplifiedType@28025 c.getSimplifiedTypeOrConstraint@28156
+  AFTER (type layer that lands after inference) K-SUBST: c.getSubstitutionIntersection@26950
+  AFTER (type layer that lands after inference) K-COND: c.getTrueTypeFromConditionalType@24662 c.getFalseTypeFromConditionalType@24670
+  AFTER (type layer that lands after inference) T-MAPPED: c.getTypeParameterFromMappedType@22784 c.getConstraintTypeFromMappedType@22792 c.getNameTypeFromMappedType@22800 c.getTemplateTypeFromMappedType@22811 c.isMappedTypeWithKeyofConstraintDeclaration@22823 c.getApparentMappedTypeKeys@22832 getMappedTypeModifiers@29135 c.getCombinedMappedTypeOptionality@29163 isPartialMappedType@29183
+  AFTER (type layer that lands after inference) K-TEMPLATE: c.templateLiteralTypesDefinitelyUnrelated@rel2354 c.isTypeMatchedByTemplateLiteralType@rel2365 c.isMemberOfStringMapping@rel2531
+  AFTER later:binder.go: binder.GetSymbolNameForPrivateIdentifier@bin369
+  AFTER later:c20_object_literals_spread: c.isNonGenericObjectType@13627 c.isReadonlySymbol@13950
+  AFTER later:c50_contextual_properties_inference_context: c.isContextSensitive@31020
+  AFTER later:c51_type_facts_awaited: c.isFunctionObjectType@31263 c.getTypeWithFacts@31273
+  AFTER later:jsx.go: c.getSuggestedSymbolForNonexistentJSXAttribute@jsx485 c.getJsxType@jsx1293
+  AFTER later:printer.go: c.TypeToString@pri43 c.typeToString@pri47 c.TypeToStringEx@pri55 c.typeToStringEx@pri59 c.SymbolToString@pri120 c.symbolToString@pri124 c.valueToString@pri249
+  AFTER later:relater.go: r.traceUnionsOrIntersectionsTooLarge@rel5028
+  AFTER later:tracer.go: Tracer.Push@tra29 Tracer.Instant@tra45
+== R-SIGREL
+  before TYPES: Type.Target@typ748
+  before MAPPER: newTypeMapper@map40
+  before T-CONSTRAINT: c.getConstraintFromTypeParameter@17165 c.getConstraintOrUnknownFromTypeParameter@17203 c.getDefaultOrUnknownFromTypeParameter@22158
+  before T-LOOKUP: c.getSignaturesOfType@19073
+  before T-SIGDECL: c.getReturnTypeOfSignature@20115 c.getNonCircularReturnTypeOfSignature@20165
+  before T-SIGSHAPE: c.isTopSignature@rel1708 c.getParameterCount@rel1726 c.getMinArgumentCount@rel1737 c.hasEffectiveRestParameter@rel1782 c.getTypeAtPosition@rel1790 c.tryGetTypeAtPosition@rel1798 c.getRestOrAnyTypeAtPosition@rel1819 c.getNonArrayRestType@rel1891 c.getThisTypeOfSignature@rel1947 c.isInstantiatedGenericParameter@rel1954 c.getParameterNameAtPosition@rel1962 c.getTypePredicateOfSignature@rel2049 c.typePredicateKindsMatch@rel2113
+  before T-SIGINST: c.getSingleCallSignature@19455 c.getErasedSignature@19510 c.getCanonicalSignature@19523 c.instantiateSignatureInContextOf@19580 c.instantiateSignatureEx@20733
+  before T-INSTANTIATE: c.instantiateType@22214
+  before T-SYMTYPE: c.GetNonNullableType@18777
+  AFTER later:c51_type_facts_awaited: c.getTypeFacts@31097
+  AFTER later:printer.go: c.TypeToString@pri43 c.signatureToString@pri179 c.typePredicateToString@pri229
+== R-VARIANCE
+  before TYPES: VarianceFlags.String@typ569 Type.AsInterfaceType@typ731 InterfaceType.TypeParameters@typ1042
+  before MAPPER: newSimpleTypeMapper@map114
+  before K-OBJ: c.createTypeReference@25226
+  before K-PRED: c.isErrorType@26761
+  before T-DECLARED: c.getDeclaredTypeOfSymbol@23784
+  before T-TYPENODE: c.getTypeAliasInstantiation@23755
+  before T-INSTANTIATE: c.instantiateType@22214 c.instantiateTypes@22881
+  AFTER later:tracer.go: Tracer.Push@tra29
+== R-DISCRIM
+  before TYPES: Type.AsUnionType@typ716 Type.Distributed@typ736 Type.Target@typ748 Type.Types@typ776
+  before K-LIT: c.getRegularTypeOfLiteralType@25396 isLiteralType@25516 isUnitType@25533
+  before K-PRED: someType@26660 c.filterType@26681 countTypes@26751 c.maybeTypeOfKind@27729
+  before K-GENERIC: c.isGenericType@24991
+  before K-UNION: c.getUnionTypeEx@25751
+  before K-INTERSECT: c.getIntersectionType@26175
+  before T-TUPLE: isTupleType@23603 c.isArrayLikeType@23634
+  before T-UIMEMBERS: c.getUnionOrIntersectionProperty@21542
+  before T-LOOKUP: c.getPropertiesOfType@18960 c.getPropertyOfType@19001 c.getTypeOfPropertyOfType@19065 c.getSignaturesOfType@19073
+  before T-APPARENT: c.getReducedType@21933
+  before T-SYMTYPE: c.getTypeOfSymbol@16587 c.getNonMissingTypeOfSymbol@16618
+  AFTER (type layer that lands after inference) K-KEYOF: c.getIndexType@26803
+  AFTER (type layer that lands after inference) K-INDEXED: c.getTypeOfPropertyOrIndexSignatureOfType@29437
+  AFTER later:tracer.go: Tracer.Instant@tra45
+== R-ELAB
+  before TYPES: Type.Types@typ776
+  before UTIL: isTypeUsableAsPropertyName@uti879 getPropertyNameFromType@uti886 hasType@uti1265
+  before S-MERGE: createDiagnosticForNode@14358 c.getSymbolOfDeclaration@14484
+  before K-LIT: c.getNumberLiteralType@25437
+  before K-UNION: c.getUnionType@25740
+  before T-TUPLE: c.isTupleLikeType@23658
+  before T-LOOKUP: c.getPropertyOfType@19001 c.getTypeOfPropertyOfType@19065 c.getSignaturesOfType@19073 c.getApplicableIndexInfo@19122
+  before T-SIGDECL: c.getReturnTypeOfSignature@20115
+  before T-SIGINST: c.getSingleCallSignature@19455
+  before T-SYMTYPE: c.removeMissingType@29215
+  AFTER (type layer that lands after inference) K-KEYOF: c.getLiteralTypeFromProperty@26869
+  AFTER (type layer that lands after inference) K-INDEXED: c.getIndexedAccessTypeOrUndefined@27058 c.getPropertyNameFromIndex@27478
+  AFTER later:c14_expressions: c.checkArrayLiteral@8111
+  AFTER later:c15_calls: c.getEffectiveCheckNode@9471
+  AFTER later:c20_object_literals_spread: c.checkExpressionForMutableLocation@13979
+  AFTER later:c34_return_types: c.createPromiseType@20462
+  AFTER later:c50_contextual_properties_inference_context: c.pushContextualType@30999 c.popContextualType@31003
+  AFTER later:jsx.go: c.elaborateJsxComponents@jsx296
+  AFTER later:printer.go: c.TypeToString@pri43
+== I-INFER
+  before TYPES: Type.AsIntrinsicType@typ705 Type.AsMappedType@typ712 Type.AsIndexType@typ718 Type.AsIndexedAccessType@typ719 Type.AsTemplateLiteralType@typ720 Type.AsStringMappingType@typ721 Type.AsSubstitutionType@typ722 Type.AsConditionalType@typ723 Type.AsTypeReference@typ730 Type.Distributed@typ736 Type.Target@typ748 Type.Types@typ776 Type.TargetTupleType@typ790
+  before LINKS: symbolArenaLinkStore.Get@lin33
+  before MAPPER: mergeTypeMappers@map65 c.newBackreferenceMapper@map88 newMergedTypeMapper@map252 c.newInferenceTypeMapper@map303
+  before UTIL: IsTypeAny@uti287 CompareTypes@uti415 isValidNumberString@uti927 isValidBigIntString@uti935 isObjectOrArrayLiteralType@uti990 pseudoBigIntToString@uti1185
+  before K-OBJ: c.newAnonymousType@25213 c.newIndexInfo@25386
+  before S-MERGE: c.newSymbol@14170
+  before K-LIT: c.getRegularTypeOfLiteralType@25396 c.getNumberLiteralType@25437 c.parseBigIntLiteralType@25465 getStringLiteralValue@25469 getNumberLiteralValue@25473 getBigIntLiteralValue@25477 getBooleanLiteralValue@25481 isLiteralType@25516 c.getBaseTypeOfLiteralType@25557 c.getWidenedLiteralType@25610
+  before K-PRED: someType@26660 c.filterType@26681 c.maybeTypeOfKind@27729
+  before K-GENERIC: c.isGenericMappedType@25031
+  before K-UNION: c.mapType@25684 c.getUnionType@25740 c.getUnionTypeEx@25751
+  before K-INTERSECT: c.getIntersectionType@26175
+  before T-TUPLE: getEndElementCount@23569 c.getTypeReferenceArity@23591 c.isArrayType@23595 isTupleType@23603 c.isArrayOrTupleType@23619 c.isMutableArrayLikeType@23640 c.createArrayType@24824 c.createTupleTypeEx@24863 c.getElementTypeOfSliceOfTupleType@24953 c.sliceTupleType@rel1915
+  before T-CONSTRAINT: c.getConstraintOfType@17141 c.getConstraintOfTypeParameter@17153 c.getDefaultConstraintOfConditionalType@17357 c.getMinTypeArgumentCount@22052 c.fillMissingTypeArguments@22068 c.getDefaultFromTypeParameter@22110 c.getBaseConstraintOfType@27559
+  before T-BASE: c.getTypeWithThisArgument@19687
+  before T-LOOKUP: c.getPropertiesOfType@18960 c.getPropertiesOfObjectType@18968 c.getPropertyOfType@19001 c.getSignaturesOfType@19073 c.getIndexInfosOfType@19088 c.getApplicableIndexInfo@19122 c.isApplicableIndexType@19168
+  before T-APPARENT: c.getApparentType@21843 c.getReducedType@21933
+  before T-SIGDECL: c.getReturnTypeOfSignature@20115
+  before T-SIGSHAPE: c.getParameterCount@rel1726 c.getTypeAtPosition@rel1790 c.getRestTypeAtPosition@rel1829 c.getEffectiveRestType@rel1899 c.getThisTypeOfSignature@rel1947 c.getTypePredicateOfSignature@rel2049 c.typePredicateKindsMatch@rel2113
+  before T-SIGINST: c.getErasedSignature@19510 c.getBaseSignature@19552
+  before T-INSTANTIATE: c.getTypeArguments@22007 c.instantiateType@22214 c.clearActiveMapperCaches@22289
+  before T-SYMTYPE: c.getTypeOfSymbol@16587 c.getNullableType@18764 c.removeMissingType@29215 c.removeMissingOrUndefinedType@29222
+  before T-WIDEN: c.getWidenedType@18469
+  AFTER (type layer that lands after inference) K-KEYOF: c.getIndexTypeEx@26807 c.getLiteralTypeFromProperty@26869
+  AFTER (type layer that lands after inference) K-INDEXED: c.getSimplifiedType@28025 c.distributeIndexOverObjectType@28113
+  AFTER (type layer that lands after inference) K-SUBST: c.isNoInferType@26945 c.getSubstitutionIntersection@26950 c.getActualTypeVariable@31694
+  AFTER (type layer that lands after inference) K-COND: c.getTrueTypeFromConditionalType@24662 c.getFalseTypeFromConditionalType@24670
+  AFTER (type layer that lands after inference) T-MAPPED: c.getConstraintTypeFromMappedType@22792 c.getNameTypeFromMappedType@22800 c.getTemplateTypeFromMappedType@22811
+  AFTER (type layer that lands after inference) K-TEMPLATE: applyStringMapping@29365 c.isTypeMatchedByTemplateLiteralType@rel2365 c.inferTypesFromTemplateLiteralType@rel2378
+  AFTER later:c20_object_literals_spread: c.isNonGenericObjectType@13627 c.isConstTypeVariable@13746
+  AFTER later:c48_contextual_types: c.getContextualType@29466 c.getContextualTypeForObjectLiteralMethod@30087
+== I-REVMAP
+  before TYPES: Type.AsReverseMappedType@typ713 Type.AsUnionType@typ716 Type.AsIndexType@typ718 Type.AsIndexedAccessType@typ719 Type.Types@typ776 Type.TargetTupleType@typ790
+  before LINKS: symbolArenaLinkStore.Get@lin33
+  before MAPPER: newTypeMapper@map40
+  before UTIL: isObjectLiteralType@uti824
+  before K-OBJ: c.newObjectType@25186 c.setStructuredTypeMembers@25268 c.newIndexInfo@25386
+  before S-MERGE: c.newSymbolEx@14178
+  before K-LIT: c.getNumberLiteralType@25437
+  before K-INTERSECT: c.getIntersectionType@26175
+  before T-TUPLE: c.getElementTypes@23582 c.isArrayType@23595 c.isReadonlyArrayType@23599 isTupleType@23603 c.createArrayTypeEx@24828 c.createTupleType@24858 c.createTupleTypeEx@24863
+  before T-LOOKUP: c.getPropertiesOfType@18960 c.getIndexInfoOfType@19101
+  before T-INSTANTIATE: c.getTypeArguments@22007 c.instantiateType@22214
+  before T-SYMTYPE: c.getTypeOfSymbol@16587
+  before T-WIDEN: c.getWidenedType@18469
+  AFTER (type layer that lands after inference) K-KEYOF: c.getIndexType@26803 c.getLiteralTypeFromProperty@26869
+  AFTER (type layer that lands after inference) K-INDEXED: c.getIndexedAccessType@27046
+  AFTER (type layer that lands after inference) T-MAPPED: c.getTypeParameterFromMappedType@22784 c.getConstraintTypeFromMappedType@22792 c.getTemplateTypeFromMappedType@22811 getMappedTypeModifiers@29135
+  AFTER later:c20_object_literals_spread: c.isReadonlySymbol@13950

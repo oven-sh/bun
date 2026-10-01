@@ -1,0 +1,44 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+calls.ts(11,6): error TS2345: Argument of type 'boolean' is not assignable to parameter of type 'string'. [len=4]
+calls.ts(12,6): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'. [len=1]
+calls.ts(13,14): error TS2554: Expected 1-2 arguments, but got 3. [len=1]
+calls.ts(14,1): error TS2554: Expected 1-2 arguments, but got 0. [len=3]
+  RELATED calls.ts(3,22): message TS6210: An argument for 'x' was not provided. [len=9]
+calls.ts(15,13): error TS2554: Expected 1-2 arguments, but got 3. [len=1]
+calls.ts(16,5): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'. [len=1]
+calls.ts(17,5): error TS2344: Type 'number' does not satisfy the constraint 'string'. [len=6]
+calls.ts(18,5): error TS2558: Expected 1 type arguments, but got 2. [len=14]
+calls.ts(19,5): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'. [len=1]
+calls.ts(20,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=3]
+calls.ts(21,6): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=8]
+calls.ts(22,5): error TS2554: Expected 1-2 arguments, but got 3. [len=23]
+calls.ts(23,5): error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter. [len=19]
+calls.ts(24,1): error TS2349: This expression is not callable. [len=5]
+  CHAIN TS2757: Type '{ a: 1; }' has no call signatures.
+calls.ts(25,5): error TS2351: This expression is not constructable. [len=5]
+  CHAIN TS2761: Type '{ a: 1; }' has no construct signatures.
+calls.ts(26,1): error TS2347: Untyped function calls may not accept type arguments. [len=14]
+calls.ts(27,7): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=3]
+calls.ts(28,1): error TS2348: Value of type 'new (x: string) => K' is not callable. Did you mean to include 'new'? [len=13]
+calls.ts(29,7): error TS2322: Type 'number' is not assignable to type 'string'. [len=2]
+calls.ts(30,28): error TS2322: Type 'number' is not assignable to type 'string'. [len=8]
+  RELATED calls.ts(6,36): message TS6502: The expected type comes from the return type of this signature. [len=11]
+calls.ts(31,16): error TS2345: Argument of type 'TemplateStringsArray' is not assignable to parameter of type 'string'. [len=3]
+calls.ts(33,8): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=3]
+calls.ts(35,1): error TS2722: Cannot invoke an object which is possibly 'undefined'. [len=5]
+calls.ts(36,9): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'. [len=3]
+calls.ts(37,22): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+  RELATED lib.es5.d.ts(1452,24): message TS6502: The expected type comes from the return type of this signature. [len=42]
+AFTER check
+STATE flowInvocationCount=26 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=1
+STATE flowNodeReachable=1 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=215 SymbolCount=335 SignatureCount=50

@@ -1,0 +1,1 @@
+["let z = a as T[] <= b;", "let z = a as any <= b;", "if (a as number << 2) {}", "let z = a as typeof x <b>;", "let z = a as T < b > (c);", "let z = a as typeof x.y[0] << b;"]

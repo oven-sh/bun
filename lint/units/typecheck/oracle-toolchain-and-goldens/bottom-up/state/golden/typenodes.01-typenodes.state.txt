@@ -1,0 +1,185 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /typenodes.ts
+SINCE type=85 signature=4
+DRIVE typenodes
+TYPENODE UnionType@/typenodes.ts:18:63 T94
+TYPENODE LiteralType@/typenodes.ts:18:22 T86
+TYPENODE LiteralType@/typenodes.ts:24:28 T88
+TYPENODE LiteralType@/typenodes.ts:30:32 T90
+TYPENODE LiteralType@/typenodes.ts:34:37 T92
+TYPENODE LiteralType@/typenodes.ts:39:44 T19
+TYPENODE LiteralType@/typenodes.ts:46:51 T13
+TYPENODE UndefinedKeyword@/typenodes.ts:53:63 T10
+TYPENODE UnionType@/typenodes.ts:85:107 T29
+TYPENODE StringKeyword@/typenodes.ts:85:92 T14
+TYPENODE NumberKeyword@/typenodes.ts:94:101 T15
+TYPENODE LiteralType@/typenodes.ts:103:107 T86
+TYPENODE IntersectionType@/typenodes.ts:129:159 T97
+TYPENODE TypeLiteral@/typenodes.ts:129:143 T95
+TYPENODE StringKeyword@/typenodes.ts:134:141 T14
+TYPENODE TypeLiteral@/typenodes.ts:145:159 T96
+TYPENODE NumberKeyword@/typenodes.ts:150:157 T15
+TYPENODE ArrayType@/typenodes.ts:179:188 T98
+TYPENODE StringKeyword@/typenodes.ts:179:186 T14
+TYPENODE TypeOperator@/typenodes.ts:207:225 T99
+TYPENODE ArrayType@/typenodes.ts:216:225 T99
+TYPENODE NumberKeyword@/typenodes.ts:216:223 T15
+TYPENODE TupleType@/typenodes.ts:245:277 T106
+TYPENODE StringKeyword@/typenodes.ts:247:253 T14
+TYPENODE OptionalType@/typenodes.ts:254:262 T105
+TYPENODE NumberKeyword@/typenodes.ts:254:261 T15
+TYPENODE RestType@/typenodes.ts:263:276 T21
+TYPENODE ArrayType@/typenodes.ts:267:276 T107
+TYPENODE BooleanKeyword@/typenodes.ts:267:274 T21
+TYPENODE TypeOperator@/typenodes.ts:299:340 T113
+TYPENODE TupleType@/typenodes.ts:308:340 T113
+TYPENODE NamedTupleMember@/typenodes.ts:310:323 T14
+TYPENODE StringKeyword@/typenodes.ts:316:323 T14
+TYPENODE NamedTupleMember@/typenodes.ts:324:339 T15
+TYPENODE NumberKeyword@/typenodes.ts:332:339 T15
+TYPENODE FunctionType@/typenodes.ts:359:423 T114
+TYPENODE VoidKeyword@/typenodes.ts:366:371 T23
+TYPENODE NumberKeyword@/typenodes.ts:375:382 T15
+TYPENODE StringKeyword@/typenodes.ts:387:394 T14
+TYPENODE ArrayType@/typenodes.ts:404:414 T107
+TYPENODE BooleanKeyword@/typenodes.ts:404:412 T21
+TYPENODE VoidKeyword@/typenodes.ts:418:423 T23
+TYPENODE ConstructorType@/typenodes.ts:444:465 T115
+TYPENODE TypeReference@/typenodes.ts:455:457 T116
+TYPENODE ArrayType@/typenodes.ts:461:465 T117
+TYPENODE TypeReference@/typenodes.ts:461:463 T116
+TYPENODE TypeLiteral@/typenodes.ts:485:566 T118
+TYPENODE LiteralType@/typenodes.ts:490:492 T90
+TYPENODE LiteralType@/typenodes.ts:497:503 T119
+TYPENODE TupleType@/typenodes.ts:516:520 T126
+TYPENODE LiteralType@/typenodes.ts:518:519 T124
+TYPENODE NumberKeyword@/typenodes.ts:526:533 T15
+TYPENODE StringKeyword@/typenodes.ts:535:542 T14
+TYPENODE NumberKeyword@/typenodes.ts:547:554 T15
+TYPENODE UnknownKeyword@/typenodes.ts:556:564 T9
+TYPENODE ArrayType@/typenodes.ts:588:608 T127
+TYPENODE ParenthesizedType@/typenodes.ts:588:606 T29
+TYPENODE UnionType@/typenodes.ts:590:605 T29
+TYPENODE StringKeyword@/typenodes.ts:590:596 T14
+TYPENODE NumberKeyword@/typenodes.ts:598:605 T15
+TYPENODE TypeOperator@/typenodes.ts:628:642 T128
+TYPENODE SymbolKeyword@/typenodes.ts:635:642 T22
+TYPENODE StringKeyword@/typenodes.ts:668:675 T14
+TYPENODE StringKeyword@/typenodes.ts:677:684 T14
+TYPENODE NumberKeyword@/typenodes.ts:710:717 T15
+TYPENODE NumberKeyword@/typenodes.ts:719:726 T15
+TYPENODE UnknownKeyword@/typenodes.ts:752:760 T9
+TYPENODE TypePredicate@/typenodes.ts:762:774 T21
+TYPENODE StringKeyword@/typenodes.ts:767:774 T14
+TYPENODE UnknownKeyword@/typenodes.ts:805:813 T9
+TYPENODE TypePredicate@/typenodes.ts:815:825 T23
+TYPENODE TypeLiteral@/typenodes.ts:861:875 T129
+TYPENODE NumberKeyword@/typenodes.ts:866:873 T15
+TYPENODE ArrayType@/typenodes.ts:880:884 T131
+TYPENODE TypeReference@/typenodes.ts:880:882 T130
+TYPENODE TypeReference@/typenodes.ts:888:890 T130
+TYPENODE TypeReference@/typenodes.ts:895:897 T132
+TYPENODE TupleType@/typenodes.ts:899:906 T137
+TYPENODE TypeReference@/typenodes.ts:901:902 T130
+TYPENODE TypeReference@/typenodes.ts:903:905 T132
+STATE
+COUNTS TypeCount=137 SymbolCount=17 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=17 mergedSymbols=0 globals=134
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=137 SymbolCount=17 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=137
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x400 objectFlags=0x0 data=Literal value=s"x" fresh=T87 regular=T86
+TYPE 87 flags=0x400 objectFlags=0x0 data=Literal value=s"x" fresh=T87 regular=T86
+TYPE 88 flags=0x400 objectFlags=0x0 data=Literal value=s"y" fresh=T89 regular=T88
+TYPE 89 flags=0x400 objectFlags=0x0 data=Literal value=s"y" fresh=T89 regular=T88
+TYPE 90 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T91 regular=T90
+TYPE 91 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=T91 regular=T90
+TYPE 92 flags=0x1000 objectFlags=0x0 data=Literal value=b2 fresh=T93 regular=T92
+TYPE 93 flags=0x1000 objectFlags=0x0 data=Literal value=b2 fresh=T93 regular=T92
+TYPE 94 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T13 T86 T88 T90 T92 T19]
+TYPE 95 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@TypeLiteral@/typenodes.ts:129:143/0x800
+TYPE 96 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@TypeLiteral@/typenodes.ts:145:159/0x800
+TYPE 97 flags=0x10000000 objectFlags=0x0 data=Intersection types=[T95 T96]
+TYPE 98 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T14]
+TYPE 99 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 target=T79 targs=[T15]
+TYPE 100 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 101 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 102 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 103 flags=0x100000 objectFlags=0xc data=Tuple target=T103 inst=[T103 T106] targs=[T100 T101 T102] tparams=[T100 T101 T102 T104] outer=0 this=T104 dmembers={"0":Y1 "1":Y2 "length":Y3} dcalls=nil dctors=nil dindex=nil elements=[1 2 4] minLength=1 fixedLength=2 combinedFlags=7 readonly=false
+TYPE 104 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T103 isThisType
+TYPE 105 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T15]
+TYPE 106 flags=0x100000 objectFlags=0x40000004 data=TypeReference target=T103 targs=[T14 T105 T21]
+TYPE 107 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T21]
+TYPE 108 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 109 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 110 flags=0x800 objectFlags=0x0 data=Literal value=n2 fresh=nil regular=T110
+TYPE 111 flags=0x100000 objectFlags=0xc data=Tuple target=T111 inst=[T111 T113] targs=[T108 T109] tparams=[T108 T109 T112] outer=0 this=T112 dmembers={"0":Y4 "1":Y5 "length":Y6} dcalls=nil dctors=nil dindex=nil elements=[1:NamedTupleMember@/typenodes.ts:310:323 1:NamedTupleMember@/typenodes.ts:324:339] minLength=2 fixedLength=2 combinedFlags=1 readonly=true
+TYPE 112 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T111 isThisType
+TYPE 113 flags=0x100000 objectFlags=0x40000004 data=TypeReference target=T111 targs=[T14 T15]
+TYPE 114 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@FunctionType@/typenodes.ts:359:423/0x800
+TYPE 115 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@ConstructorType@/typenodes.ts:444:465/0x800
+TYPE 116 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/typenodes.ts:450:451/0x40000 constraint=nil
+TYPE 117 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T116]
+TYPE 118 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@TypeLiteral@/typenodes.ts:485:566/0x800
+TYPE 119 flags=0x400 objectFlags=0x0 data=Literal value=s"two" fresh=T120 regular=T119
+TYPE 120 flags=0x400 objectFlags=0x0 data=Literal value=s"two" fresh=T120 regular=T119
+TYPE 121 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 122 flags=0x100000 objectFlags=0xc data=Tuple target=T122 inst=[T122 T126] targs=[T121] tparams=[T121 T123] outer=0 this=T123 dmembers={"0":Y7 "length":Y8} dcalls=nil dctors=nil dindex=nil elements=[1] minLength=1 fixedLength=1 combinedFlags=1 readonly=false
+TYPE 123 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T122 isThisType
+TYPE 124 flags=0x800 objectFlags=0x0 data=Literal value=n3 fresh=T125 regular=T124
+TYPE 125 flags=0x800 objectFlags=0x0 data=Literal value=n3 fresh=T125 regular=T124
+TYPE 126 flags=0x100000 objectFlags=0x40000004 data=TypeReference target=T122 targs=[T124]
+TYPE 127 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T29]
+TYPE 128 flags=0x4000 objectFlags=0x0 data=UniqueESSymbol symbol="sym"@VariableDeclaration@/typenodes.ts:623:642/0x2 name="\xFE@sym@"{"sym"@VariableDeclaration@/typenodes.ts:623:642/0x2}
+TYPE 129 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@TypeLiteral@/typenodes.ts:861:875/0x800
+TYPE 130 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/typenodes.ts:852:875/0x40000 constraint=nil
+TYPE 131 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T130]
+TYPE 132 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="U"@TypeParameter@/typenodes.ts:876:884/0x40000 constraint=nil
+TYPE 133 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 134 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 135 flags=0x100000 objectFlags=0xc data=Tuple target=T135 inst=[T135 T137] targs=[T133 T134] tparams=[T133 T134 T136] outer=0 this=T136 dmembers={"0":Y9 "1":Y10 "length":Y11} dcalls=nil dctors=nil dindex=nil elements=[1 1] minLength=2 fixedLength=2 combinedFlags=1 readonly=false
+TYPE 136 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T135 isThisType
+TYPE 137 flags=0x100000 objectFlags=0x40000004 data=TypeReference target=T135 targs=[T130 T132]
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "\xFEtype"@TypeLiteral@/typenodes.ts:129:143/0x800 resolvedMembers={"a":"a"@PropertySignature@/typenodes.ts:131:141/0x4}
+LINKS "\xFEtype"@TypeLiteral@/typenodes.ts:145:159/0x800 resolvedMembers={"b":"b"@PropertySignature@/typenodes.ts:147:157/0x4}
+LINKS "\xFEtype"@FunctionType@/typenodes.ts:359:423/0x800 resolvedMembers={"\xFEcall":"\xFEcall"@FunctionType@/typenodes.ts:359:423/0x20000}
+LINKS "\xFEtype"@ConstructorType@/typenodes.ts:444:465/0x800 resolvedMembers={"\xFEnew":"\xFEnew"@ConstructorType@/typenodes.ts:444:465/0x20000}
+LINKS "T"@TypeParameter@/typenodes.ts:450:451/0x40000 declaredType=T116 referenceKinds=0xc09e8
+LINKS "\xFEtype"@TypeLiteral@/typenodes.ts:485:566/0x800 resolvedMembers={"\xFEindex":"\xFEindex"@IndexSignature@/typenodes.ts:543:564/0x20000 "a":"a"@PropertySignature@/typenodes.ts:487:493/0x4 "b":"b"@PropertySignature@/typenodes.ts:493:504/0x1000004 "c":"c"@PropertySignature@/typenodes.ts:504:521/0x4 "m":"m"@MethodSignature@/typenodes.ts:521:543/0x2000}
+LINKS "T"@TypeParameter@/typenodes.ts:852:875/0x40000 declaredType=T130 referenceKinds=0xc09e8
+LINKS "U"@TypeParameter@/typenodes.ts:876:884/0x40000 declaredType=T132 referenceKinds=0xc09e8
+LINKS "\xFEtype"@TypeLiteral@/typenodes.ts:861:875/0x800 resolvedMembers={"a":"a"@PropertySignature@/typenodes.ts:863:873/0x4}
+GLOBALS count=134 transient=2
+SYMBOL Y1 name="0" flags=0x2000004 checkFlags=0x0 declarations=[] type=T100
+SYMBOL Y2 name="1" flags=0x3000004 checkFlags=0x0 declarations=[] type=T101
+SYMBOL Y3 name="length" flags=0x2000004 checkFlags=0x0 declarations=[] type=T15
+SYMBOL Y4 name="0" flags=0x2000004 checkFlags=0x8 declarations=[] type=T108
+SYMBOL Y5 name="1" flags=0x2000004 checkFlags=0x8 declarations=[] type=T109
+SYMBOL Y6 name="length" flags=0x2000004 checkFlags=0x8 declarations=[] type=T110
+SYMBOL Y7 name="0" flags=0x2000004 checkFlags=0x0 declarations=[] type=T121
+SYMBOL Y8 name="length" flags=0x2000004 checkFlags=0x0 declarations=[] type=T90
+SYMBOL Y9 name="0" flags=0x2000004 checkFlags=0x0 declarations=[] type=T133
+SYMBOL Y10 name="1" flags=0x2000004 checkFlags=0x0 declarations=[] type=T134
+SYMBOL Y11 name="length" flags=0x2000004 checkFlags=0x0 declarations=[] type=T110
+SYMBOLS named=11 unnamed=6

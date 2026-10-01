@@ -1,0 +1,23 @@
+callee	where	module	lines	used by	closure functions	closure lines	closure
+c.checkArrayLiteral	checker.go:8111-8191	c14_expressions	81	R-ELAB: c.elaborateArrayLiteral	860	19905	(reaches the expression checker)
+c.getEffectiveCheckNode	checker.go:9471-9478	c15_calls	8	R-ELAB: c.elaborateArrayLiteral	1	8	c.getEffectiveCheckNode
+c.getDeclaringClass	checker.go:12011-12016	c18_identifiers_property_access_this	6	R-REL: r.propertyRelatedTo	1	6	c.getDeclaringClass
+c.isValidOverrideOf	checker.go:12019-12026	c18_identifiers_property_access_this	8	R-REL: r.propertyRelatedTo	4	35	c.forEachProperty c.getDeclaringClass c.isValidOverrideOf c.isPropertyInClassDerivedFrom
+c.getExactOptionalUnassignableProperties	checker.go:13208-13215	c19_assertions_binary_operators	8	R-REL: r.reportRelationError	2	11	c.getExactOptionalUnassignableProperties c.isExactOptionalPropertyMismatch
+c.isExactOptionalPropertyMismatch	checker.go:13217-13219	c19_assertions_binary_operators	3	R-ELAB: c.elaborateElement	1	3	c.isExactOptionalPropertyMismatch
+c.isNonGenericObjectType	checker.go:13627-13629	c20_object_literals_spread	3	R-REL: r.structuredTypeRelatedTo; I-INFER: c.inferFromTypes	1	3	c.isNonGenericObjectType
+c.isConstTypeVariable	checker.go:13746-13772	c20_object_literals_spread	27	I-INFER: c.applyToParameterTypes, c.getCovariantInference	1	27	c.isConstTypeVariable
+c.isReadonlySymbol	checker.go:13950-13964	c20_object_literals_spread	15	R-REL: r.propertyRelatedTo; I-REVMAP: c.resolveReverseMappedTypeMembers	860	19905	(reaches the expression checker)
+c.checkExpressionForMutableLocation	checker.go:13979-13989	c20_object_literals_spread	11	R-ELAB: c.checkExpressionForMutableLocationWithContextualType	860	19905	(reaches the expression checker)
+c.createPromiseType	checker.go:20462-20472	c34_return_types	11	R-ELAB: c.elaborateArrowFunction	16	420	c.isReferenceToType c.createPromiseType c.getPromisedTypeOfPromiseEx c.getTypeFacts c.hasTypeFacts c.getTypeFactsWorker c.getIntersectionTypeFacts isZeroBigInt c.isFunctionObjectType c.getTypeWithFacts c.getAwaitedTypeNoAlias c.getAwaitedTypeNoAliasEx c.isAwaitedTypeInstantiation c.isAwaitedTypeNeeded c.unwrapAwaitedType c.isThenableType
+c.getContextualType	checker.go:29466-29533	c48_contextual_types	68	I-INFER: c.inferFromIntraExpressionSites	860	19905	(reaches the expression checker)
+c.getContextualTypeForObjectLiteralMethod	checker.go:30087-30093	c48_contextual_types	7	I-INFER: c.inferFromIntraExpressionSites	860	19905	(reaches the expression checker)
+c.pushContextualType	checker.go:30999-31001	c50_contextual_properties_inference_context	3	R-ELAB: c.checkExpressionForMutableLocationWithContextualType, c.elaborateArrayLiteral	1	3	c.pushContextualType
+c.popContextualType	checker.go:31003-31007	c50_contextual_properties_inference_context	5	R-ELAB: c.checkExpressionForMutableLocationWithContextualType, c.elaborateArrayLiteral	1	5	c.popContextualType
+c.isContextSensitive	checker.go:31020-31052	c50_contextual_properties_inference_context	33	R-REL: c.symbolValueDeclarationIsContextSensitive	4	54	c.isContextSensitive c.isContextSensitiveFunctionLikeDeclaration c.hasContextSensitiveReturnExpression c.hasContextSensitiveYieldExpression
+c.getTypeFacts	checker.go:31097-31099	c51_type_facts_awaited	3	R-SIGREL: c.compareSignaturesRelated	5	167	c.getTypeFacts c.getTypeFactsWorker c.getIntersectionTypeFacts isZeroBigInt c.isFunctionObjectType
+c.isFunctionObjectType	checker.go:31263-31271	c51_type_facts_awaited	9	R-REL: c.isTypeDerivedFrom	1	9	c.isFunctionObjectType
+c.getTypeWithFacts	checker.go:31273-31277	c51_type_facts_awaited	5	R-REL: r.membersRelatedToIndexInfo	7	175	c.getTypeFacts c.hasTypeFacts c.getTypeFactsWorker c.getIntersectionTypeFacts isZeroBigInt c.isFunctionObjectType c.getTypeWithFacts
+c.elaborateJsxComponents	jsx.go:296-367	jsx.go	72	R-ELAB: c.elaborateError	864	20083	(reaches the expression checker)
+c.getSuggestedSymbolForNonexistentJSXAttribute	jsx.go:485-498	jsx.go	14	R-REL: r.hasExcessProperties	1	14	c.getSuggestedSymbolForNonexistentJSXAttribute
+c.getJsxType	jsx.go:1293-1302	jsx.go	10	R-REL: r.reportErrorResults	9	178	c.getJsxType c.getJsxNamespaceAt c.getJsxNamespace c.getLocalJsxNamespace c.getJsxFragmentFactoryEntity c.parseIsolatedEntityName markAsSynthetic c.getJsxNamespaceContainerForImplicitImport c.getJSXRuntimeImportSpecifier

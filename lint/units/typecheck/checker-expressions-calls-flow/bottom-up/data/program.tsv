@@ -1,0 +1,2 @@
+E-CORE	checker.go:7682	c.checkConstEnumAccess	GetProjectReferenceFromOutputDts
+E-CORE	checker.go:10874	c.checkImportMetaProperty	GetSourceFileMetaData

@@ -1,0 +1,8 @@
+units 16211, with parse diagnostics on a side 810, lists differ 52
+  28 only typescript-go: TS1127; only TypeScript: TS1127  e.g. c03984u0_TypeArgumentList1.ts c03985u0_parserX_TypeArgumentList1.ts
+  10 only typescript-go: TS1003; only TypeScript: -  e.g. c03100u0_0.js c03342u0_bug26693.js
+  10 only typescript-go: TS2880; only TypeScript: -  e.g. c03722u4_other2.ts c03722u7_other5.ts
+   1 only typescript-go: TS1005,TS1109,TS1128,TS1110; only TypeScript: -  e.g. c03255u0_jsdocDisallowedInTypescript.ts
+   1 only typescript-go: TS1453; only TypeScript: TS1453  e.g. c03747u2_index.ts
+   1 only typescript-go: -; only TypeScript: TS2458  e.g. c06078u0_amdModuleName2.ts
+   1 only typescript-go: TS1110; only TypeScript: -  e.g. c08510u0_expressionWithJSDocTypeArguments.ts

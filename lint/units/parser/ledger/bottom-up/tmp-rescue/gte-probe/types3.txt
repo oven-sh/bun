@@ -1,0 +1,77 @@
+A extends B ? string : string & never
+A extends B ? string : string & number
+A extends B ? string : number & string
+A extends B ? string : never | string
+A extends B ? string : string | number
+A extends B ? number : string | number
+A extends B ? string : unknown & string
+A extends B ? string : string & unknown
+A extends B ? string : any & string
+A extends B ? never : never | string
+A extends B ? string : string | never
+A extends B ? string : string & string
+A extends B ? string : keyof A
+A extends B ? string : readonly string[]
+A extends B ? string[] : readonly string[]
+A extends B ? string : string[]
+A extends B ? string : string extends C ? string : number
+A extends B ? string : keyof A extends C ? string : string
+A extends B ? string extends C ? string : string : string
+A extends B ? string | string extends C ? number : number : number
+keyof A extends B ? string : string
+keyof A | string extends B ? string : string
+string | keyof A extends B ? number : number
+readonly string[] extends B ? string : string
+readonly string[] | string extends B ? number : number
+string & keyof A extends B ? number : number
+unique symbol extends B ? number : number
+readonly A
+readonly string
+readonly number[]
+readonly [string]
+readonly (string[])
+readonly (string)
+readonly string | string
+string | readonly string
+readonly string & string
+readonly never | string
+readonly unknown | string
+readonly readonly string[]
+readonly keyof A
+keyof readonly A[]
+readonly A.B
+readonly A.B | A.B
+readonly typeof a
+readonly {}
+readonly (() => void)
+readonly A[] | B[]
+readonly A<B>
+readonly A | A
+unique symbol
+unique symbol | string
+string | unique symbol
+unique symbol & string
+import("x") | string
+string | import("x")
+import("x") & string
+import("x").A | string
+typeof import("x") | string
+import("x")[] | string[]
+import("x")["a"] | string
+A.B | A.C
+A.B | A.B
+A.B & A.C
+A.B.C | A.B.D
+A.B.C | A.B.C
+A.B | A
+A | A.B
+A.B | string
+string | A.B
+this is string | number
+asserts | string
+abstract
+abstract | string
+asserts
+unique
+infer U | string
+string | infer U

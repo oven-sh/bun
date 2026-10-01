@@ -1,0 +1,5 @@
+# cargo check after one unread field of Checker, then one uncalled method, was changed from pub to pub(crate):
+    Checking bun_typecheck_dm v0.0.0 (/workspace/notes/lint/units/typecheck/checker-data-model-contract/bottom-up/crate)
+src/checker/c02_checker_generated.rs:237:16: error: field `global_reg_exp_type` is never read
+error: could not compile `bun_typecheck_dm` (lib) due to 1 previous error
+src/checker/flow.rs:16:19: error: method `put_flow_state` is never used

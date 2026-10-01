@@ -1,0 +1,11 @@
+let x1 = <div>(<b/>)</div>;
+let x2 = <div>{(<b/>)}</div>;
+let x3 = <div>{ ((<b/>)) }</div>;
+let x4 = <div>{a} (<b/>) {c}</div>;
+let x5 = <div>((<b/>))</div>;
+let x6 = <div>{/* c */ (<b/>) /* d */}</div>;
+let x7 = <div>text ( <b></b> ) more</div>;
+let x8 = <><a/>(<b/>)</>;
+let x9 = <div>{(<><b/></>)}</div>;
+let x10 = <div>{x}(<b/>)</div>;
+let x11 = <div>(<b/>){x}</div>;

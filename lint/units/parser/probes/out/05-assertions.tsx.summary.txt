@@ -1,0 +1,792 @@
+group 05-assertions  dialect tsx  config plain  inputs 4713
+counts A1=115 A1c=36 A1s=79 A2=238 AA=2269 AAg=259 B=82 RR=1750
+
+calls of Bun that differ from transformSync without tsconfig: 6 inputs
+  "const v = y || <T>x = y;"  base="Syntax Error"  ts.plain.scanImports=ok ts.deco.scanImports=ok
+  "const v = (a: A = 1 = 2) => x;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "(a: A = 1 = 2) => x;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "f((a: A = 1 = 2) => x);"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = y ? (a: A = 1 = 2) => x : z;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "const v = y ? z : (a: A = 1 = 2) => x;"  base="Invalid assignment target"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+
+==== family as  (989 inputs)
+  bun: src/js_parser/parse/parse_suffix.rs:23-60 sfx_handle_typescript_as (returns the bare operand; 39-56 records forbid_suffix_after_as_loc), src/js_parser/parse/parse_suffix.rs:1488 call site
+  ref: parser.go:4638 parseBinaryExpressionRest (as / satisfies arm), 5185 parseTypeAssertion
+  counts A1=15 A2=23 AA=724 AAg=71 B=7 RR=149
+  -- A1: 3 distinct
+    "x as if"
+        contexts (5 of 5): init stmt arg element return
+        bun x5: Unexpected if @form+5
+    "x as var"
+        contexts (5 of 5): init stmt arg element return
+        bun x5: Unexpected var @form+5
+    "x as T <= y"
+        contexts (5 of 5): init stmt arg element return
+        bun x5: Unexpected = @form+8
+  -- A2: 7 distinct
+    "x as asserts a"
+        contexts (5 of 5): init stmt arg element return
+        bun x3: Expected ";" but found "a" @form+13
+        bun x1: Expected ")" but found "a" @form+13
+        bun x1: Expected "]" but found "a" @form+13
+        tsc x5: TS1228 @form+5 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "x as ?T"
+        contexts (5 of 5): init stmt arg element return
+        bun x5: Unexpected ? @form+5
+        tsc x5: TS17020 @form+5 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "x as T?"
+        contexts (5 of 5): init stmt arg element return
+        bun x2: Unexpected ; @form+7
+        bun x1: Unexpected ) @form+7
+        bun x1: Unexpected ] @form+7
+        bun x1: Unexpected } @form+8
+        tsc x5: TS17019 @form+5 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "x as *"
+        contexts (5 of 5): init stmt arg element return
+        bun x5: Unexpected * @form+5
+        tsc x5: TS8020 @form+5 len 1 "JSDoc types can only be used inside documentation comments."
+    "x as T, y"
+        contexts (1 of 5): init
+        bun x1: The constant "y" must be initialized @form+8
+        tsc x1: TS1155 @form+8 len 1 "'const' declarations must be initialized."
+    "x satisfies T, y"
+        contexts (1 of 5): init
+        bun x1: The constant "y" must be initialized @form+15
+        tsc x1: TS1155 @form+15 len 1 "'const' declarations must be initialized."
+    "await x as T"
+        contexts (1 of 5): return
+        bun x1: "await" can only be used inside an "async" function @form+6
+        tsc x1: TS1308 @form+0 len 5 "'await' expressions are only allowed within async functions and at the top levels of modules."
+  -- B: 3 distinct
+    "x as a is B"
+        contexts (5 of 5): init stmt arg element return
+        tsc x3: TS1005 @form+7 len 2 "',' expected."
+        tsc x2: TS1005 @form+7 len 2 "';' expected."
+    "type as T"
+        contexts (1 of 5): stmt
+        tsc x1: TS1005 @form+8 len 1 "'=' expected."
+    "await as T"
+        contexts (1 of 5): return
+        tsc x1: TS1005 @form+9 len 1 "';' expected."
+  -- AAg: 15 distinct
+    "x as const"
+        contexts (4 of 4): init stmt arg return
+        tsc x4: TS1355 @form+0 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "x as unique symbol"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1335 @form+5 len 13 "'unique symbol' types are not allowed here."
+    "x as infer U"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1338 @form+5 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "x as T!"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS17019 @form+5 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'T'?"
+    "x as const as T"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1355 @form+0 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "x as const satisfies T"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1355 @form+0 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "(x as const)"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1355 @form+1 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "[x as const]"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1355 @form+1 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "{ a: x as const }"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1355 @form+5 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "x as readonly const"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1354 @form+5 len 8 "'readonly' type modifier is only permitted on array and tuple literal types."
+    "x as let"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1212 @form+5 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "await x as T"
+        contexts (4 of 5): init stmt arg element
+        tsc x4: TS1375 @form+0 len 5 "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "delete x as T"
+        contexts (5 of 5): init stmt arg element return
+        tsc x5: TS1102 @form+7 len 1 "'delete' cannot be called on an identifier in strict mode."
+    "let as T"
+        contexts (4 of 5): init arg element return
+        tsc x4: TS1212 @form+0 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+    "new.target as T"
+        contexts (4 of 5): init stmt arg element
+        tsc x4: TS17013 @form+0 len 10 "Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor."
+
+==== family nonNull  (407 inputs)
+  bun: src/js_parser/parse/parse_suffix.rs:485-505 sfx_t_exclamation, src/js_parser/parse/parse_suffix.rs:1557
+  ref: parser.go:5395 parseMemberExpressionRest (ExclamationToken), 5501 parseCallExpressionRest
+  counts A1=6 A2=7 AA=311 AAg=6 B=8 RR=69
+  -- A1: 2 distinct
+    "super.x!"
+        contexts (3 of 3): stmt init arg
+        bun x3: Unexpected "super" @form+0
+    "this.#x!"
+        contexts (3 of 3): stmt init arg
+        bun x3: Expected identifier but found "#x" @form+5
+  -- A2: 3 distinct
+    "yield x!"
+        contexts (3 of 3): stmt init arg
+        bun x3: Cannot use "yield" outside a generator function @form+0
+        tsc x3: TS1163 @form+0 len 5 "A 'yield' expression is only allowed in a generator body."
+    "x!.#y"
+        contexts (3 of 3): stmt init arg
+        bun x3: Expected identifier but found "#y" @form+3
+        tsc x3: TS18016 @form+3 len 2 "Private identifiers are not allowed outside class bodies."
+    "x!, y!"
+        contexts (1 of 3): init
+        bun x1: Expected ":" but found ";" @form+6
+        tsc x1: TS1155 @form+4 len 1 "'const' declarations must be initialized."
+  -- B: 4 distinct
+    "(x!) => y"
+        contexts (3 of 3): stmt init arg
+        tsc x2: TS1005 @form+5 len 2 "';' expected."
+        tsc x1: TS1005 @form+5 len 2 "',' expected."
+    "(x!, y) => z"
+        contexts (3 of 3): stmt init arg
+        tsc x2: TS1005 @form+8 len 2 "';' expected."
+        tsc x1: TS1005 @form+8 len 2 "',' expected."
+    "label!: x"
+        contexts (1 of 3): stmt
+        tsc x1: TS1005 @form+6 len 1 "';' expected."
+    "x!: y"
+        contexts (1 of 3): stmt
+        tsc x1: TS1005 @form+2 len 1 "';' expected."
+  -- AAg: 2 distinct
+    "await x!"
+        contexts (3 of 3): stmt init arg
+        tsc x3: TS1375 @form+0 len 5 "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "new.target!"
+        contexts (3 of 3): stmt init arg
+        tsc x3: TS17013 @form+0 len 10 "Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor."
+
+==== family cast  (761 inputs)
+  bun: src/js_parser/parse/parse_prefix.rs:960-986 ("<T>x": 982-985)
+  ref: parser.go:5185 parseTypeAssertion, 5113 parseSimpleUnaryExpression
+  counts A1=6 AA=3 RR=752
+  -- A1: 2 distinct
+    "<out, T>(x) => x"
+        contexts (3 of 4): init stmt arg
+        bun x3: The modifier "out" is not valid here @form+1
+    "<out = A>(x) => x"
+        contexts (3 of 4): init stmt arg
+        bun x3: The modifier "out" is not valid here @form+1
+
+==== family target  (169 inputs)
+  bun: src/js_parser/parse/parse_suffix.rs:39-56 (forbid_suffix_after_as_loc), src/js_parser/p.rs convert_expr_to_binding / assignment target checks on the bare operand
+  ref: parser.go:4130 parseAssignmentExpressionOrHigherWorker, checker grammar 2364 / 1005
+  counts A2=1 AA=116 AAg=11 B=10 RR=31
+  -- A2: 1 distinct
+    "({ a! } = y)"
+        bun x1: Expected "}" but found "!" @4
+        tsc x1: TS18004 @3 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+  -- B: 10 distinct
+    "(x as T) => y"
+        tsc x1: TS1005 @9 len 2 "';' expected."
+    "(x!) => y"
+        tsc x1: TS1005 @5 len 2 "';' expected."
+    "(x satisfies T) => y"
+        tsc x1: TS1005 @16 len 2 "';' expected."
+    "([x as T]) => y"
+        tsc x1: TS1005 @4 len 2 "',' expected."
+    "({ a: x as T }) => y"
+        tsc x1: TS1005 @8 len 2 "',' expected."
+    "(x as T, z) => y"
+        tsc x1: TS1005 @12 len 2 "';' expected."
+    "(...x as T) => y"
+        tsc x1: TS1005 @6 len 2 "',' expected."
+    "async (x as T) => y"
+        tsc x1: TS1005 @15 len 2 "';' expected."
+    "label as T: x"
+        tsc x1: TS1005 @10 len 1 "';' expected."
+    "label!: x"
+        tsc x1: TS1005 @6 len 1 "';' expected."
+  -- AAg: 11 distinct
+    "(x as T!) = y"
+        tsc x1: TS17019 @6 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'T'?"
+    "({ a = 1 as T } = y)"
+        tsc x1: TS18004 @3 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+    "for await (x as T of y) {}"
+        tsc x1: TS1431 @4 len 5 "'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "for await ((x as T) of y) {}"
+        tsc x1: TS1431 @4 len 5 "'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "const x = y as const"
+        tsc x1: TS1355 @10 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = (y) as const"
+        tsc x1: TS1355 @10 len 3 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = (y as const)"
+        tsc x1: TS1355 @11 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = y.z as const"
+        tsc x1: TS1355 @10 len 3 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = E.A as const"
+        tsc x1: TS1355 @10 len 3 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = null as const"
+        tsc x1: TS1355 @10 len 4 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "const x = f() as const"
+        tsc x1: TS1355 @10 len 3 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+
+==== family arrow  (1852 inputs)
+  bun: src/js_parser/parse/mod.rs:418-660 parse_paren_expr (470-475 ": T" after an item, 478-490 "=" after the type, 574-587 return type), src/js_parser/parse/parse_skip_typescript.rs:1344-1355, src/js_parser/parse/parse_skip_typescript.rs:1372-1417 (between "?" and ":")
+  ref: parser.go:4244 isParenthesizedArrowFunctionExpression, 4261 nextIsParenthesizedArrowFunctionExpression, 4369 tryParseParenthesizedArrowFunctionExpression, 4390 parseParenthesizedArrowFunctionExpression, 4601 parseConditionalExpressionRest
+  counts A1=81 A2=90 AA=870 AAg=95 B=48 RR=668
+  -- A1: 17 distinct
+    "(this: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid binding pattern @form+1
+    "(this: A, a: B) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid binding pattern @form+1
+    "(this) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid binding pattern @form+1
+    "(this: A): this is B => true"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected ":" @form+5
+    "(): if => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected "=>" but found ":" @form+2
+    "(a: A = 1 = 2) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid assignment target @form+8
+    "(public a: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+8
+    "(private a) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+9
+    "(readonly a: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+10
+    "(protected a?: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+11
+    "(override a) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+10
+    "(public readonly) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "readonly" @form+8
+    "async (this: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid binding pattern @form+7
+    "a ? (await) : b"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected ) @form+10
+    "a ? (this): b => c : d"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x3: Expected ";" but found ":" @form+19
+        bun x1: Expected ")" but found ":" @form+19
+        bun x1: Expected ";" but found ":" @form+23
+    "a ? (this: T): b => c : d"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected ":" @form+9
+    "a ? ((b)) : c => d"
+        contexts (1 of 5): condTrue
+        bun x1: Expected ":" but found ";" @form+22
+  -- A2: 18 distinct
+    "(): ?A => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected "=>" but found ":" @form+2
+        tsc x5: TS17020 @form+4 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "(): A? => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected "=>" but found ":" @form+2
+        tsc x5: TS17019 @form+4 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "(): * => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected "=>" but found ":" @form+2
+        tsc x5: TS8020 @form+4 len 1 "JSDoc types can only be used inside documentation comments."
+    "(a): T\n=> x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected newline before "=>" @form+7
+        tsc x5: TS1200 @form+7 len 2 "Line terminator not permitted before arrow."
+    "(a? = 1) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected = @form+4
+        tsc x5: TS1015 @form+1 len 1 "Parameter cannot have question mark and initializer."
+    "(a: A?) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "?" @form+5
+        tsc x5: TS17019 @form+4 len 2 "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "(a: ?A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected ? @form+4
+        tsc x5: TS17020 @form+4 len 2 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'any'?"
+    "(...a: A[], b) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected "," after rest pattern @form+10
+        tsc x5: TS1014 @form+1 len 3 "A rest parameter must be last in a parameter list."
+    "(...a: A[] = []) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Invalid binding pattern @form+0
+        tsc x5: TS1048 @form+4 len 1 "A rest parameter cannot have an initializer."
+    "(...a = []) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: A rest argument cannot have a default initializer @form+6
+        tsc x5: TS1048 @form+4 len 1 "A rest parameter cannot have an initializer."
+    "(static a) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+8
+        tsc x5: TS1090 @form+1 len 6 "'static' modifier cannot appear on a parameter."
+    "(declare a) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+9
+        tsc x5: TS1090 @form+1 len 7 "'declare' modifier cannot appear on a parameter."
+    "(abstract a) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Expected ")" but found "a" @form+10
+        tsc x5: TS1242 @form+1 len 8 "'abstract' modifier can only appear on a class, method, or property declaration."
+    "async (a: A)\n=> x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected newline before "=>" @form+13
+        tsc x5: TS1200 @form+13 len 2 "Line terminator not permitted before arrow."
+    "async (a: A): T\n=> x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x4: Unexpected newline before "=>" @form+16
+        bun x1: Unexpected ":" @form+8
+        tsc x5: TS1200 @form+16 len 2 "Line terminator not permitted before arrow."
+    "async (await) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected ) @form+12
+        tsc x5: TS1359 @form+7 len 5 "Identifier expected. 'await' is a reserved word that cannot be used here."
+    "async (await: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected : @form+12
+        tsc x5: TS1359 @form+7 len 5 "Identifier expected. 'await' is a reserved word that cannot be used here."
+    "a ? (b): c\n=> d : e"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        bun x5: Unexpected newline before "=>" @form+11
+        tsc x5: TS1200 @form+11 len 2 "Line terminator not permitted before arrow."
+  -- B: 10 distinct
+    "(a): => a"
+        contexts (4 of 5): init stmt arg condFalse
+        tsc x3: TS1005 @form+3 len 1 "',' expected."
+        tsc x1: TS1005 @form+3 len 1 "';' expected."
+    "(a!: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1005 @form+3 len 1 "')' expected."
+    "(a!) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x3: TS1005 @form+5 len 2 "';' expected."
+        tsc x1: TS1005 @form+5 len 2 "',' expected."
+        tsc x1: TS1005 @form+5 len 2 "':' expected."
+    "(a as A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x3: TS1005 @form+9 len 2 "';' expected."
+        tsc x1: TS1005 @form+9 len 2 "',' expected."
+        tsc x1: TS1005 @form+9 len 2 "':' expected."
+    "((a): A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1005 @form+4 len 1 "')' expected."
+    "((a)): T => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x3: TS1005 @form+5 len 1 "',' expected."
+        tsc x1: TS1005 @form+5 len 1 "';' expected."
+        tsc x1: TS1005 @form+14 len 1 "',' expected."
+    "(a, (b): T) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1005 @form+7 len 1 "')' expected."
+    "async (a): => x"
+        contexts (4 of 5): init stmt arg condFalse
+        tsc x3: TS1005 @form+9 len 1 "',' expected."
+        tsc x1: TS1005 @form+9 len 1 "';' expected."
+    "a ? (b,) : c"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1109 @form+7 len 1 "Expression expected."
+    "a ? (b as T): c => d : e"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x3: TS1005 @form+21 len 1 "',' expected."
+        tsc x1: TS1005 @form+21 len 1 "';' expected."
+        tsc x1: TS1005 @form+25 len 1 "',' expected."
+  -- AAg: 19 distinct
+    "(a?, b) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1016 @form+5 len 1 "A required parameter cannot follow an optional parameter."
+    "(): unique symbol => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1335 @form+4 len 13 "'unique symbol' types are not allowed here."
+    "(): infer U => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1338 @form+4 len 7 "'infer' declarations are only permitted in the 'extends' clause of a conditional type."
+    "(): A! => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS17019 @form+4 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "(a?: A = 1) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1015 @form+1 len 1 "Parameter cannot have question mark and initializer."
+    "(a: A!) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS17019 @form+4 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'A'?"
+    "(...a?: A[]) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1047 @form+5 len 1 "A rest parameter cannot be optional."
+    "(public) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+    "(public, private) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x5: TS1212 @form+9 len 7 "Identifier expected. 'private' is a reserved word in strict mode."
+    "(public: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+    "(public = 1) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+1 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+    "async (yield: A) => x"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+7 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "a ? (b): c is C => true : d"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1225 @form+9 len 1 "Cannot find parameter 'c'."
+    "a ? (b): c! => d : e"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS17019 @form+9 len 2 "'!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'c'?"
+    "a ? (b): c => ({ d }) : e"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS18004 @form+17 len 1 "No value exists in scope for the shorthand property 'd'. Either declare one or provide an initializer."
+    "a ? (b) : { c }"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS18004 @form+12 len 1 "No value exists in scope for the shorthand property 'c'. Either declare one or provide an initializer."
+    "a ? (yield) : b"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS1212 @form+5 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "a ? ({ b }) : c"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS18004 @form+7 len 1 "No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer."
+    "a ? ({ b } = c) : d"
+        contexts (5 of 5): init stmt arg condTrue condFalse
+        tsc x5: TS18004 @form+7 len 1 "No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer."
+
+==== family varAnnot  (115 inputs)
+  bun: src/js_parser/parse/mod.rs:1277-1337 parse_and_declare_decls (1316 skips the type; "!" before ":")
+  ref: parser.go:1607 parseVariableDeclaration, 1615 parseVariableDeclarationWorker, 1708 parseTypeAnnotation
+  counts A2=7 AA=73 AAg=11 B=5 RR=19
+  -- A2: 7 distinct
+    "const x: T"
+        bun x1: The constant "x" must be initialized @6
+        tsc x1: TS1155 @6 len 1 "'const' declarations must be initialized."
+    "let x!"
+        bun x1: Expected ":" but found end of file @6
+        tsc x1: TS1264 @5 len 1 "Declarations with definite assignment assertions must also have type annotations."
+    "let x! = 1"
+        bun x1: Expected ":" but found "=" @7
+        tsc x1: TS1263 @5 len 1 "Declarations with initializers cannot also have definite assignment assertions."
+    "using x: T"
+        bun x1: The declaration "x" must be initialized @6
+        tsc x1: TS1155 @6 len 1 "'using' declarations must be initialized."
+    "using { a }: T = y"
+        bun x1: Expected ";" but found "{" @6
+        tsc x1: TS1492 @6 len 5 "'using' declarations may not have binding patterns."
+    "let x: asserts a = y"
+        bun x1: Expected ";" but found "a" @15
+        tsc x1: TS1228 @7 len 9 "A type predicate is only allowed in return type position for functions and methods."
+    "declare using x: T"
+        bun x1: Cannot use "declare" with a "using" declaration @8
+        tsc x1: TS1491 @0 len 7 "'declare' modifier cannot appear on a 'using' declaration."
+  -- B: 5 distinct
+    "let { a }!: T = b"
+        tsc x1: TS1005 @9 len 1 "',' expected."
+    "let [a]!: T = b"
+        tsc x1: TS1005 @7 len 1 "',' expected."
+    "for (let x!: T of y) {}"
+        tsc x1: TS1005 @10 len 1 "',' expected."
+    "for (let x!: T = 0;;) {}"
+        tsc x1: TS1005 @10 len 1 "',' expected."
+    "let x: a is B = y"
+        tsc x1: TS1005 @9 len 2 "',' expected."
+  -- AAg: 11 distinct
+    "let x!: T = 1"
+        tsc x1: TS1263 @5 len 1 "Declarations with initializers cannot also have definite assignment assertions."
+    "const x!: T = 1"
+        tsc x1: TS1263 @7 len 1 "Declarations with initializers cannot also have definite assignment assertions."
+    "let { a }: T"
+        tsc x1: TS1182 @4 len 5 "A destructuring declaration must have an initializer."
+    "let [a]: T"
+        tsc x1: TS1182 @4 len 3 "A destructuring declaration must have an initializer."
+    "using x!: T = y"
+        tsc x1: TS1263 @7 len 1 "Declarations with initializers cannot also have definite assignment assertions."
+    "for await (const x: T of y) {}"
+        tsc x1: TS1431 @4 len 5 "'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "let x: unique symbol = y"
+        tsc x1: TS1332 @4 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "declare let x: unique symbol"
+        tsc x1: TS1332 @12 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "declare var x!: T"
+        tsc x1: TS1255 @13 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "declare let x: T = 1"
+        tsc x1: TS1039 @19 len 1 "Initializers are not allowed in ambient contexts."
+    "declare const x: T = 1"
+        tsc x1: TS1039 @21 len 1 "Initializers are not allowed in ambient contexts."
+
+==== family catch  (42 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:432-435
+  ref: parser.go:1496 parseCatchClause
+  counts A1=1 A2=2 AA=16 AAg=5 B=1 RR=17
+  -- A1: 1 distinct
+    "try {} catch (e: any = 1) {}"
+        bun x1: Expected ")" but found "=" @21
+  -- A2: 2 distinct
+    "try {} catch (e = 1) {}"
+        bun x1: Expected ")" but found "=" @16
+        tsc x1: TS1197 @18 len 1 "Catch clause variable cannot have an initializer."
+    "try {} catch (e: asserts e) {}"
+        bun x1: Expected ")" but found "e" @25
+        tsc x1: TS1196 @17 len 7 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+        tsc x1: TS1228 @17 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- B: 1 distinct
+    "try {} catch (e: a is B) {}"
+        tsc x1: TS1005 @19 len 2 "')' expected."
+  -- AAg: 5 distinct
+    "try {} catch (e: () => void) {}"
+        tsc x1: TS1196 @17 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "try {} catch (e: { a: A }) {}"
+        tsc x1: TS1196 @17 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "try {} catch ({ a }: { a: A }) {}"
+        tsc x1: TS1196 @21 len 1 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+    "try {} catch (e: unique symbol) {}"
+        tsc x1: TS1196 @17 len 6 "Catch clause variable type annotation must be 'any' or 'unknown' if specified."
+        tsc x1: TS1334 @17 len 13 "'unique symbol' types are only allowed on variables in a variable statement."
+    "try {} catch (let: any) {}"
+        tsc x1: TS1212 @14 len 3 "Identifier expected. 'let' is a reserved word in strict mode."
+
+==== family objLit  (378 inputs)
+  bun: src/js_parser/parse/parse_property.rs:241-802 parse_property (605-630 "?" "!" and type parameters, object literal: opts.is_class false)
+  ref: parser.go:5678 parseObjectLiteralElement
+  counts A1=6 A2=108 AA=156 AAg=60 B=3 RR=45
+  -- A1: 2 distinct
+    "{ a?: 1 } = b"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+    "{ m(public a: A) {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected ")" but found "a" @form+11
+  -- A2: 36 distinct
+    "{ a?: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+        tsc x3: TS1162 @form+3 len 1 "An object member cannot be declared optional."
+    "{ a!: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "!" @form+3
+        tsc x3: TS1255 @form+3 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "{ a? }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+        tsc x3: TS18004 @form+2 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+        tsc x3: TS1162 @form+3 len 1 "An object member cannot be declared optional."
+    "{ a! }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "!" @form+3
+        tsc x3: TS18004 @form+2 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+        tsc x3: TS1255 @form+3 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "{ a?, b }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+        tsc x3: TS18004 @form+2 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+        tsc x3: TS1162 @form+3 len 1 "An object member cannot be declared optional."
+        tsc x3: TS18004 @form+6 len 1 "No value exists in scope for the shorthand property 'b'. Either declare one or provide an initializer."
+    "{ a = 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Unexpected "=" @form+4
+        tsc x3: TS1312 @form+4 len 1 "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern."
+    "{ m?() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+        tsc x3: TS1162 @form+3 len 1 "An object member cannot be declared optional."
+    "{ m!() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "!" @form+3
+        tsc x3: TS1255 @form+3 len 1 "A definite assignment assertion '!' is not permitted in this context."
+    "{ m?<T>() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+3
+        tsc x3: TS1162 @form+3 len 1 "An object member cannot be declared optional."
+    "{ [a]?: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected ":" but found "?" @form+5
+        tsc x3: TS1162 @form+5 len 1 "An object member cannot be declared optional."
+    "{ \"a\"?: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected ":" but found "?" @form+5
+        tsc x3: TS1162 @form+5 len 1 "An object member cannot be declared optional."
+    "{ readonly a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'readonly' modifier cannot be used here."
+    "{ public a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'public' modifier cannot be used here."
+    "{ private a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+10
+        tsc x3: TS1042 @form+2 len 7 "'private' modifier cannot be used here."
+    "{ protected a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+12
+        tsc x3: TS1042 @form+2 len 9 "'protected' modifier cannot be used here."
+    "{ static a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'static' modifier cannot be used here."
+    "{ abstract a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'abstract' modifier cannot be used here."
+    "{ declare a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+10
+        tsc x3: TS1042 @form+2 len 7 "'declare' modifier cannot be used here."
+    "{ override a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'override' modifier cannot be used here."
+    "{ accessor a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "a" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'accessor' modifier cannot be used here."
+    "{ export a: 1 }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected ":" but found "a" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'export' modifier cannot be used here."
+    "{ readonly m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+11
+        tsc x3: TS1024 @form+2 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+        tsc x3: TS1042 @form+2 len 8 "'readonly' modifier cannot be used here."
+    "{ public m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'public' modifier cannot be used here."
+        tsc x3: TS1184 @form+2 len 6 "Modifiers cannot appear here."
+    "{ static m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'static' modifier cannot be used here."
+        tsc x3: TS1184 @form+2 len 6 "Modifiers cannot appear here."
+    "{ abstract m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'abstract' modifier cannot be used here."
+        tsc x3: TS1244 @form+2 len 8 "Abstract methods can only appear within an abstract class."
+    "{ declare m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+10
+        tsc x3: TS1042 @form+2 len 7 "'declare' modifier cannot be used here."
+        tsc x3: TS1184 @form+2 len 7 "Modifiers cannot appear here."
+    "{ override m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "m" @form+11
+        tsc x3: TS1042 @form+2 len 8 "'override' modifier cannot be used here."
+        tsc x3: TS1184 @form+2 len 8 "Modifiers cannot appear here."
+    "{ public get a() { return 1 } }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "get" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'public' modifier cannot be used here."
+    "{ static async m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "async" @form+9
+        tsc x3: TS1042 @form+2 len 6 "'static' modifier cannot be used here."
+        tsc x3: TS1184 @form+2 len 6 "Modifiers cannot appear here."
+    "{ async readonly m() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "(" but found "m" @form+17
+        tsc x3: TS1024 @form+8 len 8 "'readonly' modifier can only appear on a property declaration or index signature."
+        tsc x3: TS1042 @form+8 len 8 "'readonly' modifier cannot be used here."
+    "{ a(): A; }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "{" but found ";" @form+8
+        tsc x3: TS1005 @form+8 len 1 "'{' expected."
+    "{ m(): void }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "{" but found "}" @form+12
+        tsc x3: TS1005 @form+10 len 1 "'{' expected."
+    "{ m(); }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "{" but found ";" @form+5
+        tsc x3: TS1005 @form+5 len 1 "'{' expected."
+    "{ new (): A }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "{" but found "}" @form+12
+        tsc x3: TS1005 @form+10 len 1 "'{' expected."
+    "{ async, await }"
+        contexts (3 of 3): init arg paren
+        bun x3: Cannot use "await" here @form+9
+        tsc x3: TS18004 @form+2 len 5 "No value exists in scope for the shorthand property 'async'. Either declare one or provide an initializer."
+        tsc x3: TS18004 @form+9 len 5 "No value exists in scope for the shorthand property 'await'. Either declare one or provide an initializer."
+    "{ async?() {} }"
+        contexts (3 of 3): init arg paren
+        bun x3: Expected "}" but found "?" @form+7
+        tsc x3: TS1162 @form+7 len 1 "An object member cannot be declared optional."
+  -- B: 1 distinct
+    "{ a<T>: 1 }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1005 @form+6 len 1 "'(' expected."
+  -- AAg: 20 distinct
+    "{ get a<T>() { return 1 } }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1094 @form+6 len 1 "An accessor cannot have type parameters."
+    "{ set a(v: A): void {} }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1095 @form+6 len 1 "A 'set' accessor cannot have a return type annotation."
+    "{ readonly }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 8 "No value exists in scope for the shorthand property 'readonly'. Either declare one or provide an initializer."
+    "{ public }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1212 @form+2 len 6 "Identifier expected. 'public' is a reserved word in strict mode."
+        tsc x3: TS18004 @form+2 len 6 "No value exists in scope for the shorthand property 'public'. Either declare one or provide an initializer."
+    "{ static }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1212 @form+2 len 6 "Identifier expected. 'static' is a reserved word in strict mode."
+        tsc x3: TS18004 @form+2 len 6 "No value exists in scope for the shorthand property 'static'. Either declare one or provide an initializer."
+    "{ abstract }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 8 "No value exists in scope for the shorthand property 'abstract'. Either declare one or provide an initializer."
+    "{ declare }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 7 "No value exists in scope for the shorthand property 'declare'. Either declare one or provide an initializer."
+    "{ accessor }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 8 "No value exists in scope for the shorthand property 'accessor'. Either declare one or provide an initializer."
+    "{ override }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 8 "No value exists in scope for the shorthand property 'override'. Either declare one or provide an initializer."
+    "{ readonly, a }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 8 "No value exists in scope for the shorthand property 'readonly'. Either declare one or provide an initializer."
+        tsc x3: TS18004 @form+12 len 1 "No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer."
+    "{ a: b as const }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS1355 @form+5 len 1 "A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+    "{ get, set }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 3 "No value exists in scope for the shorthand property 'get'. Either declare one or provide an initializer."
+        tsc x3: TS18004 @form+7 len 3 "No value exists in scope for the shorthand property 'set'. Either declare one or provide an initializer."
+    "{ type }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 4 "No value exists in scope for the shorthand property 'type'. Either declare one or provide an initializer."
+    "{ as }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 2 "No value exists in scope for the shorthand property 'as'. Either declare one or provide an initializer."
+    "{ satisfies }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 9 "No value exists in scope for the shorthand property 'satisfies'. Either declare one or provide an initializer."
+    "{ is }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 2 "No value exists in scope for the shorthand property 'is'. Either declare one or provide an initializer."
+    "{ asserts }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 7 "No value exists in scope for the shorthand property 'asserts'. Either declare one or provide an initializer."
+    "{ keyof }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 5 "No value exists in scope for the shorthand property 'keyof'. Either declare one or provide an initializer."
+    "{ infer }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 5 "No value exists in scope for the shorthand property 'infer'. Either declare one or provide an initializer."
+    "{ out }"
+        contexts (3 of 3): init arg paren
+        tsc x3: TS18004 @form+2 len 3 "No value exists in scope for the shorthand property 'out'. Either declare one or provide an initializer."

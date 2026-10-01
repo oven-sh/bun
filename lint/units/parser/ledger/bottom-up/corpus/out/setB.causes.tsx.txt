@@ -1,0 +1,154 @@
+set B by cause, view tsx: 20121 rows. The bun side accepts, the parser of tsc rejects. Key: the first code of tsc.
+
+  7299  TS1005   typescript-go gives the same first diagnostic: 7280   rows with a pin: 0
+        messages: ',' expected. x3864   ')' expected. x678   ':' expected. x633   ';' expected. x622
+        origins: gds:type-literal/heritagex285 gds:type-literal/iextendsx285 gds:function-type/iextendsx273 gds:function-type/heritagex273 gds:type-literal/arrowretx246 gds:type-literal/targx241
+        "x!: 1"   "a++!;"   "x!: y;"   "f<()>(x);"   "(x!) => y"
+  5658  TS1110   typescript-go gives the same first diagnostic: 5658   rows with a pin: 2
+        messages: Type expected. x5658
+        origins: gds:type-literal/targx399 gds:type-literal/arrowretx399 gds:function-type/targx368 p04:targsExprx280 gds:tuple/arrowretx168 gds:function-type/arrowretx144
+        "f<,>;"   "f<,A>;"   "a<,>()"   "f<,>()"   "f<,>();"
+  3508  TS1131   typescript-go gives the same first diagnostic: 3508   rows with a pin: 2
+        messages: Property or signature expected. x3508
+        origins: gds:function-type/retx236 gds:function-type/fnretx236 gds:type-literal/aliasx187 gds:type-literal/paramx187 gds:type-literal/varx187 gds:type-literal/fieldx187
+        "let x: { a A };"   "let x: { a b };"   "let x: { 1 A };"   "type X = { a! };"   "type A = { a b }"
+  1448  TS1109   typescript-go gives the same first diagnostic: 1446   rows with a pin: 0
+        messages: Expression expected. x1448
+        origins: gds:function-type/iextendsx229 gds:function-type/heritagex229 gds:query/iextendsx90 gds:query/heritagex90 gds:tuple/heritagex72 gds:tuple/iextendsx72
+        "f<const>;"   "f<.B>(x);"   "f<.A>(x);"   "f<.a>(x);"   "x = (a, );"
+   395  TS1385   typescript-go gives the same first diagnostic: 395   rows with a pin: 0
+        messages: Function type notation must be parenthesized when used in a union type. x395
+        origins: p11:formx102 p01:unionx65 p04:targsExprx49 p01:corex45 p11:positionx31 td01:set.union-fnx13
+        "f<A | () => void>;"   "f<| () => void>(x);"   "f<A | (a) => C>(x);"   "f<A |  () => B>(x);"   "let x: | () => void;"
+   189  TS1387   typescript-go gives the same first diagnostic: 189   rows with a pin: 0
+        messages: Function type notation must be parenthesized when used in an intersection type. x189
+        origins: p11:formx96 p01:unionx39 td01:set.intersection-fnx13 td01:set.leading-amp-fnx13 td01:set.intersection-generic-fnx13 td01:m.intersection.string.$28$29_$3d$3e_voidx4
+        "f<& () => void>(x);"   "let x: & () => void;"   "let t: & () => void;"   "f<A & () => void>(x);"   "f<A & <T>() => T>(x);"
+   185  TS1442   typescript-go gives the same first diagnostic: 185   rows with a pin: 0
+        messages: Expected '=' for property initializer. x185
+        origins: p11:positionx45 p11:formx38 gds:predicate/fieldx17 p01:predx13 gds:import-type/fieldx8 p01:fnx7
+        "class C { p: A!.B; }"   "class C { p: (a).b; }"   "class C { p: void.b; }"   "class C { p: null.b; }"   "class C { p: this.b; }"
+   163  TS1136   typescript-go gives the same first diagnostic: 163   rows with a pin: 0
+        messages: Property assignment expected. x163
+        origins: gds:type-literal/heritagex36 gds:type-literal/iextendsx36 gds:mapped/heritagex27 gds:mapped/iextendsx27 gds:mapped/targx13 gds:mapped/ternaryx7
+        "f<{ -1 A }>(x);"   "f<{ -1:  }>(x);"   "f<{ -1: A }>(x);"   "f<{ - a: A }>(x);"   "f<{ + a: A }>(x);"
+   152  TS1477   typescript-go gives the same first diagnostic: 152   rows with a pin: 0
+        messages: An instantiation expression cannot be followed by a property access. x152
+        origins: p04:targsExprx74 p09:exprx20 otg:broad2x8 gdt:02-expressionsx5 gds:query/targx4 otg:heritagex4
+        "a<b>.c"   "f<A>.b"   "f<T>.b"   "a<b>?.c"   "a<b>\n.c"
+   146  TS1003   typescript-go gives the same first diagnostic: 55   rows with a pin: 2
+        messages: Identifier expected. x146
+        origins: p01:queryx40 td01:query.privatex13 td01:query.this-privatex13 p11:formx9 p09:exprx8 p03:arrowSigx6
+        "f<infer>(x);"   "f<infer >(x);"   "f< infer>(x);"   "a?.<const>(x);"   "f<[infer]>(x);"
+   145  TS1011   typescript-go gives the same first diagnostic: 145   rows with a pin: 0
+        messages: An element access expression should take an argument. x145
+        origins: gds:operator/heritagex14 gds:operator/iextendsx14 gds:tuple/heritagex11 gds:tuple/iextendsx11 gds:array/iextendsx9 gds:array/heritagex9
+        "f<[a[]: A]>(x);"   "f<('x').A[]>(x);"   "class C implements A[] {}"   "class C implements I[] {}"   "class A implements B[] {}"
+   136  TS1359   typescript-go gives the same first diagnostic: 136   rows with a pin: 0
+        messages: Identifier expected. 'this' is a reserved word that cannot be used here. x67   Identifier expected. 'const' is a reserved word that cannot be used here. x35   Identifier expected. 'extends' is a reserved word that cannot be used here. x21   Identifier expected. 'in' is a reserved word that cannot be used here. x12
+        origins: p04:tparamsx50 p03:typeSigx10 p03:memberSigx10 p01:fnx6 resc:gct1a-42866/tparams2.txtx4 p11:formx3
+        "class C<in\nT> {}"   "type A<in\nT> = T"   "type X<in\nT> = 1;"   "class C<const\nT> {}"   "class A<const\nT> {}"
+   132  TS1144   typescript-go gives the same first diagnostic: 132   rows with a pin: 0
+        messages: '{' or ';' expected. x132
+        origins: p11:formx30 gds:import-type/retx8 gds:import-type/fnretx8 p01:predx7 p01:opx4 gds:query/retx4
+        "function f(x): A | x is T {}"   "function f(): A!.B { throw 0 }"   "function f(): (a).b { throw 0 }"   "function f(): void.b { throw 0 }"   "function f(): null.b { throw 0 }"
+   126  TS1386   typescript-go gives the same first diagnostic: 126   rows with a pin: 0
+        messages: Constructor type notation must be parenthesized when used in a union type. x126
+        origins: p01:unionx39 td01:set.union-newx13 td01:set.leading-bar-newx13 td01:set.union-abstract-newx13 p11:formx9 td01:m.union.string.new_$28$29_$3d$3e_Ax4
+        "f<| new () => A>(x);"   "let x: | new () => A;"   "f< | new () => B>(x);"   "f<A | new () => B>(x);"   "let x:  | new () => B;"
+    70  TS1146   typescript-go gives the same first diagnostic: 70   rows with a pin: 0
+        messages: Declaration expected. x70
+        origins: p04:targsExprx43 p09:exprx14 p09:memberPosx5 p09:classPosx2 otg:decox2 resc:otg_bottomup_7f3k/deco2.txtx2
+        "@d abstract = 1"   "@f<A> class C {}"   "@f<1> class C {}"   "@d<T> class C {}"   "@d<A> class C {}"
+    64  TS1137   typescript-go gives the same first diagnostic: 64   rows with a pin: 0
+        messages: Expression or comma expected. x64
+        origins: gds:tuple/targx39 p01:labelx19 gds:tuple/heritagex5 gds:tuple/iextendsx5 gds:tuple/ternaryx2 p01:tuplex1
+        "f<[: A]>(x);"   "f<[?: A]>(x);"   "f<[?: B]>(x);"   "f<[if: A]>(x);"   "f<[const]>(x);"
+    57  TS1388   typescript-go gives the same first diagnostic: 57   rows with a pin: 0
+        messages: Constructor type notation must be parenthesized when used in an intersection type. x57
+        origins: p01:unionx13 td01:set.intersection-newx13 td01:set.intersection-abstract-newx13 td01:m.intersection.string.new_$28$29_$3d$3e_Ax4 td01:m.intersection.null.new_$28$29_$3d$3e_Ax4 td01:m.intersection.never.new_$28$29_$3d$3e_Ax4
+        "f<A & new () => B>(x);"   "let x: A & new () => B;"   "type X = A & new () => B;"   "let x: [A & new () => B];"   "let x: A<A & new () => B>;"
+    54  TS1478   typescript-go gives the same first diagnostic: 54   rows with a pin: 0
+        messages: Identifier or string literal expected. x54
+        origins: p01:importx22 td01:import.with-number-keyx12 td01:import.with-computed-keyx12 p11:formx6 resc:gct1a-42866/targs.txtx1 resc:gte/p7.jsonx1
+        "let x: import(\"x\", { with: { 1: \"b\" } });"   "let x: import(\"m\", { with: { 1: \"a\" } });"   "let x: import(\"x\", { with: { [a]: \"b\" } })"   "let x: import(\"x\", { with: { [a]: \"b\" } });"   "type X = import(\"x\", { with: { 1: \"b\" } });"
+    36  TS1260   typescript-go gives the same first diagnostic: 36   rows with a pin: 0
+        messages: Keywords cannot contain escape characters. x36
+        origins: td01:ref.unicode-keywordx13 otg:strtypex12 resc:gte-probe/in8.txtx9 resc:gte/p1.jsonx2
+        "typ\\u0065 T = 1;"   "let a: \\u0061ny;"   "f<\\u0073tring>(x);"   "let x: \\u0073tring;"   "namespac\\u0065 N {}"
+    30  TS1125   typescript-go gives the same first diagnostic: 30   rows with a pin: 0
+        messages: Hexadecimal digit expected. x30
+        origins: p01:tmplx13 td01:tpl.invalid-escapex13 p11:formx3 resc:gte-probe/in7.txtx1
+        "f<`${A}\\u`>(x);"   "f<`\\u${A}`>(x);"   "let x: `${A}\\u`;"   "let x: `\\u${A}`;"   "type X = `${A}\\u`;"
+    28  TS1128   typescript-go gives the same first diagnostic: 28   rows with a pin: 3
+        messages: Declaration or statement expected. x28
+        origins: p07:exportDeclx6 otg:h15cx4 resc:otg_bottomup_7f3k/imp2.txtx3 pin:transpiler.test.jsx3 p07:exportAssignx2 p06:classHeadx1
+        "x as A!\n.b"   "export module;"   "export declare;"   "export abstract;"   "let x: ('x')\n.A;"
+    22  TS1441   typescript-go gives the same first diagnostic: 22   rows with a pin: 0
+        messages: Cannot start a function call in a type annotation. x22
+        origins: p06:memberx8 p01:opx2 otg:membersx2 p11:formx2 td01:op.keyof-newx1 td03:sig.533x1
+        "class C { m!() {} }"   "class C { a!() {} }"   "class C { m!(): void }"   "class C { m!(): void; }"   "class A { x!(): void {} }"
+    16  TS1121   typescript-go gives the same first diagnostic: 16   rows with a pin: 0
+        messages: Octal literals are not allowed. Use the syntax '0o17'. x15   Octal literals are not allowed. Use the syntax '0o777'. x1
+        origins: td01:lit.legacy-octalx13 lex:bu/codes-inputs-t5x1 resc:lexhooks/t5.jsonx1 lex:bu/codes-inputs-t6x1 resc:lexhooks/t6.jsonx1 lex:td/codes-inputsx1
+        "x = 017"   "f<017>(x);"   "let x: 017;"   "type X = 017;"   "let v = x as 017;"
+    14  TS1084   typescript-go gives the same first diagnostic: 14   rows with a pin: 0
+        messages: Invalid 'reference' directive syntax. x14
+        origins: lex:td/pragma-inputsx5 resc:lexhooks/pragma-inputs.jsonx5 lex:bu/pragmas-inputsx2 p10:directivex1 td10:pragma.dts.012x1 td10:pragma.dts.019x1
+        "/// <reference />"   "/// <reference />\nlet x;"   "/// <reference />\nexport {};"   "/// <reference types=node />"   "/// <reference />\nlet v = 1;"
+     9  TS1434   typescript-go gives the same first diagnostic: 9   rows with a pin: 0
+        messages: Unexpected keyword or identifier. x9
+        origins: gds:junk/targx3 otg:h15bx2 gds:operator/heritagex2 td01:lit.regexx1 otg:h15cx1 gds:function-type/ternaryx1
+        "f</a/>(x);"   "f</a/g>(x);"   "f<//c\nA>(x);"   "namespace as {} X {}"   "interface as {} Foo {}"
+     8  TS1181   typescript-go gives the same first diagnostic: 8   rows with a pin: 0
+        messages: Array element destructuring pattern expected. x8
+        origins: p03:memberSigx5 p03:typeSigx3
+        "let x: <T>([this]) => T;"   "let x: new ([this]) => A;"   "type X = { ([this]): void };"   "type X = { new ([this]): A };"   "type X = { m([this]): void };"
+     8  TS1357   typescript-go gives the same first diagnostic: 8   rows with a pin: 0
+        messages: An enum member name must be followed by a ',', '=', or '}'. x8
+        origins: p08:enumx5 resc:otg_bottomup_7f3k/enum.txtx1 td08:enum.032x1 otg:misc1x1 td08:enum.033x1 gdt:05-declarationsx1
+        "enum E { a; }"   "enum E { A; }"   "enum E { A;B }"   "enum E { a; b }"   "enum E { A; B }"
+     5  TS1180   typescript-go gives the same first diagnostic: 5   rows with a pin: 0
+        messages: Property destructuring pattern expected. x5
+        origins: p03:typeSigx3 gds:function-type/ternaryx2
+        "let x: <T>({ : a }) => T;"   "let x: new ({ : a }) => A;"   "let x: abstract new ({ : a }) => A;"   "let v = a ? (b): ({ : b }: A) => void => c : d;"   "let v = a ? (b): ({ : [b] }: A) => void => c : d;"
+     3  TS1453   typescript-go gives the same first diagnostic: 0   rows with a pin: 0
+        messages: `resolution-mode` should be either `require` or `import`. x3
+        origins: lex:td/pragma-inputsx2 lex:bu/pragmas-inputsx1 resc:lexhooks/pragma-inputs.jsonx1 resc:lexhooks/extra-inputs.jsonx1
+        "/// <reference types=\"pkg\" resolution-mode=\"esm\" />\n"   "/// <reference types=\"node\" resolution-mode=\"bogus\"/>\nlet x;"   "/// <reference path=\"a.ts\" resolution-mode=\"import\"/>\n/// <reference types…
+     2  TS1034   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: 'super' must be followed by an argument list or member access. x2
+        origins: p01:labelx2
+        "f<[super: A]>(x);"   "f<[super?: A]>(x);"
+     2  TS1068   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: Unexpected token. A constructor, method, accessor, or property was expected. x2
+        origins: gds:import-type/fieldx1 gds:import-type/retx1
+        "class C { @d x: ('x')\n.A; }"   "class C { @d m(): ('x')\n.A { return x; } }"
+     2  TS1138   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: Parameter declaration expected. x2
+        origins: p03:arrowSigx2
+        "const f = <T,>((a)) => 0;"   "const f = <T,>((a): A) => 0;"
+     2  TS1209   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: Invalid optional chain from new expression. Did you mean to call 'a()'? x2
+        origins: lex:bu/codes-inputs-t3x1 lex:td/codes-inputsx1 resc:lexhooks/inputs-codes2.jsonx1 resc:lexhooks/t3.jsonx1 side:skip-call-sites/inputsx1 side:skip-call-sites/badx1
+        "new a?.<T>()"   "x = new a?.b()"
+     2  TS1382   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: Unexpected token. Did you mean `{'>'}` or `&gt;`? x2
+        origins: p04:targsJsxx1 lex:bu/codes-inputs-t4x1 lex:td/codes-inputsx1 resc:lexhooks/inputs-codes.jsonx1 resc:lexhooks/t4.jsonx1
+        "x = <div>></div>"   "const f = <T extends=\"a\">(a: T) => a</T>;"
+     2  TS18030   typescript-go gives the same first diagnostic: 2   rows with a pin: 0
+        messages: An optional chain cannot contain private identifiers. x2
+        origins: resc:otg_bottomup_7f3k/decl2.txtx1 lex:bu/codes-inputs-t3x1 resc:lexhooks/t3.jsonx1
+        "class C { #x; m() { return a?.#x! } }"   "class A { #x; m(a) { return a?.#x } }"
+     1  TS1139   typescript-go gives the same first diagnostic: 1   rows with a pin: 0
+        messages: Type parameter declaration expected. x1
+        origins: p04:targsExprx1
+        "async<A,,B>(x);"
+     1  TS1381   typescript-go gives the same first diagnostic: 1   rows with a pin: 0
+        messages: Unexpected token. Did you mean `{'}'}` or `&rbrace;`? x1
+        origins: lex:bu/codes-inputs-t4x1 lex:td/codes-inputsx1 resc:lexhooks/inputs-codes.jsonx1 resc:lexhooks/t4.jsonx1
+        "x = <div>}</div>"
+     1  TS1489   typescript-go gives the same first diagnostic: 1   rows with a pin: 0
+        messages: Decimals with leading zeros are not allowed. x1
+        origins: lex:bu/codes-inputs-t5x1 resc:lexhooks/t5.jsonx1
+        "x = 08"

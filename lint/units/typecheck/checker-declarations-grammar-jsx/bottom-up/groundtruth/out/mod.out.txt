@@ -1,0 +1,21 @@
+PARSE mod_a.ts parse=[] js=[] bind=[]
+mod_a.ts(4,1)+11: error TS2309: An export assignment cannot be used in a module with other exported elements.
+PARSE mod_b.ts parse=[] js=[] bind=[TS2528 TS2528]
+mod_b.ts(1,13)+1: error TS2614: Module '"./mod_a"' has no exported member 'v'. Did you mean to use 'import v from "./mod_a"' instead?
+mod_b.ts(1,18)+7: error TS2441: Duplicate identifier 'require'. Compiler reserves name 'require' in top level scope of a module. [skippedOnNoEmit]
+mod_b.ts(3,8)+21: error TS1363: A type-only import can specify a default import or named bindings, but not both.
+mod_b.ts(5,13)+7: error TS2614: Module '"./mod_a"' has no exported member 'missing'. Did you mean to use 'import missing from "./mod_a"' instead?
+mod_b.ts(6,15)+9: error TS2498: Module '"/mod_a"' uses 'export =' and cannot be used with 'export *'.
+mod_b.ts(7,10)+5: error TS1003: Identifier expected.
+mod_b.ts(8,5)+7: error TS2441: Duplicate identifier 'exports'. Compiler reserves name 'exports' in top level scope of a module. [skippedOnNoEmit]
+mod_b.ts(9,7)+6: error TS2725: Class name cannot be 'Object' when targeting ES5 and above with module CommonJS.
+mod_b.ts(11,33)+9: error TS1147: Import declarations in a namespace cannot reference a module.
+mod_b.ts(11,44)+13: error TS1194: Export declarations are not permitted in a namespace.
+mod_b.ts(14,54)+6: error TS2667: Imports are not permitted in module augmentations. Consider moving them to the enclosing external module.
+mod_b.ts(14,68)+3: error TS2307: Cannot find module 'q' or its corresponding type declarations.
+mod_b.ts(15,1)+24: error TS2712: A dynamic import call in ES5 requires the 'Promise' constructor.  Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your '--lib' option.
+mod_b.ts(15,19)+2: error TS1324: Dynamic imports only support a second argument when the '--module' option is set to 'esnext', 'node16', 'node18', 'node20', 'nodenext', or 'preserve'.
+RESOLUTIONDEPTH 0 []
+global: error TS2468: Cannot find global value 'Promise'.
+PROGRAM BindSourceFiles=2 GetCurrentDirectory=3 GetDefaultResolutionModeForFile=1 GetEmitModuleFormatOfFile=22 GetEmitSyntaxForUsageLocation=3 GetImpliedNodeFormatForEmit=1 GetModeForUsageLocation=17 GetProjectReferenceFromSource=1 GetRedirectTargets=1 GetResolvedModule=15 GetResolvedModuleFromModuleSpecifier=1 GetSourceFile=13 GetSourceFileForResolvedModule=13 GetSourceOfProjectReferenceIfOutputIncluded=2 GetSymlinkCache=1 Options=1 SourceFiles=1 UseCaseSensitiveFileNames=3
+COUNTS TypeCount=115 SymbolCount=11 SignatureCount=6 TotalInstantiationCount=0

@@ -1,0 +1,80 @@
+== R-REL
+  earlier C-INIT (1): c.compareTypesAssignableWorker
+  earlier K-COND (1): c.isTypeAssignableTo
+  earlier K-INDEXED (1): c.isTypeAssignableTo
+  earlier K-INTERSECT (2): c.isTypeStrictSubtypeOf c.isTypeSubtypeOf
+  earlier K-KEYOF (1): c.isTypeAssignableTo
+  earlier K-PRED (1): c.isTypeAssignableTo
+  earlier K-TEMPLATE (1): c.isTypeAssignableTo
+  earlier K-UNION (2): c.isTypeDerivedFrom c.isTypeRelatedTo
+  earlier P-PRINT (2): c.compareTypesIdentical c.isTypeIdenticalTo
+  earlier T-CONSTRAINT (2): c.isTypeIdenticalTo getRecursionIdentity
+  earlier T-ENUMVAL (1): c.checkTypeAssignableTo
+  earlier T-INSTANTIATE (1): c.isTypeAssignableTo
+  earlier T-LOOKUP (1): c.isTypeAssignableTo
+  earlier T-MEMBERS (1): c.isTypeAssignableTo
+  earlier T-SIGDECL (1): c.isTypeAssignableTo
+  earlier T-SYMTYPE (1): c.isTypeAssignableTo
+  earlier T-TUPLE (1): c.isTypeAssignableTo
+  earlier T-UIMEMBERS (1): c.compareTypesIdentical
+  later c05_check_source_file (1): c.checkTypeAssignableTo
+  later c06_check_members_type_nodes (3): c.checkTypeAssignableTo c.checkTypeAssignableToEx c.isTypeAssignableTo
+  later c07_check_functions (3): c.isTypeAssignableTo c.isTypeIdenticalTo c.isTypeRelatedTo
+  later c08_check_statements (3): c.checkTypeComparableTo c.getTypeNameForErrorDisplay c.isTypeAssignableTo
+  later c09_check_classes_interfaces (5): c.checkTypeAssignableTo c.checkTypeAssignableToEx c.compareTypesIdentical c.isTypeAssignableTo c.isTypeIdenticalTo
+  later c10_check_enums_modules_imports (1): c.checkTypeAssignableTo
+  later c11_check_variables_decorators (2): c.checkTypeAssignableTo c.isTypeIdenticalTo
+  later c12_iteration_types (4): c.checkTypeAssignableTo c.checkTypeAssignableToEx c.isTypeAssignableTo c.reportDiagnostic
+  later c14_expressions (2): c.checkTypeAssignableTo c.isTypeAssignableTo
+  later c15_calls (5): c.checkTypeAssignableToEx c.checkTypeRelatedToEx c.isTypeAssignableTo c.isTypeRelatedTo c.isTypeSubtypeOf
+  later c16_function_expressions_collisions (2): c.compareTypesIdentical c.isTypeAssignableTo
+  later c19_assertions_binary_operators (6): c.areTypesComparable c.checkTypeAssignableTo c.checkTypeComparableTo c.getTypeNamesForErrorDisplay c.isTypeAssignableTo c.isTypeComparableTo
+  later c20_object_literals_spread (1): c.isTypeAssignableTo
+  later c47_promised_mapped_template (1): c.isTypeRelatedTo
+  later c48_contextual_types (1): c.checkTypeAssignableTo
+  later c50_contextual_properties_inference_context (1): c.isTypeAssignableTo
+  later c51_type_facts_awaited (1): c.isTypeSubtypeOf
+  later emitresolver.go (1): c.isTypeIdenticalTo
+  later exports.go (1): c.isTypeAssignableTo
+  later flow.go (7): c.areTypesComparable c.isTypeAssignableTo c.isTypeDerivedFrom c.isTypeRelatedTo c.isTypeStrictSubtypeOf c.isTypeSubsetOf c.isTypeSubtypeOf
+  later jsx.go (6): c.checkTypeRelatedTo c.checkTypeRelatedToEx c.isTypeAssignableTo c.isTypeRelatedTo c.reportDiagnostic isHyphenatedJsxName
+  later nodebuilder_hover.go (2): c.compareTypesIdentical c.isTypeIdenticalTo
+  later services.go (1): c.isTypeAssignableTo
+  later tracer.go (1): getRecursionIdentity
+== R-SIGREL
+  earlier T-UIMEMBERS (4): c.compareSignaturesIdentical c.compareTypeParametersIdentical c.findMatchingSignature c.findMatchingSignatures
+  later c07_check_functions (1): c.isSignatureAssignableTo
+  later c16_function_expressions_collisions (2): c.compareSignaturesIdentical c.compareTypeParametersIdentical
+  later grammarchecks.go (1): visibilityToString
+  later nodebuilder_hover.go (1): c.compareSignaturesIdentical
+== R-VARIANCE
+  earlier P-PRINT (1): c.getTypeParameterModifiers
+  later c05_check_source_file (2): c.createMarkerType c.getTypeParameterModifiers
+== R-DISCRIM
+  later c50_contextual_properties_inference_context (4): c.discriminateTypeByDiscriminableItems c.getConstituentTypeForKeyType c.getKeyPropertyName c.isDiscriminantProperty
+  later flow.go (3): c.getConstituentTypeForKeyType c.getKeyPropertyName c.isDiscriminantProperty
+  later jsx.go (2): c.discriminateTypeByDiscriminableItems c.isDiscriminantProperty
+== R-ELAB
+  later c08_check_statements (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later c10_check_enums_modules_imports (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later c11_check_variables_decorators (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later c15_calls (1): c.checkTypeRelatedToAndOptionallyElaborate
+  later c17_unary_meta_yield (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later c19_assertions_binary_operators (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later c20_object_literals_spread (1): c.checkTypeAssignableToAndOptionallyElaborate
+  later jsx.go (6): c.checkExpressionForMutableLocationWithContextualType c.checkTypeAssignableToAndOptionallyElaborate c.checkTypeRelatedToAndOptionallyElaborate c.elaborateElement c.elaborateError c.getBestMatchIndexedAccessTypeOrUndefined
+== I-INFER
+  earlier K-COND (2): c.inferTypes c.newInferenceContext
+  earlier MAPPER (3): c.getInferredType c.inferFromIntraExpressionSites clearCachedInferences
+  earlier T-SIGINST (5): c.applyToParameterTypes c.applyToReturnTypes c.getInferredTypes c.inferTypes c.newInferenceContext
+  later c14_expressions (9): c.addIntraExpressionInferenceSite c.applyToParameterTypes c.applyToReturnTypes c.inferTypes c.isSkipDirectInferenceNode c.mergeInferences hasInferenceCandidates hasOverlappingInferences newInferenceInfo
+  later c15_calls (8): c.cloneInferenceContext c.cloneInferredPartOfContext c.createOuterReturnMapper c.getInferredTypes c.getMapperFromContext c.inferTypes c.newInferenceContext hasInferenceCandidates
+  later c16_function_expressions_collisions (1): c.inferTypes
+  later c18_identifiers_property_access_this (1): c.getMapperFromContext
+  later c20_object_literals_spread (1): c.addIntraExpressionInferenceSite
+  later c50_contextual_properties_inference_context (1): hasInferenceCandidatesOrDefault
+  later jsx.go (3): c.addIntraExpressionInferenceSite c.getInferredTypes c.inferTypes
+== I-REVMAP
+  earlier T-INSTANTIATE (1): c.inferTypeForHomomorphicMappedType
+  earlier T-MEMBERS (1): c.resolveReverseMappedTypeMembers
+  earlier T-SYMTYPE (1): c.getTypeOfReverseMappedSymbol

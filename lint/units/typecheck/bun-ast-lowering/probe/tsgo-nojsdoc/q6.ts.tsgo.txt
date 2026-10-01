@@ -1,0 +1,28 @@
+file /q6.ts scriptKind=3 variant=0 dts=false textLen=51
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=19 identifiers=4 text=8 reparsedClones=0
+root KindSourceFile [0,51) f=0x0
+  .Statements: list [0,50) n=2
+    - KindVariableStatement [0,17) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,16) f=0x0
+        .Declarations: list [3,16) n=1
+          - KindVariableDeclaration [3,16) f=0x0
+            .Initializer: KindNumericLiteral [14,16) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [3,12) f=0x0 Text="abc"
+    - KindVariableStatement [17,50) f=0x0
+      .DeclarationList: KindVariableDeclarationList [17,49) f=0x0
+        .Declarations: list [21,49) n=2
+          - KindVariableDeclaration [21,31) f=0x0
+            .Initializer: KindStringLiteral [26,31) f=0x0 Text="\u00fc" TokenFlags=0x0
+            .name: KindIdentifier [21,24) f=0x0 Text="\u00e9"
+          - KindVariableDeclaration [32,49) f=0x0
+            .Initializer: KindTemplateExpression [38,49) f=0x0
+              .Head: KindTemplateHead [38,45) f=0x0 RawText="\u5b57" TemplateFlags=0x0 Text="\u5b57" TokenFlags=0x0
+              .TemplateSpans: list [45,49) n=1
+                - KindTemplateSpan [45,49) f=0x0
+                  .Expression: KindIdentifier [45,47) f=0x0 Text="\u00e9"
+                  .Literal: KindTemplateTail [47,49) f=0x0 RawText="" TemplateFlags=0x0 Text="" TokenFlags=0x0
+            .name: KindIdentifier [32,36) f=0x0 Text="\u6f22"
+  .EndOfFileToken: KindEndOfFile [50,51) f=0x0

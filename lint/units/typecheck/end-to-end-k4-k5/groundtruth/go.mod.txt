@@ -1,0 +1,19 @@
+module github.com/microsoft/typescript-go
+
+go 1.26
+
+require (
+	github.com/go-json-experiment/json v0.0.0
+	github.com/zeebo/xxh3 v1.1.0
+	github.com/klauspost/cpuid/v2 v2.2.10
+	golang.org/x/sync v0.21.0
+	golang.org/x/sys v0.46.0
+	golang.org/x/text v0.38.0
+)
+
+replace github.com/go-json-experiment/json => /tmp/rr/deps/json
+replace github.com/zeebo/xxh3 => /tmp/rr/deps/xxh3
+replace github.com/klauspost/cpuid/v2 => /tmp/rr/deps/cpuid
+replace golang.org/x/sync => /tmp/rr/deps/sync
+replace golang.org/x/sys => /tmp/e2e/deps/sys
+replace golang.org/x/text => /tmp/rr/deps/text

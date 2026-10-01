@@ -1,0 +1,6 @@
+file mod4.ts bytes=59 statements=2
+s_export_default @0
+  s_function @0
+s_local @48
+  b_identifier @52 z
+  e_number @56

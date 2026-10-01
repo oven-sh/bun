@@ -1,0 +1,187 @@
+# type arguments in types
+let x: A<B>
+let x: A<B,>
+let x: A<>
+let x: A<,>
+let x: A<B,,>
+let x: A<B C>
+let x: A<B, C>
+let x: A<B<C>>
+let x: A<B<C<D>>>
+let x: A<B<C>>= y
+let x: A<B<C<D>>>= y
+let x: A<B>= y
+let x: A<B>>= y
+let x: A\n<B>
+let x: A.B<C>
+let x: A.B\n<C>
+let x: A<B>.C
+let x: A<B>.C<D>
+let x: A<B>[]
+let x: A<B>[C]
+let x: typeof a<B>
+let x: typeof a.b<B>
+let x: typeof a\n<B>
+let x: typeof a<B>.c
+let x: typeof import("x")<B>
+let x: import("x")<B>
+let x: import("x").A<B>
+let x: import("x").A.B<C>
+let x: import("x")\n<B>
+let x: import("x").A\n<B>
+let x: import("x", { with: { type: "json" } })
+let x: import("x", { with: { type: "json" } }).A<B>
+let x: import("x", { assert: { type: "json" } })
+let x: import("x", { with: { type: "json" }, })
+let x: import("x", { with: { "type": "json", a: "b", } })
+let x: import("x", { with: {} })
+let x: import("x", { with: { type: "json" } }, )
+let x: import("x", )
+let x: import("x", {})
+let x: import("x", { foo: { type: "json" } })
+let x: import("x", { with: { type: 1 } })
+let x: import("x", { with: { type: a + b } })
+let x: import("x", { with: { [a]: "b" } })
+let x: import("x", { with: { type: "json" }; })
+let x: import("x", { with: 1 })
+let x: import("x", { with })
+let x: import("x", { readonly with: { type: "json" } })
+let x: import("x", { with?: { type: "json" } })
+let x: import("x", { with: { type: "json" } b: 1 })
+let x: import("x", { with: { type: "json" }, b: 1 })
+let x: import("x", { a b c: 1 })
+let x: import("x", { [k: string]: number })
+let x: import("x", { m(): void })
+let x: import(x)
+let x: import(A<B>)
+let x: import(`x`)
+let x: import('x' | 'y')
+let x: import(1)
+let x: import()
+let x: import
+let x: import.meta
+let x: import("x").default
+let x: import("x").if
+let x: import("x").#a
+let x: import("x")[0]
+let x: import("x")["a"]
+let x: typeof import("x").a.b
+let x: typeof import
+let x: any<B>
+let x: number<B>
+let x: string.a
+let x: any.b<C>
+let x: this<B>
+let x: void<B>
+let x: null<B>
+let x: A<B> | C<D>
+let x: A<typeof b>
+let x: A<keyof B>
+let x: A<(b) => c>
+let x: A<(b = 1) => c>
+let x: A<new () => c>
+let x: A<<T>() => c>
+let x: A<<T>(a: T) => c>
+let x: A< <T>(a: T) => c>
+let x: A<B extends C ? D : E>
+let x: A<[B, C]>
+let x: A<{b: c}>
+let x: A<b is c>
+let x: A<asserts b>
+let x: A<infer B>
+let x: A<in B>
+let x: A<out B>
+let x: A<const B>
+let x: A<B = C>
+let x: A<B extends C>
+let x: A<...B>
+let x: A<B?>
+let x: A<?B>
+let x: A<*>
+let x: A<B
+let x: A<B, 
+let x: A<B>>
+let x: A<B>>>
+# type arguments in expressions
+f<A>(x)
+f<A,>(x)
+f<>(x)
+f<A | >(x)
+f<A, B>(x)
+f<A<B>>(x)
+f<A<B<C>>>(x)
+f<A>`x`
+f<A>`x${y}`
+f<A>
+f<A>;
+f<A>\n
+f<A>\nx
+f<A>.b
+f<A>?.b
+f<A>?.()
+f<A> = 1
+f<A> + 1
+f<A> - 1
+f<A>x
+f<A>>b
+f<A>>>b
+f<A>>= b
+f<A>= b
+f<A>[b]
+f<A>{}
+f<A>, g
+f<A> ? b : c
+f<A> as any
+f<A> satisfies any
+f<A> instanceof B
+f<A> in B
+f<A>!
+f<A>++
+f<A>(x)<B>(y)
+f?.<A>(x)
+f?.<A>`x`
+new f<A>(x)
+new f<A>
+new f<A>;
+new f<A>\n
+new f<A,>()
+new f<>()
+new f<A<B>>()
+f<A extends B ? C : D>(x)
+f<(a = 1) => void>(x)
+f<{ a: 1 }>(x)
+f<[a: 1]>(x)
+f<typeof x>(y)
+f<import("x")>(y)
+f<[if: number]>(x)
+f<a is b>(x)
+f<(a: ) => void>(x)
+f<<T>() => void>(x)
+f<A>(x) => y
+a < b > c
+a < b > (c)
+a < b >> c
+a < b , c > (d)
+a < b > - c
+a < b > + c
+a < (b) > c
+a << b > c
+a << b >(c)
+a<<T>(x: T) => void>(y)
+a<b>>(c)
+a<b>>>(c)
+a<b<c>>(d)
+a<b<c>>>(d)
+x = a<b>(c) => d
+class A extends B<C> {}
+class A extends B<C>.D {}
+class A extends B<C,> {}
+class A extends B<> {}
+class A extends B<C>() {}
+class A extends B.C<D> {}
+class A extends b()<C> {}
+class A extends (B)<C> {}
+class A extends B<C><D> {}
+class A extends B\n<C> {}
+class A extends B<C> implements D<E> {}
+class A extends B<C<D>> {}

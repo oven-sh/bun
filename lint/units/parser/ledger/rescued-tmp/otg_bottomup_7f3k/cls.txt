@@ -1,0 +1,144 @@
+# object literal members
+export const v = { a?: 1 }
+export const v = { a? }
+export const v = { a?() {} }
+export const v = { a!: 1 }
+export const v = { a!() {} }
+export const v = { a<T>() {} }
+export const v = { a?<T>() {} }
+export const v = { async a?() {} }
+export const v = { *a?() {} }
+export const v = { get a?() { return 1 } }
+export const v = { set a?(x) {} }
+export const v = { "a"?() {} }
+export const v = { [a]?() {} }
+export const v = { 1?() {} }
+export const v = { a?: 1, b }
+export const v = { a? = 1 }
+({ a?: 1 } = b)
+({ a? } = b)
+({ a? = 1 } = b)
+export const v = { m(public a: A) {} }
+export const v = { public a: 1 }
+export const v = { readonly a: 1 }
+export const v = { static a: 1 }
+export const v = { public a() {} }
+export const v = { declare a: 1 }
+export const v = { abstract a() {} }
+export const v = { a: 1; b: 2 }
+export const v = { m(): void }
+export const v = { m(); }
+export const v = { [k: string]: 1 }
+export const v = { a(): T {} }
+export const v = { get a(): T { return 1 } }
+export const v = { set a(x: T) {} }
+export const v = { a(this: T) {} }
+export const v = { async<T>() {} }
+export const v = { get<T>() {} }
+export const v = { set<T>() {} }
+export const v = { accessor a: 1 }
+# class index signatures
+class C { [k: string]: T }
+class C { [k: string]: T; }
+class C { [k: string]: T, }
+class C { [k: string]: T, [j: number]: U }
+class C { static [k: string]: T }
+class C { readonly [k: string]: T }
+class C { static readonly [k: string]: T }
+class C { public [k: string]: T }
+class C { declare [k: string]: T }
+class C { abstract [k: string]: T }
+class C { override [k: string]: T }
+class C { accessor [k: string]: T }
+class C { async [k: string]: T }
+class C { [await: string]: T; }
+class C { [yield: string]: T; }
+class C { [k: string] }
+class C { [k: string]?: T }
+class C { [k?: string]: T }
+class C { [k: string, j: number]: T }
+class C { [...k: string[]]: T }
+class C { [k]: T }
+class C { [k: string]: T = 1 }
+class C { [k: string](): T }
+class C { [public k: string]: T }
+class C { [k: string]: T\n[j: number]: U }
+class C { [k: string]\n: T }
+class C { get [k: string]: T }
+# class members misc
+class C { a?: T }
+class C { a!: T }
+class C { a?!: T }
+class C { a!?: T }
+class C { a? }
+class C { a! }
+class C { a?() {} }
+class C { a!() {} }
+class C { a?<T>() {} }
+class C { a? = 1 }
+class C { a! = 1 }
+class C { a?(): void }
+class C { a?(): void; a?() {} }
+class C { constructor?() {} }
+class C { get a?() { return 1 } }
+class C { set a?(v) {} }
+class C { static a?: T }
+class C { #a?: T }
+class C { #a!: T }
+class C { "a"?: T }
+class C { [a]?: T }
+class C { 1?: T }
+class C { accessor a: T }
+class C { accessor a }
+class C { accessor a = 1 }
+class C { static accessor a = 1 }
+class C { accessor static a = 1 }
+class C { accessor }
+class C { accessor = 1 }
+class C { accessor() {} }
+class C { accessor\na }
+class C { accessor a?: T }
+class C { accessor a!: T }
+class C { declare accessor a: T }
+class C { public accessor a: T }
+class C { accessor public a: T }
+class C { readonly accessor a: T }
+class C { accessor readonly a: T }
+class C { abstract accessor a: T }
+class C { override accessor a: T }
+class C { accessor "a" = 1 }
+class C { accessor [a] = 1 }
+class C { accessor #a = 1 }
+class C { accessor get a() { return 1 } }
+class C { accessor a() {} }
+deco: class C { accessor a: T }
+deco: class C { accessor a = 1 }
+deco: class C { static accessor a = 1 }
+deco: class C { @d accessor a = 1 }
+deco: class C { @d static accessor a = 1 }
+deco: class C { accessor }
+deco: class C { accessor = 1 }
+deco: class C { accessor() {} }
+deco: class C { accessor\na }
+deco: class C { public accessor a: T }
+deco: class C { declare accessor a: T }
+deco: class C { accessor #a = 1 }
+deco: class C { accessor [a] = 1 }
+deco: @d class C { accessor a = 1 }
+# declare class rest parameter with trailing comma
+declare class C { m(...a: T[],): void }
+declare class C { constructor(...a: T[],) }
+declare function f(...a: T[],): void
+declare class C { m(a: T,): void }
+function f(...a: T[],) {}
+class C { m(...a: T[],) {} }
+class C { m(...a: T[],): void }
+class C { m(...a: T[],): void; m(...a: T[]) {} }
+abstract class C { abstract m(...a: T[],): void }
+interface I { m(...a: T[],): void }
+type F = (...a: T[],) => void
+declare namespace N { function f(...a: T[],): void }
+function f(...a: T[],): void\nfunction f(...a: T[]) {}
+export const v = (...a: T[],) => x
+declare class C { m(...a: T[], b: U): void }
+declare function f(...a: T[], b: U): void

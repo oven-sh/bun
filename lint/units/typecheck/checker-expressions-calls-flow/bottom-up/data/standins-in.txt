@@ -1,0 +1,108 @@
+== E-CORE needs 74 stand-ins for later layers
+ E-LITERAL (6): checkArrayLiteral@8111-8191 checkObjectLiteral@13235-13445 checkRegularExpressionLiteral@8102-8109 checkTemplateExpression@8066-8091 isConstContext@13716-13722 isValidConstAssertionArgument@13724-13744
+ E-OPER (7): checkAwaitExpression@10935-10943 checkBinaryExpression@12422-12425 checkConditionalExpression@11024-11031 checkDeleteExpression@10894-10913 checkPostfixUnaryExpression@10999-11011 checkPrefixUnaryExpression@10945-10997 checkVoidExpression@10930-10933
+ E-ACCESS (8): checkIdentifier@11132-11290 checkIndexedAccess@8223-8228 checkPrivateIdentifierExpression@7927-7934 checkPropertyAccessExpression@11334-11340 checkQualifiedName@8212-8221 checkSuperExpression@7944-8052 checkThisExpression@12168-12223 getOptionalExpressionType@29187-29196
+ E-FACTS (1): getTypeFacts@31097-31099
+ E-FUNC (2): checkClassExpression@10137-10142 checkFunctionExpressionOrObjectLiteralMethod@10204-10240
+ E-CALL (7): checkCallExpression@8412-8452 checkImportCallExpression@8357-8405 checkTaggedTemplateExpression@10124-10131 checkTypeArguments@9312-9344 hasCorrectTypeArgumentArity@9304-9310 isSymbolOrSymbolForCall@8471-8488 skippedGenericFunction@10115-10122
+ I-INFER (8): applyToParameterTypes@inference:868-894 applyToReturnTypes@inference:896-909 hasInferenceCandidates@inference:1650-1652 hasOverlappingInferences@inference:1669-1676 inferTypes@inference:53-63 isSkipDirectInferenceNode@inference:1621-1623 mergeInferences@inference:1678-1684 newInferenceInfo@inference:1625-1627
+ E-CTX (10): checkGeneratorInstantiationAssignabilityToReturnType@29820-29832 getApparentTypeOfContextualType@30809-30834 getContextualIterationType@29779-29786 getContextualType@29466-29533 getInferenceContext@31088-31095 instantiateContextualType@30940-30973 popContextualType@31003-31007 popInferenceContext@31082-31086 pushContextualType@30999-31001 pushInferenceContext@31078-31080
+ K-INDEXED (1): getIndexedAccessType@27046-27048
+ X-ITER (4): checkIteratedTypeOrElementType@6185-6194 getIterationTypeOfGeneratorFunctionReturnType@6306-6312 getIterationTypeOfIterable@6328-6334 getIterationTypesOfGeneratorFunctionReturnType@6314-6325
+ X-ASYNC (2): getAwaitedType@31376-31378 getAwaitedTypeEx@31380-31386
+ X-JSX (5): checkJsxAttributes@jsx:126-129 checkJsxElement@jsx:72-75 checkJsxExpression@jsx:89-99 checkJsxFragment@jsx:110-124 checkJsxSelfClosingElement@jsx:101-104
+ X-SOURCE (2): checkSourceElement@2247-2258 checkSourceElements@2238-2245
+ X-DEFERRED (2): checkNodeDeferred@2490-2496 shouldCheckErasableSyntax@2658-2660
+ X-ENUM-MODULE (1): getIsolatedModulesLikeFlagName@5312-5314
+ X-MARKREF (1): checkExternalEmitHelpers@28699-28735
+ X-GRAMMAR (7): checkGrammarBigIntLiteral@grammarchecks:2087-2098 checkGrammarExpressionWithTypeArguments@grammarchecks:885-890 checkGrammarMetaProperty@grammarchecks:1813-1839 checkGrammarNumericLiteral@grammarchecks:2059-2085 checkGrammarStatementInAmbientContext@grammarchecks:2029-2057 checkGrammarYieldExpression@grammarchecks:1759-1770 grammarErrorOnNode@grammarchecks:38-45
+== E-LITERAL needs 20 stand-ins for later layers
+ E-ACCESS (1): isReadonlySymbol@13950-13964
+ E-FACTS (1): removeDefinitelyFalsyTypes@29229-29231
+ E-FUNC (1): checkFunctionExpressionOrObjectLiteralMethod@10204-10240
+ I-INFER (1): addIntraExpressionInferenceSite@inference:1285-1287
+ E-CTX (6): getApparentTypeOfContextualType@30809-30834 getContextualType@29466-29533 getInferenceContext@31088-31095 isContextSensitive@31020-31052 popContextualType@31003-31007 pushCachedContextualType@30995-30997
+ K-KEYOF (1): checkComputedPropertyName@26925-26943
+ K-INDEXED (1): getIndexedAccessTypeOrUndefined@27058-27122
+ T-MAPPED (1): getHomomorphicTypeVariable@22638-22647
+ K-TEMPLATE (1): getTemplateLiteralType@29268-29334
+ X-ITER (2): checkIteratedTypeOrElementType@6185-6194 getIteratedTypeOrElementType@6196-6301
+ X-DEFERRED (1): checkNodeDeferred@2490-2496
+ X-GRAMMAR (3): checkGrammarMethod@grammarchecks:1414-1460 checkGrammarObjectLiteralExpression@grammarchecks:998-1136 checkGrammarRegularExpressionLiteral@grammarchecks:69-98
+== E-OPER needs 25 stand-ins for later layers
+ E-ACCESS (5): checkPropertyAccessExpression@11334-11340 checkPropertyAccessibility@11844-11846 isReadonlySymbol@13950-13964 markPropertyAsReferenced@27829-27853 reportNonexistentProperty@11620-11681
+ E-FACTS (5): extractDefinitelyFalsyTypes@29233-29235 getTypeFacts@31097-31099 getTypeWithFacts@31273-31277 hasTypeFacts@31101-31103 removeDefinitelyFalsyTypes@29229-29231
+ E-CALL (2): createSyntheticExpression@30239-30244 getResolvedSignature@8497-8541
+ K-KEYOF (1): getLiteralTypeFromPropertyName@26892-26910
+ K-INDEXED (2): getIndexedAccessTypeEx@27050-27056 getIndexedAccessTypeOrUndefined@27058-27122
+ X-ITER (1): checkIteratedTypeOrElementType@6185-6194
+ X-ASYNC (3): checkAwaitedType@31355-31366 getAwaitedTypeNoAlias@31389-31391 getAwaitedTypeOfPromise@31581-31583
+ X-DEFERRED (1): checkNodeDeferred@2490-2496
+ X-STMT (1): checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType@3822-3827
+ X-MARKREF (1): checkExternalEmitHelpers@28699-28735
+ X-GRAMMAR (3): checkGrammarAwaitOrAwaitUsing@grammarchecks:1658-1757 checkGrammarForDisallowedTrailingComma@grammarchecks:671-676 grammarErrorOnNode@grammarchecks:38-45
+== E-ACCESS needs 39 stand-ins for later layers
+ E-FACTS (3): convertAutoToAny@31339-31347 getTypeWithFacts@31273-31277 hasTypeFacts@31101-31103
+ E-FUNC (1): getContextualSignature@10354-10383
+ I-INFER (1): getMapperFromContext@inference:1414-1419
+ E-CTX (3): getApparentTypeOfContextualType@30809-30834 getInferenceContext@31088-31095 isContextSensitiveFunctionOrObjectLiteralMethod@29619-29621
+ F-NARROW (10): getFlowNodeOfNode@flow:69-75 getFlowTypeOfReference@flow:77-79 getFlowTypeOfReferenceEx@flow:81-115 getNarrowableTypeForReference@31614-31630 hasMatchingArgument@flow:1886-1896 isDestructuringAssignmentTarget@flow:2384-2387 isEvolvingArrayOperationTarget@flow:1542-1552 isPastLastAssignment@flow:2668-2672 isSomeSymbolAssigned@31594-31596 isSymbolAssignedDefinitely@flow:2655-2658
+ F-REACH (1): isPostSuperFlowNode@flow:2604-2609
+ K-KEYOF (3): getIndexTypeEx@26807-26830 getIndexTypeForMappedType@26994-27044 getMappedTypeNameTypeKind@26965-26974
+ K-INDEXED (8): getIndexedAccessType@27046-27048 getIndexedAccessTypeOrUndefined@27058-27122 getPropertyNameFromIndex@27478-27486 isAssignmentToReadonlyEntity@27402-27449 isAutoTypedProperty@27461-27466 isSelfTypeAccess@27398-27400 isThisPropertyAccessInConstructor@27451-27459 typeHasStaticProperty@27338-27344
+ T-MAPPED (1): getMappedTypeModifiers@29135-29145
+ X-ASYNC (1): GetPromisedTypeOfPromise@29042-29044
+ X-CLASS (1): isPropertyWithoutInitializer@5032-5034
+ X-MARKREF (3): checkExternalEmitHelpers@28699-28735 markLinkedReferences@28312-28477 shouldMarkIdentifierAliasReferenced@28494-28513
+ X-GRAMMAR (2): checkGrammarPrivateIdentifierExpression@grammarchecks:100-118 grammarErrorOnNode@grammarchecks:38-45
+ API-SYMLOC (1): getThisTypeOfObjectLiteralFromContextualType@32165-32180
+== E-FACTS needs 0 stand-ins for later layers
+== E-FUNC needs 18 stand-ins for later layers
+ T-RETINFER (2): getReturnTypeFromBody@20240-20370 unwrapReturnType@20502-20519
+ I-INFER (1): inferTypes@inference:53-63
+ E-CTX (3): getApparentTypeOfContextualType@30809-30834 getInferenceContext@31088-31095 isContextSensitive@31020-31052
+ X-SOURCE (2): checkSourceElement@2247-2258 checkSourceElements@2238-2245
+ X-DEFERRED (1): checkNodeDeferred@2490-2496
+ X-MEMBERS (1): checkSignatureDeclaration@2731-2780
+ X-FUNCDECL (1): checkAllCodePathsInNonVoidFunctionReturnOrThrow@3736-3786
+ X-STMT (1): checkReturnExpression@4139-4162
+ X-CLASS (1): checkClassLikeDeclaration@4301-4402
+ X-ALIAS-UNUSED (1): registerForUnusedIdentifiersCheck@7130-7134
+ X-COLLISION (1): checkCollisionsForDeclarationName@10534-10551
+ X-MARKREF (1): checkExternalEmitHelpers@28699-28735
+ X-GRAMMAR (2): checkGrammarForGenerator@grammarchecks:974-988 checkGrammarFunctionLikeDeclaration@grammarchecks:758-765
+== T-RETINFER needs 16 stand-ins for later layers
+ E-CTX (5): getContextualIterationType@29779-29786 getContextualReturnType@29788-29818 getContextualSignatureForFunctionLikeDeclaration@29834-29840 getContextualType@29466-29533 instantiateContextualType@30940-30973
+ F-NARROW (4): getFlowNodeOfNode@flow:69-75 getFlowTypeOfReferenceEx@flow:81-115 isConstantReference@flow:1814-1839 isSymbolAssigned@flow:2661-2664
+ F-REACH (1): isReachableFlowNode@flow:2513-2520
+ X-ITER (2): getIterationTypeOfGeneratorFunctionReturnType@6306-6312 getIterationTypesOfIterable@6355-6375
+ X-ASYNC (4): GetPromisedTypeOfPromise@29042-29044 checkAwaitedType@31355-31366 getAwaitedTypeNoAlias@31389-31391 unwrapAwaitedType@31562-31570
+== E-CALL needs 28 stand-ins for later layers
+ I-INFER (8): cloneInferenceContext@inference:1258-1263 cloneInferredPartOfContext@inference:1265-1271 createOuterReturnMapper@inference:1423-1432 getInferredTypes@inference:1406-1412 getMapperFromContext@inference:1414-1419 hasInferenceCandidates@inference:1650-1652 inferTypes@inference:53-63 newInferenceContext@inference:1251-1256
+ E-CTX (4): getContextualType@29466-29533 getInferenceContext@31088-31095 getSpreadArgumentType@29623-29692 isContextSensitive@31020-31052
+ F-NARROW (3): getEffectsSignature@flow:2047-2088 getSymbolHasInstanceMethodOfObjectType@flow:2093-2105 getTypeOfDottedName@flow:2122-2153
+ X-ASYNC (2): getAwaitedType@31376-31378 getAwaitedTypeOfPromise@31581-31583
+ X-JSX (3): checkApplicableSignatureForJsxCallLikeElement@jsx:591-701 inferJsxTypeArguments@jsx:198-203 resolveJsxOpeningLikeElement@jsx:545-585
+ X-DECORATOR (2): getDecoratorCallSignature@30278-30283 getEffectiveDecoratorArguments@30265-30276
+ X-SOURCE (1): checkSourceElements@2238-2245
+ X-DEFERRED (1): checkNodeDeferred@2490-2496
+ X-MEMBERS (1): getDeprecatedSuggestionNode@3041-3061
+ X-GRAMMAR (3): checkGrammarImportCallExpression@grammarchecks:2144-2185 checkGrammarTaggedTemplateChain@grammarchecks:859-864 checkGrammarTypeArguments@grammarchecks:855-857
+== E-CTX needs 20 stand-ins for later layers
+ K-KEYOF (2): getLiteralTypeFromPropertyName@26892-26910 getMappedTypeNameTypeKind@26965-26974
+ K-INDEXED (2): getIndexedAccessTypeEx@27050-27056 substituteIndexedMappedType@29414-29427
+ K-SUBST (1): getActualTypeVariable@31694-31702
+ K-COND (2): getFalseTypeFromConditionalType@24670-24676 getTrueTypeFromConditionalType@24662-24668
+ T-MAPPED (1): getConstraintTypeFromMappedType@22792-22798
+ X-ITER (4): checkIteratedTypeOrElementType@6185-6194 getIteratedTypeOrElementType@6196-6301 getIterationTypeOfGeneratorFunctionReturnType@6306-6312 getIterationTypesOfGeneratorFunctionReturnType@6314-6325
+ X-ASYNC (2): getAwaitedTypeNoAlias@31389-31391 getAwaitedTypeOfPromise@31581-31583
+ X-JSX (5): discriminateContextualTypeByJSXAttributes@jsx:266-294 getContextualJsxElementAttributesType@jsx:229-240 getContextualTypeForJsxAttribute@jsx:215-227 getContextualTypeForJsxExpression@jsx:205-213 getEffectiveFirstArgumentForJsxSignature@jsx:925-930
+ X-DECORATOR (1): getDecoratorCallSignature@30278-30283
+== F-NARROW needs 5 stand-ins for later layers
+ F-REACH (1): isReachableFlowNode@flow:2513-2520
+ K-KEYOF (1): getLiteralTypeFromPropertyName@26892-26910
+ K-INDEXED (1): getTypeOfPropertyOrIndexSignatureOfType@29437-29447
+ K-SUBST (1): isNoInferType@26945-26948
+ X-ITER (1): checkIteratedTypeOrElementType@6185-6194
+== F-REACH needs 0 stand-ins for later layers
+== F-UNREACH needs 0 stand-ins for later layers

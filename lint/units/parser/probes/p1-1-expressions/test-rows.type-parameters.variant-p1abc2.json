@@ -1,0 +1,77 @@
+{
+ "bun": "1.4.3 e3566be889995ffff8b08823b9233617f979c889",
+ "rows": {
+  "after type parameters": [
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(y: T) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>() => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? () => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? () => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(y: T) => ({ y }) : z => ({ z });",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => ({ y }) : (z) => ({ z });\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => ({ y }) : (z) => ({ z });\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T extends U>(y: T) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? <T>(...y: T[]) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? (...y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? (...y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async <T>(y: T) => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? async (y) => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? async (y) => b : (c) => d;\n"
+    }
+   },
+   {
+    "loader": "ts",
+    "src": "x = a ? async <T>() => (b) : c => d;",
+    "tsc": "ok",
+    "expected": "x = a ? async () => b : (c) => d;\n",
+    "own": {
+     "ok": true,
+     "out": "x = a ? async () => b : (c) => d;\n"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,21 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+sig.ts(3,1): error TS2322: Type '(x: string) => number' is not assignable to type '(x: number) => string'.
+  Types of parameters 'x' and 'x' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+sig.ts(6,1): error TS2322: Type '{ m(): { n(): number; }; }' is not assignable to type '{ m(): { n(): string; }; }'.
+  The types returned by 'm().n()' are incompatible between these types.
+    Type 'number' is not assignable to type 'string'.
+sig.ts(9,1): error TS2322: Type 'new () => { a: number; }' is not assignable to type 'new () => { a: string; }'.
+  Type '{ a: number; }' is not assignable to type '{ a: string; }'.
+    Types of property 'a' are incompatible.
+      Type 'number' is not assignable to type 'string'.
+sig.ts(12,1): error TS2322: Type '(x: boolean) => void' is not assignable to type '{ (x: number): void; (x: string): void; }'.
+  Types of parameters 'x' and 'x' are incompatible.
+    Type 'number' is not assignable to type 'boolean'.
+sig.ts(15,1): error TS2322: Type '(x: number, y: number) => void' is not assignable to type '(x: number) => void'.
+  Target signature provides too few arguments. Expected 2 or more, but got 1.
+sig.ts(18,1): error TS2322: Type '(x: any) => boolean' is not assignable to type '(x: any) => x is string'.
+  Signature '(x: any): boolean' must be a type predicate.
+sig.ts(21,1): error TS2322: Type '<T>(x: T) => T' is not assignable to type '(x: string) => number'.
+  Type 'string' is not assignable to type 'number'.
+SIZES after check: identity=0 assignable=18 comparable=0 subtype=0 strictSubtype=0 enum=0 types=108

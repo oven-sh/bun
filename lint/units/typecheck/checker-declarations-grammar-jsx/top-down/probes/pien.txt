@@ -1,0 +1,38 @@
+h
+React.createElement
+a.b.c
+ a . b 
+a\n.b
+a.\nb
+a.\nb c
+a.b\nc
+h create
+
+a.
+.a
+a..b
+a.#b
+#a
+#a.b
+a.<T>
+a<T>
+this.x
+a.this
+null
+a.class
+class
+a.1
+1
+a/*c*/.b
+a//c\n.b
+a./*c*/b
+\u0061.b
+a.\u{62}
+a-b
+a.b;
+"a"
+$.h
+_a._b
+a.b.
+café.x
+a.if.b

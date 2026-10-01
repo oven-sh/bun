@@ -1,0 +1,13 @@
+R-REL	functions 103	lines 2813	closures 18	diagnostic references 75
+R-SIGREL	functions 14	lines 516	closures 1	diagnostic references 14
+R-VARIANCE	functions 9	lines 227	closures 1	diagnostic references 0
+R-DISCRIM	functions 22	lines 397	closures 3	diagnostic references 0
+R-ELAB	functions 11	lines 242	closures 1	diagnostic references 8
+I-INFER	functions 68	lines 1401	closures 17	diagnostic references 0
+I-REVMAP	functions 9	lines 176	closures 5	diagnostic references 0
+later K-TEMPLATE	functions 8	lines 197	closures 4	diagnostic references 0
+omitted: tracing only	functions 1	lines 17	closures 0	diagnostic references 0
+prior T-CONSTRAINT	functions 4	lines 63	closures 1	diagnostic references 0
+prior T-SIGSHAPE	functions 19	lines 298	closures 2	diagnostic references 0
+prior T-SIGSHAPE or K-PRED	functions 6	lines 90	closures 1	diagnostic references 0
+prior T-TUPLE	functions 3	lines 29	closures 0	diagnostic references 0

@@ -1,0 +1,177 @@
+[
+ [
+  "leading",
+  "ts",
+  "// a\n/* b */ /** c */\nlet x = 1;"
+ ],
+ [
+  "leading-after-hashbang",
+  "ts",
+  "#!/usr/bin/env bun\n// a\n/* b */\nlet x = 1;"
+ ],
+ [
+  "only-comments",
+  "ts",
+  "// a\n/* b */"
+ ],
+ [
+  "eof-line-no-newline",
+  "ts",
+  "let x = 1; // tail"
+ ],
+ [
+  "eof-block-no-newline",
+  "ts",
+  "let x = 1; /* tail */"
+ ],
+ [
+  "kinds",
+  "ts",
+  "/**/ /***/ /** d */ /* b */ // l\n/*! legal */ //! legal\nlet x;"
+ ],
+ [
+  "crlf-and-ls",
+  "ts",
+  "// a\r\nlet x; // b\u2028let y; // c\u2029let z;"
+ ],
+ [
+  "pragmas-inside",
+  "ts",
+  "// @ts-ignore\nlet x: number = 'a'; /* @__PURE__ */ f(); //# sourceMappingURL=x.map\n"
+ ],
+ [
+  "not-comments",
+  "ts",
+  "let s = '// no'; let t = `/* no ${ /* yes */ 1 } // no`; let r = /\\/\\*/; let d = 4 / 2 /* yes */ / 1;"
+ ],
+ [
+  "types",
+  "ts",
+  "let x: /*1*/ A /*2*/ | /*3*/ B<  /*4*/ C /*5*/ > = /*6*/ y as /*7*/ D;\ninterface I { /*8*/ a: /*9*/ string; // 10\n}\ntype T = /*11*/ { [K in /*12*/ keyof A]: A[K] };"
+ ],
+ [
+  "jsx-tag",
+  "tsx",
+  "let e = < /*1*/ div /*2*/ a /*3*/ = /*4*/ \"b\" // 5\n  c={ /*6*/ d } /*7*/ {...e /*8*/ } /*9*/ />;"
+ ],
+ [
+  "jsx-open-close",
+  "tsx",
+  "let e = <div /*1*/ > text // not /* not */ { /*2*/ } {/*3*/ x /*4*/} </ /*5*/ div /*6*/ >;"
+ ],
+ [
+  "jsx-nested",
+  "tsx",
+  "let e = <a /*1*/ ><b /*2*/ c={<i /*3*/ />} /*4*/ /></a /*5*/ > /*6*/ ;"
+ ],
+ [
+  "jsx-attr-element-bun-rejects-today",
+  "tsx",
+  "let e = <a /*1*/ ><b /*2*/ c=<i /*3*/ /> /*4*/ /></a /*5*/ > /*6*/ ;"
+ ],
+ [
+  "jsx-member-ns",
+  "tsx",
+  "let e = <a /*1*/ . /*2*/ b /*3*/ />; let f = <n:m /*4*/ n:o /*5*/ =\"1\" />;"
+ ],
+ [
+  "jsx-fragment",
+  "tsx",
+  "let e = < /*1*/ > </ /*2*/ >;"
+ ],
+ [
+  "jsx-type-args",
+  "tsx",
+  "let e = <Foo /*1*/ < /*2*/ number /*3*/ > /*4*/ a=\"1\" /*5*/ />;"
+ ],
+ [
+  "jsx-line-comment-in-tag",
+  "tsx",
+  "let e = <div // 1\n  a=\"b\" // 2\n/>;"
+ ],
+ [
+  "bt-type-args-fail",
+  "ts",
+  "let r = a < /*1*/ b > /*2*/ c;"
+ ],
+ [
+  "bt-type-args-ok",
+  "ts",
+  "let r = f< /*1*/ T /*2*/ >( /*3*/ x);"
+ ],
+ [
+  "bt-type-args-shift",
+  "ts",
+  "let r = f<A<B /*1*/ >> /*2*/ (x); let s = a < b >> /*3*/ c;"
+ ],
+ [
+  "bt-arrow-return-ok",
+  "ts",
+  "let r = (a) /*1*/ : /*2*/ T /*3*/ => /*4*/ a;"
+ ],
+ [
+  "bt-arrow-return-cond-arrow",
+  "ts",
+  "let r = c ? (a) /*1*/ : /*2*/ b /*3*/ => /*4*/ d /*5*/ : /*6*/ e;"
+ ],
+ [
+  "bt-arrow-return-cond-plain",
+  "ts",
+  "let r = c ? (a) /*1*/ : /*2*/ b /*3*/ ;"
+ ],
+ [
+  "bt-arrow-return-cond-jsx",
+  "tsx",
+  "let r = c ? (a) : b => <i /*1*/ j=\"k\" /*2*/ /> : e;"
+ ],
+ [
+  "bt-arrow-args-type",
+  "ts",
+  "let x: ( /*1*/ a /*2*/ : string) => void; let y: ( /*3*/ string /*4*/ );"
+ ],
+ [
+  "bt-infer-extends",
+  "ts",
+  "type A<T> = T extends [infer U extends /*1*/ string /*2*/ ? 1 : 2] ? 3 : 4; type B<T> = T extends (infer U extends /*3*/ string) ? 5 : 6;"
+ ],
+ [
+  "bt-type-params-paren",
+  "ts",
+  "let f = < /*1*/ T /*2*/ >( /*3*/ a: T) => a; class C { m< /*4*/ T>( /*5*/ ) {} }"
+ ],
+ [
+  "bt-tsx-generic-arrow",
+  "tsx",
+  "const f = <T /*1*/ , /*2*/ >(x: T) => x; const g = <T /*3*/ extends /*4*/ object>(x: T) => x;"
+ ],
+ [
+  "bt-tsx-element-not-arrow",
+  "tsx",
+  "const e = <T /*1*/ a=\"b\" /*2*/ />; const h = <T /*3*/ extends=\"x\" />;"
+ ],
+ [
+  "bt-async-arrow-lookahead",
+  "ts",
+  "let f = async /*1*/ x /*2*/ => x; let g = async /*3*/ (y) => y; let h = async /*4*/ ;"
+ ],
+ [
+  "bt-import-lookahead",
+  "ts",
+  "let r = f<T>(import /*1*/ ('x')); let s = a < b > import /*2*/ .meta;"
+ ],
+ [
+  "bt-nested",
+  "ts",
+  "let r = c ? (a) : b => f< /*1*/ T>( /*2*/ x) : e;"
+ ],
+ [
+  "expect-greater-split",
+  "ts",
+  "let x: A<B<C /*1*/ >> /*2*/ = /*3*/ y; let z: A<B<C>>= /*4*/ w;"
+ ],
+ [
+  "class-members",
+  "ts",
+  "class A { /*1*/ public /*2*/ readonly /*3*/ x /*4*/ : /*5*/ number; /*6*/ declare y: string; // 7\n /** 8 */ m(): void; m() {} }"
+ ]
+]

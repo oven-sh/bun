@@ -1,0 +1,350 @@
+AAg "f<>();"
+     bun: ok "f();\n"
+     tsc check: TS1099@1+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf();\n"
+AAg "f<>(x);"
+     bun: ok "f(x);\n"
+     tsc check: TS1099@1+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf(x);\n"
+AAg "new F<>();"
+     bun: ok "new F;\n"
+     tsc check: TS1099@5+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nnew F();\n"
+AAg "new F<>;"
+     bun: ok "new F;\n"
+     tsc check: TS1099@5+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nnew F;\n"
+AAg "f<>`x`;"
+     bun: ok "f`x`;\n"
+     tsc check: TS1099@1+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf `x`;\n"
+AAg "f<>;"
+     bun: ok "f;\n"
+     tsc check: TS1099@1+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf;\n"
+AAg "var v = f<>;"
+     bun: ok "var v = f;\n"
+     tsc check: TS1099@9+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nvar v = f;\n"
+AAg "a?.b<>();"
+     bun: ok "a?.b();\n"
+     tsc check: TS1099@4+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\na?.b();\n"
+A2  "a?.<>();"
+     bun: Unexpected > @4
+     tsc check: TS1099@3+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\na?.();\n"
+A2  "let x: A<>;"
+     bun: Unexpected > @9
+     tsc check: TS1099@8+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nlet x;\n"
+A2  "let x: A.B<>;"
+     bun: Unexpected > @11
+     tsc check: TS1099@10+2 Type argument list cannot be empty. ; (noise 2503)
+     tsc emit: "\"use strict\";\nlet x;\n"
+A2  "type T = A<>;"
+     bun: Unexpected > @11
+     tsc check: TS1099@10+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "function f<>() {}"
+     bun: Expected identifier but found ">" @11 | Expected ">" but found "(" @12
+     tsc check: TS1098@10+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+RR  "var g = <>() => 1;"
+     bun: Unexpected > @9
+     tsc parse: TS1110@9+1 Type expected. ; TS1109@11+1 Expression expected. ; TS1005@13+2 ';' expected.
+RR  "var g = <>(x) => x;"
+     bun: Unexpected > @9
+     tsc parse: TS1110@9+1 Type expected. ; TS1005@14+2 ';' expected.
+A2  "class C<> {}"
+     bun: Expected identifier but found ">" @8 | Expected ">" but found "{" @10
+     tsc check: TS1098@7+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "interface I<> {}"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "type T<> = 1;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "class C { m<>() {} }"
+     bun: Expected identifier but found ">" @12 | Expected ">" but found "(" @13
+     tsc check: TS1098@11+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+A2  "var o = { m<>() {} };"
+     bun: Expected identifier but found ">" @12 | Expected ">" but found "(" @13
+     tsc check: TS1098@11+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "let x: <>() => void;"
+     bun: Expected identifier but found ">" @8 | Expected ">" but found "(" @9
+     tsc check: TS1098@7+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nlet x;\n"
+A2  "let x: new <>() => void;"
+     bun: Expected identifier but found ">" @12 | Expected ">" but found "(" @13
+     tsc check: TS1098@11+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nlet x;\n"
+A2  "let x: typeof a<>;"
+     bun: Unexpected > @16
+     tsc check: TS1099@15+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nlet x;\n"
+A1  "let x: import(\"m\")<>;"
+     bun: Expected ";" but found "<" @18 | Unexpected > @19
+     tsc check: (noise 2307)
+     tsc emit: "\"use strict\";\nlet x;\n"
+A1  "let x: import(\"m\").A<>;"
+     bun: Unexpected > @21
+     tsc check: (noise 2307)
+     tsc emit: "\"use strict\";\nlet x;\n"
+A2  "class C extends B<> {}"
+     bun: Unexpected > @18
+     tsc check: TS1099@17+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends B {\n}\n"
+A2  "class C implements I<> {}"
+     bun: Unexpected > @21
+     tsc check: TS1099@20+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "interface I extends J<> {}"
+     bun: Unexpected > @22
+     tsc check: TS1099@21+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "@dec<>() class C {}"
+     bun: Unexpected > @5
+     tsc check: TS1099@4+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\n@dec()\nclass C {\n}\n"
+A1  "a as Foo <= b;"
+     bun: Unexpected = @10
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= b;\n"
+RR  "a as Foo < b;"
+     bun: Expected ">" but found ";" @12
+     tsc parse: TS1005@12+1 '>' expected.
+AA  "a as Foo<b> <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+RR  "a as Foo <<= b;"
+     bun: Unexpected <= @10
+     tsc parse: TS1005@9+3 ';' expected.
+RR  "a as Foo << b;"
+     bun: Expected ">" but found ";" @13 | Unexpected end of file @14
+     tsc parse: TS1005@13+1 ',' expected.
+AA  "a as Foo >= b;"
+     bun: ok "a >= b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na >= b;\n"
+AA  "a as Foo > b;"
+     bun: ok "a > b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na > b;\n"
+AA  "a as Foo >> b;"
+     bun: ok "a >> b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na >> b;\n"
+RR  "a as Foo >>= b;"
+     bun: Expected ";" but found ">>=" @9
+     tsc parse: TS1005@9+3 ';' expected.
+AA  "a as Foo >>> b;"
+     bun: ok "a >>> b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na >>> b;\n"
+AA  "a as Foo == b;"
+     bun: ok "a == b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na == b;\n"
+RR  "a as Foo = b;"
+     bun: Expected ";" but found "=" @9
+     tsc parse: TS1005@9+1 ';' expected.
+RR  "a as Foo += b;"
+     bun: Expected ";" but found "+=" @9
+     tsc parse: TS1005@9+2 ';' expected.
+AA  "a as Foo && b;"
+     bun: ok "a && b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na && b;\n"
+AA  "a as Foo || b;"
+     bun: ok "a || b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na || b;\n"
+AA  "a as Foo ?? b;"
+     bun: ok "a ?? b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na ?? b;\n"
+AA  "a as Foo ? b : c;"
+     bun: ok "a ? b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na ? b : c;\n"
+AA  "a as Foo + b;"
+     bun: ok "a + b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na + b;\n"
+AA  "a as Foo - b;"
+     bun: ok "a - b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na - b;\n"
+AA  "a as Foo * b;"
+     bun: ok "a * b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na * b;\n"
+AA  "a as Foo ** b;"
+     bun: ok "a ** b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na ** b;\n"
+AA  "a as Foo / b;"
+     bun: ok "a / b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na / b;\n"
+AA  "a as Foo % b;"
+     bun: ok "a % b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na % b;\n"
+AA  "a as Foo in b;"
+     bun: ok "a in b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na in b;\n"
+AA  "a as Foo instanceof b;"
+     bun: ok "a instanceof b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na instanceof b;\n"
+AA  "a as Foo as Bar;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo satisfies Bar;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AAg "a as Foo!;"
+     bun: ok "a;\n"
+     tsc check: TS17019@5+4 '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'Foo'? ; (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo.b;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304,2503)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo[0];"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo[];"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+RR  "a as Foo(b);"
+     bun: Expected ";" but found "(" @8 | Expected ";" but found ")" @10
+     tsc parse: TS1005@8+1 ';' expected.
+RR  "a as Foo`x`;"
+     bun: Expected ";" but found "`x`" @8
+     tsc parse: TS1005@8+3 ';' expected.
+RR  "a as Foo?.b;"
+     bun: Expected ";" but found "?." @8
+     tsc parse: TS1005@8+2 ';' expected.
+RR  "a as Foo++;"
+     bun: Expected ";" but found "++" @8
+     tsc parse: TS1005@8+2 ';' expected. ; TS1109@10+1 Expression expected.
+RR  "a as Foo--;"
+     bun: Expected ";" but found "--" @8
+     tsc parse: TS1005@8+2 ';' expected. ; TS1109@10+1 Expression expected.
+AA  "a as Foo | b;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo & b;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a as Foo ^ b;"
+     bun: ok "a ^ b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na ^ b;\n"
+AA  "a as Foo, b;"
+     bun: ok "a, b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na, b;\n"
+A1  "a as typeof b <= c;"
+     bun: Unexpected = @15
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+RR  "a as typeof b < c;"
+     bun: Expected ">" but found ";" @17
+     tsc parse: TS1005@17+1 '>' expected.
+A1  "a as import(\"x\").Y <= c;"
+     bun: Unexpected = @20
+     tsc check: (noise 2304,2307)
+     tsc emit: "\"use strict\";\na <= c;\n"
+A2  "a as keyof B <= c;"
+     bun: Unexpected = @14
+     tsc check: TS2469@0+12 The '<=' operator cannot be applied to type 'symbol'. ; (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as B[] <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as (B) <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as { b: 1 } <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as \"s\" <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as 1 <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AA  "a as any <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+AAg "a as const <= c;"
+     bun: ok "a <= c;\n"
+     tsc check: TS1355@0+1 A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals. ; (noise 2304)
+     tsc emit: "\"use strict\";\na <= c;\n"
+A1  "a as B.C <= d;"
+     bun: Unexpected = @10
+     tsc check: (noise 2304,2503)
+     tsc emit: "\"use strict\";\na <= d;\n"
+A1  "a satisfies Foo <= b;"
+     bun: Unexpected = @17
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na <= b;\n"
+RR  "a satisfies Foo << b;"
+     bun: Expected ">" but found ";" @20 | Unexpected end of file @21
+     tsc parse: TS1005@20+1 ',' expected.
+RR  "a satisfies Foo <<= b;"
+     bun: Unexpected <= @17
+     tsc parse: TS1005@16+3 ';' expected.
+RR  "let x: Foo <= 1;"
+     bun: Unexpected = @12
+     tsc parse: TS1005@11+2 ',' expected.
+RR  "let x: Foo<=1;"
+     bun: Unexpected = @11
+     tsc parse: TS1005@10+2 ',' expected.
+RR  "let x: A<B<=C>>;"
+     bun: Unexpected = @11 | Unexpected ; @15
+     tsc parse: TS1005@10+2 '>' expected. ; TS1109@15+1 Expression expected.
+RR  "type T = A <= B;"
+     bun: Unexpected = @12
+     tsc parse: TS1005@11+2 ';' expected.
+A1  "var x = a as Foo <= b ? c : d;"
+     bun: Unexpected = @18
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = a <= b ? c : d;\n"
+AA  "var x = (a as Foo) <= b;"
+     bun: ok "var x = a <= b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = a <= b;\n"
+AA  "if (a as number <= b) {}"
+     bun: ok "if (a <= b) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nif (a <= b) { }\n"
+AA  "for (var i = 0; i as number <= n; i++) {}"
+     bun: ok "for (i = 0;i <= n; i++) {}\nvar i;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (var i = 0; i <= n; i++) { }\n"
+A1  "while (a as A <= b as B) {}"
+     bun: Unexpected = @15 | Expected ";" but found ")" @23
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nwhile (a <= b) { }\n"

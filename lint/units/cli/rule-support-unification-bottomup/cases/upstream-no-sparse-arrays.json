@@ -1,0 +1,25 @@
+{
+	"valid": [
+		{
+			"code": "var a = [ 1, 2, ]"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var a = [,];"
+		},
+		{
+			"code": "var a = [ 1,, 2];"
+		},
+		{
+			"code": "[\r\n\t/* comment */,\n// comment\n ,];"
+		},
+		{
+			"code": "[(( [a,] )),,,];"
+		},
+		{
+			"code": "[,(( [a,] )),,];"
+		}
+	],
+	"skipped": 0
+}

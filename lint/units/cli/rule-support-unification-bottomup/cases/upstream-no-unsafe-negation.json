@@ -1,0 +1,67 @@
+{
+	"valid": [
+		{
+			"code": "a in b"
+		},
+		{
+			"code": "a in b === false"
+		},
+		{
+			"code": "!(a in b)"
+		},
+		{
+			"code": "(!a) in b"
+		},
+		{
+			"code": "a instanceof b"
+		},
+		{
+			"code": "a instanceof b === false"
+		},
+		{
+			"code": "!(a instanceof b)"
+		},
+		{
+			"code": "(!a) instanceof b"
+		},
+		{
+			"code": "if (! a < b) {}"
+		},
+		{
+			"code": "while (! a > b) {}"
+		},
+		{
+			"code": "foo = ! a <= b;"
+		},
+		{
+			"code": "foo = ! a >= b;"
+		},
+		{
+			"code": "! a <= b"
+		},
+		{
+			"code": "foo = ! a >= b;"
+		}
+	],
+	"invalid": [
+		{
+			"code": "!a in b"
+		},
+		{
+			"code": "(!a in b)"
+		},
+		{
+			"code": "!(a) in b"
+		},
+		{
+			"code": "!a instanceof b"
+		},
+		{
+			"code": "(!a instanceof b)"
+		},
+		{
+			"code": "!(a) instanceof b"
+		}
+	],
+	"skipped": 9
+}

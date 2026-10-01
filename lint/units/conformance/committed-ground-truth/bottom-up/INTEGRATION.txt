@@ -1,0 +1,58 @@
+Where the assembled file set reads ground truth today, and what each place becomes
+==================================================================================
+
+The assembled set is what shared-foundation-merge/bottom-up/overlay/assemble.ts writes (35 files; this pass built it
+in /tmp/cgt/asm). Line numbers are those of the assembled files. "home" is test/cli/lint/conformance.
+
+test/cli/lint/conformance.test.ts
+  :44      import from "/workspace/wt/conformance/test/harness.ts"      -> "harness"
+  :46      const notes = "/workspace/notes/lint/units/conformance"      -> gone; const home = join(import.meta.dir, "conformance")
+  :47      referenceLayout()                                            -> the layout of the committed corpus (below)
+  :51      join(notes, "check-contract-default-spawn", "top-down", "fakes", "lints.ts")
+                                                                        -> join(home, "fixtures", "lints-fixture.ts")
+  :79-91   go-subtests.tsv.gz of the notes, gunzipSync, String.includes per instance
+                                                                        -> home/fixtures/instances.tsv, a Map from name to line
+  :96-115  six constants of the corpus in the test                      -> reference_counts.json (cases, corpus)
+  :117-123 synthetic-inputs.json and synthetic-expected.json of the notes
+                                                                        -> home/fixtures/directives-inputs.json, directives-expected.json
+  :234-247 the instances of one of 40 cases against referenceStatus     -> against their lines of the list (name, E or C or skipped, reason)
+  :250-315 every instance against Go's list, 21 constants in the test   -> every line of the list, the counts of reference_counts.json,
+                                                                           and suiteRun while that member is there
+  :330     sampled(name, 500) over the baselines of typescript-go       -> sampled(name, 48): see the second failure below
+prototype/reference_blocks.ts in this directory holds these blocks as they would read the committed files; it passes
+on the scratch repository in the release build (16 tests) and in the debug build (14 tests, the 2 of the release
+tier skipped), and on a list with one changed kind and one removed line it fails with exactly those lines.
+
+test/cli/lint/conformance/runner/index.ts
+  :80      const reference = process.env.TSGO ?? "/workspace/ref/typescript-go"   a path of the research machine
+  :88-101  referenceLayout(root): the layout of the clone, tsBaselines and expectsNoErrors undefined
+  The committed tree needs the layout of the corpus beside it. With the layout of the sync prototype it is:
+    casesRoot       home/corpus/ts/tests/cases
+    libRoot         home/corpus/ts/tests/lib
+    tsgoBaselines   home/corpus/tsgo/testdata/baselines/reference/submodule
+    tsBaselines     home/corpus/ts/tests/baselines/reference
+    expectsNoErrors home/corpus/tsgo.expects-no-errors.txt
+    accepted        home/corpus/tsgo/testdata/submoduleAccepted.txt
+    triaged         home/corpus/tsgo/testdata/submoduleTriaged.txt
+    postEmitOrder   home/post-emit-order.txt
+  Every probe of this pass used that object.
+
+What the assembled test does on the committed layout (this pass ran it with referenceLayout() returning the object
+above, TFS_CHECK=replay, release build): 46 tests pass and 2 fail.
+  1. "corpus > holds the cases and the baselines of the pinned commits": tsgoCompiler 276 and tsgoConformance 398,
+     the test expects 3187 and 3840 (the clone holds every baseline of typescript-go, the corpus the 674 that differ).
+  2. "error baselines > the sample holds about 200 files, of both tools": the sample has 3 files of typescript-go
+     (one by the rule crc32 % 500, and the two in the pretty form), the test wants more than 5. With 48 in place of
+     500 the sample is 16 files of typescript-go (100253 bytes) and 180 of TypeScript.
+Everything else holds: E 7027 and C 5770 through the four steps of oracleOf (674 typescript-go, 6353 TypeScript,
+23 by the list, 5747 none), and the replay of every oracle (12796 inputs: 7026 E and 5770 C pass).
+
+runner/compiler_test.ts -> runner/compilertest.ts (NAMES.tsv): importers runner/index.ts:12 and runner/materialize.ts:4.
+
+fixtures/lints-fixture.ts: the source (check-contract-default-spawn/top-down/fakes/lints.ts) has two runs of comment
+lines (1-4 and 63-64) that rule 5 of COMMON.md does not allow; .github/workflows/comment-cop.yml:99 reads src/ only,
+so no workflow reports them.
+
+Update script (prototype/gen_reference.ts): it copies the members "go" and "suiteRun" and never computes them from
+the port. A port that is wrong and writes its own answer into the constants would pass its own test; with the copy,
+a list or a table that moved while the commits did not fails against Go's value.

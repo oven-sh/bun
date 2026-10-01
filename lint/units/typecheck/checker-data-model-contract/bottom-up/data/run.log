@@ -1,0 +1,77 @@
+analyses ok
+diagnostics block: 8 files, 2206 messages, no diff
+flags_generated.rs: no diff, 0 problems
+checker record: no diff 319 upstream fields, 295 ported, 24 without a field
+layer tables: no diff 3060 functions, 0 unplaced
+k4 path: no diff 423 entered, 57 with an earlier caller
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.82s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.94s
+     Running unittests src/lib.rs (/tmp/cdm/target/debug/build/bun_typecheck_dm/dd12f03b83e358fc/out/bun_typecheck_dm-dd12f03b83e358fc)
+
+running 38 tests
+test diagnostics::tests::decimal ... ok
+test diagnostics_tests::chain_related_and_columns ... ok
+test diagnostics::tests::format_is_one_pass ... ok
+test diagnostics::tests::ids_and_texts ... ok
+test diagnostics_tests::ad_hoc_and_out_of_range ... ok
+test diagnostics_tests::first_visible_result ... ok
+test diagnostics::tests::table_counts ... ok
+test diagnostics_tests::collection_deduplicates_at_add_and_program_merges ... ok
+test diagnostics_tests::messages_compare_by_id ... ok
+test node_table_tests::bind_publish_and_share_between_programs ... ok
+test node_table_tests::bound_tables_with_an_index ... ok
+test node_table_tests::checker_nodes_live_in_the_open_store ... ok
+test diagnostics::tests::keys_agree_with_upstream ... ok
+test tests::a_stored_comparer_names_its_relater ... ok
+test node_table_tests::every_definition_round_trips ... ok
+test node_table_tests::lazy_symbol_ids_and_private_names ... ok
+test node_table_tests::finish_numbers_in_for_each_child_order ... ok
+test node_table_tests::published_stores_keep_their_nodes ... ok
+test tests::a_checker_symbol_is_a_record_of_the_open_store ... ok
+test node_table_tests::imports_a_dump_of_typescript ... ok
+test node_table_tests::stable_store_keeps_addresses ... ok
+test node_table_tests::workspace_crates_link ... ok
+test tests::a_mapper_sees_what_fill_missing_type_arguments_writes_later ... ok
+test tests::deferred_diagnostics_run_once_in_order ... ok
+test tests::cache_keys_are_digests_of_upstreams_byte_stream ... ok
+size_of Checker = 15024
+size_of Type = 48
+size_of TypeData = 32
+size_of Signature = 80
+size_of TypeMapper = 48
+size_of Relater = 256
+size_of InferenceContext = 96
+size_of InterfaceType = 264
+size_of UnionType = 200
+size_of CacheHashKey = 16
+size_of List = 16
+size_of TypeComparer = 12
+test tests::faults_are_recorded_and_have_a_fallback ... ok
+test tests::get_union_signatures_skips_the_master_list_by_identity ... ok
+test tests::helper_objects_are_ids_with_upstreams_pool ... ok
+test tests::lists_keep_nil_and_identity ... ok
+test tests::recursive_type_related_to_keeps_upstreams_cache_and_limits ... ok
+test tests::merge_inferences_is_seen_by_every_holder_of_the_list ... ok
+test tests::the_checker_record_has_every_field_from_the_start ... ok
+test tests::report_error_reduces_the_chain_as_upstream ... ok
+test tests::signature_related_to_hands_over_reporter_and_comparer ... ok
+test tests::symbol_ids_are_assigned_by_the_first_request ... ok
+test tests::the_resolution_stack_and_the_instantiation_limits ... ok
+test tests::the_one_node_builder_is_a_unit_handle_over_checker_state ... ok
+test tests::a_loop_over_checker_state_has_a_budget ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+   Doc-tests bun_typecheck_dm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+scratch ok
+
+real	2m23.494s
+user	0m19.678s
+sys	0m4.636s
+rc=0

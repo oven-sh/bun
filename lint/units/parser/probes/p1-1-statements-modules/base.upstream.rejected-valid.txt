@@ -1,0 +1,638 @@
+A1c  "import a from \"m\"\nwith { type: \"json\" };"
+      tsc  OK   (also TS2318,TS2307)
+      tsc.js  ""
+      bun     ERR Expected "(" but found "{"
+A1c  "import \"m\" with { type: 1 };"
+      tsc  OK   (also TS2318,TS2858)
+      tsc.js  "import \"m\" with { type: 1 };"
+      bun     ERR Expected string but found "1"
+A1c  "import type { arguments } from \"m\";"
+      tsc  OK   (also TS2307)
+      tsc.js  ""
+      bun     ERR Cannot use "arguments" as an identifier here
+A1c  "import type { eval } from \"m\";"
+      tsc  OK   (also TS2307)
+      tsc.js  ""
+      bun     ERR Cannot use "eval" as an identifier here
+A1c  "export type { default };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "default"
+A1c  "export type { if };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "if"
+A1c  "export type { if as A };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "if"
+A1c  "export type { \"a\" };"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found ""
+A1c  "export { type if };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "if"
+A1c  "export default @d abstract class {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "export default @d class { }"
+      bun     ERR Expected "class" but found "abstract"
+A1c  "declare function f(public a: A): void;"
+      tsc  OK   (also TS2369,TS2304)
+      tsc.js  ""
+      bun     ERR Expected ")" but found "a"
+A1c  "declare namespace"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; namespace;"
+      bun     ERR Unexpected "namespace"
+A1c  "declare module"
+      tsc  OK   (also TS2304,TS2591)
+      tsc.js  "declare; module;"
+      bun     ERR Unexpected "module"
+A1c  "declare module;"
+      tsc  OK   (also TS2304,TS2591)
+      tsc.js  "declare; module;"
+      bun     ERR Unexpected "module"
+A1c  "declare global;"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; global;"
+      bun     ERR Expected "{" but found ";"
+A1c  "declare global"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; global;"
+      bun     ERR Expected "{" but found end of file
+A1c  "declare\nglobal {}"
+      tsc  OK   (also TS2304,TS2669,TS2670)
+      tsc.js  "declare;"
+      bun     ERR Expected ";" but found "{"
+A1c  "global {}"
+      tsc  OK   (also TS2669,TS2670)
+      tsc.js  ""
+      bun     ERR Expected ";" but found "{"
+A1c  "global { var a: A }"
+      tsc  OK   (also TS2669,TS2670,TS2304)
+      tsc.js  "var global; (function (global) { var a; })(global || (global = {}));"
+      bun     ERR Expected ";" but found "{"
+A1c  "declare a;"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; a;"
+      bun     ERR Unexpected "a"
+A1c  "declare a: A;"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; a: A;"
+      bun     ERR Unexpected "a"
+A1c  "declare {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; { }"
+      bun     ERR Unexpected "{"
+A1c  "declare if (a) {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; if (a) { }"
+      bun     ERR Unexpected "if"
+A1c  "declare 1;"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; 1;"
+      bun     ERR Unexpected "1"
+A1c  "declare label: a"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; label: a;"
+      bun     ERR Unexpected "label"
+A1c  "declare abstract;"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; abstract;"
+      bun     ERR Unexpected "abstract"
+A1c  "declare abstract\nclass C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; abstract; class C { }"
+      bun     ERR Unexpected "abstract"
+A1c  "namespace N { this.a }"
+      tsc  OK   (also TS2331,TS2683)
+      tsc.js  "var N; (function (N) { this.a; })(N || (N = {}));"
+      bun     ERR Cannot use "this" here
+A1c  "namespace N { super.a }"
+      tsc  OK   (also TS2660)
+      tsc.js  "var N; (function (N) { super.a; })(N || (N = {}));"
+      bun     ERR Unexpected "super"
+A1c  "declare namespace as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected "namespace"
+A1c  "declare namespace in {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; namespace in {};"
+      bun     ERR Unexpected "namespace"
+A1c  "enum E { 1 }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[1] = 0] = 1; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "1"
+A1c  "enum E { 1 = 2 }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[1] = 2] = 1; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "1"
+A1c  "enum E { 1.5 }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[1.5] = 0] = 1.5; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "1.5"
+A1c  "enum E { 0x10 }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[16] = 0] = 16; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "0x10"
+A1c  "enum E { 1n }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[1n] = 0] = 1n; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "1n"
+A1c  "enum E { [\"a\"] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"a\"] = 0] = \"a\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"a\"] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"a\"] = 1] = \"a\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [`a`] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[`a`] = 1] = `a`; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [1] = 1 }"
+      tsc  OK   (also TS2452)
+      tsc.js  "var E; (function (E) { E[E[1] = 1] = 1; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { A = this }"
+      tsc  OK   (also TS2332,TS2683)
+      tsc.js  "var E; (function (E) { E[E[\"A\"] = this] = \"A\"; })(E || (E = {}));"
+      bun     ERR Cannot use "this" here
+A1c  "enum E { A, A }"
+      tsc  OK   (also TS2300)
+      tsc.js  "var E; (function (E) { E[E[\"A\"] = 0] = \"A\"; E[E[\"A\"] = 1] = \"A\"; })(E || (E = {}));"
+      bun     ERR "A" has already been declared
+A1c  "type as = 1;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type satisfies = 1;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type as<T> = T;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "="
+A1c  "type as = 1; let x: as;"
+      tsc  OK   
+      tsc.js  "let x;"
+      bun     ERR Unexpected =
+A1c  "interface as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "interface satisfies { a: 1 }"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "interface as<T> extends B {}"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected "(" but found "extends"
+A1c  "declare type as = 1;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "declare interface as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "namespace as.b {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected .
+A1c  "namespace satisfies { export const a = 1 }"
+      tsc  OK   
+      tsc.js  "var satisfies; (function (satisfies) { satisfies.a = 1; })(satisfies || (satisfies = {}));"
+      bun     ERR Unexpected =
+A1c  "export interface as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "export namespace as { export const a = 1 }"
+      tsc  OK   
+      tsc.js  "export var as; (function (as) { as.a = 1; })(as || (as = {}));"
+      bun     ERR Unexpected =
+A1c  "export declare type as = 1;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "namespace as { export const a = 1 }"
+      tsc  OK   
+      tsc.js  "var as; (function (as) { as.a = 1; })(as || (as = {}));"
+      bun     ERR Unexpected =
+A1c  "namespace as.b.c { export const a = 1 }"
+      tsc  OK   
+      tsc.js  "var as; (function (as) { var b; (function (b) { var c; (function (c) { c.a = 1; })(c = b.c || (b.c = {})); })(b = as.b || (as.b = {})); })(as || (as = {}));"
+      bun     ERR Unexpected .
+A1c  "export interface as { a: 1 }"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "export interface as {}\nfoo()"
+      tsc  OK   (also TS2304)
+      tsc.js  "foo();"
+      bun     ERR Unexpected "interface"
+A1c  "declare interface as { a: 1 }"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "declare type as = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "interface as extends B {}"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Unexpected extends
+A1c  "interface as<T> {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "{"
+A1c  "interface as<T> extends B<T> { a: T }"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected "(" but found "extends"
+A1c  "interface satisfies {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "type as <T> = T"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "="
+A1c  "type as<T> = T"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "="
+A1c  "type as<in T> = T"
+      tsc  OK   (also TS2637)
+      tsc.js  ""
+      bun     ERR The modifier "in" is not valid here
+A1c  "type as<out T> = T"
+      tsc  OK   (also TS2637)
+      tsc.js  ""
+      bun     ERR The modifier "out" is not valid here
+A1c  "type as<T,> = T"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "="
+A1c  "type as<> = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found ">"
+A1c  "type as = as"
+      tsc  OK   (also TS2456)
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type as = 1\ntype satisfies = as"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type satisfies = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type satisfies<T> = T"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected "(" but found "="
+A1c  "type /* c */ as = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type as /* c */ = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "type as\n= 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "let type: any; type as = 1;"
+      tsc  OK   
+      tsc.js  "let type;"
+      bun     ERR Unexpected =
+A1c  "function f() { type as = 1; return 1 as as }"
+      tsc  OK   
+      tsc.js  "function f() { return 1; }"
+      bun     ERR Unexpected =
+A1c  "function f() { interface as {} }"
+      tsc  OK   
+      tsc.js  "function f() { }"
+      bun     ERR Expected identifier but found "}"
+A1c  "{ type as = 1 }"
+      tsc  OK   
+      tsc.js  "{ }"
+      bun     ERR Unexpected =
+A1c  "export default interface as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "export declare namespace as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected "namespace"
+A1c  "export declare interface as {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found end of file
+A1c  "export declare type satisfies = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "declare as any"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare;"
+      bun     ERR Unexpected end of file
+A1c  "export interface as {}\n"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected "interface"
+A1c  "declare interface as {}\n"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected "interface"
+A1c  "namespace as {}`x`"
+      tsc  OK   
+      tsc.js  "`x`;"
+      bun     ERR Expected ";" but found "`x`"
+A1c  "global { var x: number; }"
+      tsc  OK   (also TS2669,TS2670)
+      tsc.js  "var global; (function (global) { var x; })(global || (global = {}));"
+      bun     ERR Expected ";" but found "{"
+A1c  "global { interface A {} }"
+      tsc  OK   (also TS2669,TS2670)
+      tsc.js  ""
+      bun     ERR Expected ";" but found "{"
+A1c  "namespace N { global {} }"
+      tsc  OK   (also TS2669,TS2670)
+      tsc.js  ""
+      bun     ERR Expected ";" but found "{"
+A1c  "export {}; global { var x: number }"
+      tsc  OK   (also TS2670)
+      tsc.js  "var global; (function (global) { var x; })(global || (global = {}));"
+      bun     ERR Expected ";" but found "{"
+A1c  "abstract declare class C {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected ";" but found "declare"
+A1c  "export abstract declare class C {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected ";" but found "declare"
+A1c  "declare"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare;"
+      bun     ERR Unexpected end of file
+A1c  "declare x"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare; x;"
+      bun     ERR Unexpected "x"
+A1c  "import { eval } from \"x\";"
+      tsc  OK   (also TS2307)
+      tsc.js  ""
+      bun     ERR Cannot use "eval" as an identifier here
+A1c  "import { arguments } from \"x\";"
+      tsc  OK   (also TS2307)
+      tsc.js  ""
+      bun     ERR Cannot use "arguments" as an identifier here
+A1c  "import { a as eval } from \"x\";"
+      tsc  OK   (also TS2307)
+      tsc.js  ""
+      bun     ERR Cannot use "eval" as an identifier here
+A1c  "export { type \"a\" };"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found ""
+A1c  "export { \"a\" };"
+      tsc  OK   
+      tsc.js  "export { \"a\" };"
+      bun     ERR Expected identifier but found ""
+A1c  "export { \"type\" };"
+      tsc  OK   
+      tsc.js  "export { \"type\" };"
+      bun     ERR Expected identifier but found ""
+A1c  "export { type default };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "default"
+A1c  "export { default };"
+      tsc  OK   (also TS2304)
+      tsc.js  "export { default };"
+      bun     ERR Expected identifier but found "default"
+A1c  "export { type default as b };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "default"
+A1c  "export { default as b };"
+      tsc  OK   (also TS2304)
+      tsc.js  "export { default as b };"
+      bun     ERR Expected identifier but found "default"
+A1c  "export { if };"
+      tsc  OK   (also TS2304)
+      tsc.js  "export { if };"
+      bun     ERR Expected identifier but found "if"
+A1c  "export { type if as b };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "if"
+A1c  "export { if as b };"
+      tsc  OK   (also TS2304)
+      tsc.js  "export { if as b };"
+      bun     ERR Expected identifier but found "if"
+A1c  "export { type this };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "this"
+A1c  "export { type null };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "null"
+A1c  "export { type true };"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected identifier but found "true"
+A1c  "export { this };"
+      tsc  OK   (also TS2304)
+      tsc.js  "export { this };"
+      bun     ERR Expected identifier but found "this"
+A1c  "namespace N { import(\"x\"); }"
+      tsc  OK   (also TS2318,TS2711,TS2307)
+      tsc.js  "var N; (function (N) { import(\"x\"); })(N || (N = {}));"
+      bun     ERR Expected identifier but found "("
+A1c  "namespace N { import.meta; }"
+      tsc  OK   (also TS2318)
+      tsc.js  "var N; (function (N) { import.meta; })(N || (N = {}));"
+      bun     ERR Expected identifier but found "."
+A1c  "import defer \"x\";"
+      tsc  OK   (also TS2882)
+      tsc.js  "import \"x\";"
+      bun     ERR Expected "from" but found ""x""
+A1c  "import.defer(\"x\");"
+      tsc  OK   (also TS2318,TS2711,TS2307)
+      tsc.js  "import.defer(\"x\");"
+      bun     ERR Expected "meta" but found "defer"
+A1c  "enum E { [\"x\"] = 1, B = x }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; E[E[\"B\"] = 1] = \"B\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"] = 1, B = E.x }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; E[E[\"B\"] = 1] = \"B\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"] = 1, B = E[\"x\"] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; E[E[\"B\"] = 1] = \"B\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [`x`] = 1, B = x }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[`x`] = 1] = `x`; E[E[\"B\"] = 1] = \"B\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"a-b\"] = 1] = \"a-b\"; E[E[\"B\"] = 1] = \"B\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"], [\"y\"] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 0] = \"x\"; E[E[\"y\"] = 1] = \"y\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"] = \"s\" }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[\"x\"] = \"s\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { ['x'] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E['x'] = 0] = 'x'; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"], }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 0] = \"x\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [ \"x\" ] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\" ] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"\\u0078\"] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"\\u0078\"] = 1] = \"\\u0078\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "const enum E { [\"x\"] = 1 } var v = E.x;"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {})); var v = E.x;"
+      bun     ERR Expected identifier but found "["
+A1c  "const enum E { [\"x\"] = 1 } var v = E[\"x\"];"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {})); var v = E[\"x\"];"
+      bun     ERR Expected identifier but found "["
+A1c  "declare enum E { [\"x\"] = 1 }"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected identifier but found "["
+A1c  "export enum E { [\"x\"] = 1 }"
+      tsc  OK   
+      tsc.js  "export var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "namespace N { export enum E { [\"x\"] = 1 } }"
+      tsc  OK   
+      tsc.js  "var N; (function (N) { let E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E = N.E || (N.E = {})); })(N || (N = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [`x`] = 1, [`y`] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[`x`] = 1] = `x`; E[E[`y`] = 2] = `y`; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"x\"] = 1 } enum E { [\"y\"] = 2 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; })(E || (E = {})); (function (E) { E[E[\"y\"] = 2] = \"y\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"__proto__\"] = 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"__proto__\"] = 1] = \"__proto__\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "enum E { [\"constructor\"] }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"constructor\"] = 0] = \"constructor\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "export default @d abstract class C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "export default @d class C { }"
+      bun     ERR Expected "class" but found "abstract"
+A1c  "var v = a ? x : c ? <T>(d) : e => f;"
+      tsc  OK   (also TS2304,TS7006)
+      tsc.js  "var v = a ? x : c ? (d) : e => f;"
+      bun     ERR Expected ":" but found ";"
+      bun.tsx ERR Syntax Error
+A1c  "var v = a ? <T>(b) : c => d ? e : f;"
+      tsc  OK   (also TS2304,TS7006)
+      tsc.js  "var v = a ? (b) : c => d ? e : f;"
+      bun     ERR Expected ":" but found ";"
+      bun.tsx ERR Syntax Error
+A1c  "interface as {};"
+      tsc  OK   
+      tsc.js  ";"
+      bun     ERR Expected identifier but found ";"
+A1c  "interface as {}; foo()"
+      tsc  OK   (also TS2304)
+      tsc.js  "; foo();"
+      bun     ERR Expected identifier but found ";"
+A1c  "type as = 1; type X = as;"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "declare namespace as.b {}"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected .
+A1c  "abstract declare class C { m(): void }"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Expected ";" but found "declare"
+A1c  "@d abstract declare class C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  ""
+      bun     ERR Expected "class" but found "declare"
+A1c  "export default @d() abstract class C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "export default @d() class C { }"
+      bun     ERR Expected "class" but found "abstract"
+A1c  "class C { @d()!! m() {} }"
+      tsc  OK   (also TS2304)
+      tsc.js  "class C { @d() m() { } }"
+      bun     ERR Expected identifier but found "!"
+A1c  "@d.e()! class C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "@d.e() class C { }"
+      bun     ERR Expected "class" but found "!"
+A1c  "@d!()! class C {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "@d() class C { }"
+      bun     ERR Expected "class" but found "!"
+A1c  "enum E { [\"x\"] = 1, [\"y\"] = x + 1 }"
+      tsc  OK   
+      tsc.js  "var E; (function (E) { E[E[\"x\"] = 1] = \"x\"; E[E[\"y\"] = 2] = \"y\"; })(E || (E = {}));"
+      bun     ERR Expected identifier but found "["
+A1c  "type as = 1"
+      tsc  OK   
+      tsc.js  ""
+      bun     ERR Unexpected =
+A1c  "namespace as { export const x = 1 }"
+      tsc  OK   
+      tsc.js  "var as; (function (as) { as.x = 1; })(as || (as = {}));"
+      bun     ERR Unexpected =
+A1c  "declare as T"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare;"
+      bun     ERR Unexpected end of file
+A1c  "declare as {}"
+      tsc  OK   (also TS2304)
+      tsc.js  "declare;"
+      bun     ERR Unexpected end of file

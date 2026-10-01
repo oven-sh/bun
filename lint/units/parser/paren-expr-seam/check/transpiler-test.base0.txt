@@ -1,0 +1,15 @@
+(todo) Bun.Transpiler > parser > decls
+(todo) Bun.Transpiler > simplification > const inlining
+(todo) Bun.Transpiler > simplification > substitution
+(todo) Bun.Transpiler > transform > sync supports macros
+(todo) Bun.Transpiler > transform > sync supports macros remap > import {createElement, bacon} from 'react';
+(todo) Bun.Transpiler > transform > sync supports macros remap > import {bacon, createElement} from 'react';
+(todo) Bun.Transpiler > transform > macro remap removes import statement if its the only used one
+(todo) Bun.Transpiler > edge cases > import statement with quoted specifier
+
+ 237 pass
+ 1 skip
+ 21 todo
+ 0 fail
+ 12 snapshots, 2043 expect() calls
+Ran 259 tests across 1 file. [15.39s]

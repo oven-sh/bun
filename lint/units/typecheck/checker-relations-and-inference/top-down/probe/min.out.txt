@@ -1,0 +1,59 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+T Checker.isSkipDirectInferenceNode
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #87[StringLiteral] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Relater.reportErrorResults
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.symbolValueDeclarationIsContextSensitive
+T             Checker.typeCouldHaveTopLevelSingletonTypes
+T             Checker.getTypeNameForErrorDisplay
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["string" "number"] chainDepth=0
+T             Relater.reportError
+T             # chain after reportError: TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+min.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+SIZES after check: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=87
+F Checker.isSkipDirectInferenceNode	1621	1
+F Checker.checkTypeAssignableToAndOptionallyElaborate	424	1
+F Checker.checkTypeRelatedToAndOptionallyElaborate	428	1
+F Checker.isTypeRelatedTo	169	1
+F Checker.isSimpleTypeRelatedTo	205	2
+F Checker.elaborateError	438	1
+F Checker.isOrHasGenericConditional	474	1
+F Checker.elaborateDidYouMeanToCallOrConstruct	478	2
+F Checker.checkTypeRelatedToEx	358	1
+F Checker.getRelater	2599	1
+F Relation.size	113	6
+F Relater.isRelatedToEx	2633	1
+F Relater.reportErrorResults	4737	1
+F Relater.reportRelationError	4783	1
+F Checker.getTypeNamesForErrorDisplay	1270	1
+F Checker.symbolValueDeclarationIsContextSensitive	1294	2
+F Checker.typeCouldHaveTopLevelSingletonTypes	1298	1
+F Checker.getTypeNameForErrorDisplay	1290	1
+F Relater.getChainMessage	4932	1
+F chainDepth	4974	1
+F Relater.reportError	4862	1
+F createDiagnosticChainFromErrorChain	400	2
+F Checker.reportDiagnostic	414	1
+F Checker.putRelater	2608	1

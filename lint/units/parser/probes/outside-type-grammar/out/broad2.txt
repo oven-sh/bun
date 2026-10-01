@@ -1,0 +1,773 @@
+AA  "a!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a!!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a!.b;"
+     bun: ok "a.b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na.b;\n"
+AA  "a![0];"
+     bun: ok "a[0];\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na[0];\n"
+AA  "a!();"
+     bun: ok "a();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na();\n"
+AA  "a!`x`;"
+     bun: ok "a`x`;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na `x`;\n"
+AA  "a!<T>();"
+     bun: ok "a();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na();\n"
+AA  "a?.b!;"
+     bun: ok "a?.b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b;\n"
+AA  "a?.b!.c;"
+     bun: ok "a?.b.c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b.c;\n"
+AA  "a?.b!();"
+     bun: ok "a?.b();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b();\n"
+AA  "a?.b![0];"
+     bun: ok "a?.b[0];\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b[0];\n"
+AA  "a!?.b;"
+     bun: ok "a?.b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b;\n"
+RR  "a?.!b;"
+     bun: Expected identifier but found "!" @3
+     tsc parse: TS1003@3+1 Identifier expected.
+RR  "a\n!;"
+     bun: Unexpected ; @3
+     tsc parse: TS1109@3+1 Expression expected.
+AA  "a\n!b;"
+     bun: ok "a;\nb;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n!b;\n"
+AA  "new A!;"
+     bun: ok "new A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew A;\n"
+AA  "new A!();"
+     bun: ok "new A;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew A();\n"
+AA  "new A!.B();"
+     bun: ok "new A.B;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew A.B();\n"
+AA  "new a!.b!.c!();"
+     bun: ok "new a.b.c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew a.b.c();\n"
+AAg "new.target!;"
+     bun: ok "new.target;\n"
+     tsc check: TS17013@0+10 Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.
+     tsc emit: "\"use strict\";\nnew.target;\n"
+AA  "import.meta!;"
+     bun: ok ""
+     tsc check: (noise 2318)
+     tsc emit: "import.meta;\nexport {};\n"
+AA  "this!;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\nthis;\n"
+AA  "this!.a;"
+     bun: ok "exports.a;\n"
+     tsc emit: "\"use strict\";\nthis.a;\n"
+A2  "super.a!;"
+     bun: Unexpected "super" @0
+     tsc check: TS2660@0+5 'super' can only be referenced in members of derived classes or object literal expressions.
+     tsc emit: "\"use strict\";\nsuper.a;\n"
+AA  "(a)!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a);\n"
+AA  "(a!);"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a);\n"
+AA  "a! = 1;"
+     bun: ok "a = 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na = 1;\n"
+AA  "a! += 1;"
+     bun: ok "a += 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na += 1;\n"
+AA  "a!++;"
+     bun: ok "a++;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na++;\n"
+AA  "a!--;"
+     bun: ok "a--;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na--;\n"
+AA  "++a!;"
+     bun: ok "++a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n++a;\n"
+AA  "--a!;"
+     bun: ok "--a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n--a;\n"
+AAg "delete a!;"
+     bun: ok "delete a;\n"
+     tsc check: TS2703@7+2 The operand of a 'delete' operator must be a property reference. ; (noise 2304)
+     tsc emit: "\"use strict\";\ndelete a;\n"
+AA  "delete a!.b;"
+     bun: ok "delete a.b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndelete a.b;\n"
+AA  "typeof a!;"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntypeof a;\n"
+AA  "void a!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvoid a;\n"
+AAg "await a!;"
+     bun: ok "await a;\n"
+     tsc check: TS1375@0+5 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module. ; (noise 2304)
+     tsc emit: "\"use strict\";\nawait a;\n"
+AA  "a! as any;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a! satisfies any;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AAg "a as any!;"
+     bun: ok "a;\n"
+     tsc check: TS17019@5+4 '!' at the end of a type is not valid TypeScript syntax. Did you mean to write 'any'? ; (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "(a as any)!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "<any>a!;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na;\n"
+AA  "a! in b;"
+     bun: ok "a in b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na in b;\n"
+AA  "a! instanceof B;"
+     bun: ok "a instanceof B;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na instanceof B;\n"
+AA  "a ! in b;"
+     bun: ok "a in b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na in b;\n"
+AA  "a!\nin b;"
+     bun: ok "a in b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na\n    in b;\n"
+AA  "[a!] = b;"
+     bun: ok "[a] = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n[a] = b;\n"
+AA  "({ a: a! } = b);"
+     bun: ok "({ a } = b);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n({ a: a } = b);\n"
+A2  "({ a! } = b);"
+     bun: Expected "}" but found "!" @4 | Expected ")" but found "}" @6 | Expected ";" but found ")" @11
+     tsc check: TS18004@3+1 No value exists in scope for the shorthand property 'a'. Either declare one or provide an initializer. ; (noise 2304)
+     tsc emit: "\"use strict\";\n({ a } = b);\n"
+AA  "[a as any] = b;"
+     bun: ok "[a] = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n[a] = b;\n"
+AA  "[(a as any)] = b;"
+     bun: ok "[a] = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n[a] = b;\n"
+AA  "[<any>a] = b;"
+     bun: ok "[a] = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n[a] = b;\n"
+AA  "[a satisfies any] = b;"
+     bun: ok "[a] = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n[a] = b;\n"
+AA  "({ a: a as any } = b);"
+     bun: ok "({ a } = b);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n({ a: a } = b);\n"
+AA  "({ a: (a as any) } = b);"
+     bun: ok "({ a } = b);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n({ a: a } = b);\n"
+AA  "(a as any) = b;"
+     bun: ok "a = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na = b;\n"
+AA  "(<any>a) = b;"
+     bun: ok "a = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na = b;\n"
+AA  "(a satisfies any) = b;"
+     bun: ok "a = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na = b;\n"
+AA  "(a!) = b;"
+     bun: ok "a = b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a) = b;\n"
+AA  "(a as any)++;"
+     bun: ok "a++;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na++;\n"
+AA  "(a as any) += 1;"
+     bun: ok "a += 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na += 1;\n"
+RR  "a as any = b;"
+     bun: Expected ";" but found "=" @9
+     tsc parse: TS1005@9+1 ';' expected.
+AA  "for (a! of b) {}"
+     bun: ok "for (a of b) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (a of b) { }\n"
+AA  "for (a as any of b) {}"
+     bun: ok "for (a of b) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (a of b) { }\n"
+AA  "for ((a as any) of b) {}"
+     bun: ok "for (a of b) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (a of b) { }\n"
+AA  "for (a! in b) {}"
+     bun: ok "for (a in b) {}\n"
+     tsc check: (noise 2318,2304)
+     tsc emit: "\"use strict\";\nfor (a in b) { }\n"
+AA  "for ((a!) in b) {}"
+     bun: ok "for (a in b) {}\n"
+     tsc check: (noise 2318,2304)
+     tsc emit: "\"use strict\";\nfor ((a) in b) { }\n"
+AA  "for (a.b! of c) {}"
+     bun: ok "for (a.b of c) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (a.b of c) { }\n"
+AA  "for ((<any>a) of b) {}"
+     bun: ok "for (a of b) {}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nfor (a of b) { }\n"
+RR  "f<T>!;"
+     bun: Unexpected ; @5
+     tsc parse: TS1109@5+1 Expression expected.
+RR  "f<T>!();"
+     bun: Unexpected ) @6
+     tsc parse: TS1109@6+1 Expression expected.
+AA  "f<T>?.();"
+     bun: ok "f?.();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf?.();\n"
+B  "f<T>.a;"
+     bun: ok "f.a;\n"
+     tsc parse: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+B  "f<T>?.a;"
+     bun: ok "f?.a;\n"
+     tsc parse: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+AA  "f<T>[0];"
+     bun: ok "f < T > [0];\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > [0];\n"
+AA  "f<T>`x`;"
+     bun: ok "f`x`;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf `x`;\n"
+AA  "f<T>\n`x`;"
+     bun: ok "f`x`;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf `x`;\n"
+AA  "f<T>\n(x);"
+     bun: ok "f(x);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf(x);\n"
+AA  "f<T> as any;"
+     bun: ok "f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf;\n"
+AA  "f<T>;"
+     bun: ok "f;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf;\n"
+AA  "f<T>\ng();"
+     bun: ok "f;\ng();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf;\ng();\n"
+AAg "f<T> = 1;"
+     bun: ok "f = 1;\n"
+     tsc check: TS2364@0+4 The left-hand side of an assignment expression must be a variable or a property access. ; (noise 2304)
+     tsc emit: "\"use strict\";\n(f) = 1;\n"
+AAg "f<T> += 1;"
+     bun: ok "f += 1;\n"
+     tsc check: TS2364@0+4 The left-hand side of an assignment expression must be a variable or a property access. ; (noise 2304)
+     tsc emit: "\"use strict\";\n(f) += 1;\n"
+RR  "f<T>++;"
+     bun: Unexpected ; @6
+     tsc parse: TS1109@6+1 Expression expected.
+RR  "f<T> > g;"
+     bun: Unexpected > @5
+     tsc parse: TS1109@5+1 Expression expected.
+RR  "f<T> >> g;"
+     bun: Unexpected >> @5
+     tsc parse: TS1109@5+1 Expression expected.
+RR  "f<T> < g;"
+     bun: Expected ">" but found ";" @8
+     tsc parse: TS1005@8+1 '>' expected.
+AAg "f<T> + g;"
+     bun: ok "f < T, +g;\n"
+     tsc check: TS2365@0+8 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > +g;\n"
+AAg "f<T> - g;"
+     bun: ok "f < T, -g;\n"
+     tsc check: TS2365@0+8 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > -g;\n"
+AA  "f<T> || g;"
+     bun: ok "f || g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f) || g;\n"
+AA  "f<T> ? a : b;"
+     bun: ok "f ? a : b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f) ? a : b;\n"
+AA  "f<T>, g;"
+     bun: ok "f, g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f), g;\n"
+AA  "f<T> in g;"
+     bun: ok "f in g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f) in g;\n"
+AA  "f<T> instanceof g;"
+     bun: ok "f instanceof g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f) instanceof g;\n"
+AA  "f<T> === g;"
+     bun: ok "f, g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(f) === g;\n"
+RR  "f<T><U>;"
+     bun: Unexpected ; @7
+     tsc parse: TS1109@7+1 Expression expected.
+RR  "f<T><U>();"
+     bun: Expected "=>" but found ";" @9
+     tsc parse: TS1109@8+1 Expression expected.
+AA  "f<T>()<U>();"
+     bun: ok "f()();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf()();\n"
+RR  "f<T>\n<U>();"
+     bun: Expected "=>" but found ";" @10
+     tsc parse: TS1109@9+1 Expression expected.
+AA  "f<T> g;"
+     bun: ok "f < T > g;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > g;\n"
+AA  "f<T>\ng;"
+     bun: ok "f;\ng;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf;\ng;\n"
+AAg "f<T> 1;"
+     bun: ok "f < T;\n"
+     tsc check: TS2365@0+6 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > 1;\n"
+AAg "f<T> \"s\";"
+     bun: ok "f < T;\n"
+     tsc check: TS2365@0+8 Operator '>' cannot be applied to types 'boolean' and 'string'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > \"s\";\n"
+AAg "f<T> this;"
+     bun: ok "f < T > exports;\n"
+     tsc check: TS2365@0+9 Operator '>' cannot be applied to types 'boolean' and 'typeof globalThis'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > this;\n"
+AA  "f<T> (x);"
+     bun: ok "f(x);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf(x);\n"
+AA  "f<T> [x];"
+     bun: ok "f < T > [x];\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > [x];\n"
+AA  "f<T> {};"
+     bun: ok "f < T > {};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > {};\n"
+AAg "f<T> class {};"
+     bun: ok "f < T > class {\n};\n"
+     tsc check: TS2365@0+13 Operator '>' cannot be applied to types 'boolean' and 'typeof (Anonymous class)'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > class {\n};\n"
+AAg "f<T> function () {};"
+     bun: ok "f < T > function() {};\n"
+     tsc check: TS2365@0+19 Operator '>' cannot be applied to types 'boolean' and '() => void'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > function () { };\n"
+AA  "f<T> new X;"
+     bun: ok "f < T > new X;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > new X;\n"
+AAg "f<T> typeof x;"
+     bun: ok "f < T;\n"
+     tsc check: TS2365@0+13 Operator '>' cannot be applied to types 'boolean' and 'string'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > typeof x;\n"
+AAg "f<T> await x;"
+     bun: ok "f < T > await x;\n"
+     tsc check: TS1375@5+5 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > await x;\n"
+AAg "f<T> yield;"
+     bun: ok "f < T > yield;\n"
+     tsc check: TS1212@5+5 Identifier expected. 'yield' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > yield;\n"
+RR  "f<T> async () => 1;"
+     bun: Unexpected => @14
+     tsc parse: TS1005@14+2 ';' expected.
+AA  "f<T> !x;"
+     bun: ok "f < T, x;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > !x;\n"
+AAg "f<T> ~x;"
+     bun: ok "f < T, ~x;\n"
+     tsc check: TS2365@0+7 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > ~x;\n"
+AAg "f<T> +x;"
+     bun: ok "f < T, +x;\n"
+     tsc check: TS2365@0+7 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > +x;\n"
+AAg "f<T> -x;"
+     bun: ok "f < T, -x;\n"
+     tsc check: TS2365@0+7 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > -x;\n"
+AAg "f<T> ++x;"
+     bun: ok "f < T, ++x;\n"
+     tsc check: TS2365@0+8 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > ++x;\n"
+RR  "f<T> /x/;"
+     bun: Unexpected ; @8
+     tsc parse: TS1109@8+1 Expression expected.
+AA  "f<T> `x`;"
+     bun: ok "f`x`;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nf `x`;\n"
+AAg "f<T> @dec class {};"
+     bun: ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _class$3;\nf < T > (_dec$2 = [\n  dec\n], class {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _class$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"\", _dec$2, this);\n  }\n}, __runInitializers_cst8seht(_init$1, 1, _class$3), _class$3);\n"
+     tsc check: TS2365@0+18 Operator '>' cannot be applied to types 'boolean' and 'typeof (Anonymous class)'. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > \n@dec\nclass {\n};\n"
+AAg "f<T> import(\"x\");"
+     bun: ok "f < T > import(\"x\");\n"
+     tsc check: TS2711@5+11 A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318,2304,2307)
+     tsc emit: "\"use strict\";\nf < T > import(\"x\");\n"
+A2  "f<T> super.x;"
+     bun: Unexpected "super" @5
+     tsc check: TS2660@5+5 'super' can only be referenced in members of derived classes or object literal expressions. ; (noise 2304)
+     tsc emit: "\"use strict\";\nf < T > super.x;\n"
+AA  "new F<T>;"
+     bun: ok "new F;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F;\n"
+AA  "new F<T>();"
+     bun: ok "new F;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F();\n"
+B  "new F<T>.G();"
+     bun: ok "new F.G;\n"
+     tsc parse: TS1477@5+3 An instantiation expression cannot be followed by a property access.
+AA  "new F<T>`x`;"
+     bun: ok "new F`x`;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F `x`;\n"
+AA  "new F<T>[0];"
+     bun: ok "new F < T > [0];\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F < T > [0];\n"
+RR  "new F<T>!;"
+     bun: Unexpected ; @9
+     tsc parse: TS1109@9+1 Expression expected.
+AA  "new F<T>\n();"
+     bun: ok "new F;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F();\n"
+AA  "new (F<T>)();"
+     bun: ok "new F;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew (F)();\n"
+RR  "new F<T><U>();"
+     bun: Expected "=>" but found ";" @13
+     tsc parse: TS1109@12+1 Expression expected.
+AA  "new F.G<T>();"
+     bun: ok "new F.G;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F.G();\n"
+AA  "new F().G<T>();"
+     bun: ok "new F().G();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew F().G();\n"
+AA  "new new F<T>()<U>();"
+     bun: ok "new new F();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnew new F()();\n"
+AA  "a?.<T>();"
+     bun: ok "a?.();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.();\n"
+AA  "a?.b<T>();"
+     bun: ok "a?.b();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.b();\n"
+A2  "a?.b<T>`x`;"
+     bun: Template literals cannot have an optional chain as a tag @7
+     tsc check: TS1358@7+3 Tagged template expressions are not permitted in an optional chain. ; (noise 2304)
+     tsc emit: "\"use strict\";\n(a?.b) `x`;\n"
+AA  "a?.[0]<T>();"
+     bun: ok "a?.[0]();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na?.[0]();\n"
+RR  "a?.<T>b;"
+     bun: Expected "(" but found "b" @6 | Unexpected ; @7
+     tsc parse: TS1003@3+1 Identifier expected.
+A2  "a?.<T>`x`;"
+     bun: Expected "(" but found "`x`" @6 | Unexpected ; @9
+     tsc check: TS1358@6+3 Tagged template expressions are not permitted in an optional chain. ; (noise 2304)
+     tsc emit: "\"use strict\";\na `x`;\n"
+AA  "a?.b<T>;"
+     bun: ok "a?.b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a?.b);\n"
+B  "a?.b<T>.c;"
+     bun: ok "a?.b.c;\n"
+     tsc parse: TS1477@4+3 An instantiation expression cannot be followed by a property access.
+B  "a.b<T>.c;"
+     bun: ok "a.b.c;\n"
+     tsc parse: TS1477@3+3 An instantiation expression cannot be followed by a property access.
+B  "a<T>.b<U>();"
+     bun: ok "a.b();\n"
+     tsc parse: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+RR  "super<T>();"
+     bun: Unexpected "super" @0
+     tsc parse: TS2754@5+3 'super' may not use type arguments.
+A2  "super.a<T>();"
+     bun: Unexpected "super" @0
+     tsc check: TS2660@0+5 'super' can only be referenced in members of derived classes or object literal expressions. ; (noise 2304)
+     tsc emit: "\"use strict\";\nsuper.a();\n"
+A2  "import<T>(\"x\");"
+     bun: Unexpected < @6
+     tsc check: TS1326@0+14 This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments. ; TS2711@0+14 A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318,2307)
+     tsc emit: "\"use strict\";\nimport(\"x\");\n"
+AAg "import.meta<T>;"
+     bun: ok ""
+     tsc check: TS2635@12+1 Type '{}' has no signatures for which the type argument list is applicable. ; (noise 2318,2304)
+     tsc emit: "import.meta;\nexport {};\n"
+AAg "this<T>;"
+     bun: ok ""
+     tsc check: TS2635@5+1 Type 'typeof globalThis' has no signatures for which the type argument list is applicable. ; (noise 2304)
+     tsc emit: "\"use strict\";\nthis;\n"
+AAg "this<T>();"
+     bun: ok "exports();\n"
+     tsc check: TS2347@0+9 Untyped function calls may not accept type arguments. ; (noise 2304)
+     tsc emit: "\"use strict\";\nthis();\n"
+AAg "1<T>();"
+     bun: ok "1();\n"
+     tsc check: TS2347@0+6 Untyped function calls may not accept type arguments. ; (noise 2304)
+     tsc emit: "\"use strict\";\n1();\n"
+AAg "\"s\"<T>();"
+     bun: ok "\"s\"();\n"
+     tsc check: TS2347@0+8 Untyped function calls may not accept type arguments. ; (noise 2304)
+     tsc emit: "\"use strict\";\n\"s\"();\n"
+AA  "(a)<T>();"
+     bun: ok "a();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a)();\n"
+AA  "(a)<T>;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a);\n"
+AAg "[a]<T>;"
+     bun: ok "a;\n"
+     tsc check: TS2635@4+1 Type '{}' has no signatures for which the type argument list is applicable. ; (noise 2304)
+     tsc emit: "\"use strict\";\n[a];\n"
+RR  "{}<T>;"
+     bun: Unexpected ; @5
+     tsc parse: TS1109@5+1 Expression expected.
+B  "a<T>\n.b;"
+     bun: ok "a.b;\n"
+     tsc parse: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+B  "a<T>\n?.b;"
+     bun: ok "a?.b;\n"
+     tsc parse: TS1477@1+3 An instantiation expression cannot be followed by a property access.
+AA  "a < b > c;"
+     bun: ok "a < b > c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na < b > c;\n"
+AA  "a < b > (c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AAg "a < b > -c;"
+     bun: ok "a < b, -c;\n"
+     tsc check: TS2365@0+10 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\na < b > -c;\n"
+AAg "a < b > +c;"
+     bun: ok "a < b, +c;\n"
+     tsc check: TS2365@0+10 Operator '>' cannot be applied to types 'boolean' and 'number'. ; (noise 2304)
+     tsc emit: "\"use strict\";\na < b > +c;\n"
+AA  "a < b >> c;"
+     bun: ok "a < b >> c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na < b >> c;\n"
+AA  "a < b >>> c;"
+     bun: ok "a < b >>> c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na < b >>> c;\n"
+AA  "a < b >= c;"
+     bun: ok "a < b >= c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na < b >= c;\n"
+AAg "a < b > = c;"
+     bun: ok "a = c;\n"
+     tsc check: TS2364@0+7 The left-hand side of an assignment expression must be a variable or a property access. ; (noise 2304)
+     tsc emit: "\"use strict\";\n(a) = c;\n"
+AA  "a << b > (c);"
+     bun: ok "a << b > c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na << b > (c);\n"
+AA  "a << b >> c;"
+     bun: ok "a << b >> c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na << b >> c;\n"
+AA  "a<b<c>>(d);"
+     bun: ok "a(d);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(d);\n"
+AA  "a<b<c<d>>>(e);"
+     bun: ok "a(e);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(e);\n"
+AA  "a<<T>() => void>(b);"
+     bun: ok "a(b);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(b);\n"
+AA  "a<<T>(x: T) => T>(b);"
+     bun: ok "a(b);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(b);\n"
+AA  "a << T > (b);"
+     bun: ok "a << T > b;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na << T > (b);\n"
+AA  "typeof a<T>;"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntypeof a;\n"
+AA  "typeof a<T>();"
+     bun: ok "a();\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntypeof a();\n"
+AAg "delete a<T>;"
+     bun: ok "delete a;\n"
+     tsc check: TS2703@7+4 The operand of a 'delete' operator must be a property reference. ; (noise 2304)
+     tsc emit: "\"use strict\";\ndelete a;\n"
+AA  "void a<T>;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvoid a;\n"
+AA  "!a<T>;"
+     bun: ok "a;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n!a;\n"
+AA  "a<T> ? b<U> : c<V>;"
+     bun: ok "a ? b : c;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n(a) ? b : c;\n"
+AA  "a<typeof b>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<{ b: 1 }>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<[b]>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<b[]>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<b | c>(d);"
+     bun: ok "a(d);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(d);\n"
+AA  "a<(b)>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<() => void>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<\"s\">(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<1>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<-1>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<`x`>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AAg "a<this>(c);"
+     bun: ok "a(c);\n"
+     tsc check: TS2526@2+4 A 'this' type is available only in a non-static member of a class or interface. ; (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<void>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<keyof b>(c);"
+     bun: ok "a(c);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c);\n"
+AA  "a<b extends c ? d : e>(f);"
+     bun: ok "a(f);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(f);\n"
+AA  "a<b, c>(d);"
+     bun: ok "a(d);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(d);\n"
+AAg "a<b,>(d);"
+     bun: ok "a(d);\n"
+     tsc check: TS1009@3+1 Trailing comma not allowed. ; (noise 2304)
+     tsc emit: "\"use strict\";\na(d);\n"
+B  "a<,>(d);"
+     bun: ok "a(d);\n"
+     tsc parse: TS1110@2+1 Type expected.
+RR  "a<b c>(d);"
+     bun: Expected ";" but found "c" @4 | Unexpected > @5
+     tsc parse: TS1005@4+1 ';' expected.
+AA  "a<b>(c)<d>(e);"
+     bun: ok "a(c)(e);\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\na(c)(e);\n"

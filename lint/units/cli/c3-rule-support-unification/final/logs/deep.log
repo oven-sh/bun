@@ -1,0 +1,63 @@
+== member.js
+member.js: parse 3.961718073s, walk and rules 8.893043ms, 2 reports
+member.js	OK
+member.js	4	0	1:5	internal-error	This file is nested too deeply to check all of it.
+member.js	800007	8	2:1	no-debugger	Unexpected 'debugger' statement.
+exit 0
+== member2.js
+member2.js: parse 1.825033859s, walk and rules 10.385867ms, 2 reports
+member2.js	OK
+member2.js	4	0	1:5	internal-error	This file is nested too deeply to check all of it.
+member2.js	800007	8	2:1	no-debugger	Unexpected 'debugger' statement.
+exit 0
+== call.js
+call.js: parse 2.511914581s, walk and rules 8.407062ms, 2 reports
+call.js	OK
+call.js	4	0	1:5	internal-error	This file is nested too deeply to check all of it.
+call.js	800007	8	2:1	no-debugger	Unexpected 'debugger' statement.
+exit 0
+== pattern.js
+pattern.js: parse 48.101092ms, walk and rules 1.807812ms, 1 reports
+pattern.js	OK
+pattern.js	6013	1	2:4	no-sparse-arrays	Unexpected comma in middle of array.
+exit 0
+== arr.js
+arr.js: parse 57.327746ms, walk and rules 2.197988ms, 1 reports
+arr.js	OK
+arr.js	3006	1	1:3007	no-sparse-arrays	Unexpected comma in middle of array.
+exit 0
+== binary.js
+binary.js: parse 1.267649401s, walk and rules 25.204644ms, 999 reports
+binary.js	OK
+binary.js	1211983	1	2:11981	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+binary.js	1211971	1	2:11969	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+999 x no-compare-neg-zero Do not use the '===' operator to compare against -0.
+exit 0
+== selfassign.js
+selfassign.js: parse 1.102158506s, walk and rules 36.453124ms, 1 reports
+selfassign.js	OK
+selfassign.js	200004	0	1:200005	internal-error	This file is nested too deeply to check all of it.
+exit 0
+== index.js
+index.js: parse 632.132424ms, walk and rules 86.339175ms, 1 reports
+index.js	OK
+index.js	150004	0	1:150005	internal-error	This file is nested too deeply to check all of it.
+exit 0
+== leftchain.js
+leftchain.js: parse 205.424598ms, walk and rules 30.147151ms, 5000 reports
+leftchain.js	OK
+leftchain.js	4	1	1:5	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+leftchain.js	4	1	1:5	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+5000 x no-compare-neg-zero Do not use the '===' operator to compare against -0.
+exit 0
+== leftchain2.js
+leftchain2.js: parse 464.697664ms, walk and rules 255.04475ms, 20000 reports
+leftchain2.js	OK
+leftchain2.js	4	1	1:5	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+leftchain2.js	4	1	1:5	no-compare-neg-zero	Do not use the '===' operator to compare against -0.
+20000 x no-compare-neg-zero Do not use the '===' operator to compare against -0.
+exit 0
+== cases.js
+cases.js: parse 2.222353961s, walk and rules 660.800543ms, 0 reports
+cases.js	OK
+exit 0

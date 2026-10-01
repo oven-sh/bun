@@ -1,0 +1,1694 @@
+{
+ "rows": [
+  {
+   "name": "help",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 15
+  },
+  {
+   "name": "help",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 25
+  },
+  {
+   "name": "watch",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 33
+  },
+  {
+   "name": "preserveWatchOutput",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 43
+  },
+  {
+   "name": "listFiles",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 51
+  },
+  {
+   "name": "explainFiles",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 58
+  },
+  {
+   "name": "listEmittedFiles",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 65
+  },
+  {
+   "name": "pretty",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 72
+  },
+  {
+   "name": "traceResolution",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 80
+  },
+  {
+   "name": "diagnostics",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 87
+  },
+  {
+   "name": "extendedDiagnostics",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 94
+  },
+  {
+   "name": "generateCpuProfile",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 101
+  },
+  {
+   "name": "generateTrace",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 110
+  },
+  {
+   "name": "incremental",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 117
+  },
+  {
+   "name": "declaration",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 126
+  },
+  {
+   "name": "declarationMap",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 138
+  },
+  {
+   "name": "emitDeclarationOnly",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 148
+  },
+  {
+   "name": "sourceMap",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 159
+  },
+  {
+   "name": "inlineSourceMap",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 169
+  },
+  {
+   "name": "noCheck",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 178
+  },
+  {
+   "name": "deduplicatePackages",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 188
+  },
+  {
+   "name": "noEmit",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 196
+  },
+  {
+   "name": "assumeChangesOnlyAffectDirectDependencies",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 205
+  },
+  {
+   "name": "locale",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 215
+  },
+  {
+   "name": "quiet",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 225
+  },
+  {
+   "name": "singleThreaded",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 232
+  },
+  {
+   "name": "pprofDir",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 238
+  },
+  {
+   "name": "checkers",
+   "kind": "number",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 245
+  },
+  {
+   "name": "runExternalCode",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 253
+  },
+  {
+   "name": "all",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 267
+  },
+  {
+   "name": "version",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 275
+  },
+  {
+   "name": "init",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 284
+  },
+  {
+   "name": "project",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 292
+  },
+  {
+   "name": "showConfig",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 301
+  },
+  {
+   "name": "listFilesOnly",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 310
+  },
+  {
+   "name": "ignoreConfig",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": true,
+   "affects": false,
+   "line": 318
+  },
+  {
+   "name": "target",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 330
+  },
+  {
+   "name": "module",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 345
+  },
+  {
+   "name": "lib",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 357
+  },
+  {
+   "name": "allowJs",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 371
+  },
+  {
+   "name": "checkJs",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 381
+  },
+  {
+   "name": "jsx",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 392
+  },
+  {
+   "name": "outFile",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 408
+  },
+  {
+   "name": "outDir",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 420
+  },
+  {
+   "name": "rootDir",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 431
+  },
+  {
+   "name": "composite",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 442
+  },
+  {
+   "name": "tsBuildInfoFile",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 453
+  },
+  {
+   "name": "removeComments",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 464
+  },
+  {
+   "name": "importHelpers",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 474
+  },
+  {
+   "name": "downlevelIteration",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 484
+  },
+  {
+   "name": "isolatedModules",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 493
+  },
+  {
+   "name": "verbatimModuleSyntax",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 501
+  },
+  {
+   "name": "isolatedDeclarations",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 511
+  },
+  {
+   "name": "erasableSyntaxOnly",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 520
+  },
+  {
+   "name": "libReplacement",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 529
+  },
+  {
+   "name": "strict",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 539
+  },
+  {
+   "name": "noImplicitAny",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 552
+  },
+  {
+   "name": "strictNullChecks",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 562
+  },
+  {
+   "name": "strictFunctionTypes",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 572
+  },
+  {
+   "name": "strictBindCallApply",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 582
+  },
+  {
+   "name": "strictPropertyInitialization",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 592
+  },
+  {
+   "name": "strictBuiltinIteratorReturn",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 602
+  },
+  {
+   "name": "noImplicitThis",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 612
+  },
+  {
+   "name": "useUnknownInCatchVariables",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 622
+  },
+  {
+   "name": "alwaysStrict",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 632
+  },
+  {
+   "name": "stableTypeOrdering",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 642
+  },
+  {
+   "name": "noUnusedLocals",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 653
+  },
+  {
+   "name": "noUnusedParameters",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 662
+  },
+  {
+   "name": "exactOptionalPropertyTypes",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 671
+  },
+  {
+   "name": "noImplicitReturns",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 680
+  },
+  {
+   "name": "noFallthroughCasesInSwitch",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 689
+  },
+  {
+   "name": "noUncheckedIndexedAccess",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 699
+  },
+  {
+   "name": "noImplicitOverride",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 708
+  },
+  {
+   "name": "noPropertyAccessFromIndexSignature",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 717
+  },
+  {
+   "name": "moduleResolution",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 729
+  },
+  {
+   "name": "baseUrl",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 746
+  },
+  {
+   "name": "paths",
+   "kind": "object",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 754
+  },
+  {
+   "name": "rootDirs",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 766
+  },
+  {
+   "name": "typeRoots",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 779
+  },
+  {
+   "name": "types",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 787
+  },
+  {
+   "name": "allowSyntheticDefaultImports",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 796
+  },
+  {
+   "name": "esModuleInterop",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 805
+  },
+  {
+   "name": "preserveSymlinks",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 816
+  },
+  {
+   "name": "allowUmdGlobalAccess",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 823
+  },
+  {
+   "name": "moduleSuffixes",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 832
+  },
+  {
+   "name": "allowImportingTsExtensions",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 840
+  },
+  {
+   "name": "rewriteRelativeImportExtensions",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 850
+  },
+  {
+   "name": "resolvePackageJsonExports",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 859
+  },
+  {
+   "name": "resolvePackageJsonImports",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 867
+  },
+  {
+   "name": "customConditions",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 875
+  },
+  {
+   "name": "noUncheckedSideEffectImports",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 882
+  },
+  {
+   "name": "sourceRoot",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 893
+  },
+  {
+   "name": "mapRoot",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 901
+  },
+  {
+   "name": "inlineSources",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 909
+  },
+  {
+   "name": "experimentalDecorators",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 920
+  },
+  {
+   "name": "emitDecoratorMetadata",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 930
+  },
+  {
+   "name": "jsxFactory",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 942
+  },
+  {
+   "name": "jsxFragmentFactory",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 949
+  },
+  {
+   "name": "jsxImportSource",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 956
+  },
+  {
+   "name": "resolveJsonModule",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 968
+  },
+  {
+   "name": "allowArbitraryExtensions",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 976
+  },
+  {
+   "name": "reactNamespace",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 985
+  },
+  {
+   "name": "skipDefaultLibCheck",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 994
+  },
+  {
+   "name": "emitBOM",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1003
+  },
+  {
+   "name": "newLine",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1012
+  },
+  {
+   "name": "noErrorTruncation",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1021
+  },
+  {
+   "name": "noLib",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1030
+  },
+  {
+   "name": "noResolve",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1041
+  },
+  {
+   "name": "stripInternal",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1052
+  },
+  {
+   "name": "disableSizeLimit",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1061
+  },
+  {
+   "name": "disableSourceOfProjectReferenceRedirect",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 1069
+  },
+  {
+   "name": "disableSolutionSearching",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 1077
+  },
+  {
+   "name": "disableReferencedProjectLoad",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 1085
+  },
+  {
+   "name": "noEmitHelpers",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1093
+  },
+  {
+   "name": "noEmitOnError",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1102
+  },
+  {
+   "name": "preserveConstEnums",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1112
+  },
+  {
+   "name": "declarationDir",
+   "kind": "string",
+   "isFilePath": true,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1121
+  },
+  {
+   "name": "skipLibCheck",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1132
+  },
+  {
+   "name": "allowUnusedLabels",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1141
+  },
+  {
+   "name": "allowUnreachableCode",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1151
+  },
+  {
+   "name": "forceConsistentCasingInFileNames",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1161
+  },
+  {
+   "name": "maxNodeModuleJsDepth",
+   "kind": "number",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1169
+  },
+  {
+   "name": "useDefineForClassFields",
+   "kind": "boolean",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1177
+  },
+  {
+   "name": "plugins",
+   "kind": "list",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 1187
+  },
+  {
+   "name": "moduleDetection",
+   "kind": "enum",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": true,
+   "line": 1195
+  },
+  {
+   "name": "ignoreDeprecations",
+   "kind": "string",
+   "isFilePath": false,
+   "isCommandLineOnly": false,
+   "affects": false,
+   "line": 1204
+  }
+ ],
+ "enumMaps": {
+  "LibMap": [
+   [
+    "es5",
+    "lib.es5.d.ts"
+   ],
+   [
+    "es6",
+    "lib.es2015.d.ts"
+   ],
+   [
+    "es2015",
+    "lib.es2015.d.ts"
+   ],
+   [
+    "es7",
+    "lib.es2016.d.ts"
+   ],
+   [
+    "es2016",
+    "lib.es2016.d.ts"
+   ],
+   [
+    "es2017",
+    "lib.es2017.d.ts"
+   ],
+   [
+    "es2018",
+    "lib.es2018.d.ts"
+   ],
+   [
+    "es2019",
+    "lib.es2019.d.ts"
+   ],
+   [
+    "es2020",
+    "lib.es2020.d.ts"
+   ],
+   [
+    "es2021",
+    "lib.es2021.d.ts"
+   ],
+   [
+    "es2022",
+    "lib.es2022.d.ts"
+   ],
+   [
+    "es2023",
+    "lib.es2023.d.ts"
+   ],
+   [
+    "es2024",
+    "lib.es2024.d.ts"
+   ],
+   [
+    "es2025",
+    "lib.es2025.d.ts"
+   ],
+   [
+    "esnext",
+    "lib.esnext.d.ts"
+   ],
+   [
+    "dom",
+    "lib.dom.d.ts"
+   ],
+   [
+    "dom.iterable",
+    "lib.dom.iterable.d.ts"
+   ],
+   [
+    "dom.asynciterable",
+    "lib.dom.asynciterable.d.ts"
+   ],
+   [
+    "webworker",
+    "lib.webworker.d.ts"
+   ],
+   [
+    "webworker.importscripts",
+    "lib.webworker.importscripts.d.ts"
+   ],
+   [
+    "webworker.iterable",
+    "lib.webworker.iterable.d.ts"
+   ],
+   [
+    "webworker.asynciterable",
+    "lib.webworker.asynciterable.d.ts"
+   ],
+   [
+    "scripthost",
+    "lib.scripthost.d.ts"
+   ],
+   [
+    "es2015.core",
+    "lib.es2015.core.d.ts"
+   ],
+   [
+    "es2015.collection",
+    "lib.es2015.collection.d.ts"
+   ],
+   [
+    "es2015.generator",
+    "lib.es2015.generator.d.ts"
+   ],
+   [
+    "es2015.iterable",
+    "lib.es2015.iterable.d.ts"
+   ],
+   [
+    "es2015.promise",
+    "lib.es2015.promise.d.ts"
+   ],
+   [
+    "es2015.proxy",
+    "lib.es2015.proxy.d.ts"
+   ],
+   [
+    "es2015.reflect",
+    "lib.es2015.reflect.d.ts"
+   ],
+   [
+    "es2015.symbol",
+    "lib.es2015.symbol.d.ts"
+   ],
+   [
+    "es2015.symbol.wellknown",
+    "lib.es2015.symbol.wellknown.d.ts"
+   ],
+   [
+    "es2016.array.include",
+    "lib.es2016.array.include.d.ts"
+   ],
+   [
+    "es2016.intl",
+    "lib.es2016.intl.d.ts"
+   ],
+   [
+    "es2017.arraybuffer",
+    "lib.es2017.arraybuffer.d.ts"
+   ],
+   [
+    "es2017.date",
+    "lib.es2017.date.d.ts"
+   ],
+   [
+    "es2017.object",
+    "lib.es2017.object.d.ts"
+   ],
+   [
+    "es2017.sharedmemory",
+    "lib.es2017.sharedmemory.d.ts"
+   ],
+   [
+    "es2017.string",
+    "lib.es2017.string.d.ts"
+   ],
+   [
+    "es2017.intl",
+    "lib.es2017.intl.d.ts"
+   ],
+   [
+    "es2017.typedarrays",
+    "lib.es2017.typedarrays.d.ts"
+   ],
+   [
+    "es2018.asyncgenerator",
+    "lib.es2018.asyncgenerator.d.ts"
+   ],
+   [
+    "es2018.asynciterable",
+    "lib.es2018.asynciterable.d.ts"
+   ],
+   [
+    "es2018.intl",
+    "lib.es2018.intl.d.ts"
+   ],
+   [
+    "es2018.promise",
+    "lib.es2018.promise.d.ts"
+   ],
+   [
+    "es2018.regexp",
+    "lib.es2018.regexp.d.ts"
+   ],
+   [
+    "es2019.array",
+    "lib.es2019.array.d.ts"
+   ],
+   [
+    "es2019.object",
+    "lib.es2019.object.d.ts"
+   ],
+   [
+    "es2019.string",
+    "lib.es2019.string.d.ts"
+   ],
+   [
+    "es2019.symbol",
+    "lib.es2019.symbol.d.ts"
+   ],
+   [
+    "es2019.intl",
+    "lib.es2019.intl.d.ts"
+   ],
+   [
+    "es2020.bigint",
+    "lib.es2020.bigint.d.ts"
+   ],
+   [
+    "es2020.date",
+    "lib.es2020.date.d.ts"
+   ],
+   [
+    "es2020.promise",
+    "lib.es2020.promise.d.ts"
+   ],
+   [
+    "es2020.sharedmemory",
+    "lib.es2020.sharedmemory.d.ts"
+   ],
+   [
+    "es2020.string",
+    "lib.es2020.string.d.ts"
+   ],
+   [
+    "es2020.symbol.wellknown",
+    "lib.es2020.symbol.wellknown.d.ts"
+   ],
+   [
+    "es2020.intl",
+    "lib.es2020.intl.d.ts"
+   ],
+   [
+    "es2020.number",
+    "lib.es2020.number.d.ts"
+   ],
+   [
+    "es2021.promise",
+    "lib.es2021.promise.d.ts"
+   ],
+   [
+    "es2021.string",
+    "lib.es2021.string.d.ts"
+   ],
+   [
+    "es2021.weakref",
+    "lib.es2021.weakref.d.ts"
+   ],
+   [
+    "es2021.intl",
+    "lib.es2021.intl.d.ts"
+   ],
+   [
+    "es2022.array",
+    "lib.es2022.array.d.ts"
+   ],
+   [
+    "es2022.error",
+    "lib.es2022.error.d.ts"
+   ],
+   [
+    "es2022.intl",
+    "lib.es2022.intl.d.ts"
+   ],
+   [
+    "es2022.object",
+    "lib.es2022.object.d.ts"
+   ],
+   [
+    "es2022.string",
+    "lib.es2022.string.d.ts"
+   ],
+   [
+    "es2022.regexp",
+    "lib.es2022.regexp.d.ts"
+   ],
+   [
+    "es2023.array",
+    "lib.es2023.array.d.ts"
+   ],
+   [
+    "es2023.collection",
+    "lib.es2023.collection.d.ts"
+   ],
+   [
+    "es2023.intl",
+    "lib.es2023.intl.d.ts"
+   ],
+   [
+    "es2024.arraybuffer",
+    "lib.es2024.arraybuffer.d.ts"
+   ],
+   [
+    "es2024.collection",
+    "lib.es2024.collection.d.ts"
+   ],
+   [
+    "es2024.object",
+    "lib.es2024.object.d.ts"
+   ],
+   [
+    "es2024.promise",
+    "lib.es2024.promise.d.ts"
+   ],
+   [
+    "es2024.regexp",
+    "lib.es2024.regexp.d.ts"
+   ],
+   [
+    "es2024.sharedmemory",
+    "lib.es2024.sharedmemory.d.ts"
+   ],
+   [
+    "es2024.string",
+    "lib.es2024.string.d.ts"
+   ],
+   [
+    "es2025.collection",
+    "lib.es2025.collection.d.ts"
+   ],
+   [
+    "es2025.float16",
+    "lib.es2025.float16.d.ts"
+   ],
+   [
+    "es2025.intl",
+    "lib.es2025.intl.d.ts"
+   ],
+   [
+    "es2025.iterator",
+    "lib.es2025.iterator.d.ts"
+   ],
+   [
+    "es2025.promise",
+    "lib.es2025.promise.d.ts"
+   ],
+   [
+    "es2025.regexp",
+    "lib.es2025.regexp.d.ts"
+   ],
+   [
+    "esnext.asynciterable",
+    "lib.es2018.asynciterable.d.ts"
+   ],
+   [
+    "esnext.symbol",
+    "lib.es2019.symbol.d.ts"
+   ],
+   [
+    "esnext.bigint",
+    "lib.es2020.bigint.d.ts"
+   ],
+   [
+    "esnext.weakref",
+    "lib.es2021.weakref.d.ts"
+   ],
+   [
+    "esnext.object",
+    "lib.es2024.object.d.ts"
+   ],
+   [
+    "esnext.regexp",
+    "lib.es2024.regexp.d.ts"
+   ],
+   [
+    "esnext.string",
+    "lib.es2024.string.d.ts"
+   ],
+   [
+    "esnext.float16",
+    "lib.es2025.float16.d.ts"
+   ],
+   [
+    "esnext.iterator",
+    "lib.es2025.iterator.d.ts"
+   ],
+   [
+    "esnext.promise",
+    "lib.es2025.promise.d.ts"
+   ],
+   [
+    "esnext.array",
+    "lib.esnext.array.d.ts"
+   ],
+   [
+    "esnext.collection",
+    "lib.esnext.collection.d.ts"
+   ],
+   [
+    "esnext.date",
+    "lib.esnext.date.d.ts"
+   ],
+   [
+    "esnext.decorators",
+    "lib.esnext.decorators.d.ts"
+   ],
+   [
+    "esnext.disposable",
+    "lib.esnext.disposable.d.ts"
+   ],
+   [
+    "esnext.error",
+    "lib.esnext.error.d.ts"
+   ],
+   [
+    "esnext.intl",
+    "lib.esnext.intl.d.ts"
+   ],
+   [
+    "esnext.sharedmemory",
+    "lib.esnext.sharedmemory.d.ts"
+   ],
+   [
+    "esnext.temporal",
+    "lib.esnext.temporal.d.ts"
+   ],
+   [
+    "esnext.typedarrays",
+    "lib.esnext.typedarrays.d.ts"
+   ],
+   [
+    "decorators",
+    "lib.decorators.d.ts"
+   ],
+   [
+    "decorators.legacy",
+    "lib.decorators.legacy.d.ts"
+   ]
+  ],
+  "moduleResolutionOptionMap": [
+   [
+    "node16",
+    3
+   ],
+   [
+    "nodenext",
+    99
+   ],
+   [
+    "bundler",
+    100
+   ],
+   [
+    "classic",
+    1
+   ],
+   [
+    "node",
+    2
+   ],
+   [
+    "node10",
+    2
+   ]
+  ],
+  "targetOptionMap": [
+   [
+    "es5",
+    1
+   ],
+   [
+    "es6",
+    2
+   ],
+   [
+    "es2015",
+    2
+   ],
+   [
+    "es2016",
+    3
+   ],
+   [
+    "es2017",
+    4
+   ],
+   [
+    "es2018",
+    5
+   ],
+   [
+    "es2019",
+    6
+   ],
+   [
+    "es2020",
+    7
+   ],
+   [
+    "es2021",
+    8
+   ],
+   [
+    "es2022",
+    9
+   ],
+   [
+    "es2023",
+    10
+   ],
+   [
+    "es2024",
+    11
+   ],
+   [
+    "es2025",
+    12
+   ],
+   [
+    "esnext",
+    99
+   ]
+  ],
+  "moduleOptionMap": [
+   [
+    "commonjs",
+    1
+   ],
+   [
+    "amd",
+    2
+   ],
+   [
+    "system",
+    4
+   ],
+   [
+    "umd",
+    3
+   ],
+   [
+    "es6",
+    5
+   ],
+   [
+    "es2015",
+    5
+   ],
+   [
+    "es2020",
+    6
+   ],
+   [
+    "es2022",
+    7
+   ],
+   [
+    "esnext",
+    99
+   ],
+   [
+    "node16",
+    100
+   ],
+   [
+    "node18",
+    101
+   ],
+   [
+    "node20",
+    102
+   ],
+   [
+    "nodenext",
+    199
+   ],
+   [
+    "preserve",
+    200
+   ]
+  ],
+  "moduleDetectionOptionMap": [
+   [
+    "auto",
+    1
+   ],
+   [
+    "legacy",
+    2
+   ],
+   [
+    "force",
+    3
+   ]
+  ],
+  "jsxOptionMap": [
+   [
+    "preserve",
+    1
+   ],
+   [
+    "react-native",
+    2
+   ],
+   [
+    "react-jsx",
+    4
+   ],
+   [
+    "react-jsxdev",
+    5
+   ],
+   [
+    "react",
+    3
+   ]
+  ],
+  "newLineOptionMap": [
+   [
+    "crlf",
+    1
+   ],
+   [
+    "lf",
+    2
+   ]
+  ],
+  "watchFileEnumMap": [
+   [
+    "fixedpollinginterval",
+    -1
+   ],
+   [
+    "prioritypollinginterval",
+    -1
+   ],
+   [
+    "dynamicprioritypolling",
+    -1
+   ],
+   [
+    "fixedchunksizepolling",
+    -1
+   ],
+   [
+    "usefsevents",
+    -1
+   ],
+   [
+    "usefseventsonparentdirectory",
+    -1
+   ]
+  ],
+  "watchDirectoryEnumMap": [
+   [
+    "usefsevents",
+    -1
+   ],
+   [
+    "fixedpollinginterval",
+    -1
+   ],
+   [
+    "dynamicprioritypolling",
+    -1
+   ],
+   [
+    "fixedchunksizepolling",
+    -1
+   ]
+  ],
+  "fallbackEnumMap": [
+   [
+    "fixedinterval",
+    -1
+   ],
+   [
+    "priorityinterval",
+    -1
+   ],
+   [
+    "dynamicpriority",
+    -1
+   ],
+   [
+    "fixedchunksize",
+    -1
+   ]
+  ]
+ }
+}

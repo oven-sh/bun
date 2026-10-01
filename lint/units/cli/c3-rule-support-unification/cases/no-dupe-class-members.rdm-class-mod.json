@@ -1,0 +1,1 @@
+[{"code":"export default class { a() {} a() {} }","sourceType":"module"},{"code":"export class B { a() {} a() {} }","sourceType":"module"},{"code":"export default { a: 1, a: 2 };","sourceType":"module"},{"code":"export const o = { a: 1, a: 2 };","sourceType":"module"}]

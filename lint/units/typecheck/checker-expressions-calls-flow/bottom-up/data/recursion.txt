@@ -1,0 +1,70 @@
+functions of the twelve layers: 487; untested cycles left: 0
+== entries of the twelve layers that test the stack (seed 14, then greedy): 24
+  E-CORE	checker.go:7427-7447	c.getTypeOfExpression	seed
+  E-CORE	checker.go:7607-7625	c.checkExpressionCachedEx	seed
+  E-CORE	checker.go:7647-7661	c.checkExpressionEx	seed
+  E-OPER	checker.go:12643-12674	c.checkDestructuringAssignment
+  E-ACCESS	checker.go:11348-11480	c.checkPropertyAccessExpressionOrQualifiedName
+  E-FACTS	checker.go:31097-31099	c.getTypeFacts	seed
+  E-FACTS	checker.go:31105-31239	c.getTypeFactsWorker	seed
+  E-FACTS	checker.go:31273-31277	c.getTypeWithFacts	seed
+  T-RETINFER	checker.go:20462-20472	c.createPromiseType
+  E-CALL	checker.go:30165-30229	c.getEffectiveCallArguments
+  E-CTX	checker.go:29466-29533	c.getContextualType	seed
+  E-CTX	checker.go:29561-29578	c.getContextualTypeForVariableLikeDeclaration
+  E-CTX	checker.go:30043-30082	c.getContextualTypeForObjectLiteralElement
+  E-CTX	checker.go:31020-31052	c.isContextSensitive	seed
+  F-NARROW	flow.go:81-115	c.getFlowTypeOfReferenceEx	seed
+  F-NARROW	flow.go:117-206	c.getTypeAtFlowNode	seed
+  F-NARROW	flow.go:377-413	c.narrowType	seed
+  F-NARROW	flow.go:859-964	c.getNarrowedTypeWorker
+  F-NARROW	flow.go:2155-2195	c.getExplicitTypeOfSymbol
+  F-NARROW	flow.go:2273-2286	c.getInitialTypeOfBindingElement
+  F-NARROW	flow.go:2288-2312	c.getAssignedType
+  F-NARROW	flow.go:2703-2747	c.markNodeAssignmentsWorker	seed
+  F-REACH	flow.go:2522-2587	c.isReachableFlowNodeWorker	seed
+  F-REACH	flow.go:2611-2652	c.isPostSuperFlowNodeWorker	seed
+== self-recursive functions of the twelve layers outside that set (each tests the stack itself): 30
+  E-CORE	checker.go:7451-7475	c.getQuickTypeOfExpression
+  E-LITERAL	checker.go:8093-8096	c.isTemplateLiteralContext
+  E-LITERAL	checker.go:13488-13596	c.getSpreadType
+  E-LITERAL	checker.go:13605-13609	c.isValidSpreadType
+  E-LITERAL	checker.go:13709-13714	c.hasDefaultValue
+  E-LITERAL	checker.go:13716-13722	c.isConstContext
+  E-LITERAL	checker.go:13724-13744	c.isValidConstAssertionArgument
+  E-LITERAL	checker.go:13746-13772	c.isConstTypeVariable
+  E-OPER	checker.go:12977-13004	c.getSyntacticTruthySemantics
+  E-OPER	checker.go:13039-13092	c.getSyntacticNullishnessSemantics
+  E-OPER	checker.go:13102-13127	c.isSideEffectFree
+  E-ACCESS	checker.go:11768-11782	c.getEntityNameForExtendingInterface
+  E-ACCESS	checker.go:11997-12008	c.forEachProperty
+  E-FUNC	checker.go:10520-10532	c.assignBindingElementTypes
+  E-CALL	checker.go:8770-8798	c.typeHasProtectedAccessibleBase
+  E-CTX	checker.go:29694-29704	c.getMutableArrayOrTupleType
+  E-CTX	checker.go:30747-30759	c.isExcludedMappedPropertyName
+  E-CTX	checker.go:30925-30936	c.isPossiblyDiscriminantValue
+  E-CTX	checker.go:30978-30993	c.instantiateInstantiableTypes
+  F-NARROW	checker.go:31598-31605	c.isSomeSymbolAssignedWorker
+  F-NARROW	checker.go:31642-31647	c.isGenericTypeWithUnionConstraint
+  F-NARROW	checker.go:31649-31654	c.isGenericTypeWithoutNullableConstraint
+  F-NARROW	flow.go:338-352	c.narrowTypeByAssertion
+  F-NARROW	flow.go:1597-1649	c.isMatchingReference
+  F-NARROW	flow.go:1665-1725	c.writeFlowCacheKey
+  F-NARROW	flow.go:1814-1839	c.isConstantReference
+  F-NARROW	flow.go:1861-1874	c.getReferenceCandidate
+  F-NARROW	flow.go:1876-1884	c.getReferenceRoot
+  F-NARROW	flow.go:2122-2153	c.getTypeOfDottedName
+  F-REACH	flow.go:2589-2600	c.isFalseExpression
+== largest cycle of the whole package: 1444 functions; of the twelve layers inside it:
+  E-CORE 32 of 42
+  E-LITERAL 17 of 27
+  E-OPER 28 of 41
+  E-ACCESS 51 of 71
+  E-FACTS 11 of 15
+  E-FUNC 13 of 17
+  T-RETINFER 13 of 15
+  E-CALL 42 of 63
+  E-CTX 38 of 55
+  F-NARROW 104 of 134
+  F-REACH 2 of 5
+  F-UNREACH 2 of 2

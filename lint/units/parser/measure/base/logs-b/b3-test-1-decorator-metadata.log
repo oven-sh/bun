@@ -1,0 +1,14 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/transpiler/decorator-metadata.test.ts
+bun test v1.4.3 (e3566be88)
+
+test/bundler/transpiler/decorator-metadata.test.ts:
+(pass) decorator metadata > type serialization [259.61ms]
+(pass) decorator metadata > design: type, paramtypes, returntype [41.37ms]
+(pass) decorator metadata > class with only constructor argument decorators [7.17ms]
+(pass) decorator metadata > more types [12.14ms]
+(pass) decorator metadata > rest parameters and defaults [43.71ms]
+
+ 5 pass
+ 0 fail
+ 227 expect() calls
+Ran 5 tests across 1 file. [7.99s]

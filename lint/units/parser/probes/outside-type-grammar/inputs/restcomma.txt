@@ -1,0 +1,35 @@
+declare class C { m(...a: any[], ): void }
+declare class C { constructor(...a: any[], ); }
+declare class C { static m(...a: any[], ): void }
+declare class C { get x(...a: any[], ): number }
+declare class C { set x(...a: any[], ) }
+declare class C { m(a: number, ...b: any[], ): void }
+declare abstract class C { abstract m(...a: any[], ): void }
+declare namespace N { class C { m(...a: any[], ): void } }
+declare namespace N { function f(...a: any[], ): void }
+declare namespace N { namespace M { function f(...a: any[], ): void } }
+declare module "m" { class C { m(...a: any[], ): void } }
+declare module "m" { function f(...a: any[], ): void }
+declare module "m" { export default function f(...a: any[], ): void }
+declare module "m" { export function f(...a: any[], ): void }
+declare module "m" { export class C { m(...a: any[], ): void } }
+declare module "m" { const f: (...a: any[], ) => void }
+declare function f(...a: any[], ): void;
+declare function f(...[a, b]: any[], ): void;
+declare function f(...{ a }: any, ): void;
+export declare function f(...a: any[], ): void;
+export declare class C { m(...a: any[], ): void }
+declare const f: (...a: any[], ) => void;
+declare let f: { (...a: any[], ): void };
+declare let f: { m(...a: any[], ): void };
+declare let f: new (...a: any[], ) => void;
+declare class C { m(...a: any[],, ): void }
+declare class C { m(...a: any[], b): void }
+declare function f(...a: any[], b: any): void;
+declare function f(...a: any[], ...b: any[]): void;
+declare class C { m: (...a: any[], ) => void }
+declare class C { m(f: (...a: any[], ) => void): void }
+declare function f(g: (...a: any[], ) => void): void;
+declare function f(g = function (...a: any[], ) {}): void;
+declare function f(g = (...a: any[], ) => 1): void;
+declare class C { m(g = (...a: any[], ) => 1): void }

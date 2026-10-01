@@ -1,0 +1,42 @@
+libs keys 107 lib files 95 libs.json entries 108
+closure 19 bytes 2667036 unknown []
+load order (post-order):
+  0 lib.decorators.d.ts 106
+  1 lib.decorators.legacy.d.ts 107
+  2 lib.es5.d.ts 1
+  3 lib.es2015.core.d.ts 24
+  4 lib.es2015.collection.d.ts 25
+  5 lib.es2015.symbol.d.ts 31
+  6 lib.es2015.iterable.d.ts 27
+  7 lib.es2015.generator.d.ts 26
+  8 lib.es2015.promise.d.ts 28
+  9 lib.es2015.proxy.d.ts 29
+  10 lib.es2015.reflect.d.ts 30
+  11 lib.es2015.symbol.wellknown.d.ts 32
+  12 lib.es2015.d.ts 3
+  13 lib.es2018.asynciterable.d.ts 43
+  14 lib.dom.d.ts 16
+  15 lib.dom.iterable.d.ts 17
+  16 lib.webworker.importscripts.d.ts 20
+  17 lib.scripthost.d.ts 23
+  18 lib.es6.d.ts 0
+program order (sortLibs):
+  0 lib.es6.d.ts 0 es2015.full.d.ts
+  1 lib.es5.d.ts 1 es5.d.ts
+  2 lib.es2015.d.ts 3 es2015.d.ts
+  3 lib.dom.d.ts 16 dom.generated.d.ts
+  4 lib.dom.iterable.d.ts 17 dom.iterable.generated.d.ts
+  5 lib.webworker.importscripts.d.ts 20 webworker.importscripts.d.ts
+  6 lib.scripthost.d.ts 23 scripthost.d.ts
+  7 lib.es2015.core.d.ts 24 es2015.core.d.ts
+  8 lib.es2015.collection.d.ts 25 es2015.collection.d.ts
+  9 lib.es2015.generator.d.ts 26 es2015.generator.d.ts
+  10 lib.es2015.iterable.d.ts 27 es2015.iterable.d.ts
+  11 lib.es2015.promise.d.ts 28 es2015.promise.d.ts
+  12 lib.es2015.proxy.d.ts 29 es2015.proxy.d.ts
+  13 lib.es2015.reflect.d.ts 30 es2015.reflect.d.ts
+  14 lib.es2015.symbol.d.ts 31 es2015.symbol.d.ts
+  15 lib.es2015.symbol.wellknown.d.ts 32 es2015.symbol.wellknown.d.ts
+  16 lib.es2018.asynciterable.d.ts 43 es2018.asynciterable.d.ts
+  17 lib.decorators.d.ts 106 decorators.d.ts
+  18 lib.decorators.legacy.d.ts 107 decorators.legacy.d.ts

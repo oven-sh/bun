@@ -1,0 +1,15 @@
+[
+ ["h18-stale-merge", "namespace module { export const a = 1 }\ndeclare module \"fs\" { export const b: number }\nnamespace module { console.log(typeof b, a) }"],
+ ["h18-control", "namespace module { export const a = 1 }\nnamespace module { console.log(typeof b, a) }"],
+ ["h18-declare-kw", "namespace declare { export const a = 1 }\ndeclare module \"fs\" { export const b: number }\nnamespace declare { console.log(typeof b, a) }"],
+ ["use-strict-after-type", "type T = 1; \"use strict\"; foo()"],
+ ["legal-comment-index", "/*! legal */ type A = 1; /*! two */ const k = 1; type B = 2;"],
+ ["dotted-ns-erased-outer", "declare namespace A.B.C { const x: number }\nfoo()"],
+ ["import-type-attrs", "import type { A } from './a.json' with { type: 'json', \"resolution-mode\": \"import\" };\nfoo()"],
+ ["export-type-star-as-str", "export type * as \"a-b\" from 'z';"],
+ ["import-type-default-as", "import type { default as D, \"str-name\" as S } from 'x';"],
+ ["declare-var-destructure", "declare const { a, b: [c] }: any, d: number;\nfoo()"],
+ ["decl-fn-if", "if (x) declare function f(): void;\nfoo()"],
+ ["class-expr-members", "const C = class { m(): void; m() {} declare p: number; [k: string]: any };"],
+ ["obj-method-no-body", "const o = { m(): void; };"]
+]

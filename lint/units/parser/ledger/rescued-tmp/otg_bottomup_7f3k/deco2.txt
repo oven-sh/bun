@@ -1,0 +1,148 @@
+# decorator expressions
+@d()! class C {}
+@d! class C {}
+@d.e! class C {}
+@d!.e class C {}
+@d!() class C {}
+class C { @d()! a }
+class C { @d! a }
+class C { @d! m() {} }
+@d<T>(1)<U>\nclass C {}
+@d()<T>\nclass C {}
+@d<T> class C {}
+@d<T>() class C {}
+@d<T>\nclass C {}
+class C { @d<T>\na }
+class C { @d<T>() a }
+class C { @d<T> a }
+class C { @d()<T>\na }
+class C { static #e() {} ; @C.#e a }
+class C { static #e() {} ; @C.#e() a }
+class C { @d.#e a }
+@(d as any) class C {}
+@(d!) class C {}
+@(<any>d) class C {}
+@d as any class C {}
+@d satisfies T class C {}
+@d?.e class C {}
+@d?.() class C {}
+@d[0] class C {}
+@d`x` class C {}
+@d++ class C {}
+@new D class C {}
+@new D() class C {}
+@-d class C {}
+@await d class C {}
+@yield class C {}
+@this.d class C {}
+@super.d class C {}
+@import.meta.d class C {}
+@function () {} class C {}
+@class {} class C {}
+@(() => {}) class C {}
+@d.e.f() class C {}
+@d().e class C {}
+@d()() class C {}
+@d().e() class C {}
+@1 class C {}
+@"a" class C {}
+@[d] class C {}
+@{d} class C {}
+deco: @d()! class C {}
+deco: @d! class C {}
+deco: class C { @d! a }
+deco: class C { @d()! m() {} }
+deco: @d<T>() class C {}
+deco: @d<T> class C {}
+deco: class C { @d<T> a }
+deco: class C { m(@d! a) {} }
+deco: class C { m(@d()! a) {} }
+deco: class C { m(@d<T>() a) {} }
+deco: @(d as any) class C {}
+deco: @d as any class C {}
+deco: @d?.e class C {}
+deco: @d[0] class C {}
+deco: @d`x` class C {}
+deco: @new D() class C {}
+deco: @-d class C {}
+deco: @d()() class C {}
+deco: @d().e class C {}
+deco: class C { static #e() {} ; @C.#e a }
+# positions
+export default @d abstract class C {}
+export default abstract @d class C {}
+export @d abstract class C {}
+@d export default abstract class C {}
+deco: export default @d abstract class C {}
+if (a) @d class C {}
+for (;;) @d class C {}
+if (a) class C {}
+label: @d class C {}
+label: class C {}
+export const v = @d class {}
+export const v = @d abstract class {}
+export const v = abstract class {}
+deco: export const v = @d class {}
+class C { @d constructor() {} }
+class C { @d static {} }
+class C { @d; a }
+class C { @d [k: string]: T }
+class C { @d declare a: T }
+class C { @d abstract a: T }
+class C { @d get a() { return 1 } @e set a(v) {} }
+class C { @d a?(): void }
+class C { @d m(): void; m() {} }
+class C { @d public a }
+class C { public @d a }
+class C { @d static a }
+class C { static @d a }
+class C { @d async m() {} }
+class C { async @d m() {} }
+class C { @d *m() {} }
+class C { @d readonly a }
+class C { readonly @d a }
+class C { @d accessor a }
+class C { accessor @d a }
+class C { @d override a }
+class C { @d #a }
+class C { @d static #a }
+class C { m(@d a) {} }
+class C { constructor(@d a) {} }
+class C { m(@d this) {} }
+class C { m(@d ...a) {} }
+class C { m(@d {a}) {} }
+class C { m(a = @d class {}) {} }
+function f(@d a) {}
+export const v = (@d a) => 1
+export const v = function (@d a) {}
+export const v = { m(@d a) {} }
+export const v = { @d m() {} }
+export const v = { @d a: 1 }
+interface I { @d a: T }
+interface I { m(@d a): void }
+type T = { @d a: T }
+type F = (@d a) => void
+enum E { @d a }
+declare class C { @d a: T }
+declare class C { m(@d a): void }
+abstract class C { @d abstract m(): void }
+deco: class C { m(@d a) {} }
+deco: class C { constructor(@d a) {} }
+deco: function f(@d a) {}
+deco: export const v = (@d a) => 1
+deco: export const v = { m(@d a) {} }
+deco: declare class C { m(@d a): void }
+deco: class C { m(@d a): void; m(a) {} }
+deco: abstract class C { abstract m(@d a): void }
+deco: class C { @d a?(): void }
+deco: class C { @d m(): void; m() {} }
+deco: class C { m(@d this) {} }
+deco: class C { m(@d this: T) {} }
+deco: class C { @d constructor() {} }
+deco: class C { @d [k: string]: T }
+deco: class C { @d declare a: T }
+deco: class C { @d abstract a: T }
+deco: class C { @d #a }
+deco: class C { @d #m() {} }
+deco: interface I { @d a: T }
+deco: if (a) @d class C {}

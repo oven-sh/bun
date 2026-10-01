@@ -1,0 +1,192 @@
+binder/binder.go:1124	(*Binder).bindThisPropertyAssignment	map-nil	symbolTable != nil	ast.SymbolTable
+binder/binder.go:1271	(*Binder).lookupEntity	map-nil	symbolTable != nil	ast.SymbolTable
+binder/binder.go:1278	(*Binder).lookupEntity	map-nil	symbol.Exports != nil	ast.SymbolTable
+binder/binder.go:2527	(*Binder).addDeclarationToSymbol	slice-nil	symbol.Declarations == nil	[]*ast.Node
+binder/nameresolver.go:50	(*NameResolver).Resolve	map-nil	locals != nil	ast.SymbolTable
+binder/nameresolver.go:163	(*NameResolver).Resolve	map-nil	ctor.Locals() != nil	ast.SymbolTable
+binder/nameresolver.go:315	(*NameResolver).Resolve	func-nil	r.SymbolReferenced != nil	func(symbol *ast.Symbol, meaning ast.SymbolFlags)
+binder/nameresolver.go:330	(*NameResolver).Resolve	func-nil	r.OnPropertyWithInvalidInitializer != nil	func(location *ast.Node, name string, declaration *ast.Node, result *ast.Symbol) bool
+binder/nameresolver.go:334	(*NameResolver).Resolve	func-nil	r.OnFailedToResolveSymbol != nil	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message)
+binder/nameresolver.go:338	(*NameResolver).Resolve	func-nil	r.OnSuccessfullyResolvedSymbol != nil	func(location *ast.Node, result *ast.Symbol, meaning ast.SymbolFlags, lastLocation *ast.Node, associatedDeclarationForContainingInitializerOrBindingName *ast.Node, withinDeferredContext bool)
+binder/nameresolver.go:357	(*NameResolver).useOuterVariableScopeInParameter	func-nil	r.GetRequiresScopeChangeCache != nil	func(node *ast.Node) core.Tristate
+binder/nameresolver.go:362	(*NameResolver).useOuterVariableScopeInParameter	func-nil	r.SetRequiresScopeChangeCache != nil	func(node *ast.Node, value core.Tristate)
+binder/nameresolver.go:403	(*NameResolver).error	func-nil	r.Error != nil	func(location *ast.Node, message *diagnostics.Message, args ...any) *ast.Diagnostic
+binder/nameresolver.go:410	(*NameResolver).getSymbolOfDeclaration	func-nil	r.GetSymbolOfDeclaration != nil	func(node *ast.Node) *ast.Symbol
+binder/nameresolver.go:419	(*NameResolver).lookup	func-nil	r.Lookup != nil	func(symbols ast.SymbolTable, name string, meaning ast.SymbolFlags) *ast.Symbol
+binder/referenceresolver.go:46	(*referenceResolver).getResolvedSymbol	func-nil	r.hooks.GetResolvedSymbol != nil	func(*ast.Node) *ast.Symbol
+binder/referenceresolver.go:55	(*referenceResolver).getMergedSymbol	func-nil	r.hooks.GetMergedSymbol != nil	func(*ast.Symbol) *ast.Symbol
+binder/referenceresolver.go:65	(*referenceResolver).getParentOfSymbol	func-nil	r.hooks.GetParentOfSymbol != nil	func(*ast.Symbol) *ast.Symbol
+binder/referenceresolver.go:75	(*referenceResolver).getSymbolOfDeclaration	func-nil	r.hooks.GetSymbolOfDeclaration != nil	func(*ast.Declaration) *ast.Symbol
+binder/referenceresolver.go:94	(*referenceResolver).getReferencedValueSymbol	func-nil	r.hooks.ResolveName != nil	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol
+binder/referenceresolver.go:109	(*referenceResolver).isTypeOnlyAliasDeclaration	func-nil	r.hooks.GetTypeOnlyAliasDeclaration != nil	func(symbol *ast.Symbol, include ast.SymbolFlags) *ast.Declaration
+binder/referenceresolver.go:140	(*referenceResolver).getExportSymbolOfValueSymbolIfExported	func-nil	r.hooks.GetExportSymbolOfValueSymbolIfExported != nil	func(*ast.Symbol) *ast.Symbol
+binder/referenceresolver.go:242	(*referenceResolver).GetElementAccessExpressionName	func-nil	r.hooks.GetElementAccessExpressionName != nil	func(*ast.ElementAccessExpression) (string, bool)
+checker/checker.go:1850	(*Checker).onSuccessfullyResolvedSymbol	map-nil	d.AsSourceFile().GlobalExports != nil	ast.SymbolTable
+checker/checker.go:1862	(*Checker).onSuccessfullyResolvedSymbol	map-nil	root.Parent.Locals() != nil	ast.SymbolTable
+checker/checker.go:3031	(*Checker).checkTypeArgumentConstraints	slice-nil	typeArguments == nil	[]*checker.Type
+checker/checker.go:3159	(*Checker).checkObjectTypeForDuplicateDeclarations	map-nil	staticNames == nil	map[string]int
+checker/checker.go:3164	(*Checker).checkObjectTypeForDuplicateDeclarations	map-nil	instanceNames == nil	map[string]int
+checker/checker.go:3208	(*Checker).checkObjectTypeForDuplicateDeclarations	map-nil	privateNames == nil	map[string]int
+checker/checker.go:3988	(*Checker).checkForStatement	map-nil	node.Locals() != nil	ast.SymbolTable
+checker/checker.go:4030	(*Checker).checkForInStatement	map-nil	node.Locals() != nil	ast.SymbolTable
+checker/checker.go:4083	(*Checker).checkForOfStatement	map-nil	node.Locals() != nil	ast.SymbolTable
+checker/checker.go:4210	(*Checker).checkSwitchStatement	map-nil	caseBlock.Locals() != nil	ast.SymbolTable
+checker/checker.go:4269	(*Checker).checkCatchClause	map-nil	blockLocals != nil	ast.SymbolTable
+checker/checker.go:4632	(*Checker).checkKindsOfPropertyMemberOverrides	map-nil	notImplementedInfo == nil	map[*ast.Node]checker.MemberInfo
+checker/checker.go:5654	(*Checker).checkExportSpecifier	slice-nil	symbol.Declarations != nil	[]*ast.Node
+checker/checker.go:6697	(*Checker).getIterationTypesOfMethod	slice-nil	methodParameterTypes != nil	[]*checker.Type
+checker/checker.go:6714	(*Checker).getIterationTypesOfMethod	slice-nil	methodReturnTypes != nil	[]*checker.Type
+checker/checker.go:6948	(*Checker).checkAliasSymbol	slice-nil	targetSymbol.Declarations != nil	[]*ast.Node
+checker/checker.go:7246	(*Checker).checkUnusedLocalsAndParameters	map-nil	importClauses == nil	map[*ast.Node][]*ast.Node
+checker/checker.go:7441	(*Checker).getTypeOfExpression	map-nil	c.flowTypeCache == nil	map[*ast.Node]*checker.Type
+checker/checker.go:7581	(*Checker).checkExpressionWithContextualType	slice-nil	inferenceContext.intraExpressionInferenceSites != nil	[]checker.IntraExpressionInferenceSite
+checker/checker.go:8084	(*Checker).checkTemplateExpression	iface-nil	evaluated != nil	any
+checker/checker.go:8622	(*Checker).resolveCallExpression	slice-nil	node.TypeArguments() != nil	[]*ast.Node
+checker/checker.go:9140	(*Checker).chooseOverload	slice-nil	typeArgumentTypes == nil	[]*checker.Type
+checker/checker.go:10279	(*Checker).contextuallyCheckFunctionExpressionOrObjectLiteralMethod	slice-nil	node.TypeParameters() == nil	[]*ast.Node
+checker/checker.go:10767	(*Checker).getInstantiationExpressionType	slice-nil	typeArgumentTypes != nil	[]*checker.Type
+checker/checker.go:11459	(*Checker).checkPropertyAccessExpressionOrQualifiedName	slice-nil	targetPropSymbol.Declarations != nil	[]*ast.Node
+checker/checker.go:12811	(*Checker).reportOperatorError	func-nil	isRelated != nil	func(left *checker.Type, right *checker.Type) bool
+checker/checker.go:12818	(*Checker).reportOperatorError	func-nil	isRelated != nil	func(left *checker.Type, right *checker.Type) bool
+checker/checker.go:13360	(*Checker).checkObjectLiteral	map-nil	allPropertiesTable != nil	ast.SymbolTable
+checker/checker.go:13384	(*Checker).checkObjectLiteral	map-nil	allPropertiesTable != nil	ast.SymbolTable
+checker/checker.go:14279	(*Checker).mergeSymbol	map-nil	source.Members != nil	ast.SymbolTable
+checker/checker.go:14282	(*Checker).mergeSymbol	map-nil	source.Exports != nil	ast.SymbolTable
+checker/checker.go:14686	(*Checker).reportNonDefaultExport	map-nil	moduleSymbol.Exports != nil	ast.SymbolTable
+checker/checker.go:14691	(*Checker).reportNonDefaultExport	map-nil	moduleSymbol.Exports != nil	ast.SymbolTable
+checker/checker.go:15005	(*Checker).reportNonExportedMember	map-nil	locals != nil	ast.SymbolTable
+checker/checker.go:16026	(*Checker).getResolvedMembersOrExportsOfSymbol	map-nil	links[resolutionKind] == nil	ast.SymbolTable
+checker/checker.go:16043	(*Checker).getResolvedMembersOrExportsOfSymbol	map-nil	lateSymbols == nil	ast.SymbolTable
+checker/checker.go:16048	(*Checker).getResolvedMembersOrExportsOfSymbol	map-nil	lateSymbols == nil	ast.SymbolTable
+checker/checker.go:16060	(*Checker).getResolvedMembersOrExportsOfSymbol	map-nil	lateSymbols == nil	ast.SymbolTable
+checker/checker.go:16227	(*Checker).getExportsOfModule	map-nil	links.resolvedExports == nil	ast.SymbolTable
+checker/checker.go:16257	(*Checker).getExportsOfModuleWorker	map-nil	symbol.Exports == nil	ast.SymbolTable
+checker/checker.go:16284	(*Checker).getExportsOfModuleWorker	map-nil	typeOnlyExportStarMap == nil	map[string]*ast.Node
+checker/checker.go:16302	(*Checker).getExportsOfModuleWorker	map-nil	exports == nil	ast.SymbolTable
+checker/checker.go:16337	(*Checker).extendExportSymbols	map-nil	lookupTable != nil	checker.ExportCollisionTable
+checker/checker.go:16342	(*Checker).extendExportSymbols	map-nil	lookupTable != nil	checker.ExportCollisionTable
+checker/checker.go:17088	(*Checker).getBaseConstructorTypeOfClass	slice-nil	baseConstructorType.symbol.Declarations != nil	[]*ast.Node
+checker/checker.go:17226	(*Checker).getInferredTypeParameterConstraint	slice-nil	typeParameters != nil	[]*checker.Type
+checker/checker.go:17426	(*Checker).getDeclaredTypeOfClassOrInterface	slice-nil	typeParameters != nil	[]*checker.Type
+checker/checker.go:17484	(*keyBuilder).hash	slice-nil	b.overflowBuffer == nil	[]byte
+checker/checker.go:18538	(*Checker).getWidenedTypeOfObjectLiteral	map-nil	context.widenedTypes == nil	map[*checker.Type]*checker.Type
+checker/checker.go:18569	(*WideningContext).getChildContext	map-nil	w.childContexts == nil	map[string]*checker.WideningContext
+checker/checker.go:18577	(*Checker).getPropertiesOfContext	slice-nil	context.resolvedProperties == nil	[]*ast.Symbol
+checker/checker.go:18592	(*Checker).getSiblingsOfContext	slice-nil	context.siblings == nil	[]*checker.Type
+checker/checker.go:18917	(*Checker).typeResolutionHasProperty	slice-nil	r.target.(*Type).AsTypeReference().resolvedTypeArguments != nil	[]*checker.Type
+checker/checker.go:18977	(*Checker).getPropertiesOfUnionOrIntersectionType	slice-nil	d.resolvedProperties == nil	[]*ast.Symbol
+checker/checker.go:19303	(*Checker).getBaseTypes	slice-nil	t.symbol.Declarations != nil	[]*ast.Node
+checker/checker.go:19716	(*Checker).addInheritedMembers	map-nil	symbols == nil	ast.SymbolTable
+checker/checker.go:21240	(*Checker).getUnionSignatures	slice-nil	result == nil	[]*checker.Signature
+checker/checker.go:21242	(*Checker).getUnionSignatures	slice-nil	unionSignatures != nil	[]*checker.Signature
+checker/checker.go:21287	(*Checker).getUnionSignatures	slice-nil	results == nil	[]*checker.Signature
+checker/checker.go:21723	(*Checker).createUnionOrIntersectionProperty	slice-nil	writeTypes != nil	[]*checker.Type
+checker/checker.go:21724	(*Checker).createUnionOrIntersectionProperty	slice-nil	writeTypes == nil	[]*checker.Type
+checker/checker.go:21765	(*Checker).createUnionOrIntersectionProperty	slice-nil	writeTypes != nil	[]*checker.Type
+checker/checker.go:22009	(*Checker).getTypeArguments	slice-nil	d.resolvedTypeArguments == nil	[]*checker.Type
+checker/checker.go:22029	(*Checker).getTypeArguments	slice-nil	d.resolvedTypeArguments == nil	[]*checker.Type
+checker/checker.go:22033	(*Checker).getTypeArguments	slice-nil	d.resolvedTypeArguments == nil	[]*checker.Type
+checker/checker.go:22267	(*Checker).pushActiveMapper	map-nil	c.activeTypeMappersCaches[lastIndex] == nil	map[checker.CacheHashKey]*checker.Type
+checker/checker.go:22308	(*Checker).couldContainTypeVariablesWorker	slice-nil	t.symbol.Declarations != nil	[]*ast.Node
+checker/checker.go:22440	(*Checker).getObjectTypeInstantiation	slice-nil	typeParameters == nil	[]*checker.Type
+checker/checker.go:22459	(*Checker).getObjectTypeInstantiation	slice-nil	typeParameters == nil	[]*checker.Type
+checker/checker.go:22480	(*Checker).getObjectTypeInstantiation	map-nil	data.instantiations == nil	map[checker.CacheHashKey]*checker.Type
+checker/checker.go:24009	(*Checker).getDeclaredTypeOfEnum	iface-nil	value != nil	any
+checker/checker.go:24123	(*Checker).computeConstantEnumMemberValue	iface-nil	result.Value != nil	any
+checker/checker.go:24415	(*Checker).getTypeFromConditionalTypeNode	slice-nil	outerTypeParameters != nil	[]*checker.Type
+checker/checker.go:24563	(*Checker).getConditionalType	slice-nil	extraTypes != nil	[]*checker.Type
+checker/checker.go:25809	(*Checker).getUnionTypeWorker	slice-nil	typeSet == nil	[]*checker.Type
+checker/checker.go:26063	(*Checker).removeSubtypes	slice-nil	cached != nil	[]*checker.Type
+checker/checker.go:28684	(*Checker).markExportSpecifierAliasReferenced	slice-nil	symbol.Declarations != nil	[]*ast.Node
+checker/checker.go:31059	(*Checker).hasContextSensitiveReturnExpression	slice-nil	node.TypeParameters() != nil	[]*ast.Node
+checker/emitresolver.go:391	(*EmitResolver).hasVisibleDeclarations	map-nil	aliasesToMakeVisibleSet == nil	map[ast.NodeId]*ast.Node
+checker/emitresolver.go:843	(*EmitResolver).getReferenceResolver	iface-nil	r.referenceResolver == nil	binder.ReferenceResolver
+checker/emitresolver.go:1120	(*EmitResolver).CreateLateBoundIndexSignatures	slice-nil	mods != nil	[]*ast.Node
+checker/flow.go:1106	(*Checker).narrowTypeBySwitchOnDiscriminant	slice-nil	groundClauseTypes != nil	[]*checker.Type
+checker/flow.go:1110	(*Checker).narrowTypeBySwitchOnDiscriminant	slice-nil	groundClauseTypes == nil	[]*checker.Type
+checker/flow.go:1118	(*Checker).narrowTypeBySwitchOnDiscriminant	slice-nil	groundClauseTypes == nil	[]*checker.Type
+checker/flow.go:1159	(*Checker).narrowTypeBySwitchOnTypeOf	slice-nil	witnesses == nil	[]string
+checker/flow.go:1952	(*Checker).computeExhaustiveSwitchStatement	slice-nil	witnesses == nil	[]string
+checker/inference.go:341	(*Checker).invokeOnce	map-nil	n.visited == nil	map[checker.InferenceKey]checker.InferencePriority
+checker/inference.go:1252	(*Checker).newInferenceContext	func-nil	compareTypes == nil	checker.TypeComparer
+checker/jsx.go:462	(*Checker).elaborateIterableOrArrayLikeTargetElementwise	func-nil	e.createDiagnostic != nil	func(prop *ast.Node) *ast.Diagnostic
+checker/jsx.go:754	(*Checker).createJsxAttributesTypeFromAttributesProperty	map-nil	allAttributesTable != nil	ast.SymbolTable
+checker/jsx.go:779	(*Checker).createJsxAttributesTypeFromAttributesProperty	map-nil	allAttributesTable != nil	ast.SymbolTable
+checker/jsx.go:973	(*Checker).getJsxPropsTypeFromClassType	slice-nil	typeParams != nil	[]*checker.Type
+checker/jsx.go:1295	(*Checker).getJsxType	map-nil	exports != nil	ast.SymbolTable
+checker/nodebuilder_hover.go:97	(*NodeBuilderImpl).enumMemberInitializer	iface-nil	val == nil	any
+checker/nodebuilder_hover.go:500	(*NodeBuilderImpl).expandModuleDecl	map-nil	merged.Exports != nil	ast.SymbolTable
+checker/nodebuilderimpl.go:120	newNodeBuilderImpl	map-nil	idToSymbol == nil	map[*ast.IdentifierNode]*ast.Symbol
+checker/nodebuilderimpl.go:778	(*NodeBuilderImpl).createAccessFromSymbolChain	map-nil	exports != nil	ast.SymbolTable
+checker/nodebuilderimpl.go:824	(*NodeBuilderImpl).createAccessFromSymbolChain	map-nil	b.ch.getMembersOfSymbol(parent) != nil	ast.SymbolTable
+checker/nodebuilderimpl.go:1037	(*NodeBuilderImpl).lookupTypeParameterNodes	slice-nil	chain != nil	[]*ast.Symbol
+checker/nodebuilderimpl.go:1073	(*NodeBuilderImpl).lookupSymbolChainWorker	slice-nil	chain != nil	[]*ast.Symbol
+checker/nodebuilderimpl.go:1113	(*NodeBuilderImpl).getSymbolChain	map-nil	parent.Exports != nil	ast.SymbolTable
+checker/nodebuilderimpl.go:1286	(*NodeBuilderImpl).getSpecifierForModuleSymbol	map-nil	links.specifierCache == nil	module.ModeAwareCache[string]
+checker/nodebuilderimpl.go:2279	(*NodeBuilderImpl).serializeTypeForDeclaration	func-nil	remove != nil	func()
+checker/nodebuilderimpl.go:2769	getTypeAliasForTypeLiteral	slice-nil	t.symbol.Declarations != nil	[]*ast.Node
+checker/nodebuilderimpl.go:3071	(*NodeBuilderImpl).typeReferenceToTypeNode	slice-nil	outerTypeParameters != nil	[]*checker.Type
+checker/nodebuilderimpl.go:3101	(*NodeBuilderImpl).typeReferenceToTypeNode	slice-nil	typeParams != nil	[]*checker.Type
+checker/nodebuilderimpl.go:3109	(*NodeBuilderImpl).typeReferenceToTypeNode	slice-nil	t.AsTypeReference().node.TypeArguments() == nil	[]*ast.Node
+checker/nodebuilderimpl.go:3189	(*NodeBuilderImpl).visitAndTransformType	map-nil	links.serializedTypes == nil	map[checker.CompositeTypeCacheIdentity]*checker.SerializedTypeEntry
+checker/nodebuilderscopes.go:121	(*NodeBuilderImpl).enterNewScope	map-nil	locals == nil	ast.SymbolTable
+checker/nodebuilderscopes.go:163	(*NodeBuilderImpl).enterNewScope	slice-nil	expandedParams == nil	[]*ast.Symbol
+checker/nodebuilderscopes.go:167	(*NodeBuilderImpl).enterNewScope	slice-nil	expandedParams == nil	[]*ast.Symbol
+checker/nodebuilderscopes.go:175	(*NodeBuilderImpl).enterNewScope	slice-nil	originalParameters != nil	[]*ast.Symbol
+checker/nodebuilderscopes.go:223	(*NodeBuilderImpl).enterNewScope	slice-nil	typeParameters != nil	[]*checker.Type
+checker/nodebuilderscopes.go:225	(*NodeBuilderImpl).enterNewScope	slice-nil	typeParameters == nil	[]*checker.Type
+checker/nodebuilderscopes.go:241	(*NodeBuilderImpl).enterNewScope	func-nil	cleanupParams != nil	func()
+checker/nodebuilderscopes.go:244	(*NodeBuilderImpl).enterNewScope	func-nil	cleanupTypeParams != nil	func()
+checker/nodecopy.go:111	(*recoveryBoundary).markError	func-nil	f != nil	func()
+checker/nodecopy.go:850	getExistingNodeTreeVisitor	func-nil	exit != nil	func()
+checker/pseudotypenodebuilder.go:308	(*NodeBuilderImpl).pseudoTypeToNode	func-nil	cleanup != nil	func()
+checker/relater.go:107	(*Relation).set	map-nil	r.results == nil	map[checker.CacheHashKey]checker.RelationComparisonResult
+checker/relater.go:291	(*Checker).isEnumTypeRelatedTo	func-nil	errorReporter != nil	checker.ErrorReporter
+checker/relater.go:299	(*Checker).isEnumTypeRelatedTo	func-nil	errorReporter != nil	checker.ErrorReporter
+checker/relater.go:309	(*Checker).isEnumTypeRelatedTo	iface-nil	sourceValue != nil	any
+checker/relater.go:309	(*Checker).isEnumTypeRelatedTo	iface-nil	targetValue != nil	any
+checker/relater.go:310	(*Checker).isEnumTypeRelatedTo	func-nil	errorReporter != nil	checker.ErrorReporter
+checker/relater.go:325	(*Checker).isEnumTypeRelatedTo	func-nil	errorReporter != nil	checker.ErrorReporter
+checker/relater.go:565	(*Checker).elaborateElement	func-nil	diagnosticFactory != nil	func(prop *ast.Node) *ast.Diagnostic
+checker/relater.go:1142	(*Checker).computeKeyPropertyNameAndMap	map-nil	mapByKeyProperty == nil	map[*checker.Type]*checker.Type
+checker/relater.go:1336	(*Checker).getVariancesWorker	slice-nil	links.variances == nil	[]checker.VarianceFlags
+checker/relater.go:2338	(*Checker).getEffectiveConstraintOfIntersection	slice-nil	constraints != nil	[]*checker.Type
+checker/relater.go:2367	(*Checker).isTypeMatchedByTemplateLiteralType	slice-nil	inferences != nil	[]*checker.Type
+checker/relater.go:2818	(*Relater).hasExcessProperties	slice-nil	checkTypes != nil	[]*checker.Type
+checker/relater.go:3583	(*Relater).structuredTypeRelatedToWorker	slice-nil	c.root.inferTypeParameters == nil	[]*checker.Type
+checker/relater.go:4950	(*Relater).chainArgsMatch	iface-nil	a != nil	any
+checker/services.go:67	(*Checker).getSymbolsInScope	map-nil	location.Locals() != nil	ast.SymbolTable
+checker/services.go:272	(*Checker).getAugmentedPropertiesOfType	map-nil	propsByName == nil	ast.SymbolTable
+checker/symbolaccessibility.go:175	(*Checker).getAlternativeContainingModules	map-nil	links.extendedContainersByFile == nil	map[ast.NodeId][]*ast.Symbol
+checker/symbolaccessibility.go:179	(*Checker).getAlternativeContainingModules	slice-nil	existing != nil	[]*ast.Symbol
+checker/symbolaccessibility.go:263	(*Checker).getFileSymbolIfFileSymbolExportEqualsContainer	map-nil	fileSymbol.Exports == nil	ast.SymbolTable
+checker/symbolaccessibility.go:349	(*Checker).getAliasForSymbolInContainer	map-nil	container.Exports != nil	ast.SymbolTable
+checker/symbolaccessibility.go:456	(*Checker).getAccessibleSymbolChainEx	map-nil	links.accessibleChainCache == nil	map[checker.accessibleChainCacheKey][]*ast.Symbol
+checker/symbolaccessibility.go:514	(*Checker).getSymbolTableAliases	map-nil	c.symbolTableAliasCache != nil	map[checker.symbolTableID][]*ast.Symbol
+checker/symbolaccessibility.go:527	(*Checker).getSymbolTableAliases	map-nil	c.symbolTableAliasCache == nil	map[checker.symbolTableID][]*ast.Symbol
+checker/symbolaccessibility.go:633	(*Checker).getCandidateListForSymbol	map-nil	candidateTable == nil	ast.SymbolTable
+checker/symbolaccessibility.go:752	(*Checker).someSymbolTableInScope	map-nil	location.Locals() != nil	ast.SymbolTable
+checker/symbolaccessibility.go:779	(*Checker).someSymbolTableInScope	map-nil	table == nil	ast.SymbolTable
+checker/symbolaccessibility.go:785	(*Checker).someSymbolTableInScope	map-nil	table != nil	ast.SymbolTable
+checker/symbolaccessibility.go:796	(*Checker).someSymbolTableInScope	map-nil	nameTable != nil	ast.SymbolTable
+checker/symbolaccessibility.go:812	(*Checker).getClassExpressionNameTable	map-nil	c.classExpressionNameTables != nil	map[ast.NodeId]ast.SymbolTable
+checker/symbolaccessibility.go:823	(*Checker).getClassExpressionNameTable	map-nil	c.classExpressionNameTables == nil	map[ast.NodeId]ast.SymbolTable
+checker/symboltracker.go:15	NewSymbolTrackerImpl	iface-nil	tracker != nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:30	(*SymbolTrackerImpl).TrackSymbol	iface-nil	this.inner != nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:44	(*SymbolTrackerImpl).ReportInaccessibleThisError	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:52	(*SymbolTrackerImpl).ReportPrivateInBaseOfClassExpression	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:60	(*SymbolTrackerImpl).ReportInaccessibleUniqueSymbolError	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:68	(*SymbolTrackerImpl).ReportCyclicStructureError	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:76	(*SymbolTrackerImpl).ReportLikelyUnsafeImportRequiredError	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:84	(*SymbolTrackerImpl).ReportTruncationError	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:92	(*SymbolTrackerImpl).ReportNonlocalAugmentation	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:100	(*SymbolTrackerImpl).ReportNonSerializableProperty	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:111	(*SymbolTrackerImpl).ReportInferenceFallback	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:118	(*SymbolTrackerImpl).PushErrorFallbackNode	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/symboltracker.go:125	(*SymbolTrackerImpl).PopErrorFallbackNode	iface-nil	this.inner == nil	nodebuilder.SymbolTracker
+checker/tracer.go:57	(*Tracer).temporarilyAddCheckerIndex	map-nil	args == nil	map[string]any
+checker/utilities.go:842	(*orderedSet[T]).contains	map-nil	s.valuesByKey == nil	map[T]struct{}
+checker/utilities.go:853	(*orderedSet[T]).add	map-nil	s.valuesByKey == nil	map[T]struct{}
+checker/utilities.go:1660	(*Checker).isCanceled	iface-nil	c.ctx != nil	context.Context
+checker/utilities.go:1660	(*Checker).isCanceled	iface-nil	c.ctx.Err() != nil	error
+checker/utilities.go:1670	(*Checker).getPackagesMap	map-nil	c.packagesMap == nil	map[string]bool

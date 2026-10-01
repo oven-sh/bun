@@ -1,0 +1,5 @@
+# Instances of typescript-go 89d5d5b whose error baseline differs when the diagnostics are taken before the emit.
+# Keys: <suite>/<stem>.errors.txt. Measured with groundtruth/prepost/build.sh; the baseline before the emit equals the one of TypeScript 5848bc5.
+compiler/incorrectRecursiveMappedTypeConstraint.errors.txt
+compiler/typeParameterWithInvalidConstraintType.errors.txt
+conformance/recursiveMappedTypes.errors.txt

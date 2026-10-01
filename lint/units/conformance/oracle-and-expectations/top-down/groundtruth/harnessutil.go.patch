@@ -1,0 +1,19 @@
+--- /workspace/ref/typescript-go/internal/testutil/harnessutil/harnessutil.go	2026-09-29 15:16:34.746158801 +0000
++++ internal/testutil/harnessutil/harnessutil.go	2026-09-29 19:12:27.870471821 +0000
+@@ -716,10 +716,15 @@
+ 		errors = append(errors, diag)
+ 	}
+ 
+-	return newCompilationResult(host, config.CompilerOptions(), postProgram, emitResult, errors, harnessOptions)
++	probeResult := newCompilationResult(host, config.CompilerOptions(), postProgram, emitResult, errors, harnessOptions)
++	probeResult.PreDiagnostics = preErrors
++	probeResult.PostDiagnostics = postErrors
++	return probeResult
+ }
+ 
+ type CompilationResult struct {
++	PreDiagnostics   []*ast.Diagnostic
++	PostDiagnostics  []*ast.Diagnostic
+ 	Diagnostics      []*ast.Diagnostic
+ 	Result           *compiler.EmitResult
+ 	Program          compiler.ProgramLike

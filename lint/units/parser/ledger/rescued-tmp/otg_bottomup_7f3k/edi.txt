@@ -1,0 +1,18 @@
+export default interface as {}
+export default interface as { a: 1 }
+export default interface\nFoo {}
+export default interface satisfies<T> extends B {}
+export default interface as\n{}
+interface as\n{}
+type as\n<T> = 1
+namespace as\n{}
+namespace as\n.b {}
+type as = 1\ntype satisfies = 2
+function f() { namespace as {} }
+function f() { namespace as { export const x = 1 } }
+{ type as = 1 }
+if (x) type as = 1
+declare module as { }
+declare namespace as.b.c { }
+namespace a.as.b { export const x = 1 }
+namespace as.satisfies { export const x = 1 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+# valgrind 3.27.1 from the Homebrew bottle on ghcr.io (apt mirrors are not reachable here).
+# The launcher's ELF interpreter is an unrelocated placeholder, so it runs through the system loader.
+export VALGRIND_LIB=/workspace/tools/valgrind/libexec/valgrind
+exec /lib64/ld-linux-x86-64.so.2 /workspace/tools/valgrind/bin/valgrind "$@"

@@ -1,0 +1,41 @@
+functions 3060, largest component 1462, functions of the layers 487, of them inside the largest component 358
+== E-CORE inside 32 of 42
+outside: c.reportObjectPossiblyNullOrUndefinedError c.getContextNode c.checkConstEnumAccess c.getOuterInferenceTypeParameters c.getUniqueTypeParameters hasTypeParameterByName getUniqueTypeParameterName c.checkImportMetaProperty c.checkMetaPropertyKeyword c.checkAssertionDeferred
+self recursive: c.getQuickTypeOfExpression
+== E-LITERAL inside 17 of 27
+outside: c.isTemplateLiteralContext c.checkRegularExpressionLiteral c.createArrayLiteralType isSpreadIntoCallOrNew c.checkContextualDeprecations c.checkDeprecatedProperty c.getIndexInfoWithReadonly c.isSpreadableProperty c.hasDefaultValue c.isInPropertyInitializerOrClassStaticBlock
+self recursive: c.isTemplateLiteralContext c.getSpreadType c.isValidSpreadType c.hasDefaultValue c.isConstContext c.isValidConstAssertionArgument c.isConstTypeVariable
+== E-OPER inside 28 of 41
+outside: c.checkVoidExpression c.getSuggestedBooleanOperator c.checkNaNEquality c.isGlobalNaN c.checkTruthinessOfType c.getSyntacticTruthySemantics c.checkNullishCoalesceOperands c.checkNullishCoalesceOperandLeft c.getSyntacticNullishnessSemantics c.isSideEffectFree c.isIndirectCall c.isExactOptionalPropertyMismatch c.checkReferenceExpression
+self recursive: c.getSyntacticTruthySemantics c.getSyntacticNullishnessSemantics c.isSideEffectFree
+== E-ACCESS inside 51 of 71
+outside: c.checkPrivateIdentifierExpression c.getSymbolForPrivateIdentifierExpression c.isInConstructorArgumentInitializer c.isSameScopedBindingElement c.isInAmbientOrTypeNode c.getControlFlowContainer c.isMethodAccessForCall c.lookupSymbolForPrivateIdentifierDeclaration hasCommonDomTypeName c.getEntityNameForExtendingInterface c.isOptionalPropertyDeclaration c.isNodeUsedDuringClassInitialization c.isNodeWithinClass c.forEachEnclosingClass getThisParameterFromNodeContext c.TryGetThisTypeAtEx c.getThisContainer c.isInParameterInitializerBeforeContainingFunction c.checkThisInStaticClassFieldInitializerInDecoratedClass c.markPropertyAsReferenced
+self recursive: c.getEntityNameForExtendingInterface c.forEachProperty
+== E-FACTS inside 11 of 15
+outside: c.getDefinitelyFalsyPartOfType isZeroBigInt c.recombineUnknownType c.convertAutoToAny
+self recursive: c.getTypeFactsWorker
+== E-FUNC inside 13 of 17
+outside: c.getFirstTransformableStaticClassElement c.checkClassExpressionDeferred c.checkFunctionExpressionOrObjectLiteralMethodDeferred c.createUnionSignature
+self recursive: c.assignBindingElementTypes
+== T-RETINFER inside 13 of 15
+outside: mayReturnNever c.createGeneratorType
+self recursive: 
+== E-CALL inside 42 of 63
+outside: c.addDeprecatedSuggestionWithSignature c.isSymbolOrSymbolForCall someSignature c.getDiagnosticHeadMessageForDecoratorResolution signatureHasLiteralTypes c.getOptionalCallSignature acceptsVoid c.getLegacyDecoratorArgumentCount c.hasCorrectTypeArgumentArity c.getThisArgumentOfCall c.getEffectiveCheckNode c.createCombinedSymbolForOverloadFailure c.isPromiseResolveArityError getErrorNodeForCallNode c.getTypeArgumentArityError c.reportCannotInvokePossiblyNullOrUndefinedError c.skippedGenericFunction c.getSpreadArgumentIndex isSpreadArgument c.createSyntheticExpression c.getSpreadIndices
+self recursive: c.typeHasProtectedAccessibleBase
+== E-CTX inside 38 of 55
+outside: c.isContextSensitiveFunctionOrObjectLiteralMethod c.isCircularMappedProperty c.appendContextualPropertyTypeConstituent ObjectLiteralDiscriminator.len ObjectLiteralDiscriminator.name ObjectLiteralDiscriminator.matches c.isPossiblyDiscriminantValue c.pushContextualType c.popContextualType c.findContextualNode c.isContextSensitive c.isContextSensitiveFunctionLikeDeclaration c.hasContextSensitiveReturnExpression c.hasContextSensitiveYieldExpression c.pushInferenceContext c.popInferenceContext c.getInferenceContext
+self recursive: c.getContextualType c.getMutableArrayOrTupleType c.isExcludedMappedPropertyName c.isPossiblyDiscriminantValue c.instantiateInstantiableTypes c.isContextSensitive
+== F-NARROW inside 109 of 134
+outside: FlowType.isNil c.newFlowType c.getFlowState c.putFlowState getFlowNodeOfNode getBranchLabelAntecedents c.isEmptyArrayAssignment getCandidateVariableDeclarationInitializer c.getEvolvingArrayType c.getElementTypeOfEvolvingArrayType isEvolvingArrayTypeList c.reportFlowControlError tryGetNameFromType c.getReferenceCandidate c.getReferenceRoot isCoercibleUnderDoubleEquals c.eachTypeContainedIn c.getSwitchClauseTypeOfWitnesses c.getNotEqualFactsFromTypeofSwitch c.isDeclarationWithExplicitTypeAnnotation c.isExpandoPropertyFunctionWithReturnTypeAnnotation c.isDestructuringAssignmentTarget c.getTypePredicateArgument c.hasParentWithAssignmentsMarked c.extendAssignmentPosition
+self recursive: c.isSomeSymbolAssignedWorker c.isGenericTypeWithUnionConstraint c.isGenericTypeWithoutNullableConstraint c.getTypeAtFlowNode c.narrowTypeByAssertion c.narrowType c.isMatchingReference c.writeFlowCacheKey c.isConstantReference c.getReferenceCandidate c.getReferenceRoot c.getTypeOfDottedName c.getExplicitTypeOfSymbol c.markNodeAssignmentsWorker
+== F-REACH inside 2 of 5
+outside: c.isFalseExpression c.isPostSuperFlowNode c.isPostSuperFlowNodeWorker
+self recursive: c.isReachableFlowNodeWorker c.isFalseExpression c.isPostSuperFlowNodeWorker
+== F-UNREACH inside 2 of 2
+outside: 
+self recursive: 
+== entries that the type layers research expects of these layers and that the list lacks: none
+== tested entries of the twelve layers (data/tested_entries.txt, the list of the bottom-up pass): 54
+== graph: all functions of checker and binder
+== cycles through functions of the layers that pass no tested entry: 0

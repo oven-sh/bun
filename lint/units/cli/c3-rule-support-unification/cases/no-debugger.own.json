@@ -1,0 +1,67 @@
+[
+ "var test = { debugger: 1 }; test.debugger;",
+ "a.debugger",
+ "({debugger(){}})",
+ "class A { debugger() {} }",
+ "\"debugger\";",
+ "`debugger`",
+ "// debugger\nx",
+ "/* debugger */ x",
+ "x = /debugger/",
+ "x = a.debugger ? 1 : 2",
+ "debugger",
+ "debugger;",
+ "if (foo) debugger",
+ "if (a) debugger; else debugger;",
+ "function f(){ debugger }",
+ "() => { debugger }",
+ "x = function(){ debugger; }",
+ "class A { m(){ debugger } static { debugger; } }",
+ "switch (a) { case 1: debugger; default: debugger }",
+ "label: debugger;",
+ "for (;;) debugger",
+ "while (a) { debugger }",
+ "do debugger; while (a)",
+ "try { debugger } catch (e) { debugger } finally { debugger }",
+ "{ debugger }",
+ "debugger\ndebugger",
+ "debugger;debugger",
+ "é; debugger",
+ "\"😀\"; debugger",
+ "\t debugger",
+ "\r\ndebugger",
+ "async function f(){ await x; debugger }",
+ "x = { m() { debugger }, get g() { debugger; return 1 } }",
+ "with (a) debugger",
+ "if (a) { } else debugger",
+ "(function(){ debugger })()",
+ "x = `${ (() => { debugger })() }`",
+ "debugger /* c */ ;",
+ "debugger // c\n;",
+ "/* a */ debugger",
+ "#!/usr/bin/env node\ndebugger",
+ {
+  "code": "export function f(){ debugger }",
+  "sourceType": "module"
+ },
+ {
+  "code": "export default function(){ debugger }",
+  "sourceType": "module"
+ },
+ {
+  "code": "import a from \"a\"; debugger",
+  "sourceType": "module"
+ },
+ {
+  "code": "x = <a b={() => { debugger }} />",
+  "jsx": true
+ },
+ {
+  "code": "x = <a>debugger</a>",
+  "jsx": true
+ },
+ {
+  "code": "x = <a>{(() => { debugger })()}</a>; debugger",
+  "jsx": true
+ }
+]

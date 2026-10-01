@@ -1,0 +1,13 @@
+file /mod3.ts scriptKind=3 variant=0 dts=false textLen=22
+externalModuleIndicator KindExportAssignment[0,21)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=7 identifiers=2 text=2 reparsedClones=0
+root KindSourceFile [0,22) f=0x0
+  .Statements: list [0,21) n=1
+    - KindExportAssignment [0,21) f=0x0
+      .Expression: KindBinaryExpression [14,20) f=0x2000
+        .Left: KindIdentifier [14,16) f=0x2000 Text="a"
+        .OperatorToken: KindPlusToken [16,18) f=0x2000
+        .Right: KindIdentifier [18,20) f=0x2000 Text="b"
+  .EndOfFileToken: KindEndOfFile [21,22) f=0x0

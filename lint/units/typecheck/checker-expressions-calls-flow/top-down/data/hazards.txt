@@ -1,0 +1,78 @@
+Hazards of the twelve layers for the port. Line numbers are of internal/checker at 89d5d5b.
+
+Order and ownership
+ 1. The layer model is the one of ../../bottom-up/py/layers.py (487 functions). The collision checks (10534-10705), the decorator
+    signatures (30265-30672) and the awaited types (31349-31591) are not in the twelve layers; nine functions inside the chunks
+    belong to the type layers and are cut out of the ranges.
+ 2. By the order of typecheck.md every layer but three calls functions that land later (summary.tsv, layers.txt "calls forward"):
+    E-CORE 74 (41 of them in the other layers of this research: the switch of checkExpressionWorker reaches every check function),
+    E-ACCESS 39, E-CALL 28, E-OPER 25, E-LITERAL 20, E-CTX 20, E-FUNC 18, T-RETINFER 16, F-NARROW 5. E-FACTS, F-REACH and F-UNREACH
+    call nothing that lands later.
+ 3. K4 with the default libraries enters 38 functions of E-CORE, E-ACCESS, E-FACTS, F-NARROW, F-REACH and F-UNREACH, type analysis at
+    flow nodes included, and 39 functions of later steps (measurements.txt, 3). With lib.es5.d.ts alone it enters 12 functions of
+    these layers and computes no type at a flow node.
+
+Recursion
+ 4. checkBinaryLikeExpression recurses plainly (12432-12433); the state machine of TypeScript's checkBinaryExpression does not exist
+    in the reference. Depth in the corpus: 4953 nested binary expressions in two files, 280 in the next one.
+ 5. The stack test sits in the 54 functions of ../../bottom-up/data/recursion.txt and in the closures of item 8 (tested_entries.tsv:
+    55 rows with the value to return); py/recursion.py confirms that no cycle through these layers avoids them. The test is the
+    first statement: before it nothing is pushed, saved or counted, so an early exit keeps every stack balanced. Nine entries must
+    not return the default of their type (rows marked EXCEPTION): a default there turns into a diagnostic for the user.
+ 6. getTypeAtFlowNode stops at depth 2000 per FlowState and reports TS2563; the largeControlFlowGraph instance expects that error.
+    A thread whose stack ends before 2000 flow levels gives a StackLimit fault instead and no TS2563. The stack of the thread that
+    checks has to hold 2000 flow levels and 4953 expression levels with room; the reference needs 1 to 2 MB and 2 to 4 MB of Go stack.
+ 7. isReachableFlowNodeWorker and isPostSuperFlowNodeWorker have no depth limit; they recurse once per nested branch label and per
+    reduce label. markNodeAssignmentsWorker walks a whole function or file through the field c.markNodeAssignments (1261).
+ 8. getInstantiationExpressionType holds two local closures that call each other (10773-10814); closures are not in the call graph.
+ 9. isPostSuperFlowNodeWorker stores the cached value at 2620 and does not return: the switch below computes it again. Same result,
+    twice the work; port as written.
+
+State
+10. findContextualNode returns the oldest entry for a node, not the newest; cache entries are seen only with ContextFlagsNone.
+11. getInferenceContext returns the context of the nearest enclosing entry even when that context is nil.
+12. getResolvedSignature: the link holds resolvingSignature during the resolution; the result is stored only when
+    len(flowLoopStack) == 0, else the old value is put back; a deferred result (resolvingSignature) leaves the marker in the link;
+    when the link changed during the resolution the changed value wins (8528-8530).
+13. chooseOverload: argCheckMode is sticky across candidates (9148, 9174), the test at 9170 is "!= 0", candidates[i] is overwritten
+    with the instantiated signature (9191) and the list is shared with candidatesOutArray; the three error fields are reset per call,
+    so the errors come from the pass with the assignable relation. reorderCandidates places by slices.Insert (9092).
+14. c.flowAnalysisDisabled is restored only by checkBlock for function bodies and module blocks (3799-3801). Tripped at the top level
+    of a file it stays set for the later files of the checker. The reference spreads files over several checkers; one checker sees
+    a different set of later files.
+15. checkExpressionCachedEx caches only in mode Normal and hides flowLoopStack and flowTypeCache during the check.
+16. checkObjectLiteral: the closure createObjectLiteralType (13284-13308) reads locals that change between its calls and is also
+    called from a mapType callback (13437-13442); the last reset (13431-13434) leaves hasComputedSymbolProperty as it is, unlike
+    13377-13379.
+17. contextuallyCheckFunctionExpressionOrObjectLiteralMethod writes into the signature of the function expression
+    (typeParameters 10445, thisParameter 10451, resolvedReturnType 10288) and into the type links of its parameters once (10508).
+
+Nodes and flow nodes
+18. The checker makes nodes (synthetic_nodes.tsv). getEffectiveCallArguments makes new SyntheticExpression nodes at every call and
+    keeps none; the reference leaves them to the collector, an arena of checker-owned nodes only grows. Identity of nodes decides
+    (slices.Index(args, arg) at 29887).
+19. The checker makes three flow nodes (20705, 20707, 20714) and gives a flow node to its own reference nodes (flow.go:2476, 2499):
+    flow nodes and the node to flow node table both need a checker-owned part.
+20. FlowLoopInfo.types is the slice as it was at the push; the search of flowLoopStack goes from index 0 up (1347).
+
+Inputs from the node table and the program
+21. checkBinaryLikeExpression reads the parse diagnostics of the file (12628: code of JSX_expressions_must_have_one_parent_element
+    and its range) before it reports TS2695: both producers have to hand over parse diagnostics with code and range.
+22. Source text and scanner: GetRangeOfTokenAtPosition (flow.go:1593, scans one token at a position), SkipTrivia and SkipTriviaEx
+    (8638, 9901, 9948, 10825, 12385, 12627), GetTokenPosOfNode (2451), GetTextOfNode, TokenToString, DeclarationNameToString.
+23. Program: GetProjectReferenceFromOutputDts (7682), GetEmitModuleFormatOfFile (10555, 10583, 10702), GetSourceFileMetaData (10874).
+    Options: AllowUnreachableCode as a three state value (2454, 12625), Lib (11745), IsolatedModules, VerbatimModuleSyntax (7679),
+    ExperimentalDecorators (9274), NoUncheckedIndexedAccess (flow.go:2343), NoPropertyAccessFromIndexSignature, CheckJs,
+    GetUseDefineForClassFields, ShouldPreserveConstEnums.
+24. Flow fields the binder fills per node: FlowNode, EndFlowNode, ReturnFlowNode, FallthroughFlowNode (flow_records.tsv).
+    NodeFlagsUnreachable on statements (2461) and NodeFlagsPossiblyContainsImportMeta on the file (10882).
+
+Go semantics
+25. No map is ranged over and nothing is sorted in these layers. The core.IfElse, core.OrElse and core.Coalesce sites (111): no argument after the
+    first calls the checker (sites_eager.tsv lists the five nested ones).
+26. len(nodeText) < 100 (7507, 7536, 7555) counts bytes. math.MaxInt and math.MinInt are sentinels in getArgumentArityError (9800-9803)
+    and getTypeArgumentArityError (9961-9962): 64 bit.
+27. getQuickTypeOfExpression tests node, not the unparenthesized expr, for the literal case (7471).
+28. One defer besides the tracer: getExplicitTypeOfSymbol (flow.go:2160).
+29. TS7027 is added with addErrorOrSuggestion(AllowUnreachableCode == TSFalse, ...): a suggestion by default. Consecutive unreachable
+    statements are one diagnostic from the token start of the first to the end of the last (2436-2453).

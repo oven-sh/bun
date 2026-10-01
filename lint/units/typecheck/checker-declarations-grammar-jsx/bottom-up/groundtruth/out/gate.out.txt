@@ -1,0 +1,10 @@
+PARSE gate.ts parse=[] js=[] bind=[TS1101]
+gate.ts(1,9)+5: error TS1040: 'async' modifier cannot be used in an ambient context.
+gate.ts(1,29)+4: error TS1064: The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<void>'?
+gate.ts(2,12)+1: error TS1015: Parameter cannot have question mark and initializer.
+gate.ts(3,30)+11: error TS1228: A type predicate is only allowed in return type position for functions and methods.
+gate.ts(4,15)+1: error TS2378: A 'get' accessor must return a value.
+gate.ts(5,1)+9: error TS2410: The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=5 Options=1 SourceFiles=1
+COUNTS TypeCount=96 SymbolCount=7 SignatureCount=5 TotalInstantiationCount=0

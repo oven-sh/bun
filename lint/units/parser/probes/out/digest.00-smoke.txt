@@ -1,0 +1,7 @@
+A1c	smoke	"const v = <out>x"	[-]	bun: The modifier "out" is not valid here @11	tsc: parses
+A1c	smoke	"type as = 1"	[-]	bun: Unexpected = @8	tsc: parses
+A1c	smoke	"interface as {}"	[-]	bun: Expected identifier but found end of file @15	tsc: parses
+A1s	smoke	"let g: (a = 1) => void"	[-]	bun: Expected ")" but found "=" @10	tsc: parses also TS2371
+B	smoke	"let x: (a: ) => void"	[-]	bun: accepts	tsc: TS1110 @11+1 Type expected.
+B	smoke	"let f = (a): => a"	[-]	bun: accepts	tsc: TS1005 @11+1 ',' expected.
+B	smoke	"f<A | >(x)"	[-]	bun: accepts	tsc: TS1110 @6+1 Type expected.

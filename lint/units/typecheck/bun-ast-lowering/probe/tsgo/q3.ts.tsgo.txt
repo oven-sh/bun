@@ -1,0 +1,8 @@
+file /q3.ts scriptKind=3 variant=0 dts=false textLen=18
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=2 identifiers=0 text=0 reparsedClones=0
+root KindSourceFile [0,18) f=0x0
+  .Statements: list [0,0) n=0
+  .EndOfFileToken: KindEndOfFile [0,18) f=0x0

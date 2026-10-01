@@ -1,0 +1,15 @@
+{"same":14904,"diff":24,"failed":0,"rawBytes":58739373,"srcBytes":6966444,"nodeTotal":1396760}
+    9 E POS/FLAGS/TEXT .name: KindIdentifier [] f= Text=""   e.g. 7556_1_values-bad-import.ts:9 7556_3_values-no-as.ts:8
+    3 E POS/FLAGS/TEXT .WhenFalse: KindIdentifier [] f= Text=""   e.g. 1182_0_constructorWithIncompleteTypeAnnotation.ts:1127 9960_0_jsxAndTypeAssertion.tsx:137
+    3 E POS/FLAGS/TEXT .Expression: KindCallExpression [] f=   e.g. 5775_0_superWithTypeArgument.ts:17 5777_0_superWithTypeArgument3.ts:39
+    2 E POS/FLAGS/TEXT .Attributes: KindJsxAttributes [] f=   e.g. 3829_0_jsxAttributeMissingInitializer.tsx:12 9961_0_a.tsx:64
+    1 E go: - KindJSDocNullableType [] f=  ||  ts: - KindJSDocUnknownType [] f=   e.g. 2599_0_expressionWithJSDocTypeArguments.ts:43
+    1 E POS/FLAGS/TEXT - KindIdentifier [] f= Text=""   e.g. 5776_0_superWithTypeArgument2.ts:29
+    1   POS/FLAGS/TEXT - KindExpressionStatement [] f=   e.g. 9257_0_index.ts:136
+    1 E go: .Statements: list [] n=20  ||  ts: .Statements: list [] n=13   e.g. 9785_0_jsdocDisallowedInTypescript.ts:2
+    1 E go: - KindJsxText [] f= Text="" TokenFlags=0x0  ||  ts: - KindJsxText [] f= ContainsOnlyTriviaWhiteSpaces Text="" TokenFlags=0x0   e.g. 9972_0_jsxParserRecovery.tsx:113
+    1 E POS/FLAGS/TEXT - KindNumericLiteral [] f= Text="" TokenFlags=0x0   e.g. 10955_0_parserSuperExpression2.ts:11
+    1 E POS/FLAGS/TEXT .ArgumentExpression: KindNumericLiteral [] f= Text="" TokenFlags=0x20   e.g. 11770_0_objectTypeWithStringNamedNumericProperty.ts:172
+--- unmapped properties
+      3 JSDocFunctionType.parameters:list
+      2 JSDocFunctionType.type:node

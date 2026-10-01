@@ -1,0 +1,405 @@
+# class members, modifiers, heritage, parameter properties, overloads, index signatures
+class C { a: A }
+class C { a: A; }
+class C { a: A; b: B }
+class C { a: A⏎b: B }
+class C { a: A, b: B }
+class C { a?: A }
+class C { a!: A }
+class C { a?!: A }
+class C { a!?: A }
+class C { a: A = 1 }
+class C { a?: A = 1 }
+class C { a!: A = 1 }
+class C { a = 1 }
+class C { a }
+class C { a; }
+class C { a? }
+class C { a! }
+class C { a?; }
+class C { a!; }
+class C { readonly a: A }
+class C { public a: A }
+class C { private a: A }
+class C { protected a: A }
+class C { static a: A }
+class C { declare a: A }
+class C { override a: A }
+class C { accessor a: A }
+class C { abstract a: A }
+class C { static readonly a: A }
+class C { readonly static a: A }
+class C { public static a: A }
+class C { static public a: A }
+class C { public static override readonly a: A }
+class C { public private a: A }
+class C { public public a: A }
+class C { readonly readonly a: A }
+class C { static static a: A }
+class C { declare declare a: A }
+class C { declare readonly a: A }
+class C { declare static a: A }
+class C { static declare a: A }
+class C { declare a: A = 1 }
+class C { declare a }
+class C { declare m(): void }
+class C { declare get a(): A }
+class C { declare static { } }
+class C { declare #a: A }
+class C { declare [k: string]: A }
+class C { static accessor a: A = 1 }
+class C { accessor a }
+class C { accessor a = 1 }
+class C { accessor⏎a }
+class C { accessor 'a': A }
+class C { accessor [a]: A }
+class C { accessor #a: A }
+class C { accessor static a: A }
+class C { readonly accessor a: A }
+class C { accessor readonly a: A }
+class C { declare accessor a: A }
+class C { accessor a?: A }
+class C { accessor a!: A }
+class C { accessor m() {} }
+class C { accessor get a() {} }
+abstract class C { abstract a: A }
+abstract class C { abstract a: A = 1 }
+abstract class C { abstract a }
+abstract class C { abstract m(): void }
+abstract class C { abstract m(): void; }
+abstract class C { abstract m() }
+abstract class C { abstract m(): void {} }
+abstract class C { abstract m<T>(a: T): T }
+abstract class C { abstract get a(): A }
+abstract class C { abstract set a(v: A) }
+abstract class C { abstract get a(): A; abstract set a(v: A); }
+abstract class C { abstract accessor a: A }
+abstract class C { abstract static a: A }
+abstract class C { static abstract a: A }
+abstract class C { abstract readonly a: A }
+abstract class C { readonly abstract a: A }
+abstract class C { public abstract a: A }
+abstract class C { abstract public a: A }
+abstract class C { protected abstract override readonly a: A }
+abstract class C { abstract override m(): void }
+abstract class C { abstract declare a: A }
+abstract class C { abstract async m(): Promise<void> }
+abstract class C { abstract *m(): Generator<A> }
+abstract class C { abstract constructor() }
+abstract class C { abstract #a: A }
+abstract class C { abstract [k: string]: A }
+abstract class C { abstract 'a': A; abstract 1: B; abstract [c]: C }
+abstract class C { abstract m(): void; n() {} abstract o(): void }
+abstract class C { abstract⏎a: A }
+abstract class C { abstract abstract a: A }
+abstract class C { abstract }
+abstract class C { abstract; }
+abstract class C { abstract = 1 }
+abstract class C { abstract() {} }
+abstract class C { abstract: A }
+abstract class C { abstract?: A }
+class C { abstract a: A }
+class C { abstract m(): void }
+abstract class C {}
+abstract class C<T> extends B<T> implements D {}
+export abstract class C {}
+export default abstract class C {}
+export default abstract class {}
+declare abstract class C {}
+abstract declare class C {}
+export declare abstract class C { abstract m(): void }
+abstract abstract class C {}
+abstract interface I {}
+abstract enum E {}
+abstract function f() {}
+abstract const a = 1;
+let x = abstract class {};
+let x = abstract;
+class C { m(a: A): B {} }
+class C { m?(): void {} }
+class C { m!(): void {} }
+class C { m?() {} }
+class C { m<T>(a: T): T {} }
+class C { m<T,>(a: T): T {} }
+class C { m(this: A) {} }
+class C { m(a?: A, ...b: B[]) {} }
+class C { m(): this {} }
+class C { m(): this is A {} }
+class C { m(a: A): a is B {} }
+class C { m(a: A): asserts a {} }
+class C { m(): asserts this is A {} }
+class C { async m(): Promise<A> {} }
+class C { *m(): Generator<A> {} }
+class C { async *m(): AsyncGenerator<A> {} }
+class C { static m(): void {} }
+class C { public m(): void {} }
+class C { private static async m(): Promise<void> {} }
+class C { override m(): void {} }
+class C { static override m(): void {} }
+class C { readonly m(): void {} }
+class C { get a(): A { return 1 } }
+class C { set a(v: A) {} }
+class C { get a(): A { return 1 } set a(v: A) {} }
+class C { static get a(): A { return 1 } }
+class C { public get a(): A { return 1 } }
+class C { get a<T>(): A { return 1 } }
+class C { set a(v?: A) {} }
+class C { set a(v: A): void {} }
+class C { get a?(): A { return 1 } }
+class C { get a(): A; }
+class C { set a(v: A); }
+class C { m(a: A): B; m(a: any): any {} }
+class C { m(a: A): B⏎m(a: any): any {} }
+class C { m(a: A): B; m(a: C): D; m(a: any): any {} }
+class C { m(a: A): B; }
+class C { m(a: A); }
+class C { m() }
+class C { m(); n() {} }
+class C { m(): void; n(): void {} }
+class C { static m(a: A): B; static m(a: any): any {} }
+class C { public m(a: A): B; public m(a: any): any {} }
+class C { async m(a: A): Promise<B>; async m(a: any): Promise<any> {} }
+class C { *m(a: A): Generator<B>; *m(a: any): any {} }
+class C { 'm'(a: A): B; 'm'(a: any): any {} }
+class C { [m](a: A): B; [m](a: any): any {} }
+class C { #m(a: A): B; #m(a: any): any {} }
+class C { m<T>(a: T): T; m(a: any): any {} }
+class C { m?(a: A): B; }
+class C { constructor(); }
+class C { constructor(a: A); constructor(a: any) {} }
+class C { constructor(a: A)⏎constructor(a: any) {} }
+class C { constructor(a: A); constructor(a: A, b: B); constructor(...a: any[]) {} }
+class C { constructor() }
+class C { constructor(a: A): void {} }
+class C { constructor<T>(a: T) {} }
+class C { public constructor() {} }
+class C { private constructor() {} }
+class C { protected constructor(a: A) {} }
+class C { static constructor() {} }
+class C { 'constructor'() {} }
+class C { 'constructor'(a: A); 'constructor'(a: any) {} }
+class C { constructor: A }
+class C { constructor(public a: A) {} }
+class C { constructor(private a: A) {} }
+class C { constructor(protected a: A) {} }
+class C { constructor(readonly a: A) {} }
+class C { constructor(override a: A) {} }
+class C { constructor(public readonly a: A) {} }
+class C { constructor(private readonly a: A, protected b?: B, public c = 1, readonly d: D = 2, override e?: E) {} }
+class C { constructor(public override readonly a: A) {} }
+class C { constructor(readonly public a: A) {} }
+class C { constructor(public public a: A) {} }
+class C { constructor(static a: A) {} }
+class C { constructor(declare a: A) {} }
+class C { constructor(abstract a: A) {} }
+class C { constructor(accessor a: A) {} }
+class C { constructor(public a) {} }
+class C { constructor(public a?) {} }
+class C { constructor(public a = 1) {} }
+class C { constructor(public ...a: A[]) {} }
+class C { constructor(public { a }: A) {} }
+class C { constructor(public [a]: A) {} }
+class C { constructor(public) {} }
+class C { constructor(public, b) {} }
+class C { constructor(public: A) {} }
+class C { constructor(public = 1) {} }
+class C { constructor(public?: A) {} }
+class C { constructor(readonly) {} }
+class C { constructor(readonly: A) {} }
+class C { constructor(private, protected, public, readonly, override) {} }
+class C { constructor(public a: A, b: B) {} }
+class C { constructor(a: A, public b: B) {} }
+class C { constructor(public a: A); constructor(public a: any) {} }
+class C { constructor(@d public a: A) {} }
+class C { constructor(public @d a: A) {} }
+class C { constructor(public this: A) {} }
+class C { constructor(this: A) {} }
+class C { m(public a: A) {} }
+class C extends B { constructor(public a: A) { super(); } }
+class C { [k: string]: A }
+class C { [k: string]: A; }
+class C { [k: number]: A; [k: string]: B }
+class C { static [k: string]: A }
+class C { readonly [k: string]: A }
+class C { static readonly [k: string]: A }
+class C { public [k: string]: A }
+class C { [k: string]: A = 1 }
+class C { [k: string] }
+class C { [k: string]?: A }
+class C { [k: string](): A }
+class C { [k: symbol]: A }
+class C { [k: `a${string}`]: A }
+class C { [k: K]: A; a: B }
+class C { [k]: A }
+class C { [k] = 1 }
+class C { [k.l]: A }
+class C { [k: string, l: number]: A }
+class C { static { } }
+class C { static { let a: A = 1; } }
+class C { static⏎{ } }
+class C<T> {}
+class C<T extends A = B> {}
+class C<T, U extends T> {}
+class C<in T, out U, in out V> {}
+class C<const T> {}
+class C<T,> {}
+class C<> {}
+class C<T extends A<B>> {}
+class C<T extends A<B<C>>> {}
+class C<T = A<B<C>>> {}
+class C extends B<A> {}
+class C extends B<A<D>> {}
+class C extends B<A<D<E>>> {}
+class C extends B<A, D> {}
+class C extends B<> {}
+class C extends B<A>() {}
+class C extends B<A>.D {}
+class C extends a.b<A> {}
+class C extends a.b.c<A, B> {}
+class C extends b()<A> {}
+class C extends (B)<A> {}
+class C extends B<A> implements D<E>, F {}
+class C<T> extends B<T> implements D<T> {}
+class C implements A {}
+class C implements A, B {}
+class C implements A, {}
+class C implements {}
+class C implements A.B<C> {}
+class C implements A<B<C>> {}
+class C implements A<B<C>>, D<E<F>> {}
+class C implements A extends B {}
+class C implements A implements B {}
+class C extends A extends B {}
+class C extends A, B {}
+class C implements A[] {}
+class C implements typeof a {}
+class C implements (A) {}
+class C implements A | B {}
+class C implements () => void {}
+class C implements { a: A } {}
+class C implements 'a' {}
+class C implements import('a').B {}
+class C extends (B as any) {}
+class C extends (B as any)<A> {}
+class C extends (<any>B) {}
+class C extends B! {}
+class C extends B!<A> {}
+class C extends B as any {}
+class C extends B satisfies A {}
+class C extends class<T> {}<A> {}
+class implements {}
+class C extends implements {}
+class implements implements A {}
+class extends A {}
+let x = class implements A {};
+let x = class C<T> implements A<T> {};
+let x = class<T> {};
+let x = class<T> extends B<T> {};
+let x = class extends B<A> {};
+let x = class implements {};
+export default class implements A {}
+export default class<T> {}
+export default class<T> extends B<T> implements A<T> {}
+export default class C<T> {}
+class C { public }
+class C { public; }
+class C { public = 1 }
+class C { public() {} }
+class C { public: A }
+class C { public?: A }
+class C { public!: A }
+class C { public<T>() {} }
+class C { readonly }
+class C { readonly = 1 }
+class C { readonly() {} }
+class C { readonly: A }
+class C { declare }
+class C { declare = 1 }
+class C { declare() {} }
+class C { declare: A }
+class C { static }
+class C { static = 1 }
+class C { static() {} }
+class C { static: A }
+class C { static?: A }
+class C { accessor }
+class C { accessor = 1 }
+class C { accessor() {} }
+class C { accessor: A }
+class C { override }
+class C { override = 1 }
+class C { override() {} }
+class C { get }
+class C { get = 1 }
+class C { get() {} }
+class C { get: A }
+class C { get?: A }
+class C { get<T>() {} }
+class C { set }
+class C { set: A }
+class C { set(v: A) {} }
+class C { async }
+class C { async: A }
+class C { async() {} }
+class C { async<T>() {} }
+class C { async?() {} }
+class C { private private }
+class C { public⏎a: A }
+class C { readonly⏎a: A }
+class C { static⏎a: A }
+class C { declare⏎a: A }
+class C { override⏎a: A }
+class C { get⏎a() {} }
+class C { async⏎m() {} }
+class C { public⏎readonly⏎a: A }
+class C { a<T>(x: T): T {} }
+class C { <T>(x: T): T }
+class C { (): void }
+class C { new (): A }
+class C { new(): A {} }
+class C { 'a': A }
+class C { 'a'?: A }
+class C { 'a'!: A }
+class C { 1: A }
+class C { 1n: A }
+class C { [a]: A }
+class C { [a]?: A }
+class C { [a]!: A }
+class C { [a]: A = 1 }
+class C { #a: A }
+class C { #a?: A }
+class C { #a!: A }
+class C { #a: A = 1 }
+class C { static #a: A }
+class C { readonly #a: A }
+class C { private #a: A }
+class C { public #a: A }
+class C { #a(b: B): C {} }
+class C { get #a(): A { return 1 } }
+class C { in: A; out: B; is: C; as: D; type: E; of: F; new: G; this: H; typeof: I; void: J; enum: K; class: L }
+class C { in(): A {} out(): B {} is(): C {} as(): D {} type(): E {} of(): F {} new(): G {} typeof(): I {} void(): J {} }
+class C { a: A;; b: B }
+class C { ; }
+class C { a: A } class D { b: B }
+class C { a: () => void⏎b: B }
+class C { a: A⏎(): void }
+class C { a: A⏎['b']: B }
+class C { a: typeof b⏎<T>(): void {} }
+class C { a = b⏎<T>(): void {} }
+class C { a = 1⏎['b'] = 2 }
+class C { a⏎b }
+class C { a: A⏎*m() {} }
+class C { a⏎*m() {} }
+class C { a: A⏎get b() {} }
+class C { a: A⏎static b: B }
+declare class C { m(): void; a: A; constructor(a: A); static b: B; get c(): C; set c(v: C); [k: string]: any }
+declare class C { m() {} }
+declare class C { a = 1 }
+declare class C { static { } }
+declare class C { constructor(public a: A); }
+declare class C<T> extends B<T> implements A<T> { m<U>(a: U): T }
+declare class C { #a: A; #m(): void }
+declare class C { abstract m(): void }
+declare class C { readonly a = 1 }
+declare class { }
+declare class C

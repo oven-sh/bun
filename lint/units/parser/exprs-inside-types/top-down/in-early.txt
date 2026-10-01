@@ -1,0 +1,73 @@
+# await / yield / in
+await x
+await
+yield
+yield x
+b in c
+() => await x
+async () => await x
+function* () { yield 1 }
+() => { for await (const q of r); }
+# strict mode (modules are strict)
+(x, x) => 1
+function (q, q) {}
+delete x
+010
+"\08"
+function () { with (a) {} }
+function (package) {}
+(arguments = 1)
+(eval = 1)
+function () { var let = 1 }
+function () { let let = 1 }
+# context
+new.target
+super.x
+super()
+this
+arguments
+#x in y
+function () { break }
+function () { continue }
+function () { x: x: ; }
+function () { return; }
+class { constructor() {} constructor() {} }
+class { get constructor() {} }
+class { static prototype() {} }
+class { #a; #a; }
+class { m() { this.#zz } }
+({ get x(a) { return 1 } })
+({ set x() {} })
+({ a = 1 })
+({ __proto__: 1, __proto__: 2 })
+# assignment targets and operators
+(1 = 2)
+(a + b = c)
+(a?.b = 1)
+a ?? b || c
+-x ** 2
+new a?.b()
+a?.`x`
+(a, ...b, c) => 1
+(...a,) => 1
+async (a = await 1) => 1
+function () { const q; }
+function () { let z; let z; }
+function () { for (let i, j of k); }
+# lexical
+/a/gg
+/(/
+1__0
+1_
+`\u{`
+0b12
+1n.5
+'\u{110000}'
+# statements that cannot be in a function body
+function () { import x from "y" }
+function () { export const q = 1 }
+function () { namespace N {} }
+function () { enum E { A } }
+function () { declare const q: number }
+function () { type T = 1; interface I {} }
+function () { @dec class K {} }

@@ -1,0 +1,30 @@
+site	function	upstream	port: fault kind, then what the function does
+checker.go:1210	GetTypeAliasTypeParameters	panic("Attempted to fetch type alias parameters for non-type-alias symbol")	Panic; return List::NIL
+checker.go:1905	checkResolvedBlockScopedVariable	panic("checkResolvedBlockScopedVariable could not find block-scoped declaration")	Panic; return without a diagnostic
+checker.go:2167	getImmediateAliasedSymbol	panic("Unexpected nil in getImmediateAliasedSymbol")	Panic; return SymbolId::NIL, links.immediate_target stays nil
+checker.go:15143	getModuleSpecifierForImportOrExport	panic("Unhandled case in getModuleSpecifierForImportOrExport")	Panic with detail = kind; return NodeId::NIL
+checker.go:15153	getModuleSpecifierFromNode	panic("Unhandled case in getModuleSpecifierFromNode")	Panic with detail = kind; return NodeId::NIL
+checker.go:15324	resolveExternalModule	panic("should be able to extract TS extension from string that passes IsDeclarationFileName")	Panic; skip the c.error of 15326 and go on
+checker.go:15347	resolveExternalModule	panic("should be able to extract TS extension from string when resolvedUsingTsExtension is true")	Panic; skip the c.error of 15349 and go on
+checker.go:15773	isCommonJSRequire	panic("Expected identifier for require call")	Panic; return false
+checker.go:15860	getTargetOfAliasDeclaration	panic("Unhandled case in getTargetOfAliasDeclaration: " + kind)	Panic with detail = kind; return SymbolId::NIL
+checker.go:15907	resolveEntityName	panic("Unknown entity name kind")	Panic; return SymbolId::NIL
+checker.go:16362	resolveAlias	panic("Should only get alias here")	Panic; return unknown_symbol
+checker.go:16371	resolveAlias	panic("Unexpected nil in resolveAlias for symbol: ...")	Panic; links.alias_target = unknown_symbol, pop_type_resolution() to balance the push of 16366, return unknown_symbol
+checker.go:17636	getUnionKey	panic("Unhandled case in getUnionKey")	Panic; return CacheHashKey::default()
+checker.go:18933	typeResolutionHasProperty	panic("Unhandled case in typeResolutionHasProperty")	unreachable: the property name is an enum and the match is exhaustive
+checker.go:25206	newObjectType	panic("Unhandled case in newObjectType")	Panic; return error_type, no type is created
+types.go:761	Type.Target	panic("Unhandled case in Type.Target")	Panic; return TypeId::NIL
+types.go:773	Type.Mapper	panic("Unhandled case in Type.Mapper")	Panic; return TypeMapperId::NIL
+types.go:783	Type.Types	panic("Unhandled case in Type.Types")	Panic; return List::NIL
+utilities.go:107	getAssignmentTargetKind	panic("Unhandled case in getAssignmentTargetKind")	Panic; return AssignmentKindNone
+utilities.go:426	CompareTypes	panic("Cannot compare types from different checkers")	dropped with the `checker` field: one checker
+utilities.go:895	getPropertyNameFromType	panic("Unhandled case in getPropertyNameFromType")	Panic; return the empty text
+utilities.go:1665	checkNotCanceled	panic("Checker was previously cancelled")	Panic; go on
+utilities.go:1707	ValueToString	panic("unhandled value type in valueToString")	Panic for LiteralValue::Nil; return the empty text
+checker.go:18891	popTypeResolution	index out of range on an empty stack	Panic("index out of range [-1]"); return false
+checker.go:18913-18931	typeResolutionHasProperty	r.target.(*ast.Symbol) and the other type assertions	BadCast; read the nil object
+checker.go:25240	createTypeReferenceEx	intf.instantiations[id] = t on a nil map	NilMapWrite; the new reference is returned uncached
+checker.go:1406,15270,15677,15936 utilities.go:236	mergeModuleAugmentation, resolveExternalModule, resolveESModuleSymbol, resolveQualifiedName, getExternalModuleRequireArgument	x[0] on a possibly empty slice	List::at(0) gives NIL, no fault
+checker.go:1620,1895,1917,2162,14584,14871,16100,16191 utilities.go:314	nine debug.Assert	assert	Assert with upstream's message; go on
+every recursion entry of recursion.txt	see the findings	unbounded Go stack	StackLimit; fallback of the result type, resolve_alias gives unknown_symbol

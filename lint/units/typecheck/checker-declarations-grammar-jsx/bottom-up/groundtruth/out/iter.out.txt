@@ -1,0 +1,10 @@
+PARSE iter.ts parse=[] js=[] bind=[]
+iter.ts(2,17)+1: error TS2488: Type 'number' must have a '[Symbol.iterator]()' method that returns an iterator.
+iter.ts(5,15)+1: error TS2488: Type 'number' must have a '[Symbol.iterator]()' method that returns an iterator.
+iter.ts(6,44)+1: error TS2504: Type 'number' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.
+iter.ts(7,18)+6: error TS2322: Type 'Generator<any, any, unknown>' is not assignable to type 'number'.
+iter.ts(8,42)+7: error TS1320: Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member.
+iter.ts(10,17)+2: error TS2490: The type returned by the 'next()' method of an iterator must have a 'value' property.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=30 Options=1 SourceFiles=1
+COUNTS TypeCount=159 SymbolCount=141 SignatureCount=12 TotalInstantiationCount=6

@@ -1,0 +1,273 @@
+--- import_export:28 import.foo [ts] "x = import.foo"
+   bun: @11+3 Expected "meta" but found "foo"
+   bun: @14+0 Unexpected end of file
+   chk: @11+3 TS17012 'foo' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?
+--- import_export:34 import expr no parens [ts] "x = new import('x')"
+   bun: @8+6 Cannot use an "import" expression here without parentheses
+   tsc: @8+6 TS1109 Expression expected.
+--- import_export:188 import { if } [ts] "import { if } from 'x'"
+   bun: @12+1 Expected "as" but found "}"
+   tsc: @9+2 TS1003 Identifier expected.
+--- import_export:221 import { a b } [ts] "import { a b } from 'x'"
+   bun: @11+1 Expected "}" but found "b"
+   bun: @13+0 Expected "from" but found "}"
+   tsc: @11+1 TS1005 ',' expected.
+--- import_export:236 import { 'a' } [ts] "import { 'a' } from 'x'"
+   bun: @13+1 Expected "as" but found "}"
+   tsc: @9+3 TS1003 Identifier expected.
+--- import_export:242 import { a as if } [ts] "import { a as if } from 'x'"
+   bun: @14+2 Expected identifier but found "if"
+   tsc: @14+2 TS1003 Identifier expected.
+--- import_export:456 export { if } [ts] "export { if }"
+   bun: @9+2 Expected identifier but found "if"
+--- import_export: import { 5 } [ts] "import { 5 } from 'x'"
+   bun: @9+1 Expected identifier but found "5"
+   bun: @13+4 Expected "as" but found "from"
+   bun: @18+0 Expected "from" but found "'x'"
+   tsc: @9+1 TS1003 Identifier expected.
+   tsc: @11+1 TS1128 Declaration or statement expected.
+   tsc: @13+4 TS1434 Unexpected keyword or identifier.
+   chk: @9+1 TS1141 String literal expected.
+--- import_export: import {a,, b} [ts] "import { a,, b } from 'x'"
+   bun: @11+1 Expected identifier but found ","
+   bun: @15+1 Expected "as" but found "}"
+   tsc: @11+1 TS1003 Identifier expected.
+--- import_export: export { a b } [ts] "export { a b }"
+   bun: @11+1 Expected "}" but found "b"
+   bun: @13+1 Unexpected }
+   tsc: @11+1 TS1005 ',' expected.
+--- import_export: export { 5 } [ts] "export { 5 }"
+   bun: @9+1 Expected identifier but found "5"
+   bun: @12+0 Expected "}" but found end of file
+   bun: @11+0 Expected identifier but found ""
+   tsc: @9+1 TS1003 Identifier expected.
+   tsc: @11+1 TS1128 Declaration or statement expected.
+--- import_export: import( no arg [ts] "x = import()"
+   bun: @11+1 Unexpected )
+   chk: @4+8 TS1450 Dynamic imports can only accept a module specifier and an optional set of attributes as arguments
+--- import_export: import type newline [ts] "import type\nA from 'x'"
+--- import_export: import type { type } [ts] "import type { type a } from 'x'"
+   chk: @14+4 TS2206 The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement.
+--- import_export: import a = require( [ts] "import a = require(5)"
+   bun: @19+1 Expected string but found "5"
+   chk: @19+1 TS1141 String literal expected.
+--- import_export: import a = 5 [ts] "import a = 5;"
+   bun: @11+1 Expected identifier but found "5"
+   tsc: @11+1 TS1003 Identifier expected.
+--- import_export: export * as 5 [ts] "export * as 5 from 'x'"
+   bun: @12+1 Expected identifier but found "5"
+   bun: @19+0 Expected "from" but found "'x'"
+   tsc: @12+1 TS1003 Identifier expected.
+   tsc: @14+4 TS1005 ';' expected.
+   chk: @12+1 TS1141 String literal expected.
+--- import_export: import defer [ts] "import defer * as a from 'x'"
+--- jsx:205 <div {5} /> [tsx] "x = <div {5} />"
+   bun: @10+1 Unexpected 5
+   bun: @11+1 Expected ">" but found "}"
+   tsc: @10+1 TS1005 '...' expected.
+   chk: @10+1 TS2698 Spread types may only be created from object types.
+--- jsx:378 child default [tsx] "x = <div>"
+   bun: @9+0 Unexpected end of file
+   tsc: @5+3 TS17008 JSX element 'div' has no corresponding closing tag.
+   tsc: @9+0 TS1005 '</' expected.
+--- jsx:271 <div / x [tsx] "x = <div / x"
+   bun: @11+1 Expected ">" but found "x"
+   tsc: @11+1 TS1005 '>' expected.
+--- jsx:361 </div x [tsx] "x = <div></div x"
+   bun: @15+1 Expected ">" but found "x"
+   tsc: @15+1 TS1005 '>' expected.
+--- jsx:347 mismatched close [tsx] "x = <div></span>"
+   bun: @11+4 Expected closing JSX tag to match opening tag "<div>"
+   tsc: @11+4 TS17002 Expected corresponding JSX closing tag for 'div'.
+--- jsx:171 invalid shorthand [tsx] "x = <div {a + b} />"
+   bun: @10+0 Invalid JSX prop shorthand, must be identifier, dot or string
+   tsc: @10+1 TS1005 '...' expected.
+--- jsx:255 invalid escape [tsx] "x = <div a=\"b\\\" c\" />"
+   bun: @17+0 Syntax Error
+   tsc: @21+0 TS1002 Unterminated string literal.
+   tsc: @17+4 TS1003 Identifier expected.
+--- jsx parser.rs:780 name expected [tsx] "x = <5 />"
+   bun: @5+1 Expected JSX element name but found "5"
+   tsc: @4+1 TS1109 Expression expected.
+   tsc: @8+1 TS1109 Expression expected.
+   tsc: @9+0 TS1109 Expression expected.
+--- jsx: member name [tsx] "x = <a. />"
+   bun: @8+1 Expected identifier but found "/"
+   tsc: @8+1 TS1003 Identifier expected.
+--- jsx: attr value missing [tsx] "x = <div a= />"
+   bun: @12+1 Expected "{" but found "/"
+   bun: @13+1 Unexpected >
+   tsc: @12+1 TS1145 '{' or JSX element expected.
+--- jsx: attr value number [tsx] "x = <div a=5 />"
+   bun: @11+1 Expected "{" but found "5"
+   tsc: @11+1 TS1145 '{' or JSX element expected.
+   tsc: @14+1 TS1109 Expression expected.
+   tsc: @15+0 TS1109 Expression expected.
+--- jsx: unterminated string attr [tsx] "x = <div a=\"b />"
+   bun: @11+0 Syntax Error
+   tsc: @16+0 TS1002 Unterminated string literal.
+--- jsx: fragment mismatch [tsx] "x = <></div>"
+   bun: @8+3 Expected closing JSX tag to match opening tag "<>"
+   tsc: @8+3 TS17015 Expected corresponding closing tag for JSX fragment.
+   tsc: @12+0 TS1109 Expression expected.
+--- jsx: fragment unclosed [tsx] "x = <>"
+   bun: @6+0 Unexpected end of file
+   tsc: @3+3 TS17014 JSX fragment has no corresponding closing tag.
+   tsc: @6+0 TS1005 '</' expected.
+--- jsx: two roots [tsx] "x = <a /><b />"
+   bun: @13+1 Unexpected >
+   tsc: @4+10 TS2657 JSX expressions must have one parent element.
+--- jsx: namespace bad [tsx] "x = <a:5 />"
+   bun: @7+0 Expected identifier after "a:" in namespaced JSX name
+   tsc: @7+1 TS1003 Identifier expected.
+   tsc: @10+1 TS1109 Expression expected.
+   tsc: @11+0 TS1109 Expression expected.
+--- jsx: unterminated comment in tag [tsx] "x = <div /* a"
+   bun: @13+0 Expected "*/" to terminate multi-line comment
+   tsc: @13+0 TS1010 '*/' expected.
+--- jsx: expression empty in attr [tsx] "x = <div a={} />"
+   bun: @12+1 Unexpected }
+   chk: @11+2 TS17000 JSX attributes must only be assigned a non-empty 'expression'.
+--- jsx: spread child [tsx] "x = <div>{...a}</div>"
+   chk: @9+6 TS2609 JSX spread child must be an array type.
+--- jsx: closing with attrs [tsx] "x = <div></div a>"
+   bun: @15+1 Expected ">" but found "a"
+   bun: @17+0 Unexpected end of file
+   tsc: @15+1 TS1005 '>' expected.
+   tsc: @17+0 TS1109 Expression expected.
+--- jsx: text with } [tsx] "x = <div>}</div>"
+   tsc: @9+1 TS1381 Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+--- jsx: text with > [tsx] "x = <div>></div>"
+   tsc: @9+1 TS1382 Unexpected token. Did you mean `{'>'}` or `&gt;`?
+--- jsx: type args on tag [tsx] "x = <Foo<number> a=\"1\" />"
+--- ts:123 decorator optional chain [ts] "@a?.b class A {}"
+   bun: @2+2 Optional chaining is not allowed in decorator expressions; wrap the expression in parentheses to use it as a decorator
+   chk: @1+4 TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+--- ts:180 decorator call then prop [ts] "@a().b class A {}"
+   bun: @4+1 A decorator call expression cannot be followed by a property access; wrap the expression in parentheses to use it as a decorator
+   chk: @1+5 TS1497 Expression must be enclosed in parentheses to be used as a decorator.
+--- ts:114 decorator ! in js [js] "@a! class A {}"
+   bun: @2+1 Unexpected !
+--- ts: enum member number [ts] "enum A { 5 }"
+   bun: @9+1 Expected identifier but found "5"
+   chk: @9+1 TS2452 An enum member cannot have a numeric name.
+--- ts: enum member missing comma [ts] "enum A { a b }"
+   bun: @11+1 Expected "}" but found "b"
+   bun: @13+1 Unexpected }
+   tsc: @11+1 TS1357 An enum member name must be followed by a ',', '=', or '}'.
+--- ts: enum missing name [ts] "enum { a }"
+   bun: @5+1 Expected identifier but found "{"
+   bun: @7+1 Expected "{" but found "a"
+   tsc: @5+1 TS1003 Identifier expected.
+--- ts: enum computed [ts] "enum A { [a] = 1 }"
+   bun: @9+1 Expected identifier but found "["
+   chk: @9+3 TS1164 Computed property names are not allowed in enums.
+--- ts: enum template [ts] "enum A { `a` = 1 }"
+   bun: @9+3 Expected identifier but found "`a`"
+   tsc: @9+3 TS1132 Enum member expected.
+   tsc: @17+1 TS1128 Declaration or statement expected.
+   chk: @9+3 TS2364 The left-hand side of an assignment expression must be a variable or a property access.
+--- ts: namespace missing name [ts] "namespace { }"
+   bun: @10+1 Expected ";" but found "{"
+   bun: @12+1 Unexpected }
+   tsc: @10+1 TS1437 Namespace must be given a name.
+--- ts: namespace string [ts] "namespace 'a' { }"
+   bun: @10+3 Expected ";" but found "'a'"
+   tsc: @10+3 TS1003 Identifier expected.
+   tsc: @14+1 TS1005 ';' expected.
+--- ts: module string nodeclare [ts] "module 'a' { }"
+   bun: @7+3 Expected ";" but found "'a'"
+   chk: @7+3 TS1035 Only ambient modules can use quoted names.
+--- ts: namespace dotted bad [ts] "namespace a. { }"
+   bun: @15+1 Expected "{" but found "}"
+   bun: @16+0 Unexpected end of file
+   tsc: @13+1 TS1003 Identifier expected.
+--- ts: interface missing name [ts] "interface { }"
+   bun: @10+1 Expected identifier but found "{"
+   bun: @12+1 Expected "{" but found "}"
+   bun: @13+0 Unexpected end of file
+   tsc: @10+1 TS1438 Interface must be given a name.
+--- ts: interface extends missing [ts] "interface A extends { }"
+   bun: @23+0 Expected "{" but found end of file
+   chk: @19+0 TS1097 'extends' list cannot be empty.
+--- ts: interface keyword name [ts] "interface class { }"
+   bun: @10+5 Expected identifier but found "class"
+   tsc: @10+5 TS2427 Interface name cannot be 'class'.
+--- ts: type missing name [ts] "type = 1"
+--- ts: type missing = [ts] "type A 1"
+   bun: @7+1 Expected "=" but found "1"
+   bun: @8+0 Unexpected end of file
+   tsc: @7+1 TS1005 '=' expected.
+--- ts: type missing rhs [ts] "type A = "
+   bun: @9+0 Unexpected end of file
+   tsc: @8+0 TS1110 Type expected.
+--- ts: type newline name [ts] "type\nA = 1"
+--- ts: declare newline [ts] "declare\nconst x: number"
+   bun: @14+1 The constant "x" must be initialized
+   chk: @14+1 TS1155 'const' declarations must be initialized.
+--- ts: abstract non-class [ts] "abstract foo"
+   bun: @9+3 Expected ";" but found "foo"
+   tsc: @0+8 TS1434 Unexpected keyword or identifier.
+--- ts: class implements missing [ts] "class A implements { }"
+   bun: @22+0 Expected "{" but found end of file
+   chk: @18+0 TS1097 'implements' list cannot be empty.
+--- ts: class extends missing [ts] "class A extends { }"
+   bun: @19+0 Expected "{" but found end of file
+   chk: @15+0 TS1097 'extends' list cannot be empty.
+--- ts: class two extends [ts] "class A extends B extends C { }"
+   bun: @18+7 Expected "{" but found "extends"
+   bun: @28+1 Expected ";" but found "{"
+   chk: @18+7 TS1172 'extends' clause already seen.
+--- ts: definite ! misuse [ts] "let x!;"
+   bun: @6+1 Expected ":" but found ";"
+   bun: @7+0 Unexpected end of file
+   chk: @5+1 TS1264 Declarations with definite assignment assertions must also have type annotations.
+--- ts: optional param then required [ts] "function f(a?, b) {}"
+   chk: @15+1 TS1016 A required parameter cannot follow an optional parameter.
+--- ts: param property in fn [ts] "function f(private a) {}"
+   bun: @19+1 Expected ")" but found "a"
+   bun: @20+1 Expected ";" but found ")"
+   chk: @11+9 TS2369 A parameter property is only allowed in a constructor implementation.
+--- ts: index sig bad [ts] "class A { [a: string, b: string]: number }"
+   bun: @20+1 Expected "]" but found ","
+   bun: @22+1 Expected ":" but found "b"
+   bun: @23+1 Unexpected :
+   bun: @31+1 Expected ";" but found "]"
+   bun: @32+1 Expected identifier but found ":"
+   chk: @11+1 TS1096 An index signature must have exactly one parameter.
+--- ts: non-null newline [ts] "x = a\n!b"
+--- ts: as const bad [ts] "x = a as const b"
+   bun: @15+1 Expected ";" but found "b"
+   tsc: @15+1 TS1005 ';' expected.
+   chk: @4+1 TS1355 A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+--- ts: angle cast missing > [ts] "x = <number y"
+   bun: @12+1 Expected ">" but found "y"
+   tsc: @12+1 TS1005 '>' expected.
+--- ts: export = nested [ts] "function f() { export = 1 }"
+   bun: @15+6 Unexpected export
+   chk: @15+6 TS1231 An export assignment must be at the top level of a file or module declaration.
+--- ts: export as namespace nested [ts] "namespace N { export as namespace X }"
+   chk: @14+21 TS1316 Global module exports may only appear at top level.
+--- ts: import type = [ts] "import type a = require('x')"
+--- ts: export type * [ts] "export type * from 'x'"
+--- ts: export type { } [ts] "export type { a }"
+--- ts: accessor modifier dup [ts] "class A { public public x }"
+   chk: @17+6 TS1028 Accessibility modifier already seen.
+--- ts: readonly method [ts] "class A { readonly m() {} }"
+   chk: @10+8 TS1024 'readonly' modifier can only appear on a property declaration or index signature.
+--- ts: abstract with body [ts] "abstract class A { abstract m() {} }"
+   chk: @28+1 TS1245 Method 'm' cannot have an implementation because it is marked abstract.
+--- ts: declare method [ts] "class A { declare m() {} }"
+   chk: @10+7 TS1031 'declare' modifier cannot appear on class elements of this kind.
+   chk: @22+1 TS1183 An implementation cannot be declared in ambient contexts.
+--- ts: override static order [ts] "class A { override static m() {} }"
+   chk: @19+6 TS1029 'static' modifier must precede 'override' modifier.
+   chk: @26+1 TS4112 This member cannot have an 'override' modifier because its containing class 'A' does not extend another class.
+--- ts: constructor type params [ts] "class A { constructor<T>() {} }"
+   chk: @22+1 TS1092 Type parameters cannot appear on a constructor declaration.
+--- ts: unique symbol bad [ts] "let x: unique y"
+   bun: @14+1 Expected ";" but found "y"
+   chk: @14+1 TS1005 'symbol' expected.
+--- ts: satisfies newline [ts] "x = a\nsatisfies B"
+   bun: @16+1 Expected ";" but found "B"
+   tsc: @6+9 TS1434 Unexpected keyword or identifier.

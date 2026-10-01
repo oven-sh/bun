@@ -1,0 +1,270 @@
+
+## B parameter initializer in signatures
+P-ok/C-err / bun REJ     | let g: (a = 1) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-ok/C-err / bun REJ     | let g: (a: number = 1) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found ":" | Expected ";" but found "number"
+P-ok/C-err / bun REJ     | let g: (a?: number, b = a) => void
+    tsc parse=[] check=[TS2371@20]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "?" | Expected ";" but found ":"
+P-ok/C-err / bun REJ     | let g: new (a = 1) => X
+    tsc parse=[] check=[TS2371@12]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-ok/C-err / bun REJ     | let g: abstract new (a = 1) => X
+    tsc parse=[] check=[TS2371@21]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-ok/C-err / bun REJ     | type A = { (a = 1): void }
+    tsc parse=[] check=[TS2371@12]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { new (a = 1): X }
+    tsc parse=[] check=[TS2371@16]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { m(a = 1): void }
+    tsc parse=[] check=[TS2371@13]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { m?(a = 1): void }
+    tsc parse=[] check=[TS2371@14]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | type A = { set x(v = 1) }
+    tsc parse=[] check=[TS1052@15,TS2371@17]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | interface I { m(a = 1): void }
+    tsc parse=[] check=[TS2371@16]
+    tsc emit: "use strict";
+    bun: Expected ")" but found "=" | Unexpected 1
+P-ok/C-err / bun REJ     | let g: (a = () => { let z = 1; return z }) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "("
+P-ok/C-err / bun REJ     | let g: (a = function f(q) { var w }) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "function"
+P-ok/C-err / bun REJ     | let g: (a = class C { m() {} }) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "class"
+P-ok/C-err / bun REJ     | let g: (a = b ? c : d, e = f) => void
+    tsc parse=[] check=[TS2371@8,TS2371@23]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "b"
+P-ok/C-err / bun REJ     | let g: (a = x < y, z > (w)) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "x"
+P-ok/C-err / bun REJ     | let g: (a = <T>(x: T) => x) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "<"
+P-ok/C-err / bun REJ     | let g: (a = await 1) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "await"
+P-ok/C-err / bun REJ     | let g: (a = yield) => void
+    tsc parse=[] check=[TS2371@8,TS1212@12]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "yield"
+P-ok/C-err / bun REJ     | let g: (a = b in c) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "b"
+P-ok/C-err / bun REJ     | let g: (a = import("x")) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "import"
+P-ok/C-err / bun REJ     | let g: (a = import.meta) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: let g; export {};
+    bun: Expected ")" but found "=" | Expected ";" but found "import"
+P-ok/C-err / bun REJ     | let g: (a = /re/g) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "/"
+P-ok/C-err / bun REJ     | let g: (a = `t${1}`) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "`t${"
+P-ok/C-err / bun REJ     | let g: (a = {b: 1, c() {}}) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "{"
+P-ok/C-err / bun REJ     | let g: (a = [1, 2]) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected "]" but found ","
+P-ok/C-err / bun REJ     | let g: (...a = []) => void
+    tsc parse=[] check=[TS2371@8,TS1048@11]
+    tsc emit: "use strict"; let g;
+    bun: Unexpected ... | Expected ";" but found "a"
+P-rej / bun REJ          | let g: (this = 1) => void
+    tsc parse=[TS1005@13,TS1003@15] check=[]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-ok/C-err / bun REJ     | let g: (a = 1, b: string) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-ok/C-err / bun REJ     | function f(x: (a = 1) => void) {}
+    tsc parse=[] check=[TS2371@15]
+    tsc emit: "use strict"; function f(x) { }
+    bun: Expected ")" but found "=" | Expected ")" but found "1"
+P-ok/C-err / bun REJ     | let h = (x: (a = 1) => void): ((b = 2) => void) => x
+    tsc parse=[] check=[TS2371@13,TS2371@32]
+    tsc emit: "use strict"; let h = (x) => x;
+    bun: Expected ")" but found "=" | Expected ")" but found "1"
+P-rej / bun REJ          | let g: (a = 1)
+    tsc parse=[TS1005@14] check=[]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+P-rej / bun REJ          | let g: (a = 1)[]
+    tsc parse=[TS1005@14] check=[]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "1"
+
+## C binding patterns in signature parameters
+valid / bun ok           | let g: ({a, b}: X) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ([a, b]: X) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+P-ok/C-err / bun REJ     | let g: ({a = 1}: X) => void
+    tsc parse=[] check=[TS2371@9]
+    tsc emit: "use strict"; let g;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | let g: ([a = 1]: X) => void
+    tsc parse=[] check=[TS2371@9]
+    tsc emit: "use strict"; let g;
+    bun: Expected "]" but found "=" | Expected ")" but found "1"
+P-ok/C-err / bun REJ     | let g: ({a: {b} = {}}: X) => void
+    tsc parse=[] check=[TS2371@12]
+    tsc emit: "use strict"; let g;
+    bun: Unexpected =
+valid / bun ok           | let g: ({a, ...rest}: X) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ([a, ...rest]: X) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+P-ok/C-err / bun REJ     | let g: ({[k]: v}: X) => void
+    tsc parse=[] check=[TS2842@14]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found ":" | Expected ";" but found "X"
+P-ok/C-err / bun REJ     | let g: ({[k + 1]: v}: X) => void
+    tsc parse=[] check=[TS2842@18]
+    tsc emit: "use strict"; let g;
+    bun: Expected "]" but found "+" | Unexpected 1
+P-ok/C-err / bun ok      | let g: ({"a": b, 1: c}: X) => void
+    tsc parse=[] check=[TS2842@14,TS2842@20]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+P-ok/C-err / bun REJ     | let g: ({a}: X = {a: 1}) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found ":" | Expected ";" but found "X"
+P-ok/C-err / bun REJ     | let g: ({a} = {a: 1}) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found "{"
+P-ok/C-err / bun REJ     | let g: ([a] = [1]) => void
+    tsc parse=[] check=[TS2371@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "=" | Expected ";" but found ")"
+valid / bun ok           | let g: ({a}) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ([a]) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ({a}, b) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ({a}?) => void
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ({ [K in keyof T]: X })[keyof T]
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ({ [k: string]: T })
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+valid / bun ok           | let g: ({ [Symbol.iterator]: T })
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+P-ok/C-err / bun REJ     | let g: ({ [Symbol.iterator]: T }) => void
+    tsc parse=[] check=[TS2842@29]
+    tsc emit: "use strict"; let g;
+    bun: Expected ";" but found "=>" | Unexpected end of file
+valid / bun ok           | let g: ({ a: 1 })
+    tsc parse=[] check=[]
+    tsc emit: "use strict"; let g;
+    bun: let g;
+P-rej / bun REJ          | let g: ({ a = 1 })
+    tsc parse=[TS1131@10,TS1128@16,TS1128@17] check=[]
+    tsc emit: "use strict"; let g, a = 1;
+    bun: Unexpected =
+P-ok/C-err / bun REJ     | type A = { m({a = 1}): void }
+    tsc parse=[] check=[TS2371@14]
+    tsc emit: "use strict";
+    bun: Expected "}" but found "=" | Expected ")" but found "1"
+
+## H parameter decorators and modifiers in signatures
+P-rej / bun REJ          | let g: (@dec a: number) => void
+    tsc parse=[TS1110@8,TS1146@12,TS1434@16,TS1128@22,TS1128@24,TS1109@31] check=[]
+    tsc emit: "use strict"; let g; a: number; void ;
+    bun: Unexpected @ | Expected ";" but found "dec"
+P-rej / bun REJ          | let g: (@dec() a) => void
+    tsc parse=[TS1110@8,TS1146@14,TS1434@15,TS1128@16,TS1128@18,TS1109@25] check=[]
+    tsc emit: "use strict"; let g; a; void ;
+    bun: Unexpected @ | Expected ";" but found "dec"
+P-rej / bun REJ          | let g: (@a.b.c(1) a, @d b) => void
+    tsc parse=[TS1110@8,TS1146@17,TS1109@23,TS1005@24,TS1128@25,TS1128@27,TS1109@34] check=[]
+    tsc emit: "use strict"; let g; a, ; b; void ;
+    bun: Unexpected @ | Expected ";" but found "a"
+P-ok/C-err / bun REJ     | type A = { m(@dec a): void }
+    tsc parse=[] check=[TS1206@13]
+    tsc emit: "use strict";
+    bun: Unexpected @
+P-ok/C-err / bun REJ     | let g: (public a: number) => void
+    tsc parse=[] check=[TS2369@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ")" but found "a" | Expected ";" but found ":"
+P-ok/C-err / bun REJ     | let g: (readonly a) => void
+    tsc parse=[] check=[TS2369@8]
+    tsc emit: "use strict"; let g;
+    bun: Expected ";" but found "=>" | Unexpected end of file
+P-rej / bun REJ          | let g: (@dec public a) => void
+    tsc parse=[TS1110@8,TS1146@19,TS1434@20,TS1128@21,TS1128@23,TS1109@30] check=[]
+    tsc emit: "use strict"; let g; a; void ;
+    bun: Unexpected @ | Expected ";" but found "dec"
+P-rej / bun REJ          | let g: (@(x => x) a) => void
+    tsc parse=[TS1110@8,TS1146@17,TS1434@18,TS1128@19,TS1128@21,TS1109@28] check=[]
+    tsc emit: "use strict"; let g; a; void ;
+    bun: Unexpected @ | Expected ";" but found "("
+P-rej / bun REJ          | let g: (@dec this) => void
+    tsc parse=[TS1110@8,TS1146@12,TS1005@17,TS1128@19,TS1109@26] check=[]
+    tsc emit: "use strict"; let g; this; void ;
+    bun: Unexpected @ | Expected ";" but found "dec"

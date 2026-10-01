@@ -1,0 +1,278 @@
+# arrow functions, return types, ternaries, functions, overloads
+(a: A) => a;
+(a: A): B => a;
+(a?: A) => a;
+(a?) => a;
+(a?, b?) => a;
+(a?: A, b?: B): C => a;
+(...a: A[]) => a;
+(...a): A => a;
+({ a }: A) => a;
+({ a }): A => a;
+([a]: A) => a;
+([a]): A => a;
+(a = 1) => a;
+(a: A = 1) => a;
+(a?: A = 1) => a;
+(a: A = 1): B => a;
+(this: A) => a;
+(a: A, b: B): C => a;
+(a, b: B) => a;
+(a: A, b) => a;
+(a: A,) => a;
+(a,): A => a;
+(): A => a;
+() => a;
+(a): => a;
+(a: ) => a;
+(a:) => a;
+(a: A): => a;
+(a): A =>;
+(a: A);
+(a: A) = 1;
+(a?: A);
+(a?);
+(a?) = 1;
+(a ? b : c);
+(a ? b : c) => d;
+(a!: A) => a;
+(a!) => a;
+(public a: A) => a;
+(readonly a: A) => a;
+(a: A | B) => a;
+(a: A<B>) => a;
+(a: A<B<C>>) => a;
+(a: A<B>, c: D<E<F>>) => a;
+(a: () => void) => a;
+(a: (b: B) => C) => a;
+(a: (b: B) => C, d: D) => a;
+(a: { b: B }) => a;
+(a: [A, B]) => a;
+(a: typeof b) => a;
+(a: keyof A) => a;
+(a: A extends B ? C : D) => a;
+(a: 'a') => a;
+(a: 1) => a;
+(a: -1) => a;
+(a: new () => A) => a;
+(a): a is A => true;
+(a): asserts a => {};
+(a): asserts a is A => {};
+(): this is A => true;
+(a): A | B => a;
+(a): A[] => a;
+(a): A<B> => a;
+(a): A<B<C>> => a;
+(a): { b: B } => a;
+(a): [A, B] => a;
+(a): () => void => a;
+(a): (b: B) => C => a;
+(a): typeof b => a;
+(a): keyof A => a;
+(a): A extends B ? C : D => a;
+(a): 'a' => a;
+(a): void => {};
+(a): never => { throw a; };
+(a): new () => A => a;
+(a): (A) => a;
+(a)⏎: A => a;
+(a):⏎A => a;
+(a): A⏎=> a;
+a => a;
+a: A => a;
+async (a: A) => a;
+async (a: A): Promise<A> => a;
+async (a?) => a;
+async (a): a is A => a;
+async a => a;
+async (a: A);
+async (a?);
+async <T>(a: T);
+async<T>(a);
+async < T > (a);
+async⏎(a: A) => a;
+async (a: A)⏎=> a;
+<T>(a: T) => a;
+<T>(a: T): T => a;
+<T extends A>(a: T): T => a;
+<T,>(a: T): T => a;
+x = (a: A) => a;
+x = (a: A): B => a;
+x = a ? b : c;
+x = a ? (b) : c;
+x = a ? (b) : (c);
+x = a ? (b) : c => d;
+x = a ? (b): c => d : e;
+x = a ? (b) => c : d;
+x = a ? (b): C => c : d;
+x = a ? (b: B) => c : d;
+x = a ? (b: B): C => c : d;
+x = a ? b : (c): D => d;
+x = a ? b : (c: C) => d;
+x = a ? (b, c): D => d : e;
+x = a ? (b, c) : d;
+x = a ? async (b): C => c : d;
+x = a ? async (b) : c;
+x = a ? (b): C => (c) : d;
+x = a ? (b) : (c): D => d;
+x = a ? (b) : c ? (d) : e;
+x = a ? (b): C => c ? d : e : f;
+x = a ? (b ? c : d) : e;
+x = a ? (b): c<d> => e : f;
+x = a ? (b): C<D> => e : f;
+x = a ? (b): (c) => d => e : f;
+x = a ? (b): { c: d } => e : f;
+x = a ? (b): [c] => e : f;
+x = a ? (b): typeof c => e : f;
+x = a ? (b): c.d => e : f;
+x = a ? (b): c is d => e : f;
+x = a ? (b): c | d => e : f;
+x = a ? (b): 'c' => e : f;
+x = a ? (b): 1 => e : f;
+x = a ? ({ b }): C => e : f;
+x = a ? ([b]): C => e : f;
+x = a ? (b = 1): C => e : f;
+x = a ? (...b): C => e : f;
+x = a ? (b?): C => e : f;
+x = a ? (b?: B): C => e : f;
+x = a ? (b!) : c;
+x = a ? (b as B) : c;
+x = a ? <B>(b) : c;
+x = a ? <T>(b: T) => b : c;
+x = a ? <T,>(b: T): T => b : c;
+x = a ? (): void => {} : c;
+x = a ? () => {} : c;
+x = a ? (b) : c => d : e;
+x = a ? b => c : d;
+x = a ? (b): c : d;
+x = a ? (b): c => d;
+x = (a ? (b): c => d : e);
+f(a ? (b): c => d : e);
+[a ? (b): c => d : e];
+({ a: b ? (c): d => e : f });
+x = a ? { b: (c): d => e } : f;
+x = a ? [(b): c => d] : e;
+x = a ? f((b): c => d) : e;
+x = a ? function (b): c {} : d;
+x = a ? class { m(b): c {} } : d;
+x = a ? (b)⏎: c => d : e;
+function f(a: A): B {}
+function f(a?: A) {}
+function f(a?: A, b?: B): C {}
+function f(a: A = 1) {}
+function f(a?: A = 1) {}
+function f(...a: A[]) {}
+function f({ a }: A) {}
+function f([a]: A) {}
+function f({ a }?: A) {}
+function f(this: A) {}
+function f(this: A, b: B) {}
+function f(this) {}
+function f(a: A, this: B) {}
+function f<T>(a: T): T {}
+function f<T extends A>(a: T): T {}
+function f<T = A>(a: T): T {}
+function f<T, U>(a: T, b: U): [T, U] {}
+function f<const T>(a: T): T {}
+function f<in T>(a: T): T {}
+function f<T,>(a: T): T {}
+function f<>(a) {}
+function f<T extends A<B>>(a: T) {}
+function f<T extends A<B<C>>>(a: T) {}
+function f<T = A<B<C>>>(a: T) {}
+function f(a: A): a is B {}
+function f(a: A): asserts a {}
+function f(a: A): asserts a is B {}
+function f(): this is A {}
+function f(): asserts this {}
+function f(a: A): a is B | C {}
+function f(): A | B {}
+function f(): A<B> {}
+function f(): A<B<C>> {}
+function f(): { a: A } {}
+function f(): () => void {}
+function f(): typeof a {}
+function f(): void {}
+function f(): {} {}
+function f(): {}
+function f(): ;
+function f(): {
+function f(a: ) {}
+function f(a:) {}
+function f(: A) {}
+function f(a!: A) {}
+function f(a!) {}
+function f(public a: A) {}
+function f(private a) {}
+function f(readonly a: A) {}
+function f(override a: A) {}
+function f(a: A);
+function f(a: A): B;
+function f(a: A);⏎function f(a: any) {}
+function f(a: A): B;⏎function f(a: C): D;⏎function f(a: any): any {}
+function f(a: A)⏎function f(a: any) {}
+function f();
+function f()
+function f();⏎function g() {}
+function f<T>(a: T): T;⏎function f(a: any) { return a; }
+async function f(a: A): Promise<A>;
+async function f(a: A): Promise<A>;⏎async function f(a: any) {}
+async function f(a: A): Promise<A> {}
+function* g(a: A): Generator<A> {}
+function* g(a: A): Generator<A>;
+async function* g(a: A): AsyncGenerator<A> {}
+export function f(a: A);
+export function f(a: A);⏎export function f(a: any) {}
+export function f(a: A): B {}
+export default function f(a: A);
+export default function f(a: A);⏎export default function f(a: any) {}
+export default function (a: A);
+export default function (a: A): B {}
+export default function f<T>(a: T): T {}
+export async function f(a: A): Promise<A>;
+export default async function f(a: A): Promise<A>;
+declare function f(a: A): B;
+declare function f(a: A): B {}
+declare function f<T>(a: T): T;
+declare function f(a: A);⏎declare function f(a: B);
+declare function f(a = 1): void;
+declare function f({ a }: A): void;
+declare async function f(): Promise<void>;
+declare function* f(): Generator<A>;
+export declare function f(a: A): B;
+(function (a: A): B {});
+(function f(a: A): B {});
+(function <T>(a: T): T {});
+(function f<T>(a: T): T {});
+(function (this: A) {});
+(function (a?: A) {});
+(async function (a: A): Promise<A> {});
+(function* (a: A): Generator<A> {});
+(function (a: A));
+({ m(a: A): B {} });
+({ m<T>(a: T): T {} });
+({ m(this: A) {} });
+({ m(a?: A) {} });
+({ get a(): A { return 1; } });
+({ set a(v: A) {} });
+({ set a(v?: A) {} });
+({ get a<T>(): A { return 1; } });
+({ async m<T>(a: T): Promise<T> {} });
+({ *m(a: A): Generator<A> {} });
+({ async *m(a: A): AsyncGenerator<A> {} });
+({ [a](b: B): C {} });
+({ 'a'(b: B): C {} });
+({ 1(b: B): C {} });
+({ m(a: A): B; });
+({ m(a: A); });
+({ a?: 1 });
+({ a!: 1 });
+({ m?() {} });
+({ m!() {} });
+({ a: A = 1 });
+({ readonly a: 1 });
+({ public a: 1 });
+({ public m() {} });
+({ declare a: 1 });
+({ get: 1, set: 2, async: 3, readonly: 4, declare: 5, abstract: 6, static: 7, accessor: 8 });
+({ get() {}, set() {}, async() {}, readonly() {}, declare() {}, abstract() {}, static() {}, accessor() {} });

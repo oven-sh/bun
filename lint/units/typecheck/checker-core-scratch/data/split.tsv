@@ -1,0 +1,53 @@
+01	1-552	552	0	c01_data.rs	CheckMode .. maxSerializationLevel	[36..551]	DATA
+02	553-907	355	0	c02_program_checker.rs	Program .. Checker	[553..906]	STRUCT
+03	908-1504	597	23	c03_init.rs	NewChecker .. Checker.createNameResolverForSuggestion	[908..1503]	C-INIT
+04	1505-2201	697	31	c04_name_resolution_hooks.rs	Checker.symbolReferenced .. Checker.getSymbol	[1505..2200]	N-DIAG, N-RESOLVE(getSymbol)
+05	2202-2661	460	17	c05_check_source_file.rs	Checker.checkSourceFile .. Checker.shouldCheckErasableSyntax	[2202..2660]	
+06	2662-3411	750	37	c06_check_members_type_nodes.rs	Checker.checkParameter .. Checker.checkMappedType	[2662..3410]	
+07	3412-3792	381	8	c07_check_functions.rs	Checker.checkFunctionDeclaration .. Checker.isUnwrappedReturnTypeUndefinedVoidOrAny	[3412..3791]	
+08	3793-4285	493	23	c08_check_statements.rs	Checker.checkBlock .. Checker.checkBindingElement	[3793..4284]	
+09	4286-5147	862	30	c09_check_classes_interfaces.rs	Checker.checkClassDeclaration .. Checker.isPropertyIdenticalTo	[4286..5146]	
+10	5148-5853	706	26	c10_check_enums_modules_imports.rs	Checker.checkEnumDeclaration .. Checker.checkMissingDeclaration	[5148..5852]	
+11	5854-6184	331	8	c11_check_variables_decorators.rs	Checker.checkVariableStatement .. Checker.checkDecorator	[5854..6183]	
+12	6185-6825	641	30	c12_iteration_types.rs	Checker.checkIteratedTypeOrElementType .. isES2015OrLaterIterable	[6185..6824]	
+13	6826-7418	593	29	c13_check_aliases_unused.rs	Checker.checkAliasSymbol .. Checker.checkUnusedRenamedBindingElements	[6826..7417]	
+14	7419-8406	988	45	c14_expressions.rs	Checker.checkExpressionStatement .. Checker.checkImportCallExpression	[7419..8405]	
+15	8407-10132	1726	59	c15_calls.rs	Checker.checkCallExpression .. Checker.checkTaggedTemplateExpression	[8407..10131]	
+16	10133-10706	574	29	c16_function_expressions_collisions.rs	Checker.checkParenthesizedExpression .. Checker.checkClassNameCollisionWithObject	[10133..10705]	
+17	10707-11131	425	23	c17_unary_meta_yield.rs	Checker.checkTypeOfExpression .. Checker.checkSyntheticExpression	[10707..11130]	
+18	11132-12377	1246	53	c18_identifiers_property_access_this.rs	Checker.checkIdentifier .. Checker.classDeclarationExtendsNull	[11132..12376]	
+19	12378-13234	857	34	c19_assertions_binary_operators.rs	Checker.checkAssertion .. Checker.checkReferenceExpression	[12378..13233]	
+20	13235-13990	756	25	c20_object_literals_spread.rs	Checker.checkObjectLiteral .. Checker.checkExpressionForMutableLocation	[13235..13989]	
+21	13991-14169	179	22	c21_resolved_symbols_diagnostics.rs	Checker.getResolvedSymbol .. Checker.hasParseDiagnostics	[13991..14168]	N-RESOLVE(4 fns), D-SINK
+22	14170-14532	363	26	c22_symbols_merge.rs	Checker.newSymbol .. Checker.resolveSymbolEx	[14170..14531]	S-MERGE
+23	14533-15194	662	31	c23_alias_targets.rs	Checker.getTargetOfImportEqualsDeclaration .. Checker.markSymbolOfAliasDeclarationIfTypeOnly	[14533..15193]	A-ALIAS
+24	15195-15829	635	22	c24_external_modules.rs	Checker.resolveExternalModuleName .. Checker.cloneTypeAsModuleType	[15195..15828]	M-MODULE
+25	15830-16013	184	6	c25_entity_names.rs	Checker.getTargetOfAliasDeclaration .. Checker.getFullyQualifiedName	[15830..16012]	A-ALIAS(getTargetOfAliasDeclaration), Q-ENTITY
+26	16014-16348	335	10	c26_exports_late_binding.rs	Checker.getExportsOfSymbol .. Checker.extendExportSymbols	[16014..16347]	M-MODULE
+27	16349-16494	146	8	c27_resolve_alias.rs	Checker.ResolveAlias .. Checker.getDeclarationOfAliasSymbol	[16349..16493]	A-ALIAS
+28	16495-17140	646	28	c28_types_of_symbols.rs	Checker.getTypeOfSymbolWithDeferredType .. Checker.getTypeOfParameter	[16495..17139]	
+29	17141-17470	330	17	c29_constraints.rs	Checker.getConstraintOfType .. Checker.isThislessInterface	[17141..17469]	
+30	17471-17776	306	30	c30_type_keys.rs	CacheHashKey .. isUnconstrainedTypeParameter	[17471..17775]	T-KEYS
+31	17777-18860	1084	49	c31_binding_patterns_widening.rs	Checker.isNullOrUndefined .. Checker.getCombinedModifierFlagsCached	[17777..18859]	
+32	18861-18959	99	5	c32_type_resolution.rs	Checker.pushTypeResolution .. Checker.reportCircularityError	[18861..18958]	T-RSTACK
+33	18960-20114	1155	75	c33_members_base_types_signatures.rs	Checker.getPropertiesOfType .. isLateBindableAST	[18960..20113]	
+34	20115-20728	614	28	c34_return_types.rs	Checker.getReturnTypeOfSignature .. Checker.addOptionalTypeMarker	[20115..20727]	
+35	20729-21512	784	29	c35_resolve_members.rs	Checker.instantiateSignature .. Checker.includeMixinType	[20729..21511]	
+36	21513-22213	701	34	c36_properties_apparent_types.rs	Checker.getPropertyOfObjectType .. Checker.symbolIsValueEx	[21513..22212]	
+37	22214-22912	699	36	c37_instantiation.rs	Checker.instantiateType .. instantiateList	[22214..22911]	
+38	22913-23877	965	62	c38_type_nodes_references.rs	Checker.tryGetTypeFromTypeNode .. Checker.canGetTypeParametersOfClassOrInterface	[22913..23876]	
+39	23878-24224	347	17	c39_declared_types_enums.rs	Checker.getOuterTypeParameters .. Checker.getDeclaredTypeOfAlias	[23878..24223]	
+40	24225-25125	901	57	c40_type_nodes_conditional_tuples.rs	Checker.getTypeFromTypeQueryNode .. isUnaryTupleTypeNode	[24225..25124]	
+41	25126-25395	270	27	c41_new_types.rs	Checker.newType .. Checker.newIndexInfo	[25126..25394]	K-OBJ
+42	25396-25724	329	28	c42_literal_types.rs	Checker.getRegularTypeOfLiteralType .. Checker.mapTypeEx	[25396..25723]	
+43	25725-26802	1078	52	c43_unions_intersections.rs	UnionReduction .. Checker.getCrossProductUnionSize	[25725..26801]	
+44	26803-27550	748	38	c44_index_indexed_access.rs	Checker.getIndexType .. Checker.getOrCreateSubstitutionType	[26803..27549]	
+45	27551-28311	761	43	c45_base_constraints_normalization.rs	Checker.getBaseConstraintOrType .. Checker.transformTypeOfMembers	[27551..28310]	
+46	28312-29041	730	26	c46_mark_references.rs	Checker.markLinkedReferences .. Checker.markTypeNodeAsReferenced	[28312..29040]	
+47	29042-29448	407	26	c47_promised_mapped_template.rs	Checker.GetPromisedTypeOfPromise .. Checker.getTypeOfPropertyOrIndexSignatureOfType	[29042..29447]	
+48	29449-30163	715	27	c48_contextual_types.rs	Checker.getContextualType .. Checker.getContextualImportAttributeType	[29449..30162]	
+49	30164-30673	510	28	c49_call_arguments_decorator_signatures.rs	Checker.getEffectiveCallArguments .. Checker.getClassElementPropertyKeyType	[30164..30672]	
+50	30674-31096	423	28	c50_contextual_properties_inference_context.rs	Checker.getTypeOfPropertyOfContextualType .. Checker.getInferenceContext	[30674..31095]	
+51	31097-31703	607	36	c51_type_facts_awaited.rs	Checker.getTypeFacts .. Checker.getActualTypeVariable	[31097..31702]	
+52	31704-32296	593	16	c52_symbol_at_location.rs	Checker.GetSymbolAtLocation .. Checker.GetAliasedSymbol	[31704..32296]	
+total funcs 1497

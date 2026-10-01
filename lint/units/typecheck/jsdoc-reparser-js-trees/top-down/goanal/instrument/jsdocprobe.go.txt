@@ -1,0 +1,71 @@
+// Research probe (cmd/jsdocprobe/main.go of the instrumented module): parses the given files with the instrumented parser,
+// resolves every lazy JSDoc, and prints for each parser function how often it was entered, in total and below parseJSDocComment.
+// usage: jsdocprobe <out.tsv> <list file with one "<virtual-name>=<path>" per line>...
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/microsoft/typescript-go/internal/ast"
+	"github.com/microsoft/typescript-go/internal/core"
+	"github.com/microsoft/typescript-go/internal/parser"
+	"github.com/microsoft/typescript-go/internal/scanner"
+	"github.com/microsoft/typescript-go/internal/tspath"
+)
+
+func main() {
+	out := os.Args[1]
+	files := 0
+	for _, list := range os.Args[2:] {
+		lf, err := os.Open(list)
+		if err != nil {
+			panic(err)
+		}
+		sc := bufio.NewScanner(lf)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			a := sc.Text()
+			eq := strings.Index(a, "=")
+			if eq < 0 {
+				continue
+			}
+			name, path := a[:eq], a[eq+1:]
+			b, err := os.ReadFile(path)
+			if err != nil {
+				panic(err)
+			}
+			text := strings.TrimPrefix(string(b), "\ufeff")
+			fileName := tspath.NormalizePath("/" + name)
+			kind := core.EnsureScriptKindFromFileName(fileName)
+			sf := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: fileName, Path: tspath.Path(fileName)}, text, kind)
+			var walk func(n *ast.Node) bool
+			walk = func(n *ast.Node) bool {
+				if n.Flags&ast.NodeFlagsHasJSDoc != 0 {
+					n.JSDoc(sf)
+				}
+				n.ForEachChild(walk)
+				return false
+			}
+			walk(sf.AsNode())
+			files++
+		}
+		lf.Close()
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		panic(err)
+	}
+	w := bufio.NewWriter(f)
+	fmt.Fprintf(w, "# files %d\n# file\tstart\tend\tfunction\tentered\tentered below parseJSDocComment\n", files)
+	for i, n := range parser.ProbeNames {
+		fmt.Fprintf(w, "%s\t%d\t%d\n", n, parser.AllEntered[i], parser.JSDocEntered[i])
+	}
+	for i, n := range scanner.ProbeNames {
+		fmt.Fprintf(w, "scanner/%s\t%d\t%d\n", n, scanner.AllEntered[i], scanner.JSDocEntered[i])
+	}
+	w.Flush()
+	f.Close()
+}

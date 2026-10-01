@@ -1,0 +1,131 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /classes.ts
+SINCE type=85 signature=4
+DRIVE declared
+DECLARED ClassDeclaration@/classes.ts:0:133 T86
+DECLARED InterfaceDeclaration@/classes.ts:133:169 T88
+DECLARED TypeParameter@/classes.ts:151:152 T89
+DECLARED ClassDeclaration@/classes.ts:169:390 T91
+DECLARED TypeParameter@/classes.ts:188:189 T92
+DECLARED TypeParameter@/classes.ts:190:206 T93
+DECLARED TypeParameter@/classes.ts:334:335 T95
+DECLARED ClassDeclaration@/classes.ts:390:481 T96
+DRIVE symtypes
+SYMTYPE ClassDeclaration@/classes.ts:0:133 "Animal"@ClassDeclaration@/classes.ts:0:133/0x20 T98
+SYMTYPE PropertyDeclaration@/classes.ts:22:40 "legs"@PropertyDeclaration@/classes.ts:22:40/0x4 T15
+SYMTYPE PropertyDeclaration@/classes.ts:40:66 "count"@PropertyDeclaration@/classes.ts:40:66/0x4 T15
+SYMTYPE Parameter@/classes.ts:83:95 "legs"@Parameter@/classes.ts:83:95/0x1 T15
+SYMTYPE MethodDeclaration@/classes.ts:97:131 "move"@MethodDeclaration@/classes.ts:97:131/0x2000 T99
+SYMTYPE Parameter@/classes.ts:107:123 "distance"@Parameter@/classes.ts:107:123/0x1 T15
+SYMTYPE PropertySignature@/classes.ts:155:167 "tag"@PropertySignature@/classes.ts:155:167/0x4 T89
+SYMTYPE ClassDeclaration@/classes.ts:169:390 "Dog"@ClassDeclaration@/classes.ts:169:390/0x20 T100
+SYMTYPE PropertyDeclaration@/classes.ts:245:257 "tag"@PropertyDeclaration@/classes.ts:245:257/0x4 T92
+SYMTYPE PropertyDeclaration@/classes.ts:257:279 "owner"@PropertyDeclaration@/classes.ts:257:279/0x4 T93
+SYMTYPE GetAccessor@/classes.ts:279:299 "label"@GetAccessor@/classes.ts:279:299/0x18000 T92
+SYMTYPE SetAccessor@/classes.ts:299:324 "label"@GetAccessor@/classes.ts:279:299/0x18000 T92
+SYMTYPE Parameter@/classes.ts:314:322 "value"@Parameter@/classes.ts:314:322/0x1 T92
+SYMTYPE MethodDeclaration@/classes.ts:324:354 "bark"@MethodDeclaration@/classes.ts:324:354/0x2000 T101
+SYMTYPE Parameter@/classes.ts:337:346 "volume"@Parameter@/classes.ts:337:346/0x1 T95
+SYMTYPE MethodDeclaration@/classes.ts:354:388 "create"@MethodDeclaration@/classes.ts:354:388/0x2000 T102
+SYMTYPE ClassDeclaration@/classes.ts:390:481 "Shape"@ClassDeclaration@/classes.ts:390:481/0x20 T103
+SYMTYPE MethodDeclaration@/classes.ts:421:450 "area"@MethodDeclaration@/classes.ts:421:450/0x2000 T104
+DRIVE bases
+BASES T86 nil baseCtor=T10
+BASES T88 nil
+BASES T91 [T86] baseCtor=T98
+BASES T96 nil baseCtor=T10
+DRIVE members
+MEMBERS T86
+MEMBERS T88
+MEMBERS T91
+MEMBERS T96
+MEMBERS T98
+MEMBERS T99
+MEMBERS T100
+MEMBERS T101
+MEMBERS T102
+MEMBERS T103
+MEMBERS T104
+STATE
+COUNTS TypeCount=105 SymbolCount=11 SignatureCount=11 TotalInstantiationCount=0 transientSymbols=11 mergedSymbols=0 globals=122
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=105 SymbolCount=11 SignatureCount=11
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=105
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x280005 data=Interface symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 members={"legs":"legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move":"move"@MethodDeclaration@/classes.ts:97:131/0x2000} props=["legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move"@MethodDeclaration@/classes.ts:97:131/0x2000] sigs=nil calls=0 index=nil target=T86 inst=[T86 T105] targs=[] tparams=[T87] outer=0 this=T87 baseCtor=T10 bases=nil dmembers={"\xFEconstructor":"\xFEconstructor"@Constructor@/classes.ts:66:97/0x4000 "legs":"legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move":"move"@MethodDeclaration@/classes.ts:97:131/0x2000} dcalls=nil dctors=nil dindex=nil
+TYPE 87 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 constraint=T86 isThisType
+TYPE 88 flags=0x100000 objectFlags=0x200006 data=Interface symbol="Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 members={"tag":Y1} props=[Y1] sigs=nil calls=0 index=nil target=T88 inst=[T88] targs=[T89] tparams=[T89 T90] outer=0 this=T90 bases=nil dmembers={"T":"T"@TypeParameter@/classes.ts:151:152/0x40000 "tag":"tag"@PropertySignature@/classes.ts:155:167/0x4} dcalls=nil dctors=nil dindex=nil
+TYPE 89 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/classes.ts:151:152/0x40000 constraint=nil
+TYPE 90 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 constraint=T88 isThisType
+TYPE 91 flags=0x100000 objectFlags=0x200005 data=Interface symbol="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 members={"bark":Y2 "label":Y3 "legs":"legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move":"move"@MethodDeclaration@/classes.ts:97:131/0x2000 "owner":Y4 "tag":Y5} props=[Y5 Y4 Y3 Y2 "legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move"@MethodDeclaration@/classes.ts:97:131/0x2000] sigs=nil calls=0 index=nil target=T91 inst=[T91] targs=[T92 T93] tparams=[T92 T93 T94] outer=0 this=T94 baseCtor=T98 bases=[T86] dmembers={"T":"T"@TypeParameter@/classes.ts:188:189/0x40000 "U":"U"@TypeParameter@/classes.ts:190:206/0x40000 "bark":"bark"@MethodDeclaration@/classes.ts:324:354/0x2000 "label":"label"@GetAccessor@/classes.ts:279:299/0x18000 "owner":"owner"@PropertyDeclaration@/classes.ts:257:279/0x4 "tag":"tag"@PropertyDeclaration@/classes.ts:245:257/0x4} dcalls=nil dctors=nil dindex=nil
+TYPE 92 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="T"@TypeParameter@/classes.ts:188:189/0x40000 constraint=nil
+TYPE 93 flags=0x80000 objectFlags=0x180000 data=TypeParameter symbol="U"@TypeParameter@/classes.ts:190:206/0x40000 constraint=nil
+TYPE 94 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 constraint=T91 isThisType
+TYPE 95 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="V"@TypeParameter@/classes.ts:334:335/0x40000 constraint=nil
+TYPE 96 flags=0x100000 objectFlags=0x200005 data=Interface symbol="Shape"@ClassDeclaration@/classes.ts:390:481/0x20 members={"area":"area"@MethodDeclaration@/classes.ts:421:450/0x2000} props=["area"@MethodDeclaration@/classes.ts:421:450/0x2000] sigs=nil calls=0 index=nil target=T96 inst=[T96] targs=[] tparams=[T97] outer=0 this=T97 baseCtor=T10 bases=nil dmembers={"\xFEconstructor":"\xFEconstructor"@Constructor@/classes.ts:450:479/0x4000 "area":"area"@MethodDeclaration@/classes.ts:421:450/0x2000} dcalls=nil dctors=nil dindex=nil
+TYPE 97 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Shape"@ClassDeclaration@/classes.ts:390:481/0x20 constraint=T96 isThisType
+TYPE 98 flags=0x100000 objectFlags=0x200010 data=Object symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 members={"count":"count"@PropertyDeclaration@/classes.ts:40:66/0x4 "prototype":"prototype"@-/0x400004} props=["count"@PropertyDeclaration@/classes.ts:40:66/0x4 "prototype"@-/0x400004] sigs=[S5] calls=0 index=nil
+TYPE 99 flags=0x100000 objectFlags=0x200010 data=Object symbol="move"@MethodDeclaration@/classes.ts:97:131/0x2000 members=nil props=nil sigs=[S6] calls=1 index=nil
+TYPE 100 flags=0x100000 objectFlags=0x200010 data=Object symbol="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 members={"count":"count"@PropertyDeclaration@/classes.ts:40:66/0x4 "create":"create"@MethodDeclaration@/classes.ts:354:388/0x2000 "prototype":"prototype"@-/0x400004} props=["create"@MethodDeclaration@/classes.ts:354:388/0x2000 "count"@PropertyDeclaration@/classes.ts:40:66/0x4 "prototype"@-/0x400004] sigs=[S7] calls=0 index=nil
+TYPE 101 flags=0x100000 objectFlags=0x380010 data=Object symbol="bark"@MethodDeclaration@/classes.ts:324:354/0x2000 members=nil props=nil sigs=[S8] calls=1 index=nil
+TYPE 102 flags=0x100000 objectFlags=0x200010 data=Object symbol="create"@MethodDeclaration@/classes.ts:354:388/0x2000 members=nil props=nil sigs=[S9] calls=1 index=nil
+TYPE 103 flags=0x100000 objectFlags=0x200010 data=Object symbol="Shape"@ClassDeclaration@/classes.ts:390:481/0x20 members={"prototype":"prototype"@-/0x400004} props=["prototype"@-/0x400004] sigs=[S10] calls=0 index=nil
+TYPE 104 flags=0x100000 objectFlags=0x200010 data=Object symbol="area"@MethodDeclaration@/classes.ts:421:450/0x2000 members=nil props=nil sigs=[S11] calls=1 index=nil
+TYPE 105 flags=0x100000 objectFlags=0x200004 data=TypeReference symbol="Animal"@ClassDeclaration@/classes.ts:0:133/0x20 members={"legs":"legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move":"move"@MethodDeclaration@/classes.ts:97:131/0x2000} props=["legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move"@MethodDeclaration@/classes.ts:97:131/0x2000] sigs=nil calls=0 index=nil target=T86 targs=[T91]
+SIGNATURE 5 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=Constructor@/classes.ts:66:97 typeParameters=[] parameters=["legs"@Parameter@/classes.ts:83:95/0x1] returnType=nil
+SIGNATURE 6 flags=0x0 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=MethodDeclaration@/classes.ts:97:131 typeParameters=nil parameters=["distance"@Parameter@/classes.ts:107:123/0x1] returnType=nil
+SIGNATURE 7 flags=0x4 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=Constructor@/classes.ts:66:97 typeParameters=[T92 T93] parameters=["legs"@Parameter@/classes.ts:83:95/0x1] returnType=T91
+SIGNATURE 8 flags=0x0 minArgumentCount=1 resolvedMinArgumentCount=-1 declaration=MethodDeclaration@/classes.ts:324:354 typeParameters=[T95] parameters=["volume"@Parameter@/classes.ts:337:346/0x1] returnType=nil
+SIGNATURE 9 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 declaration=MethodDeclaration@/classes.ts:354:388 typeParameters=nil parameters=nil returnType=nil
+SIGNATURE 10 flags=0xc minArgumentCount=0 resolvedMinArgumentCount=-1 declaration=Constructor@/classes.ts:450:479 typeParameters=[] parameters=nil returnType=nil
+SIGNATURE 11 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 declaration=MethodDeclaration@/classes.ts:421:450 typeParameters=nil parameters=nil returnType=nil
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "Animal"@ClassDeclaration@/classes.ts:0:133/0x20 type=T98 declaredType=T86 resolvedExports={"count":"count"@PropertyDeclaration@/classes.ts:40:66/0x4 "prototype":"prototype"@-/0x400004} resolvedMembers={"\xFEconstructor":"\xFEconstructor"@Constructor@/classes.ts:66:97/0x4000 "legs":"legs"@PropertyDeclaration@/classes.ts:22:40/0x4 "move":"move"@MethodDeclaration@/classes.ts:97:131/0x2000}
+LINKS "legs"@PropertyDeclaration@/classes.ts:22:40/0x4 type=T15
+LINKS "move"@MethodDeclaration@/classes.ts:97:131/0x2000 type=T99
+LINKS "count"@PropertyDeclaration@/classes.ts:40:66/0x4 type=T15
+LINKS "Dog"@ClassDeclaration@/classes.ts:169:390/0x20 type=T100 declaredType=T91 resolvedExports={"create":"create"@MethodDeclaration@/classes.ts:354:388/0x2000 "prototype":"prototype"@-/0x400004} resolvedMembers={"T":"T"@TypeParameter@/classes.ts:188:189/0x40000 "U":"U"@TypeParameter@/classes.ts:190:206/0x40000 "bark":"bark"@MethodDeclaration@/classes.ts:324:354/0x2000 "label":"label"@GetAccessor@/classes.ts:279:299/0x18000 "owner":"owner"@PropertyDeclaration@/classes.ts:257:279/0x4 "tag":"tag"@PropertyDeclaration@/classes.ts:245:257/0x4}
+LINKS "T"@TypeParameter@/classes.ts:188:189/0x40000 declaredType=T92 referenceKinds=0xc09e8
+LINKS "U"@TypeParameter@/classes.ts:190:206/0x40000 declaredType=T93 referenceKinds=0xc09e8
+LINKS "bark"@MethodDeclaration@/classes.ts:324:354/0x2000 type=T101
+LINKS "label"@GetAccessor@/classes.ts:279:299/0x18000 type=T92
+LINKS "owner"@PropertyDeclaration@/classes.ts:257:279/0x4 type=T93
+LINKS "tag"@PropertyDeclaration@/classes.ts:245:257/0x4 type=T92
+LINKS "create"@MethodDeclaration@/classes.ts:354:388/0x2000 type=T102
+LINKS "Shape"@ClassDeclaration@/classes.ts:390:481/0x20 type=T103 declaredType=T96 resolvedExports={"prototype":"prototype"@-/0x400004} resolvedMembers={"\xFEconstructor":"\xFEconstructor"@Constructor@/classes.ts:450:479/0x4000 "area":"area"@MethodDeclaration@/classes.ts:421:450/0x2000}
+LINKS "area"@MethodDeclaration@/classes.ts:421:450/0x2000 type=T104
+LINKS "Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 declaredType=T88 resolvedMembers={"T":"T"@TypeParameter@/classes.ts:151:152/0x40000 "tag":"tag"@PropertySignature@/classes.ts:155:167/0x4}
+LINKS "T"@TypeParameter@/classes.ts:151:152/0x40000 declaredType=T89 referenceKinds=0xc09e8
+LINKS "tag"@PropertySignature@/classes.ts:155:167/0x4 type=T89
+LINKS "legs"@Parameter@/classes.ts:83:95/0x1 type=T15
+LINKS "distance"@Parameter@/classes.ts:107:123/0x1 type=T15
+LINKS "value"@Parameter@/classes.ts:314:322/0x1 type=T92
+LINKS "V"@TypeParameter@/classes.ts:334:335/0x40000 declaredType=T95 referenceKinds=0xc09e8
+LINKS "volume"@Parameter@/classes.ts:337:346/0x1 type=T95
+GLOBALS count=122 transient=2
+SYMBOL Y1 name="tag" flags=0x2000004 checkFlags=0x1 declarations=[PropertySignature@/classes.ts:155:167] valueDeclaration=PropertySignature@/classes.ts:155:167 parent="Tagged"@InterfaceDeclaration@/classes.ts:133:169/0x40 target="tag"@PropertySignature@/classes.ts:155:167/0x4 mapper=array([T89 T90]=>[T89 T88])
+SYMBOL Y2 name="bark" flags=0x2002000 checkFlags=0x1 declarations=[MethodDeclaration@/classes.ts:324:354] valueDeclaration=MethodDeclaration@/classes.ts:324:354 parent="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 target="bark"@MethodDeclaration@/classes.ts:324:354/0x2000 mapper=array([T92 T93 T94]=>[T92 T93 T91])
+SYMBOL Y3 name="label" flags=0x2018000 checkFlags=0x1 declarations=[GetAccessor@/classes.ts:279:299 SetAccessor@/classes.ts:299:324] valueDeclaration=GetAccessor@/classes.ts:279:299 parent="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 target="label"@GetAccessor@/classes.ts:279:299/0x18000 mapper=array([T92 T93 T94]=>[T92 T93 T91])
+SYMBOL Y4 name="owner" flags=0x2000004 checkFlags=0x1 declarations=[PropertyDeclaration@/classes.ts:257:279] valueDeclaration=PropertyDeclaration@/classes.ts:257:279 parent="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 target="owner"@PropertyDeclaration@/classes.ts:257:279/0x4 mapper=array([T92 T93 T94]=>[T92 T93 T91])
+SYMBOL Y5 name="tag" flags=0x2000004 checkFlags=0x1 declarations=[PropertyDeclaration@/classes.ts:245:257] valueDeclaration=PropertyDeclaration@/classes.ts:245:257 parent="Dog"@ClassDeclaration@/classes.ts:169:390/0x20 target="tag"@PropertyDeclaration@/classes.ts:245:257/0x4 mapper=array([T92 T93 T94]=>[T92 T93 T91])
+SYMBOLS named=5 unnamed=6

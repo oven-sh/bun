@@ -1,0 +1,15 @@
+# HEAD e3566be889 dirty: []
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/transpiler/decorator-metadata.test.ts --timeout "180000"
+bun test v1.4.3 (e3566be88)
+
+test/bundler/transpiler/decorator-metadata.test.ts:
+(pass) decorator metadata > type serialization [360.24ms]
+(pass) decorator metadata > design: type, paramtypes, returntype [130.30ms]
+(pass) decorator metadata > class with only constructor argument decorators [67.00ms]
+(pass) decorator metadata > more types [24.69ms]
+(pass) decorator metadata > rest parameters and defaults [45.19ms]
+
+ 5 pass
+ 0 fail
+ 227 expect() calls
+Ran 5 tests across 1 file. [4.21s]

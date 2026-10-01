@@ -1,0 +1,48 @@
+A1c	bodyless	"export class C { accessor x: T; }"	[-]	bun: Expected ";" but found "x" @26	tsc: parses
+A1c	bodyless	"export class C { static accessor x: T; }"	[-]	bun: Expected ";" but found "x" @33	tsc: parses
+A1c	bodyless	"export class C { accessor #x: T; }"	[-]	bun: Expected ";" but found "#x" @26	tsc: parses
+A1c	directive	"// @ts-ignore\nexport const x: T;"	[-]	bun: The constant "x" must be initialized @27	tsc: parses
+A1c	directive	"// @ts-expect-error\nexport const x: T;"	[-]	bun: The constant "x" must be initialized @33	tsc: parses
+A1s	topLevel	"global {}"	[-]	bun: Expected ";" but found "{" @7	tsc: parses also TS2669 TS2670
+A1s	module	"global { var x: T; }"	[-]	bun: Expected ";" but found "{" @7	tsc: parses also TS2669 TS2670
+A2	topLevel	"export const x: number;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	topLevel	"export const x: 1;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	topLevel	"export const x, y: number;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	topLevel	"export const { a }: T;"	[-]	bun: This constant must be initialized @13	tsc: TS1182 @13+5 A destructuring declaration must have an initializer.
+A2	topLevel	"export const [a]: T;"	[-]	bun: This constant must be initialized @13	tsc: TS1182 @13+3 A destructuring declaration must have an initializer.
+A2	topLevel	"export const x: unique symbol;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	topLevel	"export using x: T;"	[-]	bun: Unexpected using @7	tsc: TS1491 @0+6 'export' modifier cannot appear on a 'using' declaration.
+A2	topLevel	"export namespace N { const x: T; function f(): void; class C {} }"	[-]	bun: The constant "x" must be initialized @27	tsc: TS1155 @27+1 'const' declarations must be initialized. also TS2391
+A2	topLevel	"export namespace N { export const x: T; }"	[-]	bun: The constant "x" must be initialized @34	tsc: TS1155 @34+1 'const' declarations must be initialized.
+A2	topLevel	"const x: number;"	[-]	bun: The constant "x" must be initialized @6	tsc: TS1155 @6+1 'const' declarations must be initialized.
+A2	topLevel	"const x;"	[-]	bun: The constant "x" must be initialized @6	tsc: TS1155 @6+1 'const' declarations must be initialized.
+A2	topLevel	"namespace N { const x: T; }"	[-]	bun: The constant "x" must be initialized @20	tsc: TS1155 @20+1 'const' declarations must be initialized.
+A2	topLevel	"module \"m\" {}"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	topLevel	"module \"m\";"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	topLevel	"using x: T;"	[-]	bun: The declaration "x" must be initialized @6	tsc: TS1155 @6+1 'using' declarations must be initialized.
+A2	topLevel	"break;"	[-]	bun: Cannot use "break" here @0	tsc: TS1105 @0+6 A 'break' statement can only be used within an enclosing iteration or switch statement.
+A2	topLevel	"continue;"	[-]	bun: Cannot use "continue" here @0	tsc: TS1104 @0+9 A 'continue' statement can only be used within an enclosing iteration statement.
+A2	topLevel	"{ const x: T; }"	[-]	bun: The constant "x" must be initialized @8	tsc: TS1155 @8+1 'const' declarations must be initialized.
+A2	bodyless	"export function f(): void\nexport const x: T\nexport class C {}"	[-]	bun: The constant "x" must be initialized @39	tsc: TS1155 @39+1 'const' declarations must be initialized. also TS2391
+A2	bodyless	"export const x: T, y: U, z: V;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: T\nexport const y: U"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: { a: A; b(): B; [k: string]: C };"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: () => void;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: new () => A;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: typeof y;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: import(\"y\").Z;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: typeof import(\"y\");"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: A<B<C>>;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: A extends B ? C : D;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: keyof typeof y;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: readonly A[];"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: [a: A, b?: B, ...c: C[]];"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: `a${string}`;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: -1;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: 1n;"	[-]	bun: The constant "x" must be initialized @13	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	bodyless	"export const x: asserts y;"	[-]	bun: Expected ";" but found "y" @24	tsc: TS1155 @13+1 'const' declarations must be initialized.
+A2	module	"module \"m\" { export const x: T; }"	[-]	bun: Expected ";" but found ""m"" @7	tsc: TS1035 @7+3 Only ambient modules can use quoted names.
+A2	module	"namespace N { export const x: T; function f(): void; }"	[-]	bun: The constant "x" must be initialized @27	tsc: TS1155 @27+1 'const' declarations must be initialized. also TS2391
+A2	module	"namespace N.M { const x: T; }"	[-]	bun: The constant "x" must be initialized @22	tsc: TS1155 @22+1 'const' declarations must be initialized.
+A2	module	"module N { const x: T; }"	[-]	bun: The constant "x" must be initialized @17	tsc: TS1540 @7+1 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+B	directive	"/// <reference />\nexport {};"	[-]	bun: accepts	tsc: TS1084 @0+17 Invalid 'reference' directive syntax.

@@ -1,0 +1,217 @@
+// ---- the dump (not from the reference) ----
+type entry struct {
+	Path   string `json:"path"`
+	Link   string `json:"link,omitempty"`
+	Sha    string `json:"sha,omitempty"`
+	Size   int    `json:"size"`
+	IsLink bool   `json:"isLink,omitempty"`
+}
+
+type dump struct {
+	Name              string            `json:"name"`
+	Suite             string            `json:"suite"`
+	CasePath          string            `json:"casePath"`
+	ConfigurationName string            `json:"configurationName"`
+	ConfiguredName    string            `json:"configuredName"`
+	Stop              string            `json:"stop,omitempty"`
+	CurrentDirectory  string            `json:"currentDirectory"`
+	HasNonDtsFiles    bool              `json:"hasNonDtsFiles"`
+	HasConfig         bool              `json:"hasConfig"`
+	ConfigFiles       []string          `json:"configFiles"`
+	ConfigFileNames   []string          `json:"configFileNames"`
+	ExtendedSourceFiles []string        `json:"extendedSourceFiles"`
+	ConfigOptions     map[string]any    `json:"configOptions"`
+	ConfigErrors      int               `json:"configErrors"`
+	ConfigErrorCodes  []int             `json:"configErrorCodes"`
+	Roots             []string          `json:"roots"`
+	OtherFiles        []string          `json:"otherFiles"`
+	ProgramFileNames  []string          `json:"programFileNames"`
+	IncludeLibDir     bool              `json:"includeLibDir"`
+	LibFiles          []string          `json:"libFiles"`
+	NoLib             string            `json:"noLib"`
+	CaseSensitive     bool              `json:"useCaseSensitiveFileNames"`
+	Symlinks          map[string]string `json:"symlinks"`
+	Entries           []entry           `json:"entries"`
+	VfsPanic          string            `json:"vfsPanic,omitempty"`
+	Skip              string            `json:"skip,omitempty"`
+}
+
+func names(files []*TestFile) []string {
+	r := []string{}
+	for _, f := range files {
+		r = append(r, f.UnitName)
+	}
+	return r
+}
+
+func finish(testfs map[string]any, programFileNames []string, includeLibDir bool, harnessOptions *HarnessOptions, compilerOptions *core.CompilerOptions, symlinks map[string]string, currentDirectory string) (d *dump) {
+	d = &dump{}
+	d.ProgramFileNames = append([]string{}, programFileNames...)
+	d.IncludeLibDir = includeLibDir
+	d.LibFiles = append([]string{}, harnessOptions.LibFiles...)
+	d.NoLib = fmt.Sprint(compilerOptions.NoLib)
+	d.CaseSensitive = harnessOptions.UseCaseSensitiveFileNames
+	d.Symlinks = map[string]string{}
+	for src, target := range symlinks {
+		d.Symlinks[tspath.GetNormalizedAbsolutePath(src, currentDirectory)] = tspath.GetNormalizedAbsolutePath(target, currentDirectory)
+	}
+	keys := slices.Collect(maps.Keys(testfs))
+	sort.Strings(keys)
+	for _, k := range keys {
+		f := testfs[k].(*fstest.MapFile)
+		if strings.HasPrefix(k, testLibFolder+"/") && includeLibDir {
+			if _, isLib := testLibFolderMap()[k]; isLib {
+				continue
+			}
+		}
+		e := entry{Path: k, Size: len(f.Data)}
+		if f.Mode&iofs.ModeSymlink != 0 {
+			e.IsLink = true
+			e.Link = string(f.Data)
+		} else {
+			e.Sha = fmt.Sprintf("%016x", fnv(f.Data))
+		}
+		d.Entries = append(d.Entries, e)
+	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				d.VfsPanic = fmt.Sprint(r)
+			}
+		}()
+		vfstest.FromMap(testfs, harnessOptions.UseCaseSensitiveFileNames)
+	}()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if s, ok := r.(skipStop); ok {
+					d.Skip = s.msg
+					return
+				}
+				panic(r)
+			}
+		}()
+		// the reference skips on the options of the program, which are these options after the absolute path fixes
+		o := compilerOptions.Clone()
+		if o.BaseUrl != "" {
+			o.BaseUrl = tspath.GetNormalizedAbsolutePath(o.BaseUrl, currentDirectory)
+		}
+		SkipUnsupportedCompilerOptions(&T{}, o)
+	}()
+	return d
+}
+
+func fnv(b []byte) uint64 {
+	h := uint64(14695981039346656037)
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return h
+}
+
+func runOne(filename string, suite string, casesRoot string, testName string, test *compilerFileBasedTest, config *NamedTestConfiguration) (d *dump) {
+	basename := tspath.GetBaseFileName(filename)
+	defer func() {
+		if r := recover(); r != nil {
+			d = &dump{}
+			switch v := r.(type) {
+			case fatalStop:
+				d.Stop = "fatal: " + v.msg
+			case skipStop:
+				d.Stop = "skip: " + v.msg
+			default:
+				d.Stop = "panic: " + fmt.Sprint(r)
+			}
+		}
+		d.Name = testName
+		d.Suite = suite
+		d.CasePath = strings.TrimPrefix(filename, casesRoot+"/")
+		if config != nil {
+			d.ConfigurationName = config.Name
+		}
+		if d.ConfiguredName == "" {
+			d.ConfiguredName = basename
+		}
+	}()
+	payload := makeUnitsFromTest(test.content, test.filename)
+	return newCompilerTest(&T{}, testName, test.filename, &payload, config)
+}
+
+func enumerate(folder string) []string {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		panic(err)
+	}
+	var paths []string
+	for _, e := range entries {
+		p := folder + "/" + e.Name()
+		if !e.IsDir() {
+			if compilerBaselineRegex.MatchString(p) {
+				paths = append(paths, p)
+			}
+		} else {
+			paths = append(paths, enumerate(p)...)
+		}
+	}
+	return paths
+}
+
+func main() {
+	casesRoot := os.Args[1]
+	testsLibDir = os.Args[2]
+	out, err := os.Create(os.Args[3])
+	if err != nil {
+		panic(err)
+	}
+	defer out.Close()
+	w := bufio.NewWriterSize(out, 1<<20)
+	defer w.Flush()
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	n := 0
+	for _, suite := range []string{"compiler", "conformance"} {
+		for _, filename := range enumerate(casesRoot + "/" + suite) {
+			basename := tspath.GetBaseFileName(filename)
+			if slices.Contains(skippedTests, basename) {
+				continue
+			}
+			var test *compilerFileBasedTest
+			var stop string
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						stop = fmt.Sprint(r)
+					}
+				}()
+				test = getCompilerFileBasedTest(&T{}, filename)
+			}()
+			if test == nil {
+				enc.Encode(&dump{Name: basename, Suite: suite, CasePath: strings.TrimPrefix(filename, casesRoot+"/"), Stop: "case: " + stop})
+				n++
+				continue
+			}
+			if len(test.configurations) > 0 {
+				for _, config := range test.configurations {
+					testName := basename
+					if config.Name != "" {
+						testName += " " + config.Name
+					}
+					enc.Encode(runOne(filename, suite, casesRoot, testName, test, config))
+					n++
+				}
+			} else {
+				enc.Encode(runOne(filename, suite, casesRoot, basename, test, nil))
+				n++
+			}
+		}
+	}
+	fmt.Fprintln(os.Stderr, "instances:", n)
+	_ = strconv.Itoa
+	_ = regexp.MustCompile
+	_ = ast.KindUnknown
+	_ = parser.ParseSourceFile
+	_ = scanner.SkipTrivia
+	_ = tsoptions.OptionsDeclarations
+	_ = tsoptionstest.NewVFSParseConfigHost
+}

@@ -1,0 +1,71 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /empty.ts
+SINCE type=64 signature=4
+DRIVE lit
+LIT "a" T65
+LIT "a" again T65
+LIT "b" T66
+LIT 1 T67
+LIT 0 T52
+LIT -0 T52
+LIT 12n T68
+LIT fresh "a" T69
+LIT regular of fresh "a" T65
+LIT string | number T29
+LIT number | string T29
+LIT "b" | "a" T70
+LIT "a" | "b" | string T14
+LIT ("b" | "a") | 1 | undefined | null T71
+LIT fresh "a" | "b" T72
+LIT true | false T73
+LIT never | string T14
+LIT any | string T1
+LIT unknown | string T9
+LIT "a" | "b" | string, no reduction T74
+LIT string & number T24
+LIT string & "a" T65
+LIT (string | number) & string T14
+LIT ("b" | "a") & ("b" | 1) T66
+LIT {} & string T14
+LIT unknown & string T14
+LIT object & {} T28
+LIT `id-${number}` T76
+LIT `id-${"a" | "b"}` T79
+STATE
+COUNTS TypeCount=79 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=2
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=79 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=79
+RESOLUTIONSTACK 0 []
+TYPE 65 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T69 regular=T65
+TYPE 66 flags=0x400 objectFlags=0x0 data=Literal value=s"b" fresh=nil regular=T66
+TYPE 67 flags=0x800 objectFlags=0x0 data=Literal value=n1 fresh=nil regular=T67
+TYPE 68 flags=0x1000 objectFlags=0x0 data=Literal value=b12 fresh=nil regular=T68
+TYPE 69 flags=0x400 objectFlags=0x0 data=Literal value=s"a" fresh=T69 regular=T65
+TYPE 70 flags=0x8000000 objectFlags=0x8000 data=Union types=[T65 T66] regular=T70
+TYPE 71 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T13 T65 T66 T67]
+TYPE 72 flags=0x8000000 objectFlags=0x8000 data=Union types=[T69 T66]
+TYPE 73 flags=0x8000100 objectFlags=0x8000 data=Union types=[T18 T20]
+TYPE 74 flags=0x8000000 objectFlags=0x8000 data=Union types=[T14 T65 T66]
+TYPE 75 flags=0x8000000 objectFlags=0x8000 data=Union types=[T66 T67] regular=T75
+TYPE 76 flags=0x400000 objectFlags=0x0 data=TemplateLiteral texts=["id-" ""] types=[T15]
+TYPE 77 flags=0x400 objectFlags=0x0 data=Literal value=s"id-a" fresh=nil regular=T77
+TYPE 78 flags=0x400 objectFlags=0x0 data=Literal value=s"id-b" fresh=nil regular=T78
+TYPE 79 flags=0x8000000 objectFlags=0x8000 data=Union types=[T77 T78]
+GLOBALS count=2 transient=2
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+SYMBOLS named=0 unnamed=6

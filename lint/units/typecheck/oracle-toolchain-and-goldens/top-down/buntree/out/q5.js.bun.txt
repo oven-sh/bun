@@ -1,0 +1,14 @@
+file q5.js bytes=86 statements=4
+s_local @0
+  b_identifier @4 x
+  e_number @8
+s_function @11
+  b_identifier @22 a
+  s_return @27
+    e_dot @34
+      e_identifier @34 a
+s_class @42
+  e_string @59
+  e_function @60
+s_export_default @68
+  e_identifier @83 C

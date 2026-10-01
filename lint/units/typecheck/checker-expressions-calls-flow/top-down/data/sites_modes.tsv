@@ -1,0 +1,51 @@
+layer	site	function	statement
+E-CORE	checker.go:7438	c.getTypeOfExpression	t := c.checkExpressionEx(node, CheckModeTypeOnly)
+E-CORE	checker.go:7578	c.checkExpressionWithContextualType	t := c.checkExpressionEx(node, checkMode|CheckModeContextual|core.IfElse(inferenceContext != nil, CheckModeInferential, 0))
+E-CORE	checker.go:7604	c.checkExpressionCached	return c.checkExpressionCachedEx(node, CheckModeNormal)
+E-CORE	checker.go:7608	c.checkExpressionCachedEx	if checkMode != CheckModeNormal {
+E-CORE	checker.go:7637	c.getContextFreeTypeOfExpression	t := c.checkExpressionEx(node, CheckModeSkipContextSensitive)
+E-CORE	checker.go:7644	c.checkExpression	return c.checkExpressionEx(node, CheckModeNormal)
+E-CORE	checker.go:7690	c.instantiateTypeWithSingleGenericCallSignature	if checkMode&(CheckModeInferential|CheckModeSkipGenericFunctions) == 0 {
+E-CORE	checker.go:7707	c.instantiateTypeWithSingleGenericCallSignature	if checkMode&CheckModeSkipGenericFunctions != 0 {
+E-LITERAL	checker.go:8165	c.checkArrayLiteral	if inTupleContext && checkMode&CheckModeInferential != 0 && checkMode&CheckModeSkipContextSensitive == 0 && c.isContextSensitive(e) {
+E-LITERAL	checker.go:8176	c.checkArrayLiteral	if checkMode&CheckModeForceTuple != 0 || inConstContext || inTupleContext {
+E-CALL	checker.go:8658	c.resolveCallExpression	if checkMode&CheckModeSkipGenericFunctions != 0 && len(node.TypeArguments()) == 0 && core.Some(callSignatures, c.isGenericFunctionReturningFunction) {
+E-CALL	checker.go:8974	c.resolveCall	s.argCheckMode = CheckModeSkipContextSensitive
+E-CALL	checker.go:8976	c.resolveCall	s.argCheckMode = CheckModeNormal
+E-CALL	checker.go:9001	c.resolveCall	s.signatureHelpTrailingComma = checkMode&CheckModeIsForSignatureHelp != 0 && ast.IsCallExpression(node) && node.ArgumentList().HasTrailingComma()
+E-CALL	checker.go:9124	c.chooseOverload	if !c.isSignatureApplicable(s.node, s.args, candidate, relation, CheckModeNormal, false /*reportErrors*/, nil /*diagnosticOutput*/) {
+E-CALL	checker.go:9146	c.chooseOverload	typeArgumentTypes = c.inferTypeArguments(s.node, candidate, s.args, s.argCheckMode|CheckModeSkipGenericFunctions, inferenceContext)
+E-CALL	checker.go:9148	c.chooseOverload	s.argCheckMode |= CheckModeSkipGenericFunctions
+E-CALL	checker.go:9165	c.chooseOverload	if !c.isSignatureApplicable(s.node, s.args, checkCandidate, relation, s.argCheckMode, false /*reportErrors*/, nil /*diagnosticOutput*/) {
+E-CALL	checker.go:9170	c.chooseOverload	if s.argCheckMode != 0 {
+E-CALL	checker.go:9174	c.chooseOverload	s.argCheckMode = CheckModeNormal
+E-CALL	checker.go:9176	c.chooseOverload	typeArgumentTypes := c.inferTypeArguments(s.node, candidate, s.args, s.argCheckMode, inferenceContext)
+E-CALL	checker.go:9185	c.chooseOverload	if !c.isSignatureApplicable(s.node, s.args, checkCandidate, relation, s.argCheckMode, false /*reportErrors*/, nil /*diagnosticOutput*/) {
+E-CALL	checker.go:9386	c.isSignatureApplicable	if checkMode&CheckModeSkipContextSensitive != 0 {
+E-CALL	checker.go:9667	c.inferSignatureInstantiationForOverloadFailure	typeArgumentTypes := c.inferTypeArguments(node, candidate, args, checkMode|CheckModeSkipContextSensitive|CheckModeSkipGenericFunctions, inferenceContext)
+E-CALL	checker.go:9744	c.reportCallResolutionErrors	c.isSignatureApplicable(s.node, s.args, last, c.assignableRelation, CheckModeNormal, true /*reportErrors*/, &diags)
+E-CALL	checker.go:10116	c.skippedGenericFunction	if checkMode&CheckModeInferential != 0 {
+E-CALL	checker.go:10128	c.checkTaggedTemplateExpression	signature := c.getResolvedSignature(node, nil, CheckModeNormal)
+E-FUNC	checker.go:10209	c.checkFunctionExpressionOrObjectLiteralMethod	if checkMode&CheckModeSkipContextSensitive != 0 && c.isContextSensitive(node) {
+E-FUNC	checker.go:10260	c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod	if checkMode&CheckModeInferential != 0 {
+E-FUNC	checker.go:10281	c.contextuallyCheckFunctionExpressionOrObjectLiteralMethod	if checkMode&CheckModeInferential != 0 {
+E-FUNC	checker.go:10463	c.assignContextualParameterTypes	initializerType := c.checkDeclarationInitializer(declaration, CheckModeNormal, nil)
+E-ACCESS	checker.go:11316	c.parameterInitializerContainsUndefined	containsUndefined := c.hasTypeFacts(c.checkDeclarationInitializer(declaration, CheckModeNormal, nil), TypeFactsIsUndefined)
+E-OPER	checker.go:12570	c.checkBinaryLikeExpression	if checkMode&CheckModeTypeOnly == 0 {
+E-OPER	checker.go:12708	c.checkObjectLiteralDestructuringPropertyAssignment	return c.checkDestructuringAssignment(expr, t, CheckModeNormal, false)
+E-OPER	checker.go:12728	c.checkObjectLiteralDestructuringPropertyAssignment	return c.checkDestructuringAssignment(property.Expression(), t, CheckModeNormal, false)
+E-OPER	checker.go:12858	c.checkAssignmentOperator	leftType = c.checkPropertyAccessExpression(left, CheckModeNormal, true /*writeOnly*/)
+E-LITERAL	checker.go:13363	c.checkObjectLiteral	if contextualType != nil && checkMode&CheckModeInferential != 0 && checkMode&CheckModeSkipContextSensitive == 0 && (ast.IsPropertyAssignment(memberDecl) || ast.IsMethodDeclaration(memberDecl)) && c.is
+E-LITERAL	checker.go:13381	c.checkObjectLiteral	t := c.getReducedType(c.checkExpressionEx(memberDecl.Expression(), checkMode&CheckModeInferential))
+E-ACCESS	checker.go:13866	c.getNarrowedTypeOfSymbol	parentType := c.getTypeForBindingElementParent(parent, CheckModeNormal)
+T-RETINFER	checker.go:20254	c.getReturnTypeFromBody	returnType = c.checkExpressionCachedEx(body, checkMode & ^CheckModeSkipGenericFunctions)
+T-RETINFER	checker.go:20395	c.checkAndAggregateReturnExpressionTypes	t := c.checkExpressionCachedEx(expr, checkMode & ^CheckModeSkipGenericFunctions)
+T-RETINFER	checker.go:20441	c.checkAndAggregateYieldOperandTypes	yieldExprType = c.checkExpressionEx(yieldExpr.Expression(), checkMode & ^CheckModeSkipGenericFunctions)
+E-CTX	checker.go:29591	c.getContextuallyTypedParameterType	return c.getSpreadArgumentType(args, indexOfParameter, len(args), c.anyType, nil /*context*/, CheckModeNormal)
+E-CTX	checker.go:29715	c.getContextualTypeForBindingElement	parentType = c.checkDeclarationInitializer(parent, core.IfElse(hasDotDotDotToken(declaration), CheckModeRestBindingElement, CheckModeNormal), nil)
+E-CTX	checker.go:29912	c.getContextualTypeForArgumentAtIndex	signature = c.getResolvedSignature(callTarget, nil, CheckModeNormal)
+F-NARROW	checker.go:31625	c.getNarrowableTypeForReference	substituteConstraints := checkMode&CheckModeInferential == 0 && someType(t, c.isGenericTypeWithUnionConstraint) && (c.isConstraintPosition(t, reference) || c.hasContextualTypeWithNoGenericTypes(refere
+F-NARROW	checker.go:31663	c.hasContextualTypeWithNoGenericTypes	contextualType := c.getContextualType(node, core.IfElse(checkMode&CheckModeRestBindingElement != 0, ContextFlagsSkipBindingPatterns, ContextFlagsNone))
+F-NARROW	flow.go:278	c.getInitialOrAssignedType	return c.getNarrowableTypeForReference(c.getInitialType(flow.Node), f.reference, CheckModeNormal)
+F-NARROW	flow.go:280	c.getInitialOrAssignedType	return c.getNarrowableTypeForReference(c.getAssignedType(flow.Node), f.reference, CheckModeNormal)
+F-NARROW	flow.go:2077	c.getEffectsSignature	signature = c.getResolvedSignature(node, nil, CheckModeNormal)

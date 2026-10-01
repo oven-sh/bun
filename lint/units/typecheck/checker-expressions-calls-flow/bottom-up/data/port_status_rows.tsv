@@ -1,0 +1,36 @@
+upstream path	lines	group	Rust module	state	commit
+internal/checker/checker.go	2398-2477	F-UNREACH: c.checkSourceElementUnreachable .. c.isSourceElementUnreachable (2)	checker/c05_check_source_file.rs	not started	89d5d5b
+internal/checker/checker.go	7419-7925	E-CORE: c.checkExpressionStatement .. c.checkExpressionWorker (24)	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	7927-8064	E-ACCESS: c.checkPrivateIdentifierExpression .. c.isInConstructorArgumentInitializer (4)	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	8066-8210	E-LITERAL: c.checkTemplateExpression .. isSpreadIntoCallOrNew (7)	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	8212-8355	E-ACCESS: c.checkQualifiedName .. c.getConstituentProperty (9)	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	8357-8405	E-CALL: c.checkImportCallExpression (1)	checker/c14_expressions.rs	not started	89d5d5b
+internal/checker/checker.go	8412-9719	E-CALL: c.checkCallExpression .. c.createCombinedSymbolForOverloadFailure (41)	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	9739-10131	E-CALL: c.reportCallResolutionErrors .. c.checkTaggedTemplateExpression (16)	checker/c15_calls.rs	not started	89d5d5b
+internal/checker/checker.go	10133-10135	E-CORE: c.checkParenthesizedExpression (1)	checker/c16_function_expressions_collisions.rs	not started	89d5d5b
+internal/checker/checker.go	10137-10532	E-FUNC: c.checkClassExpression .. c.assignBindingElementTypes (17)	checker/c16_function_expressions_collisions.rs	not started	89d5d5b
+internal/checker/checker.go	10707-10892	E-CORE: c.checkTypeOfExpression .. c.checkMetaPropertyKeyword (10)	checker/c17_unary_meta_yield.rs	not started	89d5d5b
+internal/checker/checker.go	10894-11035	E-OPER: c.checkDeleteExpression .. c.checkTruthinessExpression (9)	checker/c17_unary_meta_yield.rs	not started	89d5d5b
+internal/checker/checker.go	11037-11130	E-CORE: c.checkSpreadExpression .. c.checkSyntheticExpression (4)	checker/c17_unary_meta_yield.rs	not started	89d5d5b
+internal/checker/checker.go	11132-12376	E-ACCESS: c.checkIdentifier .. c.classDeclarationExtendsNull (53)	checker/c18_identifiers_property_access_this.rs	not started	89d5d5b
+internal/checker/checker.go	12378-12420	E-CORE: c.checkAssertion .. c.checkAssertionDeferred (2)	checker/c19_assertions_binary_operators.rs	not started	89d5d5b
+internal/checker/checker.go	12422-13233	E-OPER: c.checkBinaryExpression .. c.checkReferenceExpression (32)	checker/c19_assertions_binary_operators.rs	not started	89d5d5b
+internal/checker/checker.go	13235-13609	E-LITERAL: c.checkObjectLiteral .. c.isValidSpreadType (7)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	13627-13822	E-LITERAL: c.isNonGenericObjectType .. c.isInPropertyInitializerOrClassStaticBlock (12)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	13824-13964	E-ACCESS: c.getNarrowedTypeOfSymbol .. c.isReadonlySymbol (3)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	13966-13977	E-LITERAL: c.checkObjectLiteralMethod (1)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	13979-13989	E-CORE: c.checkExpressionForMutableLocation (1)	checker/c20_object_literals_spread.rs	not started	89d5d5b
+internal/checker/checker.go	20240-20564	T-RETINFER: c.getReturnTypeFromBody .. c.createGeneratorType (12)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	20649-20720	T-RETINFER: c.getTypePredicateFromBody .. c.checkIfExpressionRefinesParameter (3)	checker/c34_return_types.rs	not started	89d5d5b
+internal/checker/checker.go	27829-27853	E-ACCESS: c.markPropertyAsReferenced (1)	checker/c45_base_constraints_normalization.rs	not started	89d5d5b
+internal/checker/checker.go	29187-29196	E-ACCESS: c.getOptionalExpressionType (1)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29229-29253	E-FACTS: c.removeDefinitelyFalsyTypes .. c.getDefinitelyFalsyPartOfType (3)	checker/c47_promised_mapped_template.rs	not started	89d5d5b
+internal/checker/checker.go	29466-30162	E-CTX: c.getContextualType .. c.getContextualImportAttributeType (27)	checker/c48_contextual_types.rs	not started	89d5d5b
+internal/checker/checker.go	30165-30262	E-CALL: c.getEffectiveCallArguments .. c.getSpreadIndices (5)	checker/c49_call_arguments_decorator_signatures.rs	not started	89d5d5b
+internal/checker/checker.go	30674-31095	E-CTX: c.getTypeOfPropertyOfContextualType .. c.getInferenceContext (28)	checker/c50_contextual_properties_inference_context.rs	not started	89d5d5b
+internal/checker/checker.go	31097-31347	E-FACTS: c.getTypeFacts .. c.convertAutoToAny (12)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/checker.go	31594-31605	F-NARROW: c.isSomeSymbolAssigned .. c.isSomeSymbolAssignedWorker (2)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/checker.go	31614-31692	F-NARROW: c.getNarrowableTypeForReference .. c.isGenericTypeWithUndefinedConstraint (7)	checker/c51_type_facts_awaited.rs	not started	89d5d5b
+internal/checker/flow.go	24-2511	F-NARROW: FlowType.isNil .. c.getFlowTypeInStaticBlocks (118)	checker/flow.rs	not started	89d5d5b
+internal/checker/flow.go	2513-2652	F-REACH: c.isReachableFlowNode .. c.isPostSuperFlowNodeWorker (5)	checker/flow.rs	not started	89d5d5b
+internal/checker/flow.go	2655-2764	F-NARROW: c.isSymbolAssignedDefinitely .. c.extendAssignmentPosition (7)	checker/flow.rs	not started	89d5d5b

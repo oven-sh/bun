@@ -1,0 +1,992 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #88[Object] -> #91[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #87[Object] -> #90[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                           Checker.isWeakType
+T                           Relater.traceUnionsOrIntersectionsTooLarge
+T                           Relater.recursiveTypeRelatedTo
+T                             Relation.get
+T                             Checker.isDeeplyNestedType
+T                             Checker.isDeeplyNestedType
+T                             Relater.structuredTypeRelatedTo
+T                               Relater.getErrorState
+T                               Relater.structuredTypeRelatedToWorker
+T                                 Relater.getErrorState
+T                                 Relater.propertiesRelatedTo
+T                                   Checker.getUnmatchedProperty
+T                                     Checker.getUnmatchedPropertiesWorker
+T                                   excludeProperties
+T                                   Relater.propertyRelatedTo
+T                                     Relater.isPropertySymbolTypeRelated
+T                                       # isRelatedToEx #86[Object] -> #89[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                                       Relater.isRelatedToEx
+T                                         Checker.isSimpleTypeRelatedTo
+T                                         Checker.isWeakType
+T                                         Relater.traceUnionsOrIntersectionsTooLarge
+T                                         Relater.recursiveTypeRelatedTo
+T                                           Relation.get
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Relater.structuredTypeRelatedTo
+T                                             Relater.getErrorState
+T                                             Relater.structuredTypeRelatedToWorker
+T                                               Relater.getErrorState
+T                                               Relater.propertiesRelatedTo
+T                                                 Checker.getUnmatchedProperty
+T                                                   Checker.getUnmatchedPropertiesWorker
+T                                                 excludeProperties
+T                                                 Relater.propertyRelatedTo
+T                                                   Relater.isPropertySymbolTypeRelated
+T                                                     # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                                                     Relater.isRelatedToEx
+T                                                       Checker.isSimpleTypeRelatedTo
+T                                                     # isRelatedToEx = False
+T                                           Relation.set
+T                                             # SET assignable key=73560000005900000000000000 result=Failed size=1
+T                                           Relater.resetMaybeStack
+T                                       # isRelatedToEx = False
+T                             Relation.set
+T                               # SET assignable key=73570000005a00000000000000 result=Failed size=2
+T                             Relater.resetMaybeStack
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=73580000005b00000000000000 result=Failed size=3
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #88[Object] -> #91[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Checker.isWeakType
+T         Relater.traceUnionsOrIntersectionsTooLarge
+T         Relater.recursiveTypeRelatedTo
+T           Relation.get
+T           Checker.isDeeplyNestedType
+T           Checker.isDeeplyNestedType
+T           Relater.structuredTypeRelatedTo
+T             Relater.getErrorState
+T             Relater.structuredTypeRelatedToWorker
+T               Relater.getErrorState
+T               Relater.propertiesRelatedTo
+T                 Checker.getUnmatchedProperty
+T                   Checker.getUnmatchedPropertiesWorker
+T                 excludeProperties
+T                 Relater.propertyRelatedTo
+T                   Relater.isPropertySymbolTypeRelated
+T                     # isRelatedToEx #87[Object] -> #90[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                       Checker.isWeakType
+T                       Relater.traceUnionsOrIntersectionsTooLarge
+T                       Relater.recursiveTypeRelatedTo
+T                         Relation.get
+T                         Checker.isDeeplyNestedType
+T                         Checker.isDeeplyNestedType
+T                         Relater.structuredTypeRelatedTo
+T                           Relater.getErrorState
+T                           Relater.structuredTypeRelatedToWorker
+T                             Relater.getErrorState
+T                             Relater.propertiesRelatedTo
+T                               Checker.getUnmatchedProperty
+T                                 Checker.getUnmatchedPropertiesWorker
+T                               excludeProperties
+T                               Relater.propertyRelatedTo
+T                                 Relater.isPropertySymbolTypeRelated
+T                                   # isRelatedToEx #86[Object] -> #89[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                                   Relater.isRelatedToEx
+T                                     Checker.isSimpleTypeRelatedTo
+T                                     Checker.isWeakType
+T                                     Relater.traceUnionsOrIntersectionsTooLarge
+T                                     Relater.recursiveTypeRelatedTo
+T                                       Relation.get
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Relater.structuredTypeRelatedTo
+T                                         Relater.getErrorState
+T                                         Relater.structuredTypeRelatedToWorker
+T                                           Relater.getErrorState
+T                                           Relater.propertiesRelatedTo
+T                                             Checker.getUnmatchedProperty
+T                                               Checker.getUnmatchedPropertiesWorker
+T                                             excludeProperties
+T                                             Relater.propertyRelatedTo
+T                                               Relater.isPropertySymbolTypeRelated
+T                                                 # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T                                                 Relater.isRelatedToEx
+T                                                   Checker.isSimpleTypeRelatedTo
+T                                                   Relater.reportErrorResults
+T                                                     Relater.reportRelationError
+T                                                       Checker.getTypeNamesForErrorDisplay
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                       Relater.getChainMessage
+T                                                       chainDepth
+T                                                       # reportError TS2322 args=["string" "number"] chainDepth=0
+T                                                       Relater.reportError
+T                                                       # chain after reportError: TS2322["string" "number"]
+T                                                 # isRelatedToEx = False
+T                                               chainDepth
+T                                               # reportError TS2326 args=["c"] chainDepth=1
+T                                               Relater.reportError
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                               # chain after reportError: TS2326["c"] <- TS2322["string" "number"]
+T                                       Relation.set
+T                                         # SET assignable key=73560000005900000000000000 result=Failed size=3
+T                                       Relater.resetMaybeStack
+T                                     Relater.reportErrorResults
+T                                       Relater.tryElaborateArrayLikeErrors
+T                                       Relater.reportRelationError
+T                                         Checker.getTypeNamesForErrorDisplay
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                         Relater.getChainMessage
+T                                         chainDepth
+T                                         # reportError TS2322 args=["{ c: string; }" "{ c: number; }"] chainDepth=2
+T                                         Relater.reportError
+T                                         # chain after reportError: TS2322["{ c: string; }" "{ c: number; }"] <- TS2326["c"] <- TS2322["string" "number"]
+T                                   # isRelatedToEx = False
+T                                 chainDepth
+T                                 # reportError TS2326 args=["b"] chainDepth=3
+T                                 Relater.reportError
+T                                   Relater.getChainMessage
+T                                   Relater.getChainMessage
+T                                   Relater.getChainMessage
+T                                   getPropertyNameArg
+T                                   getPropertyNameArg
+T                                   addToDottedName
+T                                   chainDepth
+T                                   # reportError TS2200 args=["b.c"] chainDepth=1
+T                                   Relater.reportError
+T                                   # chain after reportError: TS2200["b.c"] <- TS2322["string" "number"]
+T                                 # chain after reportError: TS2200["b.c"] <- TS2322["string" "number"]
+T                         Relation.set
+T                           # SET assignable key=73570000005a00000000000000 result=Failed size=3
+T                         Relater.resetMaybeStack
+T                       Relater.reportErrorResults
+T                         Relater.tryElaborateArrayLikeErrors
+T                         Relater.reportRelationError
+T                           Checker.getTypeNamesForErrorDisplay
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                           Relater.getChainMessage
+T                           chainDepth
+T                           # reportError TS2322 args=["{ b: { c: string; }; }" "{ b: { c: number; }; }"] chainDepth=2
+T                           Relater.reportError
+T                           # chain after reportError: TS2322["{ b: { c: string; }; }" "{ b: { c: number; }; }"] <- TS2200["b.c"] <- TS2322["string" "number"]
+T                     # isRelatedToEx = False
+T                   chainDepth
+T                   # reportError TS2326 args=["a"] chainDepth=3
+T                   Relater.reportError
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                     getPropertyNameArg
+T                     getPropertyNameArg
+T                     addToDottedName
+T                     chainDepth
+T                     # reportError TS2200 args=["a.b.c"] chainDepth=1
+T                     Relater.reportError
+T                     # chain after reportError: TS2200["a.b.c"] <- TS2322["string" "number"]
+T                   # chain after reportError: TS2200["a.b.c"] <- TS2322["string" "number"]
+T           Relation.set
+T             # SET assignable key=73580000005b00000000000000 result=Failed size=3
+T           Relater.resetMaybeStack
+T         Relater.reportErrorResults
+T           Relater.tryElaborateArrayLikeErrors
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.symbolValueDeclarationIsContextSensitive
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["{ a: { b: { c: string; }; }; }" "{ a: { b: { c: number; }; }; }"] chainDepth=2
+T             Relater.reportError
+T             # chain after reportError: TS2322["{ a: { b: { c: string; }; }; }" "{ a: { b: { c: number; }; }; }"] <- TS2200["a.b.c"] <- TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T           createDiagnosticChainFromErrorChain
+T             createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #94[Object] -> #97[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #93[Object] -> #96[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                           Checker.isWeakType
+T                           Relater.traceUnionsOrIntersectionsTooLarge
+T                           Relater.recursiveTypeRelatedTo
+T                             Relation.get
+T                             Checker.isDeeplyNestedType
+T                             Checker.isDeeplyNestedType
+T                             Relater.structuredTypeRelatedTo
+T                               Relater.getErrorState
+T                               Relater.structuredTypeRelatedToWorker
+T                                 Relater.getErrorState
+T                                 Relater.propertiesRelatedTo
+T                                   Checker.getUnmatchedProperty
+T                                     Checker.getUnmatchedPropertiesWorker
+T                                   excludeProperties
+T                                 Relater.signaturesRelatedTo
+T                                   Relater.signatureRelatedTo
+T                                     Checker.compareSignaturesRelated
+T                                       Checker.isTopSignature
+T                                       Checker.getParameterCount
+T                                       Checker.hasEffectiveRestParameter
+T                                       Checker.getMinArgumentCount
+T                                         Checker.getMinArgumentCountEx
+T                                       Checker.getParameterCount
+T                                       Checker.getNonArrayRestType
+T                                         Checker.getEffectiveRestType
+T                                       Checker.getNonArrayRestType
+T                                         Checker.getEffectiveRestType
+T                                       Checker.getThisTypeOfSignature
+T                                       Checker.isResolvingReturnTypeOfSignature
+T                                       Checker.isResolvingReturnTypeOfSignature
+T                                       Checker.getTypePredicateOfSignature
+T                                       # isRelatedToEx #92[Object] -> #95[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                                       Relater.isRelatedToEx
+T                                         Checker.isSimpleTypeRelatedTo
+T                                         Checker.isWeakType
+T                                         Relater.traceUnionsOrIntersectionsTooLarge
+T                                         Relater.recursiveTypeRelatedTo
+T                                           Relation.get
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Relater.structuredTypeRelatedTo
+T                                             Relater.getErrorState
+T                                             Relater.structuredTypeRelatedToWorker
+T                                               Relater.getErrorState
+T                                               Relater.propertiesRelatedTo
+T                                                 Checker.getUnmatchedProperty
+T                                                   Checker.getUnmatchedPropertiesWorker
+T                                                 excludeProperties
+T                                                 Relater.propertyRelatedTo
+T                                                   Relater.isPropertySymbolTypeRelated
+T                                                     # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                                                     Relater.isRelatedToEx
+T                                                       Checker.isSimpleTypeRelatedTo
+T                                                     # isRelatedToEx = False
+T                                           Relation.set
+T                                             # SET assignable key=735c0000005f00000000000000 result=Failed size=4
+T                                           Relater.resetMaybeStack
+T                                       # isRelatedToEx = False
+T                             Relation.set
+T                               # SET assignable key=735d0000006000000000000000 result=Failed size=5
+T                             Relater.resetMaybeStack
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=735e0000006100000000000000 result=Failed size=6
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #94[Object] -> #97[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Checker.isWeakType
+T         Relater.traceUnionsOrIntersectionsTooLarge
+T         Relater.recursiveTypeRelatedTo
+T           Relation.get
+T           Checker.isDeeplyNestedType
+T           Checker.isDeeplyNestedType
+T           Relater.structuredTypeRelatedTo
+T             Relater.getErrorState
+T             Relater.structuredTypeRelatedToWorker
+T               Relater.getErrorState
+T               Relater.propertiesRelatedTo
+T                 Checker.getUnmatchedProperty
+T                   Checker.getUnmatchedPropertiesWorker
+T                 excludeProperties
+T                 Relater.propertyRelatedTo
+T                   Relater.isPropertySymbolTypeRelated
+T                     # isRelatedToEx #93[Object] -> #96[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                       Checker.isWeakType
+T                       Relater.traceUnionsOrIntersectionsTooLarge
+T                       Relater.recursiveTypeRelatedTo
+T                         Relation.get
+T                         Checker.isDeeplyNestedType
+T                         Checker.isDeeplyNestedType
+T                         Relater.structuredTypeRelatedTo
+T                           Relater.getErrorState
+T                           Relater.structuredTypeRelatedToWorker
+T                             Relater.getErrorState
+T                             Relater.propertiesRelatedTo
+T                               Checker.getUnmatchedProperty
+T                                 Checker.getUnmatchedPropertiesWorker
+T                               excludeProperties
+T                             Relater.signaturesRelatedTo
+T                               Relater.signatureRelatedTo
+T                                 Checker.compareSignaturesRelated
+T                                   Checker.isTopSignature
+T                                   Checker.getParameterCount
+T                                   Checker.hasEffectiveRestParameter
+T                                   Checker.getMinArgumentCount
+T                                     Checker.getMinArgumentCountEx
+T                                   Checker.getParameterCount
+T                                   Checker.getNonArrayRestType
+T                                     Checker.getEffectiveRestType
+T                                   Checker.getNonArrayRestType
+T                                     Checker.getEffectiveRestType
+T                                   Checker.getThisTypeOfSignature
+T                                   Checker.isResolvingReturnTypeOfSignature
+T                                   Checker.isResolvingReturnTypeOfSignature
+T                                   Checker.getTypePredicateOfSignature
+T                                   # isRelatedToEx #92[Object] -> #95[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                                   Relater.isRelatedToEx
+T                                     Checker.isSimpleTypeRelatedTo
+T                                     Checker.isWeakType
+T                                     Relater.traceUnionsOrIntersectionsTooLarge
+T                                     Relater.recursiveTypeRelatedTo
+T                                       Relation.get
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Relater.structuredTypeRelatedTo
+T                                         Relater.getErrorState
+T                                         Relater.structuredTypeRelatedToWorker
+T                                           Relater.getErrorState
+T                                           Relater.propertiesRelatedTo
+T                                             Checker.getUnmatchedProperty
+T                                               Checker.getUnmatchedPropertiesWorker
+T                                             excludeProperties
+T                                             Relater.propertyRelatedTo
+T                                               Relater.isPropertySymbolTypeRelated
+T                                                 # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T                                                 Relater.isRelatedToEx
+T                                                   Checker.isSimpleTypeRelatedTo
+T                                                   Relater.reportErrorResults
+T                                                     Relater.reportRelationError
+T                                                       Checker.getTypeNamesForErrorDisplay
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                       Relater.getChainMessage
+T                                                       chainDepth
+T                                                       # reportError TS2322 args=["string" "number"] chainDepth=0
+T                                                       Relater.reportError
+T                                                       # chain after reportError: TS2322["string" "number"]
+T                                                 # isRelatedToEx = False
+T                                               chainDepth
+T                                               # reportError TS2326 args=["\"x-y\""] chainDepth=1
+T                                               Relater.reportError
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                               # chain after reportError: TS2326["\"x-y\""] <- TS2322["string" "number"]
+T                                       Relation.set
+T                                         # SET assignable key=735c0000005f00000000000000 result=Failed size=6
+T                                       Relater.resetMaybeStack
+T                                     Relater.reportErrorResults
+T                                       Relater.tryElaborateArrayLikeErrors
+T                                       Relater.reportRelationError
+T                                         Checker.getTypeNamesForErrorDisplay
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                         Relater.getChainMessage
+T                                         chainDepth
+T                                         # reportError TS2322 args=["{ \"x-y\": string; }" "{ \"x-y\": number; }"] chainDepth=2
+T                                         Relater.reportError
+T                                         # chain after reportError: TS2322["{ \"x-y\": string; }" "{ \"x-y\": number; }"] <- TS2326["\"x-y\""] <- TS2322["string" "number"]
+T                                   # isRelatedToEx = False
+T                                   chainDepth
+T                                   # reportError TS2204 args=["{ \"x-y\": string; }" "{ \"x-y\": number; }"] chainDepth=3
+T                                   Relater.reportError
+T                                   # chain after reportError: TS2204["{ \"x-y\": string; }" "{ \"x-y\": number; }"] <- TS2322["{ \"x-y\": string; }" "{ \"x-y\": number; }"] <- TS2326["\"x-y\""] <- TS2322["string" "number"]
+T                         Relation.set
+T                           # SET assignable key=735d0000006000000000000000 result=Failed size=6
+T                         Relater.resetMaybeStack
+T                       Relater.reportErrorResults
+T                         Relater.tryElaborateArrayLikeErrors
+T                         Relater.reportRelationError
+T                           Checker.getTypeNamesForErrorDisplay
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.getTypePredicateOfSignature
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.getTypePredicateOfSignature
+T                           Relater.getChainMessage
+T                           chainDepth
+T                           # reportError TS2322 args=["() => { \"x-y\": string; }" "() => { \"x-y\": number; }"] chainDepth=4
+T                           Relater.reportError
+T                           # chain after reportError: TS2322["() => { \"x-y\": string; }" "() => { \"x-y\": number; }"] <- TS2204["{ \"x-y\": string; }" "{ \"x-y\": number; }"] <- TS2322["{ \"x-y\": string; }" "{ \"x-y\": number; }"] <- TS2326["\"x-y\""] <- TS2322["string" "number"]
+T                     # isRelatedToEx = False
+T                   chainDepth
+T                   # reportError TS2326 args=["m"] chainDepth=5
+T                   Relater.reportError
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                     getPropertyNameArg
+T                     Relater.getChainMessage
+T                     getPropertyNameArg
+T                     getPropertyNameArg
+T                     addToDottedName
+T                     chainDepth
+T                     # reportError TS2201 args=["m()[\"x-y\"]"] chainDepth=1
+T                     Relater.reportError
+T                     # chain after reportError: TS2201["m()[\"x-y\"]"] <- TS2322["string" "number"]
+T                   # chain after reportError: TS2201["m()[\"x-y\"]"] <- TS2322["string" "number"]
+T           Relation.set
+T             # SET assignable key=735e0000006100000000000000 result=Failed size=6
+T           Relater.resetMaybeStack
+T         Relater.reportErrorResults
+T           Relater.tryElaborateArrayLikeErrors
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["{ m: () => { \"x-y\": string; }; }" "{ m: () => { \"x-y\": number; }; }"] chainDepth=2
+T             Relater.reportError
+T             # chain after reportError: TS2322["{ m: () => { \"x-y\": string; }; }" "{ m: () => { \"x-y\": number; }; }"] <- TS2201["m()[\"x-y\"]"] <- TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T           createDiagnosticChainFromErrorChain
+T             createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+T Checker.checkTypeAssignableToAndOptionallyElaborate
+T   Checker.checkTypeRelatedToAndOptionallyElaborate
+T     Checker.isTypeRelatedTo
+T       Checker.isSimpleTypeRelatedTo
+T       Relation.get
+T       Checker.checkTypeRelatedTo
+T         Checker.checkTypeRelatedToEx
+T           Checker.getRelater
+T           Relation.size
+T           # isRelatedToEx #100[Object] -> #103[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T           Relater.isRelatedToEx
+T             Checker.isSimpleTypeRelatedTo
+T             Checker.isWeakType
+T             Relater.traceUnionsOrIntersectionsTooLarge
+T             Relater.recursiveTypeRelatedTo
+T               Relation.get
+T               Checker.isDeeplyNestedType
+T               Checker.isDeeplyNestedType
+T               Relater.structuredTypeRelatedTo
+T                 Relater.getErrorState
+T                 Relater.structuredTypeRelatedToWorker
+T                   Relater.getErrorState
+T                   Relater.propertiesRelatedTo
+T                     Checker.getUnmatchedProperty
+T                       Checker.getUnmatchedPropertiesWorker
+T                     excludeProperties
+T                     Relater.propertyRelatedTo
+T                       Relater.isPropertySymbolTypeRelated
+T                         # isRelatedToEx #99[Object] -> #102[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                         Relater.isRelatedToEx
+T                           Checker.isSimpleTypeRelatedTo
+T                           Checker.isWeakType
+T                           Relater.traceUnionsOrIntersectionsTooLarge
+T                           Relater.recursiveTypeRelatedTo
+T                             Relation.get
+T                             Checker.isDeeplyNestedType
+T                             Checker.isDeeplyNestedType
+T                             Relater.structuredTypeRelatedTo
+T                               Relater.getErrorState
+T                               Relater.structuredTypeRelatedToWorker
+T                                 Relater.getErrorState
+T                                 Relater.propertiesRelatedTo
+T                                   Checker.getUnmatchedProperty
+T                                     Checker.getUnmatchedPropertiesWorker
+T                                   excludeProperties
+T                                 Relater.signaturesRelatedTo
+T                                 Relater.signaturesRelatedTo
+T                                   Relater.constructorVisibilitiesAreCompatible
+T                                   Relater.signatureRelatedTo
+T                                     Checker.compareSignaturesRelated
+T                                       Checker.isTopSignature
+T                                       Checker.getParameterCount
+T                                       Checker.hasEffectiveRestParameter
+T                                       Checker.getMinArgumentCount
+T                                         Checker.getMinArgumentCountEx
+T                                           Checker.getTypeAtPosition
+T                                             Checker.tryGetTypeAtPosition
+T                                       Checker.getParameterCount
+T                                       Checker.getNonArrayRestType
+T                                         Checker.getEffectiveRestType
+T                                       Checker.getNonArrayRestType
+T                                         Checker.getEffectiveRestType
+T                                       Checker.getThisTypeOfSignature
+T                                       Checker.tryGetTypeAtPosition
+T                                       Checker.tryGetTypeAtPosition
+T                                       Checker.isResolvingReturnTypeOfSignature
+T                                       Checker.isResolvingReturnTypeOfSignature
+T                                       Checker.getTypePredicateOfSignature
+T                                       # isRelatedToEx #98[Object] -> #101[Object] recursionFlags=3 reportErrors=false intersectionState=0
+T                                       Relater.isRelatedToEx
+T                                         Checker.isSimpleTypeRelatedTo
+T                                         Checker.isWeakType
+T                                         Relater.traceUnionsOrIntersectionsTooLarge
+T                                         Relater.recursiveTypeRelatedTo
+T                                           Relation.get
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Checker.isDeeplyNestedType
+T                                             getRecursionIdentityTarget
+T                                             getRecursionIdentityFromTarget
+T                                               asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                             hasMatchingRecursionIdentity
+T                                               getRecursionIdentityTarget
+T                                               getRecursionIdentityFromTarget
+T                                                 asRecursionId
+T                                           Relater.structuredTypeRelatedTo
+T                                             Relater.getErrorState
+T                                             Relater.structuredTypeRelatedToWorker
+T                                               Relater.getErrorState
+T                                               Relater.propertiesRelatedTo
+T                                                 Checker.getUnmatchedProperty
+T                                                   Checker.getUnmatchedPropertiesWorker
+T                                                 excludeProperties
+T                                                 Relater.propertyRelatedTo
+T                                                   Relater.isPropertySymbolTypeRelated
+T                                                     # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=false intersectionState=0
+T                                                     Relater.isRelatedToEx
+T                                                       Checker.isSimpleTypeRelatedTo
+T                                                     # isRelatedToEx = False
+T                                           Relation.set
+T                                             # SET assignable key=73620000006500000000000000 result=Failed size=7
+T                                           Relater.resetMaybeStack
+T                                       # isRelatedToEx = False
+T                             Relation.set
+T                               # SET assignable key=73630000006600000000000000 result=Failed size=8
+T                             Relater.resetMaybeStack
+T                         # isRelatedToEx = False
+T               Relation.set
+T                 # SET assignable key=73640000006700000000000000 result=Failed size=9
+T               Relater.resetMaybeStack
+T           # isRelatedToEx = False
+T           Checker.putRelater
+T     Checker.elaborateError
+T       Checker.isOrHasGenericConditional
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T       Checker.elaborateDidYouMeanToCallOrConstruct
+T     Checker.checkTypeRelatedToEx
+T       Checker.getRelater
+T       Relation.size
+T       # isRelatedToEx #100[Object] -> #103[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T       Relater.isRelatedToEx
+T         Checker.isSimpleTypeRelatedTo
+T         Checker.isWeakType
+T         Relater.traceUnionsOrIntersectionsTooLarge
+T         Relater.recursiveTypeRelatedTo
+T           Relation.get
+T           Checker.isDeeplyNestedType
+T           Checker.isDeeplyNestedType
+T           Relater.structuredTypeRelatedTo
+T             Relater.getErrorState
+T             Relater.structuredTypeRelatedToWorker
+T               Relater.getErrorState
+T               Relater.propertiesRelatedTo
+T                 Checker.getUnmatchedProperty
+T                   Checker.getUnmatchedPropertiesWorker
+T                 excludeProperties
+T                 Relater.propertyRelatedTo
+T                   Relater.isPropertySymbolTypeRelated
+T                     # isRelatedToEx #99[Object] -> #102[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                     Relater.isRelatedToEx
+T                       Checker.isSimpleTypeRelatedTo
+T                       Checker.isWeakType
+T                       Relater.traceUnionsOrIntersectionsTooLarge
+T                       Relater.recursiveTypeRelatedTo
+T                         Relation.get
+T                         Checker.isDeeplyNestedType
+T                         Checker.isDeeplyNestedType
+T                         Relater.structuredTypeRelatedTo
+T                           Relater.getErrorState
+T                           Relater.structuredTypeRelatedToWorker
+T                             Relater.getErrorState
+T                             Relater.propertiesRelatedTo
+T                               Checker.getUnmatchedProperty
+T                                 Checker.getUnmatchedPropertiesWorker
+T                               excludeProperties
+T                             Relater.signaturesRelatedTo
+T                             Relater.signaturesRelatedTo
+T                               Relater.constructorVisibilitiesAreCompatible
+T                               Relater.signatureRelatedTo
+T                                 Checker.compareSignaturesRelated
+T                                   Checker.isTopSignature
+T                                   Checker.getParameterCount
+T                                   Checker.hasEffectiveRestParameter
+T                                   Checker.getMinArgumentCount
+T                                     Checker.getMinArgumentCountEx
+T                                   Checker.getParameterCount
+T                                   Checker.getNonArrayRestType
+T                                     Checker.getEffectiveRestType
+T                                   Checker.getNonArrayRestType
+T                                     Checker.getEffectiveRestType
+T                                   Checker.getThisTypeOfSignature
+T                                   Checker.tryGetTypeAtPosition
+T                                   Checker.tryGetTypeAtPosition
+T                                   Checker.isResolvingReturnTypeOfSignature
+T                                   Checker.isResolvingReturnTypeOfSignature
+T                                   Checker.getTypePredicateOfSignature
+T                                   # isRelatedToEx #98[Object] -> #101[Object] recursionFlags=3 reportErrors=true intersectionState=0
+T                                   Relater.isRelatedToEx
+T                                     Checker.isSimpleTypeRelatedTo
+T                                     Checker.isWeakType
+T                                     Relater.traceUnionsOrIntersectionsTooLarge
+T                                     Relater.recursiveTypeRelatedTo
+T                                       Relation.get
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Checker.isDeeplyNestedType
+T                                         getRecursionIdentityTarget
+T                                         getRecursionIdentityFromTarget
+T                                           asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                         hasMatchingRecursionIdentity
+T                                           getRecursionIdentityTarget
+T                                           getRecursionIdentityFromTarget
+T                                             asRecursionId
+T                                       Relater.structuredTypeRelatedTo
+T                                         Relater.getErrorState
+T                                         Relater.structuredTypeRelatedToWorker
+T                                           Relater.getErrorState
+T                                           Relater.propertiesRelatedTo
+T                                             Checker.getUnmatchedProperty
+T                                               Checker.getUnmatchedPropertiesWorker
+T                                             excludeProperties
+T                                             Relater.propertyRelatedTo
+T                                               Relater.isPropertySymbolTypeRelated
+T                                                 # isRelatedToEx #14[String] -> #15[Number] recursionFlags=3 reportErrors=true intersectionState=0
+T                                                 Relater.isRelatedToEx
+T                                                   Checker.isSimpleTypeRelatedTo
+T                                                   Relater.reportErrorResults
+T                                                     Relater.reportRelationError
+T                                                       Checker.getTypeNamesForErrorDisplay
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                         Checker.symbolValueDeclarationIsContextSensitive
+T                                                       Relater.getChainMessage
+T                                                       chainDepth
+T                                                       # reportError TS2322 args=["string" "number"] chainDepth=0
+T                                                       Relater.reportError
+T                                                       # chain after reportError: TS2322["string" "number"]
+T                                                 # isRelatedToEx = False
+T                                               chainDepth
+T                                               # reportError TS2326 args=["z"] chainDepth=1
+T                                               Relater.reportError
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                                 Relater.getChainMessage
+T                                               # chain after reportError: TS2326["z"] <- TS2322["string" "number"]
+T                                       Relation.set
+T                                         # SET assignable key=73620000006500000000000000 result=Failed size=9
+T                                       Relater.resetMaybeStack
+T                                     Relater.reportErrorResults
+T                                       Relater.tryElaborateArrayLikeErrors
+T                                       Relater.reportRelationError
+T                                         Checker.getTypeNamesForErrorDisplay
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                           Checker.symbolValueDeclarationIsContextSensitive
+T                                         Relater.getChainMessage
+T                                         chainDepth
+T                                         # reportError TS2322 args=["{ z: string; }" "{ z: number; }"] chainDepth=2
+T                                         Relater.reportError
+T                                         # chain after reportError: TS2322["{ z: string; }" "{ z: number; }"] <- TS2326["z"] <- TS2322["string" "number"]
+T                                   # isRelatedToEx = False
+T                                   chainDepth
+T                                   # reportError TS2203 args=["{ z: string; }" "{ z: number; }"] chainDepth=3
+T                                   Relater.reportError
+T                                   # chain after reportError: TS2203["{ z: string; }" "{ z: number; }"] <- TS2322["{ z: string; }" "{ z: number; }"] <- TS2326["z"] <- TS2322["string" "number"]
+T                         Relation.set
+T                           # SET assignable key=73630000006600000000000000 result=Failed size=9
+T                         Relater.resetMaybeStack
+T                       Relater.reportErrorResults
+T                         Relater.tryElaborateArrayLikeErrors
+T                         Relater.reportRelationError
+T                           Checker.getTypeNamesForErrorDisplay
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.getTypePredicateOfSignature
+T                             Checker.symbolValueDeclarationIsContextSensitive
+T                             Checker.getTypePredicateOfSignature
+T                           Relater.getChainMessage
+T                           chainDepth
+T                           # reportError TS2322 args=["new (p: number) => { z: string; }" "new (p: number) => { z: number; }"] chainDepth=4
+T                           Relater.reportError
+T                           # chain after reportError: TS2322["new (p: number) => { z: string; }" "new (p: number) => { z: number; }"] <- TS2203["{ z: string; }" "{ z: number; }"] <- TS2322["{ z: string; }" "{ z: number; }"] <- TS2326["z"] <- TS2322["string" "number"]
+T                     # isRelatedToEx = False
+T                   chainDepth
+T                   # reportError TS2326 args=["k"] chainDepth=5
+T                   Relater.reportError
+T                     Relater.getChainMessage
+T                     Relater.getChainMessage
+T                     getPropertyNameArg
+T                     Relater.getChainMessage
+T                     getPropertyNameArg
+T                     getPropertyNameArg
+T                     addToDottedName
+T                     chainDepth
+T                     # reportError TS2201 args=["(new k(...)).z"] chainDepth=1
+T                     Relater.reportError
+T                     # chain after reportError: TS2201["(new k(...)).z"] <- TS2322["string" "number"]
+T                   # chain after reportError: TS2201["(new k(...)).z"] <- TS2322["string" "number"]
+T           Relation.set
+T             # SET assignable key=73640000006700000000000000 result=Failed size=9
+T           Relater.resetMaybeStack
+T         Relater.reportErrorResults
+T           Relater.tryElaborateArrayLikeErrors
+T           Relater.reportRelationError
+T             Checker.getTypeNamesForErrorDisplay
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T               Checker.symbolValueDeclarationIsContextSensitive
+T               Checker.getTypePredicateOfSignature
+T             Relater.getChainMessage
+T             chainDepth
+T             # reportError TS2322 args=["{ k: new (p: number) => { z: string; }; }" "{ k: new (p: number) => { z: number; }; }"] chainDepth=2
+T             Relater.reportError
+T             # chain after reportError: TS2322["{ k: new (p: number) => { z: string; }; }" "{ k: new (p: number) => { z: number; }; }"] <- TS2201["(new k(...)).z"] <- TS2322["string" "number"]
+T       # isRelatedToEx = False
+T       createDiagnosticChainFromErrorChain
+T         createDiagnosticChainFromErrorChain
+T           createDiagnosticChainFromErrorChain
+T             createDiagnosticChainFromErrorChain
+T       Checker.reportDiagnostic
+T       Checker.putRelater
+chain.ts(3,1): error TS2322: Type '{ a: { b: { c: string; }; }; }' is not assignable to type '{ a: { b: { c: number; }; }; }'.
+  The types of 'a.b.c' are incompatible between these types.
+    Type 'string' is not assignable to type 'number'.
+chain.ts(6,1): error TS2322: Type '{ m: () => { "x-y": string; }; }' is not assignable to type '{ m: () => { "x-y": number; }; }'.
+  The types returned by 'm()["x-y"]' are incompatible between these types.
+    Type 'string' is not assignable to type 'number'.
+chain.ts(9,1): error TS2322: Type '{ k: new (p: number) => { z: string; }; }' is not assignable to type '{ k: new (p: number) => { z: number; }; }'.
+  The types returned by '(new k(...)).z' are incompatible between these types.
+    Type 'string' is not assignable to type 'number'.
+SIZES after check: identity=0 assignable=9 comparable=0 subtype=0 strictSubtype=0 enum=0 types=103

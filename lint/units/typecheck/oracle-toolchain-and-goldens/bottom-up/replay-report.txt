@@ -1,0 +1,61 @@
+# replay.sh /tmp/oracle-bu-fresh  (tsgoprobe of the final sources, built by bootstrap.sh with the prebuilt Go 1.26.8; the same results with Go 1.26.0 built from source)
+tree.data.min identical=1 different=0
+tree.data.sample-a identical=1 different=0
+tree.golden-sample.cout identical=240 different=0
+tree.golden-sample.jout identical=27 different=0
+cases 12445 units 16211
+tree.topdown.cases-digests identical=1 different=0 (16212 lines)
+tree.topdown.libs-digests identical=1 different=0 (109 lines)
+tree.topdown.rules identical=18 different=0
+tree.topdown.rules-digests identical=1 different=0 (19 lines)
+tree.topdown.sample-200 identical=269 different=0
+tree.lowering.tsgo identical=29 different=0
+tree.lowering.tsgo-nojsdoc identical=29 different=0
+units 218
+bind.dumps identical=218 different=0
+bind.synthetic identical=4 different=0
+init.checker-core identical=7 different=0
+check.type-layers identical=6 different=0
+check.printer-probes identical=11 different=0
+rel.out identical=12 different=0
+rel.trace identical=12 different=0
+rel.topdown-probe identical=3 different=0
+rel.relation-tree-without-getNamedMembers identical=1 different=0
+checkstate.bottom-up identical=16 different=0
+checkstate.top-down identical=7 different=0
+checkopts.bottom-up identical=32 different=0
+checkopts.top-down identical=5 different=0
+printer.declstrings identical=4 different=0
+printer.roundtrip identical=1 different=0
+printer.typestrings identical=1 different=0
+printer.typestrings-notrunc identical=1 different=0
+printer.rt-texts identical=1 different=0
+printer.rt-diff identical=1 different=0
+printer.rt-noparse identical=1 different=0
+diag.go.out identical=1 different=0
+diag.go-external.out identical=1 different=0
+diag.go-keys.out identical=1 different=0
+cli.program-order identical=21 different=0
+cli.verify-compiler-options identical=1 different=0
+leaf.leafdump identical=1 different=0
+leaf.leafdump2 identical=1 different=0
+leaf.leafdump3 identical=1 different=0
+leaf.leafchk identical=1 different=0
+no replay:
+  checker-relations-and-inference/groundtruth/out/k4.relation-tree.txt   as a whole: the 24 lines below getNamedMembers change in every run (checker.go:22173 ranges over a Go map); the rest is compared above with tsgoprobe-all and foldtree.py
+  */out/*.entered.txt, */data/*entered*.tsv, *.blocks.tsv, *.fns.txt, *covered-functions.tsv   coverage lists: COVER=1 build, then go tool covdata and the py script of the owning unit
+  checker-type-printer/bottom-up/data/{family,panics,...}.tsv   three coverage runs of the whole suite (CTP_MODE), analysis data, not an oracle of the port
+  end-to-end-k4-k5/vectors/lib-references.txt   made by py/libmodel.py from the lib files, no probe involved
+  ts-dump-and-test-importer/top-down/rules/dump/*.ast.json   made by TypeScript 6.0.2 (probe/dump-ast.ts), not by the reference
+
+# replay.sh <work dir> suite
+PASS
+PASS
+suite.manifest identical=1 different=0 (12797 lines)
+suite.manifest-with-opts identical=1 different=0 (12797 lines)
+
+# state/state.sh check
+state.golden runs=43 stable=43 unstable=0 identical-to-golden=43 different=0
+
+# astutil/astutil.sh check
+astutil.golden identical=37 different=0

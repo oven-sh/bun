@@ -1,0 +1,105 @@
+MISMATCH B no-duplicate-case.dup-edge.eslint.txt: "switch (a) { case a: break; case // c\n a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   -
+    probe:  2:2 Duplicate case label.
+MISMATCH B no-duplicate-case.dup-edge.eslint.txt: "switch (a) { case a: break;\n  case /* case */ a: break; }"
+    eslint: 2:3 Duplicate case label.
+    spec:   -
+    probe:  2:19 Duplicate case label.
+MISMATCH B no-duplicate-case.dup-final.eslint.txt: "switch (a) { case a: break; case // c\n a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   -
+    probe:  2:2 Duplicate case label.
+MISMATCH B no-duplicate-case.dup-final.eslint.txt: "switch (a) { case a: break;\n  case /* case */ a: break; }"
+    eslint: 2:3 Duplicate case label.
+    spec:   -
+    probe:  2:19 Duplicate case label.
+MISMATCH B no-duplicate-case.dup-final.eslint.txt: "switch (a) { case a: break;\n  case // case\n a: break; }"
+    eslint: 2:3 Duplicate case label.
+    spec:   -
+    probe:  3:2 Duplicate case label.
+MISMATCH B no-self-assign.self-edge.eslint.txt: "a.b = ( /* c */ a).b"
+    eslint: 1:7 '(/*c*/a).b' is assigned to itself.
+    spec:   -
+    probe:  1:17 '(a).b' is assigned to itself.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a\n: break; case // c\n a: break; }"
+    eslint: 2:10 Duplicate case label.
+    spec:   2:10 Duplicate case label.
+    probe:  3:2 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case // case\n a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  2:2 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case // case (\n a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  2:2 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case /* case /* x */ a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  1:50 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: x = \"case /*\"; case /* x */ a: break; }"
+    eslint: 1:37 Duplicate case label.
+    spec:   1:37 Duplicate case label.
+    probe:  1:50 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case/**/a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  1:37 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case\na: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  2:1 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case\n\n(\n(\na\n)\n)\n: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  5:1 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case ( // c\n a ): break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  2:2 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case ( /* ( */ a ): break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  1:44 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case /* ( */ a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  1:42 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case /* x; case */ a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  1:48 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case /* x;\n case */ a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:29 Duplicate case label.
+    probe:  2:10 Duplicate case label.
+MISMATCH C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (a) { case a: break; case // x; case\n a: break; }"
+    eslint: 1:29 Duplicate case label.
+    spec:   1:40 Duplicate case label.
+    probe:  2:2 Duplicate case label.
+MISMATCH D vectors/no-dupe-keys.json: "var x = { '\\uD800': 1, '\\uD800': 2 };"
+    eslint: 1:24 Duplicate key '�'.
+    spec:   -
+    probe:  (none)
+
+family file: cases / parser rejects / as ESLint (of which only merged duplicates) / as the unit's specified difference / neither
+A lists/no-compare-neg-zero.txt: 95 / 0 / 92 (0) / 3 / 0
+A lists/use-isnan.txt: 234 / 0 / 226 (3) / 8 / 0
+A lists/valid-typeof.txt: 162 / 0 / 156 (0) / 6 / 0
+A lists/no-unsafe-negation.txt: 102 / 0 / 102 (0) / 0 / 0
+B no-duplicate-case.dup-diff.eslint.txt: 25 / 0 / 25 (0) / 0 / 0
+B no-duplicate-case.dup-edge.eslint.txt: 78 / 0 / 76 (0) / 0 / 2
+B no-duplicate-case.dup-eslint-tests.eslint.txt: 29 / 0 / 29 (0) / 0 / 0
+B no-duplicate-case.dup-final-module.eslint.txt: 2 / 0 / 2 (0) / 0 / 0
+B no-duplicate-case.dup-final.eslint.txt: 62 / 0 / 59 (0) / 0 / 3
+B no-self-assign.self-edge.eslint.txt: 126 / 0 / 125 (1) / 0 / 1
+B no-self-assign.self-eslint-tests.eslint.txt: 74 / 0 / 74 (0) / 0 / 0
+B no-self-assign.self-static.eslint.txt: 22 / 0 / 22 (0) / 0 / 0
+C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: 182 / 0 / 167 (0) / 1 / 14
+C rules-expression-equality-bottomup/vectors/vectors-no-self-assign.json: 348 / 0 / 348 (3) / 0 / 0
+D vectors/no-debugger.json: 47 / 0 / 47 (0) / 0 / 0
+D vectors/no-dupe-class-members.json: 209 / 0 / 209 (0) / 0 / 0
+D vectors/no-dupe-keys.json: 343 / 0 / 342 (0) / 0 / 1
+D vectors/no-empty-pattern.json: 130 / 0 / 130 (0) / 0 / 0
+D vectors/no-sparse-arrays.json: 90 / 0 / 90 (0) / 0 / 0

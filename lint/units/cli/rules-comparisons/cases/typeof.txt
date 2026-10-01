@@ -1,0 +1,181 @@
+typeof a === "string"
+----
+typeof a === "symbol"
+----
+typeof a === "undefined"
+----
+typeof a === "object"
+----
+typeof a === "boolean"
+----
+typeof a === "number"
+----
+typeof a === "function"
+----
+typeof a === "bigint"
+----
+typeof a === 'string'
+----
+typeof a === `string`
+----
+typeof a == "string"
+----
+typeof a != "string"
+----
+typeof a !== "string"
+----
+"string" === typeof a
+----
+typeof a === "strnig"
+----
+typeof a == "strnig"
+----
+typeof a != "strnig"
+----
+typeof a !== "strnig"
+----
+"strnig" === typeof a
+----
+typeof a === 'strnig'
+----
+typeof a === `strnig`
+----
+typeof a === "String"
+----
+typeof a === "STRING"
+----
+typeof a === " string"
+----
+typeof a === ""
+----
+typeof a === "null"
+----
+typeof a === "array"
+----
+typeof a === "nunber"
+----
+typeof a === "fucntion"
+----
+typeof a === "str\u0069ng"
+----
+typeof a === "\x73tring"
+----
+typeof a === `str\u0069ng`
+----
+typeof a === "strin\
+g"
+----
+typeof a === `${b}`
+----
+typeof a === `strnig${b}`
+----
+typeof a === tag`strnig`
+----
+typeof a === 5
+----
+typeof a === 5n
+----
+typeof a === null
+----
+typeof a === true
+----
+typeof a === false
+----
+typeof a === /re/
+----
+typeof a === undefined
+----
+undefined === typeof a
+----
+typeof a == undefined
+----
+typeof a != undefined
+----
+typeof a !== undefined
+----
+typeof a === void 0
+----
+typeof a === b
+----
+typeof a === typeof b
+----
+typeof a === "strnig" + ""
+----
+typeof a === ("strnig")
+----
+(typeof a) === "strnig"
+----
+typeof (a) === "strnig"
+----
+typeof(a) === "strnig"
+----
+typeof a.b.c === "strnig"
+----
+typeof a() === "strnig"
+----
+typeof typeof a === "strnig"
+----
+!typeof a === "strnig"
+----
+typeof a + "" === "strnig"
+----
+typeof a < "strnig"
+----
+typeof a > "strnig"
+----
+typeof a <= "strnig"
+----
+typeof a >= "strnig"
+----
+typeof a + "strnig"
+----
+typeof a in "strnig"
+----
+typeof a instanceof "strnig"
+----
+typeof a && "strnig"
+----
+typeof a ?? "strnig"
+----
+x = typeof a === "strnig" ? 1 : 2
+----
+switch (typeof a) { case "strnig": }
+----
+f(typeof a, "strnig")
+----
+typeof a === "strnig" === b
+----
+b === typeof a === "strnig"
+----
+typeof a === "strnig" || typeof b === "nubmer"
+----
+typeof a === (b, "strnig")
+----
+typeof a === NaN
+----
+typeof a === Infinity
+----
+typeof a === -1
+----
+typeof a === [ ]
+----
+typeof a === {}
+----
+if (typeof a ===
+    "strnig") {}
+----
+é = typeof a === "strnig"
+----
+"😀" + (typeof a === "strnig")
+----
+typeof a === "😀"
+----
+typeof a === <a/>
+----
+typeof a === undefined$
+----
+typeof a === (undefined)
+----
+void a === "strnig"
+----
+delete a === "strnig"

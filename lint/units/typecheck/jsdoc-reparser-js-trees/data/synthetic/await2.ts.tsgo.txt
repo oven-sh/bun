@@ -1,0 +1,36 @@
+file /await2.ts scriptKind=3 variant=0 dts=false textLen=93
+externalModuleIndicator KindExportDeclaration[0,10)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=43 identifiers=12 text=18 reparsedClones=0
+root KindSourceFile [0,93) f=0x0
+  .Statements: list [0,92) n=3
+    - KindExportDeclaration [0,10) f=0x0
+      .ExportClause: KindNamedExports [6,9) f=0x2000
+        .Elements: list [8,8) n=0
+    - KindVariableStatement [10,56) f=0x202000
+      .DeclarationList: KindVariableDeclarationList [10,55) f=0x2002
+        .Declarations: list [39,55) n=1
+          - KindVariableDeclaration [39,55) f=0x2000
+            .Initializer: KindAwaitExpression [43,55) f=0x2000
+              .Expression: KindParenthesizedExpression [49,55) f=0x2000
+                .Expression: KindIdentifier [51,54) f=0x2000 Text="foo"
+            .name: KindIdentifier [39,41) f=0x2000 Text="x"
+      .jsdoc: KindJSDoc [10,33) f=0x400000
+        .Comment: list [11,31) n=3
+          - KindJSDocText [11,19) f=0x400000 text="doc "
+          - KindJSDocLink [19,30) f=0x400000 text=""
+            .name: KindIdentifier [26,29) f=0x400000 Text="foo"
+          - KindJSDocText [30,31) f=0x400000 text=""
+    - KindVariableStatement [56,92) f=0x202000
+      .DeclarationList: KindVariableDeclarationList [56,91) f=0x2002
+        .Declarations: list [75,91) n=1
+          - KindVariableDeclaration [75,91) f=0x2000
+            .Initializer: KindAwaitExpression [79,91) f=0x2000
+              .Expression: KindParenthesizedExpression [85,91) f=0x2000
+                .Expression: KindIdentifier [87,90) f=0x2000 Text="bar"
+            .name: KindIdentifier [75,77) f=0x2000 Text="y"
+      .jsdoc: KindJSDoc [56,69) f=0x400000
+        .Comment: list [57,67) n=1
+          - KindJSDocText [57,67) f=0x400000 text="plain"
+  .EndOfFileToken: KindEndOfFile [92,93) f=0x0

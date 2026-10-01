@@ -1,0 +1,78 @@
+step	state	artifact	cited by	what it is	replacement
+bin	present 80705056	/workspace/bun/build/release/bun	every finding (the `bun` on PATH)	the installed release binary: tests of P1.6 must fail on it	-
+bin	ABSENT	/workspace/notes/lint/measure/pr2/bun.pr2b	G13	stable copy of the installed binary 8965734d5	the commit is not in the repository; use `bun` on PATH (367d939d9, before the sink grammar)
+bin	ABSENT	/workspace/notes/lint/measure/pr2/bun-profile.pr2b	G13	profile twin of 8965734d5	/workspace/notes/lint/units/parser/measure/base/bin/bun-profile (e3566be889)
+bin	ABSENT	/workspace/notes/lint/units/parser/base/bun-debug-e3566be889	verification-harness	saved debug build of the clean worktree	/workspace/wt/parser/build/debug/bun-debug
+bin	present 810688600	/workspace/wt/parser/build/debug/bun-debug	verification-harness	debug build of e3566be889	-
+bin	present 80832072	/workspace/notes/lint/units/parser/measure/base/bin/bun	base measurements	release build of e3566be889, the base of every comparison (git-ignored)	/workspace/wt/parser/build/release/bun while the worktree is clean, else rebuild
+bin	present 169916968	/workspace/notes/lint/units/parser/measure/base/bin/bun-profile	base measurements	release build with symbols of e3566be889 (git-ignored)	/workspace/wt/parser/build/release/bun-profile while the worktree is clean, else rebuild
+bin	present 15388811	/tmp/rr/go126/bin/go	typecheck unit, ts-dump-and-test-importer	Go 1.26 built from source (volatile)	units/typecheck/ts-dump-and-test-importer/groundtruth/build.sh rebuilds it
+bin	ABSENT	/tmp/rr/bin/tsgo	G13	typescript-go binary used for executed reference results	/workspace/notes/lint/units/parser/ledger/top-down/tsgo-oracle/build.sh builds /tmp/rr/parsediag (parse diagnostics); /tmp/rr/dumpast prints trees
+bin	present 11516196	/tmp/rr/parsediag	this ledger	parse oracle of typescript-go 89d5d5b (volatile)	/workspace/notes/lint/units/parser/ledger/top-down/tsgo-oracle/build.sh
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/probe.mjs	verification-harness	the one probe script (3,381 inputs, six groups)	/workspace/notes/lint/units/parser/ledger/top-down/corpus/run.sh
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/upstream-verdicts.json	verification-harness	verdicts of the inventory run; reproduces 625/326/114/68/117 and the five other totals	none: the inventory inputs are lost, the totals cannot be reproduced
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/upstream	verification-harness	raw copy of the inventory run	none
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/results	verification-harness	report, records, set A and set B lists per pass	/workspace/notes/lint/units/parser/ledger/top-down/corpus/out
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/inputs/type-forms	verification-harness	one of six input directories	/workspace/notes/lint/units/parser/probes/inputs/01-type-forms.mjs and the merged corpus
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/make_rows.mjs	verification-harness	Bun output against tsc emit for inputs both accept (1,810 same, 149 differ, 18 not reprintable)	none for the numbers; /workspace/notes/lint/units/parser/probes/candidates.mjs builds test rows
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/existing-tests/record-transpiler-calls.js	verification-harness	records every transformSync call of a test file	/workspace/notes/lint/units/parser/ledger/top-down/corpus/record-transpiler-calls.js
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/existing-tests/record-bundler-files.js	verification-harness	records the files of the itBundled cases	static scan of bundleErrors in /workspace/notes/lint/units/parser/ledger/top-down/corpus/pinned.mjs; /workspace/notes/lint/units/parser/probes/existing-tests.mjs for the decorator cases
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/type-grammar-core	type-grammar-core	probe directory of the finding	/workspace/notes/lint/units/parser/ledger/rescued-tmp/gct1a-42866 (spot probes), the merged corpus
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/members-params-args	type-grammar-members-params-args	probe directory of the finding	the merged corpus (families bu/02, bu/03, bu/04, td/02..04)
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/area-expressions	area-expressions	probe directory of the finding	the merged corpus (bu/05, td/05, otg)
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/area-functions-classes	area-functions-classes	probe directory of the finding	the merged corpus (bu/03, bu/06, bu/09, td/06, td/09)
+P1.1	ABSENT	/workspace/notes/lint/units/parser/probes/area-statements-modules	area-statements-modules	probe directory of the finding	the merged corpus (bu/07, bu/08, bu/10, td/07, td/08, td/10)
+P1.1	present 12402	/workspace/notes/lint/units/parser/probes/run.mjs	tsc-oracle-probes (bottom-up)	probe runner over probes/inputs/NN-*.mjs, installed binary only	-
+P1.1	present 341313	/workspace/notes/lint/units/parser/probes/out/raw/01-type-forms.jsonl.gz	tsc-oracle-probes (bottom-up)	results with the installed 367d939d9	-
+P1.1	present 37409	/workspace/notes/lint/units/parser/probes/top-down/runner.mjs	tsc-oracle-probes (top-down)	probe runner with --bun <binary>, causes.mjs names the place in Bun and the production	-
+P1.1	present 1106713	/workspace/notes/lint/units/parser/probes/top-down/results/classes.tsv	tsc-oracle-probes (top-down)	classes with the installed 367d939d9	-
+P1.1	present 4016	/workspace/notes/lint/units/parser/probes/outside-type-grammar/probe.mjs	outside-type-grammar	spot probe, one input per line	-
+P1.1	present	/tmp/gct1a-42866	grammar spot probes (bottom-up)	inputs that existed only under /tmp	/workspace/notes/lint/units/parser/ledger/rescued-tmp/gct1a-42866
+P1.1	present	/tmp/otg_bottomup_7f3k	outside-type-grammar (bottom-up)	inputs that existed only under /tmp	/workspace/notes/lint/units/parser/ledger/rescued-tmp/otg_bottomup_7f3k
+P1.1	present 6022	/workspace/notes/lint/units/parser/ledger/top-down/corpus/run.sh	this ledger	THE TOOL OF P1.1: one corpus (327,745 sources), any binary, tsc, typescript-go, checker classes, pinned tests	-
+P1.1	present 5284	/workspace/notes/lint/units/parser/ledger/bottom-up/run.sh	evidence ledger (bottom-up pass)	a second pipeline with the same stages, built in parallel: its pin classes agree with flips.tsv (101: A1v 13, A1j 1, A2 77, A3 10)	-
+P1.3	ABSENT	/workspace/notes/lint/units/parser/probes/decorator-metadata	decorator-metadata	metadata model with its 130 test rows	/workspace/notes/lint/units/parser/probes/out/metadata.table.tsv (16,149 rows: Bun, tsc with strictNullChecks off, tsc defaults)
+P1.3	ABSENT	/workspace/notes/lint/units/parser/probes/metadata_tags.mjs	verification-harness	reduces a printed tag to a name	/workspace/notes/lint/units/parser/probes/metadata.mjs (normal form of a tag)
+P1.3	present 12580	/workspace/notes/lint/units/parser/probes/metadata.mjs	tsc-oracle-probes (bottom-up)	THE TOOL OF P1.3: table, differences and causes from out/11-metadata.jsonl (run.mjs 11 with the binary under test)	-
+P1.3	present 3118196	/workspace/notes/lint/units/parser/probes/out/metadata.table.tsv	tsc-oracle-probes (bottom-up)	input, form, position, Bun, tsc loose, tsc strict, same	-
+P1.3	present 548466	/workspace/notes/lint/units/parser/probes/out/metadata.diff.tsv	tsc-oracle-probes (bottom-up)	the 1,750 rows where Bun and tsc differ, 18 causes in metadata.summary.txt	-
+P1.3	present 1470417	/workspace/notes/lint/units/parser/probes/top-down/results/metadata.tsv	tsc-oracle-probes (top-down)	5,399 rows with verdict, Bun, tsc, tsc with strictNullChecks off	-
+P1.6	ABSENT	/workspace/notes/lint/units/parser/probes/typescript-grammar.test.template.ts	verification-harness	verified layout of the test file	/workspace/notes/lint/units/parser/probes/out/candidates.typescript-grammar.test.ts with candidates.mjs
+P1.6	present 121828	/workspace/notes/lint/units/parser/probes/out/candidates.typescript-grammar.test.ts	tsc-oracle-probes (bottom-up)	candidate test file generated from the probe results	-
+P1.6	present 45462	/workspace/notes/lint/units/parser/probes/top-down/results/test-candidates.json.gz	tsc-oracle-probes (top-down)	rows that fail on the probed binary with the output they must print; verify-candidates.mjs	-
+P1.7	present 9320	/workspace/notes/lint/units/parser/grammar-diff/harness.mjs	grammar-diff	THE TOOL OF P1.7: 15 configurations of Bun.Transpiler over a corpus, run by the binary under test	-
+P1.7	present 4792	/workspace/notes/lint/units/parser/grammar-diff/diff.mjs	grammar-diff	compares two runs, gives every differing record to a cause (causes.mjs), exit 1 on A>R or unexplained	-
+P1.7	present 26832	/workspace/notes/lint/units/parser/grammar-diff/gen.mjs	grammar-diff	generates the corpus from productions, valid and with one token changed	-
+P1.7	present 992471	/workspace/notes/lint/units/parser/grammar-diff/corpus.small.json	grammar-diff	209,628 sources	-
+P1.7	present 4261908	/workspace/notes/lint/units/parser/measure/base/grammar-diff/base.small.jsonl.gz	base measurements	run of the base build e3566be889 (the left side of every later diff)	rerun harness.mjs with the base binary
+P1.7	present 4269015	/workspace/notes/lint/units/parser/measure/base/grammar-diff/installed-367d939d9.small.jsonl.gz	base measurements	run of the installed binary	-
+P1.7	present 2714486	/workspace/notes/lint/units/parser/grammar-diff/oracle.small.jsonl.gz	grammar-diff	tsc parse diagnostics and metadata of every source	-
+P2	present 2300	/workspace/notes/lint/tools/symsizes.py	COMMON.md	parser symbol sizes by address	-
+P2	present 857	/workspace/notes/lint/tools/cgbench.sh	COMMON.md	THE TOOL OF P2 (with symsizes.py): instruction and branch counts of the benchmark under valgrind	-
+P2	present 1839	/workspace/notes/lint/tools/cgsum.py	COMMON.md	sums a cachegrind file	-
+P2	present 29704	/workspace/tools/valgrind/bin/valgrind	COMMON.md	valgrind for cgbench.sh	sh /workspace/notes/lint/tools/bootstrap.sh
+P2	present 2379	/workspace/notes/lint/units/parser/measure/symdiff.py	base measurements	sizes of bun_js_parser symbols of two binaries by demangled name	-
+P2	present 2197	/workspace/notes/lint/units/parser/measure/grammar-syms.py	base measurements	every text symbol of the type grammar with size and address	-
+P2	present 2357	/workspace/notes/lint/units/parser/measure/tools/cgdiff.py	base measurements	per-symbol difference of two cachegrind files	-
+P2	present 588	/workspace/notes/lint/units/parser/measure/base/symsizes.b.txt	base measurements	base values of the symbol groups	-
+P2	present 3970	/workspace/notes/lint/units/parser/measure/base/grammar-syms.b.txt	base measurements	base values per grammar function	-
+P2	present 6318975	/workspace/notes/lint/units/parser/measure/base/cg-b/b-run1.tsx.cg	base measurements	base cachegrind files (git-ignored)	rerun cgbench.sh with the base profile binary; the .log files beside them are committed
+P2	present 1610	/workspace/notes/lint/units/parser/build-sink-positions/fncmp.py	build-sink-positions	function disassembly comparer (check of sink neutrality without a full build)	-
+P2	ABSENT	/workspace/notes/lint/units/parser/probes/type-nodes	type-nodes	probe directory of the finding	/workspace/notes/lint/units/parser/type-nodes-layout, /workspace/notes/lint/units/parser/build-sink-positions/type-nodes-prototype, /workspace/notes/lint/units/parser/ledger/rescued-tmp/tsnodes
+P2	present	/tmp/tsnodes	type-nodes layout	layout experiments (61 MB, volatile)	/workspace/notes/lint/units/parser/type-nodes-layout and /workspace/notes/lint/units/parser/ledger/rescued-tmp/tsnodes (sources only)
+P3.3	ABSENT	/workspace/notes/lint/units/parser/probes/lexer-comments	lexer-comments-directives	probe directory of the finding	/workspace/notes/lint/units/parser/lexer-lint-hooks/{bottom-up,top-down} (comments, pragmas), /workspace/notes/lint/units/parser/ledger/rescued-tmp/lexhooks
+P3.3	ABSENT	/tmp/lexprobe	lexer-comments-directives	lexer probes	/workspace/notes/lint/units/parser/lexer-lint-hooks
+P3.3	present	/tmp/lexhooks	lexer-lint-hooks	probes that existed only under /tmp	/workspace/notes/lint/units/parser/ledger/rescued-tmp/lexhooks
+P3.1	ABSENT	/workspace/notes/lint/units/parser/probes/lint-entry	lint-entry	probe directory of the finding	/workspace/notes/lint/units/parser/lint-entry-probe, /workspace/notes/lint/units/parser/ledger/rescued-tmp/lint-entry-probe
+P3.1	present	/tmp/lint-entry-probe	lint-entry-probe	probes that existed only under /tmp	/workspace/notes/lint/units/parser/ledger/rescued-tmp/lint-entry-probe
+P3.4	ABSENT	/tmp/sidecar-research	sidecar-model-rewind	work directory of the finding	/workspace/notes/lint/units/parser/sidecar-core, /workspace/notes/lint/units/parser/ledger/rescued-tmp/sidecar-probe
+P3.4	present	/tmp/sidecar-probe	sidecar probes	probes that existed only under /tmp	/workspace/notes/lint/units/parser/ledger/rescued-tmp/sidecar-probe
+P3.4	present	/tmp/sidl	sidecar probes	JSX rule probe	/workspace/notes/lint/units/parser/ledger/rescued-tmp/sidl
+P3.5	ABSENT	/workspace/notes/lint/units/parser/probes/diag-codes	strict-mode-and-diagnostic-codes	711 first-code rows of rejected inputs	/workspace/notes/lint/units/parser/ledger/top-down/corpus/out/first-codes.tsv.gz (188,925 rows)
+P3.5	present 2262384	/workspace/notes/lint/units/parser/ledger/top-down/corpus/out/first-codes.tsv.gz	this ledger	THE TABLE OF P3.5: first diagnostic of typescript-go and of tsc per rejected source, beside the Bun message and offset	-
+P3.5	present 10183	/workspace/notes/lint/units/parser/lexer-lint-hooks/bottom-up/reference-parseErrorAt-sites.tsv	lexer-lint-hooks (bottom-up)	every parseErrorAt site of the reference parser	-
+P3.5	present 3422	/workspace/notes/lint/units/parser/lexer-lint-hooks/bottom-up/codes-probe.mjs	lexer-lint-hooks (bottom-up)	tsc codes of labelled inputs per Bun error site	-
+P3.5	present 311304	/workspace/notes/lint/units/parser/probes/out/strict-grammar.B.tsv	tsc-oracle-probes (bottom-up)	set B with tsc codes (installed binary)	/workspace/notes/lint/units/parser/ledger/top-down/corpus/out/setB.tsv.gz
+boot	ABSENT	/tmp/parser-bootstrap	bootstrap-and-test-seam	work directory of the finding	/workspace/notes/lint/units/parser/measure/base/logs (build, check, clippy, fmt and test logs of the base)
+boot	ABSENT	/workspace/notes/lint/units/parser/tools	G13	tools directory of the unit	/workspace/notes/lint/units/parser/measure/tools, /workspace/notes/lint/units/parser/ledger
+boot	ABSENT	/workspace/notes/lint/units/parser/verify	verification-harness	verification scripts	/workspace/notes/lint/units/parser/ledger/top-down/corpus/run.sh, /workspace/notes/lint/units/parser/grammar-diff

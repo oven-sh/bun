@@ -1,0 +1,38 @@
+file q4.ts bytes=131
+s_local 0
+  b_object 6
+    e_identifier 8 name="k"
+    b_identifier 12 name="v"
+    e_number 16 value=1
+    e_string 19 text="q"
+    b_identifier 24 name="w"
+    e_number 27 value=3
+    b_identifier 30 name="z"
+    e_missing 40
+    b_identifier 36 name="rest"
+  e_identifier 44 name="o"
+  b_array 47
+    b_array 48
+      b_identifier 49 name="a"
+    b_object 53
+      e_string 54 text="b"
+      b_identifier 54 name="b"
+  e_identifier 60 name="p"
+s_expr 63
+  e_call 63
+    e_identifier 63 name="f"
+    e_number 65 value=1
+    e_number 68 value=2
+s_expr 74
+  e_binary 74 op=bin_assign
+    e_identifier 74 name="x"
+    e_object 78
+      e_string 80 text="a"
+      e_identifier 80 name="a"
+s_switch 86
+  e_identifier 94 name="s"
+  e_number 104 value=1
+  s_empty -1
+s_label 111
+  s_block 116
+    s_break 118

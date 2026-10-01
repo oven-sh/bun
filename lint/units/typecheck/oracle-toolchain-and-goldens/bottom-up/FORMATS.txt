@@ -1,0 +1,128 @@
+The three canonical texts of the typecheck oracle. The Go side prints them with `tsgoprobe tree|bind|state`
+(bootstrap.sh); the Rust side prints the same bytes from its own data and a test compares.
+
+================================================================================================================
+1. TREE: "<name>.tsgo.txt"      printer: probe/zzprobe/tree/tree.go      command: tsgoprobe tree [-nojsdoc] <out> <name>=<path>
+================================================================================================================
+Chosen among: this text, its FNV digests (top-down/golden/*.tsv of ts-dump-and-test-importer), the JSON of dump-ast.ts.
+Reason: it is the only one printed from typescript-go's own tree, and it is complete (every node field that is a node,
+a list, a kind, token flags, a string or a bool). The digests are this text hashed; the JSON is TypeScript's tree.
+All positions are UTF-8 byte offsets of the text without a leading byte order mark. Strings are Go's strconv.QuoteToASCII.
+
+  file <path> scriptKind=<n> variant=<n> dts=<bool> textLen=<bytes>
+  externalModuleIndicator <ref>            ref = <nil> | Kind<Name>[pos,end)
+  commonJSModuleIndicator <ref>
+  usesUriStyleNodeCoreModules <n>
+  counts nodes=<n> identifiers=<n> text=<n> reparsedClones=<n>
+  import <ref> <string>                    one per entry of SourceFile.Imports(), in order
+  moduleAugmentation <ref> | ambientModuleName <string>
+  pragma <name> [pos,end) kind=<n> <key>=<string>[pos,end)...     keys sorted
+  referencedFile|typeReference|libReference [pos,end) <string> mode=<n> preserve=<bool>
+  checkJs enabled=<bool> [pos,end)
+  commentDirective [pos,end) kind=<n>
+  diagnostic [pos,end) TS<code> cat=<n> <string>          then "diagnostic.related ..." lines, same shape
+  jsDiagnostic ...
+  root KindSourceFile [pos,end) f=0x<node flags>
+  <2 spaces per level><label> Kind<Name> [pos,end) f=0x<flags>[ parent=<ref>][ SHARED] <Field>=<value>...
+      label: "root", ".<FieldName>:" for a node field, "-" for a list element, ".jsdoc:" for a JSDoc host
+      scalar fields in byte order of the field name: Kind fields as Kind<Name>, TokenFlags as 0x.., strings quoted,
+      a true bool as the bare field name, a false bool not at all
+      parent=... only when the Parent pointer is not the node one level up; SHARED when the node was printed before
+  <indent>.<FieldName>: list [pos,end) n=<count>         then the elements; a modifier list is preceded by
+  <indent>.<FieldName>.flags=0x<modifier flags>
+  children after the scalar line: node and list fields in byte order of the field name (SourceFile: Statements, then
+  EndOfFileToken), then the JSDoc nodes of the host (left out with -nojsdoc)
+  jsdocDiagnostic ... at the very end
+Phase 1 of the port compares with -nojsdoc (the dump of TypeScript 6.0.2 carries no JSDoc trees).
+The stored digests (cases.tsgo-digests.tsv.gz) were made before the ".related" lines existed: see replay.sh.
+
+================================================================================================================
+2. BIND RESULT: "bind-dump v1"  printer: probe/zzprobe/bind/bind.go      command: tsgoprobe bind <out|-> <name>=<path>
+================================================================================================================
+Chosen among: this text, the .symbols baselines of the reference. Reason: the baselines need the checker to print and
+show only declaration names; this text is everything the binder writes, with no checker.
+Numbering, which the port must reproduce exactly:
+  nodes    n<i>: pre-order of ForEachChild from the source file, i from 0
+  symbols  #<k>: order of first visit of this walk, k from 1: the file symbol, then GlobalExports by name, then
+           PatternAmbientModules, then for each node in n order: its declaration symbol, its local symbol, its locals by
+           name; a visited symbol is followed by its Members by name, its Exports by name, its Parent, its ExportSymbol
+           (depth first, a stack, so the list is reversed before pushing)
+  flow     f<k>: order of first visit, k from 1: per node its FlowNode, EndFlowNode, ReturnFlowNode, FallthroughFlowNode;
+           a visited flow node is followed by the target and antecedents of a reduce label, its Antecedent, its Antecedents
+  names    quoted with \xNN for every byte outside 0x20..0x7E; a private name "\xFE#<symbol id>@<name>" is printed
+           with the # number of the class symbol in place of the lazily assigned id: "\xFE#<12>@#x"
+Sections: header "bind-dump v1", "file ..." line, globalExport, patternAmbientModule, bindDiagnostic lines, "== nodes",
+"== symbols", "== flow", "== resolve" (binder.NameResolver with the default hooks on every identifier, three meanings),
+"== reference" (binder.ReferenceResolver on every identifier and element access). A binder panic is "panic <string>".
+
+================================================================================================================
+3. CHECKER STATE: "checker-state v1"   printer: probe/checker/zz_probe_types.go   command: tsgoprobe state ...
+================================================================================================================
+Chosen among the five partial texts of the unit notes, none of which can show what a type layer built:
+  initprobe (MARK/TYPE/FIELD/SYMBOL/GLOBALS after NewChecker: types without members, targets or mappers, symbols cut at 40),
+  k4probe and declprobe (COUNTS, RESOLUTIONDEPTH), checkprobe (six STATE lines), relprobe (SIZES).
+checker-state v1 keeps their line prefixes and keys and adds the structure. `tsgoprobe init|check|checkstate|checkopts|rel`
+still print the five old texts for the stored goldens.
+
+What makes it comparable between two implementations:
+  - types and signatures are listed by id; an id is the creation count (c.TypeCount, c.SignatureCount), so the port
+    must create types and signatures in the reference's order. That order does not change from run to run.
+    One place is known where even the order of TYPES changes from run to run: getWithAlternativeContainers
+    (symbolaccessibility.go:144-147) ranges over every symbol table in scope, a Go map, and asks getTypeOfSymbol of each
+    symbol. The type printer reaches it when it names a member through a variable of the container's type; with the
+    default libs that walk creates the types of about a thousand globals in map order (seen: more.ts of
+    checker-expressions-calls-flow with the 82 default libs, four runs, four dumps, first difference at type 519).
+    A dump taken after that point cannot be a golden; `state.sh check` makes every dump twice and says "unstable".
+    The 43 stored dumps (lib es5) never reach it.
+  - the order in which the reference creates TRANSIENT SYMBOLS does change from run to run (instantiateSymbolTable,
+    checker.go:20859, ranges over a Go map), and so does the order of the lazily assigned symbol ids. So a transient
+    symbol is "Y<n>" where n counts first mentions in the text, top to bottom, left to right; a symbol table is
+    printed, and its symbols named, in byte order of its printed keys; a lazily assigned id inside a name (private
+    members "\xFE#<id>@x", unique symbols "\xFE@x@<id>") is replaced by {<reference of the symbol that owns the id>}.
+  - a bound symbol is <quoted name>@<Kind>@<file>:<pos>:<end>/0x<flags> of its first declaration ("-" without one).
+  - a node is <Kind>@<file>:<pos>:<end>, a type "T<id>", a signature "S<id>", nil is "nil", an empty list "[]".
+  - printing reads fields only. It never resolves, never asks for a lazy symbol id (ast.GetSymbolId assigns one:
+    the value links are read only when the symbol already has an id), and never creates a type.
+
+Lines, in this order:
+  checker-state v1
+  OPTIONS [<key=value>...]
+  FILE <path>                                  one per file of the program, lib files included
+  SINCE type=<n> signature=<n>                 the counts after NewChecker; without -all only later ids are listed
+  DRIVE <step>                                 then one line per call of the step (see below), repeated per step
+  STATE                                        ("STATE after <step>" with -dumpeach)
+  MARK <label>: TypeCount=.. SymbolCount=.. SignatureCount=.. globals=.. mergedSymbols=.. diagnostics=..   (-marks: six marks of NewChecker)
+  COUNTS TypeCount=.. SymbolCount=.. SignatureCount=.. TotalInstantiationCount=.. transientSymbols=.. mergedSymbols=.. globals=..
+  STATE ...                                    the six lines of checkprobe (flow caches, stacks, counters)
+  SIZES identity=.. assignable=.. comparable=.. subtype=.. strictSubtype=.. enum=.. types=..
+  RESOLUTIONSTACK <depth> [<entries>]
+  TYPE <id> flags=0x.. objectFlags=0x.. data=<variant>[ symbol=<sym>][ alias=<sym>[targs]][ baseConstraint=T]<fields of the variant>
+      variant: Intrinsic Literal UniqueESSymbol Object TypeReference Interface Tuple InstantiationExpression Mapped
+               ReverseMapped EvolvingArray Union Intersection TypeParameter Index IndexedAccess TemplateLiteral
+               StringMapping Substitution Conditional
+      structured types, only when ObjectFlagsMembersResolved is set: members={..} props=[..] sigs=[S..] calls=<n> index=[(Tkey:Tvalue ...)]
+      object: target= mapper= inst=[T.. by id]     reference: node= targs=     interface: tparams= outer= this=
+      baseCtor= bases= (basesPartial= while unresolved) dmembers= dcalls= dctors= dindex= (when declared members are resolved)
+      tuple: elements=[<flags>[:<label node>]..] minLength= fixedLength= combinedFlags= readonly=
+      union: types= propertyCache= resolvedProperties= reduced= regular= origin= keyProperty= constituents=<n>
+      literal: value=s"text" | n<number as JS prints it> | b<bigint> | true | false | nil   fresh= regular=
+      mapper: simple(T=>T) array([..]=>[..]) single([..]=>T) deferred([..]) function merged(m,m) composite(m,m) inference(fixing=..)
+  ROOT R<n> node= checkType= extendsType= distributive= inferTypeParameters= outerTypeParameters= inst= alias=      conditional roots, by first mention
+  SIGNATURE <id> flags=0x.. minArgumentCount= resolvedMinArgumentCount= declaration= typeParameters= parameters= thisParameter= returnType= predicate= target= mapper= isolated= composite=
+  LINKS <bound symbol> type= writeType= target= mapper= nameType= containingType= declaredType= aliasDeclaredType= aliasTypeParameters=
+        aliasInstantiations= immediateTarget= aliasTarget= typeOnlyDeclaration= moduleResolvedExports= resolvedExports= resolvedMembers= ...
+        bound symbols in the order of the bind dump walk, file by file; only symbols with a link that holds something
+  FIELD <field of Checker> <T|S|symbol>        (-fields) every field of the checker that is one type, signature or symbol
+  GLOBALS count=<n> transient=<n>              then "GLOBAL <name> <symbol>" by name with -globals
+  GLOBALDIAG | DIAG | SUGGESTION <file>(<pos>,<end>) TS<code> category=<n>[ <text>]   (-diagtext adds the text, CHAIN and RELATED lines)
+  SYMBOL Y<n> name= flags=0x.. checkFlags=0x.. declarations=[..] valueDeclaration= parent= members=<n> exports=<n> <links as above>
+        the transient symbols named above and the ones these name, in the order of first mention
+  SYMBOLS named=<n> unnamed=<n>                unnamed ones were created and are referenced by nothing that is printed
+
+Drive steps (-drive a,b,c runs them in order; each calls entry points of one layer group in source order):
+  lit tuple declared typenodes symtypes signatures constraints bases members lookup apparent proptypes widen keyof rel check
+  (zz_probe_types.go, ProbeDrive, lists the calls of each). A step over "every type" visits the types that exist when it
+  starts, by id, after SINCE. `rel` prints one line per ordered pair of top-level variables of the last file:
+  REL <a>(T) <b>(T) <five bits: identity assignable comparable subtype strictSubtype>, with no type printer involved.
+state/runs.txt names the 41 stored dumps; state/layers-summary.txt and layers-detail.txt say which checker and binder
+functions each one enters, by K3 layer (a dump can be compared once every function it enters is ported).

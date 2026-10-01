@@ -1,0 +1,73 @@
+
+family file: cases / parser rejects / as ESLint (of which only merged duplicates) / as the unit's specified difference / neither
+A lists/no-compare-neg-zero.txt: 95 / 0 / 92 (0) / 3 / 0
+A lists/use-isnan.txt: 234 / 0 / 228 (3) / 6 / 0
+A lists/valid-typeof.txt: 162 / 0 / 156 (0) / 6 / 0
+A lists/no-unsafe-negation.txt: 102 / 0 / 102 (0) / 0 / 0
+B no-duplicate-case.dup-diff.eslint.txt: 25 / 0 / 25 (0) / 0 / 0
+B no-duplicate-case.dup-edge.eslint.txt: 78 / 0 / 78 (0) / 0 / 0
+B no-duplicate-case.dup-eslint-tests.eslint.txt: 29 / 0 / 29 (0) / 0 / 0
+B no-duplicate-case.dup-final-module.eslint.txt: 2 / 0 / 2 (0) / 0 / 0
+B no-duplicate-case.dup-final.eslint.txt: 62 / 0 / 62 (0) / 0 / 0
+B no-self-assign.self-edge.eslint.txt: 126 / 0 / 125 (1) / 0 / 1
+B no-self-assign.self-eslint-tests.eslint.txt: 74 / 0 / 74 (0) / 0 / 0
+B no-self-assign.self-static.eslint.txt: 22 / 0 / 22 (0) / 0 / 0
+C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: 182 / 0 / 181 (0) / 1 / 0
+C rules-expression-equality-bottomup/vectors/vectors-no-self-assign.json: 348 / 0 / 348 (3) / 0 / 0
+D vectors/no-debugger.json: 47 / 0 / 47 (0) / 0 / 0
+D vectors/no-dupe-class-members.json: 209 / 0 / 209 (0) / 0 / 0
+D vectors/no-dupe-keys.json: 343 / 0 / 343 (0) / 0 / 0
+D vectors/no-empty-pattern.json: 130 / 0 / 130 (0) / 0 / 0
+D vectors/no-sparse-arrays.json: 90 / 0 / 90 (0) / 0 / 0
+AS-SPECIFIED A lists/no-compare-neg-zero.txt: "(/* c */ x) === -0"
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    probe:  1:10 Do not use the '===' operator to compare against -0.
+AS-SPECIFIED A lists/no-compare-neg-zero.txt: "(\n x) === -0"
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    probe:  2:2 Do not use the '===' operator to compare against -0.
+AS-SPECIFIED A lists/no-compare-neg-zero.txt: "( // c\n x) === -0"
+    eslint: 1:1 Do not use the '===' operator to compare against -0.
+    probe:  2:2 Do not use the '===' operator to compare against -0.
+AS-SPECIFIED A lists/use-isnan.txt: "x === NaN; function g(NaN) {}"
+    eslint: 1:1 Use the isNaN function to compare with NaN.
+    probe:  (none)
+AS-SPECIFIED A lists/use-isnan.txt: "function g(Number) {} x === Number.NaN"
+    eslint: 1:23 Use the isNaN function to compare with NaN.
+    probe:  (none)
+AS-SPECIFIED A lists/use-isnan.txt: "function g(NaN) {} switch (NaN) { case NaN: }"
+    eslint: 1:20 'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch. | 1:35 'case NaN' can never match. Use Number.isNaN before the switch.
+    probe:  (none)
+AS-SPECIFIED A lists/use-isnan.txt: "(function NaN() {}); x == NaN"
+    eslint: 1:22 Use the isNaN function to compare with NaN.
+    probe:  (none)
+AS-SPECIFIED A lists/use-isnan.txt: "(class NaN {}); x == NaN"
+    eslint: 1:17 Use the isNaN function to compare with NaN.
+    probe:  (none)
+AS-SPECIFIED A lists/use-isnan.txt: "function f(a = x === NaN) { var NaN; }"
+    eslint: 1:16 Use the isNaN function to compare with NaN.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "function f(undefined) {} typeof x === undefined"
+    eslint: 1:39 Invalid typeof comparison value.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "{ let undefined = 1; } typeof x === undefined"
+    eslint: 1:37 Invalid typeof comparison value.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "function f() { var undefined; } typeof x === undefined"
+    eslint: 1:46 Invalid typeof comparison value.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "try {} catch (undefined) {} typeof x === undefined"
+    eslint: 1:42 Invalid typeof comparison value.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "(function undefined() {}); typeof x === undefined"
+    eslint: 1:41 Invalid typeof comparison value.
+    probe:  (none)
+AS-SPECIFIED A lists/valid-typeof.txt: "function f(a = typeof x === undefined) { var undefined; }"
+    eslint: 1:29 Invalid typeof comparison value.
+    probe:  (none)
+MISMATCH B no-self-assign.self-edge.eslint.txt: "a.b = ( /* c */ a).b"
+    eslint: 1:7 '(/*c*/a).b' is assigned to itself.
+    spec:   -
+--
+AS-SPECIFIED C rules-expression-equality-bottomup/vectors/vectors-no-duplicate-case.json: "switch (x) { case <a/>: break; case <a />: break; }"
+    eslint: 1:32 Duplicate case label.
+    probe:  (none)

@@ -1,0 +1,48 @@
+// whole
+"any" "AnyKeyword[0,3)" 
+"string[]" "ArrayType[0,8) StringKeyword[0,6)" 
+"A.B.C" "TypeReference[0,5)" 
+"A<B, C>" "TypeReference[0,7)<2,6> TypeReference[2,3) TypeReference[5,6)" 
+"A<B<C>>" "TypeReference[0,7)<2,6> TypeReference[2,6)<4,5> TypeReference[4,5)" 
+"A<B<C<D>>>" "TypeReference[0,10)<2,9> TypeReference[2,9)<4,8> TypeReference[4,8)<6,7> TypeReference[6,7)" 
+"A | B & C" "UnionType[0,9) TypeReference[0,1) IntersectionType[4,9) TypeReference[4,5) TypeReference[8,9)" 
+"| A | B" "UnionType[0,7) TypeReference[2,3) TypeReference[6,7)" 
+"A | B extends C ? D : E" "ConditionalType[0,23) UnionType[0,5) TypeReference[0,1) TypeReference[4,5) TypeReference[14,15) TypeReference[18,19) TypeReference[22,23)" 
+"T extends (infer U)[] ? U : never" "ConditionalType[0,33) TypeReference[0,1) ArrayType[10,21) ParenthesizedType[10,19) InferType[11,18) TypeReference[24,25) NeverKeyword[28,33)" 
+"keyof A[]" "TypeOperator[0,9) ArrayType[6,9) TypeReference[6,7)" 
+"readonly string[]" "TypeOperator[0,17) ArrayType[9,17) StringKeyword[9,15)" 
+"unique symbol" "TypeOperator[0,13) SymbolKeyword[7,13)" 
+"typeof a.b<C>" "TypeQuery[0,13)<11,12> TypeReference[11,12)" 
+"A[\"k\"][number]" "IndexedAccessType[0,14) IndexedAccessType[0,6) TypeReference[0,1) LiteralType[2,5) NumberKeyword[7,13)" 
+"[a: A, b?: B, ...c: C[]]" "TupleType[0,24) NamedTupleMember[1,5) TypeReference[4,5) NamedTupleMember[7,12) TypeReference[11,12) NamedTupleMember[14,23) ArrayType[20,23) TypeReference[20,21)" 
+"[A?, ...B[]]" "TupleType[0,12) OptionalType[1,3) TypeReference[1,2) RestType[5,11) ArrayType[8,11) TypeReference[8,9)" 
+"(a: A, b?: B) => C" "FunctionType[0,18) TypeReference[4,5) TypeReference[11,12) TypeReference[17,18)" 
+"<T extends A<B>>(a: T) => void" "FunctionType[0,30){1,15} TypeReference[11,15)<13,14> TypeReference[13,14) TypeReference[20,21) VoidKeyword[26,30)" 
+"new () => A" "ConstructorType[0,11) TypeReference[10,11)" 
+"abstract new <T>() => A" "ConstructorType[0,23){14,15} TypeReference[22,23)" 
+"{ a: A; b?: B; (c: C): D; new (e: E): F; [k: string]: G; m<T>(x: T): void }" "TypeLiteral[0,75) TypeReference[5,6) TypeReference[12,13) TypeReference[19,20) TypeReference[23,24) TypeReference[34,35) TypeReference[38,39) StringKeyword[45,51) TypeReference[54,55) TypeReference[65,66) VoidKeyword[69,73)" 
+"{ readonly [K in keyof T]?: T[K] }" "MappedType[0,34) TypeOperator[17,24) TypeReference[23,24) IndexedAccessType[28,32) TypeReference[28,29) TypeReference[30,31)" 
+"{ [K in T as U]: V }" "MappedType[0,20) TypeReference[8,9) TypeReference[13,14) TypeReference[17,18)" 
+"`a${B}c${D}`" "TemplateLiteralType[0,12) TypeReference[4,5) TypeReference[9,10)" 
+"import(\"m\").A<B>" "ImportType[0,16)<14,15> LiteralType[7,10) TypeReference[14,15)" 
+"typeof import(\"m\")" "ImportType[0,18) LiteralType[14,17)" 
+"(A)" "ParenthesizedType[0,3) TypeReference[1,2)" 
+"\"s\" | 1 | -1 | 1n | true | null | undefined | void | this" "UnionType[0,57) LiteralType[0,3) LiteralType[6,7) LiteralType[10,12) LiteralType[15,17) LiteralType[20,24) LiteralType[27,31) UndefinedKeyword[34,43) VoidKeyword[46,50) ThisType[53,57)" 
+// before =
+"A<B>= 1" "TypeReference[0,4)<2,3> TypeReference[2,3)" end 4
+"A<B<C>>= 1" "TypeReference[0,7)<2,6> TypeReference[2,6)<4,5> TypeReference[4,5)" end 7
+"A<B<C<D>>>= 1" "TypeReference[0,10)<2,9> TypeReference[2,9)<4,8> TypeReference[4,8)<6,7> TypeReference[6,7)" end 10
+"A<B>[]= 1" "ArrayType[0,6) TypeReference[0,4)<2,3> TypeReference[2,3)" end 6
+// return types
+"x is T" "TypePredicate[0,6) TypeReference[5,6)" end 6
+"asserts x" "TypePredicate[0,9)" end 9
+"asserts x is T" "TypePredicate[0,14) TypeReference[13,14)" end 14
+"this is T" "TypePredicate[0,9) ThisType[0,4) TypeReference[8,9)" end 9
+"A<B>" "TypeReference[0,4)<2,3> TypeReference[2,3)" end 4
+"asserts this is T" "TypePredicate[0,17) ThisType[8,12) TypeReference[16,17)" end 17
+// type parameters
+"<T>" "{1,2} T[1,2)" close_end 3
+"<T, U>" "{1,5} T[1,2) U[4,5)" close_end 6
+"<T extends A<B>>" "{1,15} T[1,15)" close_end 16
+"<T = A<B<C>>>" "{1,12} T[1,12)" close_end 13
+"<in out T, const U extends V = W,>" "{1,33} T[1,9) U[11,32)" close_end 34

@@ -1,0 +1,44 @@
+file /type-parameter-default.ts scriptKind=3 variant=0 dts=false textLen=91
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=28 identifiers=9 text=9 reparsedClones=0
+root KindSourceFile [0,91) f=0x0
+  .Statements: list [0,90) n=2
+    - KindTypeAliasDeclaration [0,51) f=0x0
+      .Type: KindTupleType [43,50) f=0x0
+        .Elements: list [45,49) n=2
+          - KindTypeReference [45,46) f=0x0
+            .TypeName: KindIdentifier [45,46) f=0x0 Text="T"
+          - KindTypeReference [47,49) f=0x0
+            .TypeName: KindIdentifier [47,49) f=0x0 Text="U"
+      .TypeParameters: list [7,40) n=2
+        - KindTypeParameter [7,17) f=0x0
+          .DefaultType: KindStringKeyword [10,17) f=0x0
+          .name: KindIdentifier [7,8) f=0x0 Text="T"
+        - KindTypeParameter [18,40) f=0x0
+          .Constraint: KindObjectKeyword [28,35) f=0x0
+          .DefaultType: KindTypeLiteral [37,40) f=0x0
+            .Members: list [39,39) n=0
+          .name: KindIdentifier [18,20) f=0x0 Text="U"
+      .name: KindIdentifier [4,6) f=0x0 Text="A"
+    - KindFunctionDeclaration [51,90) f=0x0
+      .Body: KindBlock [87,90) f=0x0
+        .Statements: list [89,89) n=0
+      .Parameters: list [86,86) n=0
+      .TypeParameters: list [63,84) n=2
+        - KindTypeParameter [63,70) f=0x0
+          .modifiers.flags=0x1000
+          .modifiers: list [63,68) n=1
+            - KindConstKeyword [63,68) f=0x0
+          .name: KindIdentifier [68,70) f=0x0 Text="T"
+        - KindTypeParameter [71,84) f=0x0
+          .DefaultType: KindTypeReference [82,84) f=0x0
+            .TypeName: KindIdentifier [82,84) f=0x0 Text="T"
+          .modifiers.flags=0x6000
+          .modifiers: list [71,78) n=2
+            - KindInKeyword [71,74) f=0x0
+            - KindOutKeyword [74,78) f=0x0
+          .name: KindIdentifier [78,80) f=0x0 Text="U"
+      .name: KindIdentifier [60,62) f=0x0 Text="f"
+  .EndOfFileToken: KindEndOfFile [90,91) f=0x0

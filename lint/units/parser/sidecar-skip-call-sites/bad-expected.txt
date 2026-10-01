@@ -1,0 +1,61 @@
+"let x: ;"                                           TS1110@7+1 "Type expected."
+"let x: = 1"                                         TS1110@7+1 "Type expected."
+"function f(a: ) {}"                                 TS1110@14+1 "Type expected."
+"function f(this: ) {}"                              TS1110@17+1 "Type expected."
+"function f(): {}"                                   (no parse diagnostic)
+"function f(): ;"                                    TS1110@14+1 "Type expected."
+"let f = (a): => a"                                  TS1005@11+1 "',' expected." | TS1005@13+2 "';' expected."
+"let f = (a: ) => a"                                 TS1110@12+1 "Type expected."
+"try {} catch (e: ) {}"                              TS1110@17+1 "Type expected."
+"class C { a: ; }"                                   TS1110@13+1 "Type expected."
+"class C implements A[] {}"                          TS1011@21+0 "An element access expression should take an argument."
+"class C implements {} {}"                           (no parse diagnostic)
+"class C implements typeof x {}"                     TS1109@19+6 "Expression expected." | TS1005@28+1 "';' expected."
+"class C implements A | B {}"                        TS1005@21+1 "',' expected." | TS1005@25+1 "';' expected."
+"class C implements (A) {}"                          (no parse diagnostic)
+"class C implements a.b() {}"                        (no parse diagnostic)
+"class C implements {}"                              (no parse diagnostic)
+"class C extends B<> {}"                             (no parse diagnostic)
+"class C extends B<T> <U> {}"                        TS1005@21+1 "',' expected."
+"class C extends A, B {}"                            (no parse diagnostic)
+"class C extends A extends B {}"                     (no parse diagnostic)
+"class C implements A implements B {}"               (no parse diagnostic)
+"f<>()"                                              (no parse diagnostic)
+"new F<>()"                                          (no parse diagnostic)
+"function f<>() {}"                                  (no parse diagnostic)
+"class C<> {}"                                       (no parse diagnostic)
+"const v = <>x;"                                     TS1110@11+1 "Type expected."
+"const v = <A, B>(x);"                               TS1005@12+1 "'>' expected." | TS1005@15+1 "',' expected."
+"const v = <in T>(x);"                               TS1005@14+1 "'>' expected."
+"const v = <A, B>(x) => x;"                          (no parse diagnostic)
+"new a?.<T>()"                                       TS1209@5+2 "Invalid optional chain from new expression. Did you mean to call 'a()'?"
+"a?.<T>"                                             TS1005@6+0 "'(' expected."
+"a?.<T>.b"                                           TS1005@6+1 "'(' expected." | TS1005@8+0 "')' expected."
+"f<T>.b"                                             TS1477@1+3 "An instantiation expression cannot be followed by a property access."
+"f<T"                                                (no parse diagnostic)
+"class C { [k: string, j: number]: any }"            (no parse diagnostic)
+"class C { [k: string]; }"                           (no parse diagnostic)
+"class C { [k?: string]: any }"                      (no parse diagnostic)
+"class C { [...k: string]: any }"                    (no parse diagnostic)
+"class C { m<T> }"                                   TS1005@15+1 "'(' expected."
+"const o = { a<T>: 1 }"                              TS1005@16+1 "'(' expected."
+"@d<T> class C {}"                                   TS1146@2+0 "Declaration expected."
+"@d<T>\nclass C {}"                                  (no parse diagnostic)
+"const f = (this: T) => 1"                           (no parse diagnostic)
+"function f(a, this: T) {}"                          (no parse diagnostic)
+"const f = (a = 1: T) => a"                          TS1005@16+1 "',' expected."
+"const f = ((a)): T => a"                            TS1005@15+1 "',' expected." | TS1005@19+2 "';' expected."
+"const f = (x as any) => 1"                          TS1005@21+2 "';' expected."
+"const f = (a?) => 1"                                (no parse diagnostic)
+"const r = (a: T)"                                   TS1005@16+0 "'=>' expected."
+"const r = (a?)"                                     TS1005@14+0 "'=>' expected."
+"const e = <Foo<> />;"                               (no parse diagnostic)
+"const e = <Foo<T />;"                               TS1005@17+1 "'>' expected."
+"function f(a?: T = 1) {}"                           (no parse diagnostic)
+"let x!;"                                            (no parse diagnostic)
+"let [a]!: T;"                                       TS1005@7+1 "',' expected." | TS1109@8+1 "Expression expected."
+"async<T>(a, b) => a"                                (no parse diagnostic)
+"const v = async<A.B>(x)"                            (no parse diagnostic)
+"type A<in T>= T"                                    (no parse diagnostic)
+"function f<in T>() {}"                              (no parse diagnostic)
+"function f(...a?: T) {}"                            (no parse diagnostic)

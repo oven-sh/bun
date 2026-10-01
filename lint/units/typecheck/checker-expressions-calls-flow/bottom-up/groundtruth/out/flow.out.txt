@@ -1,0 +1,60 @@
+AFTER NewChecker
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=85 SymbolCount=123 SignatureCount=4
+flow.ts(10,9): error TS2322: Type '{ kind: "tri"; b: number; h: number; }' is not assignable to type '{ kind: "circle"; }'. [len=4]
+  CHAIN TS2326: Types of property 'kind' are incompatible.
+    CHAIN TS2322: Type '"tri"' is not assignable to type '"circle"'.
+flow.ts(14,38): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+flow.ts(15,37): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+flow.ts(16,16): error TS2322: Type 'undefined' is not assignable to type 'string'. [len=1]
+flow.ts(17,28): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+flow.ts(19,9): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+flow.ts(21,9): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+flow.ts(23,9): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+flow.ts(24,60): error TS2322: Type 'string | number' is not assignable to type 'boolean'. [len=1]
+  CHAIN TS2322: Type 'string' is not assignable to type 'boolean'.
+flow.ts(27,9): error TS2322: Type '(string | number)[]' is not assignable to type 'boolean[]'. [len=1]
+  CHAIN TS2322: Type 'string | number' is not assignable to type 'boolean'.
+    CHAIN TS2322: Type 'string' is not assignable to type 'boolean'.
+flow.ts(30,9): error TS2322: Type 'number' is not assignable to type 'string'. [len=1]
+flow.ts(34,24): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+flow.ts(36,26): error TS2322: Type '{ a?: { b: string; } | undefined; }' is not assignable to type 'string'. [len=1]
+flow.ts(38,9): error TS2322: Type '{ b: string; } | undefined' is not assignable to type 'string'. [len=1]
+  CHAIN TS2322: Type 'undefined' is not assignable to type 'string'.
+flow.ts(42,31): error TS2322: Type 'A' is not assignable to type 'string'. [len=1]
+flow.ts(42,61): error TS2322: Type 'B' is not assignable to type 'number'. [len=1]
+flow.ts(43,25): error TS2322: Type 'A' is not assignable to type 'string'. [len=1]
+flow.ts(47,26): error TS2322: Type 'string' is not assignable to type 'number'. [len=1]
+flow.ts(50,22): error TS2454: Variable 'unassigned' is used before being assigned. [len=10]
+SUGGESTION flow.ts(10,9): suggestion TS6133: 'rest' is declared but its value is never read. [len=4]
+SUGGESTION flow.ts(14,38): suggestion TS6133: 'a' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(15,37): suggestion TS6133: 'b' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(16,16): suggestion TS6133: 'c' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(17,28): suggestion TS6133: 'd' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(19,9): suggestion TS6133: 'e' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(21,9): suggestion TS6133: 'g' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(23,9): suggestion TS6133: 'h' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(24,60): suggestion TS6133: 'i' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(27,9): suggestion TS6133: 'j' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(30,9): suggestion TS6133: 'k' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(31,20): suggestion TS7027: Unreachable code detected. [len=15]
+SUGGESTION flow.ts(31,26): suggestion TS6133: 'dead' is declared but its value is never read. [len=4]
+SUGGESTION flow.ts(34,24): suggestion TS6133: 'l' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(36,26): suggestion TS6133: 'm' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(38,9): suggestion TS6133: 'n' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(42,31): suggestion TS6133: 'p' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(42,61): suggestion TS6133: 'q' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(43,25): suggestion TS6133: 'r' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(45,24): suggestion TS6133: 'r' is declared but its value is never read. [len=1]
+SUGGESTION flow.ts(47,26): suggestion TS6133: 'w' is declared but its value is never read. [len=1]
+AFTER check
+STATE flowInvocationCount=77 flowAnalysisDisabled=false
+STATE flowLoopCache=2 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=1 freeFlowStates=2
+STATE flowNodeReachable=30 flowNodePostSuper=0 lastFlowNodeSet=true lastFlowNodeReachable=true
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=2 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=223 SymbolCount=353 SignatureCount=17

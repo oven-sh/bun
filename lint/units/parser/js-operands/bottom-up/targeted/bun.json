@@ -1,0 +1,5408 @@
+{
+ "revision": "e3566be889995ffff8b08823b9233617f979c889",
+ "version": "1.4.3",
+ "rows": {
+  "g01": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g02": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   }
+  },
+  "g03": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a;\nc;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a;\nc;\n"
+   }
+  },
+  "g04": {
+   "js": {
+    "ok": true,
+    "out": "f(a < b, c > d);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "f(a < b, c > d);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "f(a(d));\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "f(a(d));\n"
+   }
+  },
+  "g05": {
+   "js": {
+    "ok": true,
+    "out": "a < b > \"t\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > \"t\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a`t`;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a`t`;\n"
+   }
+  },
+  "g06": {
+   "js": {
+    "ok": true,
+    "out": "new a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "new a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "new a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "new a(c);\n"
+   }
+  },
+  "g07": {
+   "js": {
+    "ok": true,
+    "out": "a < b < c >> d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b < c >> d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g08": {
+   "js": {
+    "ok": true,
+    "out": "a < b > /re/.test(c);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > /re/.test(c);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:13 Unexpected ."
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:13 Unexpected ."
+    ]
+   }
+  },
+  "g09": {
+   "js": {
+    "ok": true,
+    "out": "async < T > x;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "async < T > x;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "async(x);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "async(x);\n"
+   }
+  },
+  "g10": {
+   "js": {
+    "ok": true,
+    "out": "a < b >> c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b >> c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b >> c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b >> c;\n"
+   }
+  },
+  "g11": {
+   "js": {
+    "ok": true,
+    "out": "a << b > c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a << b > c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g12": {
+   "js": {
+    "ok": true,
+    "out": "a?.b < c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a?.b < c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a?.b(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a?.b(d);\n"
+   }
+  },
+  "g14": {
+   "js": {
+    "ok": true,
+    "out": "a < b >= c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b >= c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b >= c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b >= c;\n"
+   }
+  },
+  "g15": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:1 Invalid assignment target"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:1 Invalid assignment target"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:1 Invalid assignment target"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:1 Invalid assignment target"
+    ]
+   }
+  },
+  "g16": {
+   "js": {
+    "ok": true,
+    "out": "if (a < b && c > d)\n  ;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "if (a < b && c > d)\n  ;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "if (a < b && c > d)\n  ;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "if (a < b && c > d)\n  ;\n"
+   }
+  },
+  "g17": {
+   "js": {
+    "ok": true,
+    "out": "a < b, c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b, c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g19": {
+   "js": {
+    "ok": true,
+    "out": "a < b > -c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > -c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b > -c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b > -c;\n"
+   }
+  },
+  "g21": {
+   "js": {
+    "ok": true,
+    "out": "a < b > [c];\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > [c];\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b > [c];\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b > [c];\n"
+   }
+  },
+  "g22": {
+   "js": {
+    "ok": true,
+    "out": "x = a < b > {};\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = a < b > {};\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = a < b > {};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = a < b > {};\n"
+   }
+  },
+  "g24": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:5 Unexpected ;"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:5 Unexpected ;"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "a;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a;\n"
+   }
+  },
+  "g27": {
+   "js": {
+    "ok": true,
+    "out": "a < typeof b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < typeof b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g29": {
+   "js": {
+    "ok": true,
+    "out": "a < exports > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < exports > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g30": {
+   "js": {
+    "ok": true,
+    "out": "a < \"s\" > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < \"s\" > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g31": {
+   "js": {
+    "ok": true,
+    "out": "a < 1 > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < 1 > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g32": {
+   "js": {
+    "ok": true,
+    "out": "a < -1 > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < -1 > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g33": {
+   "js": {
+    "ok": true,
+    "out": "a < [b] > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < [b] > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g33b": {
+   "js": {
+    "ok": true,
+    "out": "a < { b } > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < { b } > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g34": {
+   "js": {
+    "ok": true,
+    "out": "a < b | c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b | c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g36": {
+   "js": {
+    "ok": true,
+    "out": "a < b.c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b.c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g37": {
+   "js": {
+    "ok": true,
+    "out": "a < b[c] > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b[c] > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(d);\n"
+   }
+  },
+  "g39": {
+   "js": {
+    "ok": true,
+    "out": "a < !b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < !b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < !b > c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < !b > c;\n"
+   }
+  },
+  "g42": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g43": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c > d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c > d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c) > d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c) > d;\n"
+   }
+  },
+  "g44": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:4 Expected identifier but found \"<\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:4 Expected identifier but found \"<\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "a?.(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a?.(c);\n"
+   }
+  },
+  "g45": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \"<\"",
+     "1:20 Expected \";\" but found \">\"",
+     "1:22 Expected identifier but found \"{\"",
+     "1:23 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \"<\"",
+     "1:20 Expected \";\" but found \">\"",
+     "1:22 Expected identifier but found \"{\"",
+     "1:23 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   }
+  },
+  "g46": {
+   "js": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b > c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a(c);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a(c);\n"
+   }
+  },
+  "g47": {
+   "js": {
+    "ok": true,
+    "out": "for (i = 0;i < n > 0; i++)\n  ;\nvar i;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "for (i = 0;i < n > 0; i++)\n  ;\nvar i;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "for (i = 0;i(0); i++)\n  ;\nvar i;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "for (i = 0;i(0); i++)\n  ;\nvar i;\n"
+   }
+  },
+  "g48": {
+   "js": {
+    "ok": true,
+    "out": "x = a < b > c ? d : e;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = a < b > c ? d : e;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = a(c) ? d : e;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = a(c) ? d : e;\n"
+   }
+  },
+  "g49": {
+   "js": {
+    "ok": true,
+    "out": "a < b >>> c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a < b >>> c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a < b >>> c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a < b >>> c;\n"
+   }
+  },
+  "g50": {
+   "js": {
+    "ok": false,
+    "err": [
+     "2:1 Unexpected ."
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "2:1 Unexpected ."
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "a.c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a.c;\n"
+   }
+  },
+  "c01": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  public;\n  x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  public;\n  x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   }
+  },
+  "c02": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  *gen() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  *gen() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  *gen() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  *gen() {}\n}\n"
+   }
+  },
+  "c03": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  x;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  x;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  x;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  x;\n}\n"
+   }
+  },
+  "c04": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  abstract;\n  x;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  abstract;\n  x;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  abstract;\n  x;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  abstract;\n  x;\n}\n"
+   }
+  },
+  "c05": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  override;\n  [\"x\"]() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  override;\n  [\"x\"]() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  [\"x\"]() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  [\"x\"]() {}\n}\n"
+   }
+  },
+  "c06": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  private;\n  #x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  private;\n  #x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  #x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  #x = 1;\n}\n"
+   }
+  },
+  "c07": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  protected;\n  0 = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  protected;\n  0 = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  0 = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  0 = 1;\n}\n"
+   }
+  },
+  "c08": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   }
+  },
+  "c09": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  accessor;\n  x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  accessor;\n  x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  accessor;\n  x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  accessor;\n  x = 1;\n}\n"
+   }
+  },
+  "c10": {
+   "js": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+   }
+  },
+  "c11": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  public = 1;\n  readonly;\n  override() {}\n  declare = 2;\n  abstract() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  public = 1;\n  readonly;\n  override() {}\n  declare = 2;\n  abstract() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  public = 1;\n  readonly;\n  override() {}\n  declare = 2;\n  abstract() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  public = 1;\n  readonly;\n  override() {}\n  declare = 2;\n  abstract() {}\n}\n"
+   }
+  },
+  "c12": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   }
+  },
+  "c13": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  async;\n  x() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  async;\n  x() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  async;\n  x() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  async;\n  x() {}\n}\n"
+   }
+  },
+  "c15": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  public;\n  static x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  public;\n  static x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   }
+  },
+  "c16": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  x;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  x;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  x;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  readonly;\n  x;\n}\n"
+   }
+  },
+  "c17": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  static;\n  accessor;\n  abstract;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  static;\n  accessor;\n  abstract;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  static;\n  accessor;\n  abstract;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  declare;\n  static;\n  accessor;\n  abstract;\n}\n"
+   }
+  },
+  "c19": {
+   "js": {
+    "ok": true,
+    "out": "(class implements {\n});\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "(class implements {\n});\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \"{\" but found \")\"",
+     "1:21 Expected \"}\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \"{\" but found \")\"",
+     "1:21 Expected \"}\" but found end of file"
+    ]
+   }
+  },
+  "c20": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  public;\n  x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  public;\n  x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   }
+  },
+  "c21": {
+   "js": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass A {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+   }
+  },
+  "c22": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \";\" but found \"x\"",
+     "1:20 Expected identifier but found \"=\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \";\" but found \"x\"",
+     "1:20 Expected identifier but found \"=\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x = 1;\n}\n"
+   }
+  },
+  "c23": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  private;\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  private;\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n}\n"
+   }
+  },
+  "c24": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  override;\n  static x = 1;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  override;\n  static x = 1;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  static x = 1;\n}\n"
+   }
+  },
+  "c25": {
+   "js": {
+    "ok": true,
+    "out": "x = {\n  public,\n  readonly: 1,\n  get declare() {\n    return 1;\n  },\n  async override() {},\n  static: 2\n};\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = {\n  public,\n  readonly: 1,\n  get declare() {\n    return 1;\n  },\n  async override() {},\n  static: 2\n};\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = {\n  public,\n  readonly: 1,\n  get declare() {\n    return 1;\n  },\n  async override() {},\n  static: 2\n};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = {\n  public,\n  readonly: 1,\n  get declare() {\n    return 1;\n  },\n  async override() {},\n  static: 2\n};\n"
+   }
+  },
+  "s01": {
+   "js": {
+    "ok": true,
+    "out": "type;\nFoo = 1;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "type;\nFoo = 1;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "type;\nFoo = 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "type;\nFoo = 1;\n"
+   }
+  },
+  "s03": {
+   "js": {
+    "ok": true,
+    "out": "namespace;\nfoo;\n;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "namespace;\nfoo;\n;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "namespace;\nfoo;\n;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "namespace;\nfoo;\n;\n"
+   }
+  },
+  "s04": {
+   "js": {
+    "ok": true,
+    "out": "module;\nfoo;\n;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "module;\nfoo;\n;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "module;\nfoo;\n;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "module;\nfoo;\n;\n"
+   }
+  },
+  "s05": {
+   "js": {
+    "ok": true,
+    "out": "abstract;\n\nclass A {\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "abstract;\n\nclass A {\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "abstract;\n\nclass A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "abstract;\n\nclass A {\n}\n"
+   }
+  },
+  "s06": {
+   "js": {
+    "ok": true,
+    "out": "declare;\n\nclass A {\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "declare;\n\nclass A {\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "declare;\n\nclass A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "declare;\n\nclass A {\n}\n"
+   }
+  },
+  "s07": {
+   "js": {
+    "ok": true,
+    "out": "interface;\nFoo;\n;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "interface;\nFoo;\n;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "interface;\nFoo;\n;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "interface;\nFoo;\n;\n"
+   }
+  },
+  "s08": {
+   "js": {
+    "ok": true,
+    "out": "global;\n;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "global;\n;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "global;\n;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "global;\n;\n"
+   }
+  },
+  "s09": {
+   "js": {
+    "ok": true,
+    "out": "declare;\nglobal;\n;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "declare;\nglobal;\n;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "declare;\nglobal;\n;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "declare;\nglobal;\n;\n"
+   }
+  },
+  "s10": {
+   "js": {
+    "ok": true,
+    "out": "type = 1;\ntype(1);\ntype.x;\ntype = 2;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "type = 1;\ntype(1);\ntype.x;\ntype = 2;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "type = 1;\ntype(1);\ntype.x;\ntype = 2;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "type = 1;\ntype(1);\ntype.x;\ntype = 2;\n"
+   }
+  },
+  "s11": {
+   "js": {
+    "ok": true,
+    "out": "namespace.x = 1;\nmodule.exports = 1;\ndeclare(x);\nabstract = 2;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "namespace.x = 1;\nmodule.exports = 1;\ndeclare(x);\nabstract = 2;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "namespace.x = 1;\nmodule.exports = 1;\ndeclare(x);\nabstract = 2;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "namespace.x = 1;\nmodule.exports = 1;\ndeclare(x);\nabstract = 2;\n"
+   }
+  },
+  "s12": {
+   "js": {
+    "ok": true,
+    "out": "module;\n\"x\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "module;\n\"x\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "module;\n\"x\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "module;\n\"x\";\n"
+   }
+  },
+  "s13": {
+   "js": {
+    "ok": true,
+    "out": "type:\n  for (;; )\n    break type;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "type:\n  for (;; )\n    break type;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "type:\n  for (;; )\n    break type;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "type:\n  for (;; )\n    break type;\n"
+   }
+  },
+  "s14": {
+   "js": {
+    "ok": true,
+    "out": "declare:\n  x;\nnamespace:\n  y;\nabstract:\n  z;\nmodule:\n  w;\nglobal:\n  u;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "declare:\n  x;\nnamespace:\n  y;\nabstract:\n  z;\nmodule:\n  w;\nglobal:\n  u;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "declare:\n  x;\nnamespace:\n  y;\nabstract:\n  z;\nmodule:\n  w;\nglobal:\n  u;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "declare:\n  x;\nnamespace:\n  y;\nabstract:\n  z;\nmodule:\n  w;\nglobal:\n  u;\n"
+   }
+  },
+  "s18": {
+   "js": {
+    "ok": true,
+    "out": "export default abstract;\n\nclass A {\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "export default abstract;\n\nclass A {\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "export default abstract;\n\nclass A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export default abstract;\n\nclass A {\n}\n"
+   }
+  },
+  "s19": {
+   "js": {
+    "ok": true,
+    "out": "import type from \"x\";\ntype;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import type from \"x\";\ntype;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import type from \"x\";\ntype;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import type from \"x\";\ntype;\n"
+   }
+  },
+  "s20": {
+   "js": {
+    "ok": true,
+    "out": "import type, { a } from \"x\";\nimport typ, * as ns from \"y\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import type, { a } from \"x\";\nimport typ, * as ns from \"y\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import type, { a } from \"x\";\nimport typ, * as ns from \"y\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import type, { a } from \"x\";\nimport typ, * as ns from \"y\";\n"
+   }
+  },
+  "s21": {
+   "js": {
+    "ok": true,
+    "out": "import { type } from \"x\";\nimport { type as t } from \"x\";\nimport { type as as } from \"x\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { type } from \"x\";\nimport { type as t } from \"x\";\nimport { type as as } from \"x\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { type } from \"x\";\nimport { type as t } from \"x\";\nimport { type as as } from \"x\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { type } from \"x\";\nimport { type as t } from \"x\";\nimport { type as as } from \"x\";\n"
+   }
+  },
+  "s22": {
+   "js": {
+    "ok": true,
+    "out": "var type;\n\nexport { type };\nexport { type as t };\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var type;\n\nexport { type };\nexport { type as t };\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var type;\n\nexport { type };\nexport { type as t };\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var type;\n\nexport { type };\nexport { type as t };\n"
+   }
+  },
+  "s24": {
+   "js": {
+    "ok": true,
+    "out": "import { as } from \"x\";\nimport { as as as2 } from \"x\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { as } from \"x\";\nimport { as as as2 } from \"x\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { as } from \"x\";\nimport { as as as2 } from \"x\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { as } from \"x\";\nimport { as as as2 } from \"x\";\n"
+   }
+  },
+  "s25": {
+   "js": {
+    "ok": true,
+    "out": "export * as type from \"x\";\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "export * as type from \"x\";\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "export * as type from \"x\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export * as type from \"x\";\n"
+   }
+  },
+  "s29": {
+   "js": {
+    "ok": true,
+    "out": "var as = 1, satisfies = 2, x, y;\nx;\nas;\ny;\nx;\nsatisfies;\ny;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var as = 1, satisfies = 2, x, y;\nx;\nas;\ny;\nx;\nsatisfies;\ny;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var as = 1, satisfies = 2, x, y;\nx;\nas;\ny;\nx;\nsatisfies;\ny;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var as = 1, satisfies = 2, x, y;\nx;\nas;\ny;\nx;\nsatisfies;\ny;\n"
+   }
+  },
+  "s32": {
+   "js": {
+    "ok": true,
+    "out": "var any, unknown, never, string, number, keyof, infer, is, asserts, readonly, unique, out, override, accessor, satisfies, type, declare, abstract, namespace, module, global;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var any, unknown, never, string, number, keyof, infer, is, asserts, readonly, unique, out, override, accessor, satisfies, type, declare, abstract, namespace, module, global;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var any, unknown, never, string, number, keyof, infer, is, asserts, readonly, unique, out, override, accessor, satisfies, type, declare, abstract, namespace, module, global;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var any, unknown, never, string, number, keyof, infer, is, asserts, readonly, unique, out, override, accessor, satisfies, type, declare, abstract, namespace, module, global;\n"
+   }
+  },
+  "s33": {
+   "js": {
+    "ok": true,
+    "out": "function f(readonly, override, declare, abstract, type, of, async) {}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "function f(readonly, override, declare, abstract, type, of, async) {}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(readonly, override, declare, abstract, type, of, async) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(readonly, override, declare, abstract, type, of, async) {}\n"
+   }
+  },
+  "s34": {
+   "js": {
+    "ok": true,
+    "out": "function f(public, private, protected, static, interface, implements, package) {}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "function f(public, private, protected, static, interface, implements, package) {}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(public, private, protected, static, interface, implements, package) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(public, private, protected, static, interface, implements, package) {}\n"
+   }
+  },
+  "s35": {
+   "js": {
+    "ok": true,
+    "out": "async;\nfunction f() {}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "async;\nfunction f() {}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "async;\nfunction f() {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "async;\nfunction f() {}\n"
+   }
+  },
+  "s36": {
+   "js": {
+    "ok": true,
+    "out": "let async;\nasync;\n(x) => 1;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "let async;\nasync;\n(x) => 1;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "let async;\nasync;\n(x) => 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let async;\nasync;\n(x) => 1;\n"
+   }
+  },
+  "s37": {
+   "js": {
+    "ok": true,
+    "out": "x = async (y) => 1;\nz = async (y) => 1;\nw = async(y);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = async (y) => 1;\nz = async (y) => 1;\nw = async(y);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = async (y) => 1;\nz = async (y) => 1;\nw = async(y);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = async (y) => 1;\nz = async (y) => 1;\nw = async(y);\n"
+   }
+  },
+  "s38": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:30 \"a\" has already been declared"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:30 \"a\" has already been declared"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:30 \"a\" has already been declared"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:30 \"a\" has already been declared"
+    ]
+   }
+  },
+  "s39": {
+   "js": {
+    "ok": true,
+    "out": "try {} catch (e) {} finally {}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "try {} catch (e) {} finally {}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "try {} catch (e) {} finally {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "try {} catch (e) {} finally {}\n"
+   }
+  },
+  "s40": {
+   "js": {
+    "ok": true,
+    "out": "var x = 1;\n\nexport { x as default };\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var x = 1;\n\nexport { x as default };\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var x = 1;\n\nexport { x as default };\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var x = 1;\n\nexport { x as default };\n"
+   }
+  },
+  "s41": {
+   "js": {
+    "ok": true,
+    "out": "interface = 1;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "interface = 1;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "interface = 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "interface = 1;\n"
+   }
+  },
+  "s42": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:6 Expected identifier but found \"=\"",
+     "1:8 Expected \"{\" but found \"1\"",
+     "1:8 Expected identifier but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected identifier but found \"=\"",
+     "1:8 Expected \"{\" but found \"1\"",
+     "1:8 Expected identifier but found end of file"
+    ]
+   }
+  },
+  "s43": {
+   "js": {
+    "ok": true,
+    "out": "declare;\nconst x = 1;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "declare;\nconst x = 1;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "declare;\nconst x = 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "declare;\nconst x = 1;\n"
+   }
+  },
+  "s44": {
+   "js": {
+    "ok": true,
+    "out": "abstract(class {\n});\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "abstract(class {\n});\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "abstract(class {\n});\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "abstract(class {\n});\n"
+   }
+  },
+  "a01": {
+   "js": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   }
+  },
+  "a02": {
+   "js": {
+    "ok": true,
+    "out": "a ? (b, c) : d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? (b, c) : d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? (b, c) : d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? (b, c) : d;\n"
+   }
+  },
+  "a03": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a04": {
+   "js": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \":\" but found \";\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \":\" but found \";\""
+    ]
+   }
+  },
+  "a05": {
+   "js": {
+    "ok": true,
+    "out": "a ? b : (c) => d ? e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d ? e : f;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b : (c) => d ? e : f;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d ? e : f;\n"
+   }
+  },
+  "a06": {
+   "js": {
+    "ok": true,
+    "out": "a ? b = 1 : (c) => d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b = 1 : (c) => d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b = 1 : (c) => d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b = 1 : (c) => d;\n"
+   }
+  },
+  "a07": {
+   "js": {
+    "ok": true,
+    "out": "a ? { b } : (c) => d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? { b } : (c) => d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? { b } : (c) => d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? { b } : (c) => d;\n"
+   }
+  },
+  "a08": {
+   "js": {
+    "ok": true,
+    "out": "a ? async(b) : (c) => d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? async(b) : (c) => d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? async(b) : (c) => d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? async(b) : (c) => d;\n"
+   }
+  },
+  "a10": {
+   "js": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b : (c) => d;\n"
+   }
+  },
+  "a12": {
+   "js": {
+    "ok": true,
+    "out": "a ? (b) => c : d;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? (b) => c : d;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? (b) => c : d;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? (b) => c : d;\n"
+   }
+  },
+  "a14": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:20 Expected \";\" but found \":\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:20 Expected \";\" but found \":\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b : (c) => (d) => f;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b : (c) => (d) => f;\n"
+   }
+  },
+  "a15": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   }
+  },
+  "a16": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   }
+  },
+  "a19": {
+   "js": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    b;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    b;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    b;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    b;\n}\n"
+   }
+  },
+  "a21": {
+   "js": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (b) => c;\n}\n"
+   }
+  },
+  "a23": {
+   "js": {
+    "ok": true,
+    "out": "x = { a: b };\ny = a ? b : c;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = { a: b };\ny = a ? b : c;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = { a: b };\ny = a ? b : c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = { a: b };\ny = a ? b : c;\n"
+   }
+  },
+  "a24": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? c : (d) => e : f;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a25": {
+   "js": {
+    "ok": true,
+    "out": "a ? b : (c) => {\n  d;\n};\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b : (c) => {\n  d;\n};\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b : (c) => {\n  d;\n};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b : (c) => {\n  d;\n};\n"
+   }
+  },
+  "a26": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? c : d : (e) => f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? c : d : (e) => f;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "a ? b ? c : d : (e) => f;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a ? b ? c : d : (e) => f;\n"
+   }
+  },
+  "a27": {
+   "js": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (async) => c;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case a:\n    (async) => c;\n}\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:34 Expected \":\" but found \";\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:34 Expected \":\" but found \";\""
+    ]
+   }
+  },
+  "a28": {
+   "js": {
+    "ok": true,
+    "out": "a ? b ? async(c) : (d) => e : f;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? b ? async(c) : (d) => e : f;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a30": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => ({ y }) : (z) => ({ z });\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => ({ y }) : (z) => ({ z });\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:31 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:31 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a31": {
+   "js": {
+    "ok": true,
+    "out": "a ? (b) => c : (d) => e;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "a ? (b) => c : (d) => e;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a32": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a33": {
+   "js": {
+    "ok": true,
+    "out": "x ? () => y : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? () => y : (z) => z;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a34": {
+   "js": {
+    "ok": true,
+    "out": "f(x ? (y) => y : (z) => z);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "f(x ? (y) => y : (z) => z);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found \")\"",
+     "1:24 Unexpected end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found \")\"",
+     "1:24 Unexpected end of file"
+    ]
+   }
+  },
+  "a35": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => (z) => w : (v) => v;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => (z) => w : (v) => v;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a36": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   }
+  },
+  "a37": {
+   "js": {
+    "ok": true,
+    "out": "x ? async (y) => y : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? async (y) => y : (z) => z;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:27 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:27 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a40": {
+   "js": {
+    "ok": true,
+    "out": "x ? [(y) => y] : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? [(y) => y] : (z) => z;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x ? [(y) => y] : (z) => z;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x ? [(y) => y] : (z) => z;\n"
+   }
+  },
+  "a41": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => (y, w) : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => (y, w) : (z) => z;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a42": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => y ? w : (u) => u : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => y ? w : (u) => u : (z) => z;\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:36 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:36 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "a43": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x ? (y) => y : (z) => z;\n"
+   }
+  },
+  "a44": {
+   "js": {
+    "ok": true,
+    "out": "switch (x) {\n  case ((y) => y):\n    (z) => z;\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "switch (x) {\n  case ((y) => y):\n    (z) => z;\n}\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:35 Expected \":\" but found \";\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:35 Expected \":\" but found \";\""
+    ]
+   }
+  },
+  "a45": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => y : z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => y : z;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x ? (y) => y : z;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x ? (y) => y : z;\n"
+   }
+  },
+  "a46": {
+   "js": {
+    "ok": true,
+    "out": "x ? (y) => {\n  return y;\n} : (z) => z;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x ? (y) => {\n  return y;\n} : (z) => z;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x ? (y) => {\n  return y;\n} : (z) => z;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x ? (y) => {\n  return y;\n} : (z) => z;\n"
+   }
+  },
+  "j01": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \">\" but found \"/\""
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j02": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: !0,\n  b: !0,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:23 Expected \"?\" but found \">\"",
+     "1:26 Unexpected /",
+     "1:28 Unexpected end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \"(\" but found \"y\"",
+     "1:26 Expected JSX element name but found \"/\""
+    ]
+   }
+  },
+  "j03": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: !0,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:21 Unexpected >",
+     "1:24 Unexpected /",
+     "1:26 Unexpected end of file"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: !0,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j04": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: 1,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:21 Unexpected =",
+     "1:25 Expected \":\" but found \">\"",
+     "1:28 Unexpected /"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: 1,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j05": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \">\" but found \",\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "const x = (y) => y;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = (y) => y;\n"
+   }
+  },
+  "j06": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  b: \"1\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \">\" but found \"b\""
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  b: \"1\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j08": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {\n  children: a < b > c\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \"{\" but found \"}\"",
+     "1:26 Unexpected /"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {\n  children: a(c)\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j11": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(T, {\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:16 Syntax Error"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(T, {\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j12": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {\n  a: \"1\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "3:3 Expected \">\" but found \"a\"",
+     "3:22 Unexpected >"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"div\", {\n  a: \"1\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j14": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \">\" but found \"<\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:17 Expected \">\" but found \"b\"",
+     "1:24 Unexpected >"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  b: \"1\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j15": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "f(jsxDEV_7x81h0kn(T, {\n  children: \"() => x\"\n}, void 0, !1, void 0, this));\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:14 Syntax Error"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "f(jsxDEV_7x81h0kn(T, {\n  children: \"() => x\"\n}, void 0, !1, void 0, this));\n"
+   }
+  },
+  "j16": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:14 Syntax Error"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "const x = y;\n"
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:14 Syntax Error"
+    ]
+   }
+  },
+  "j17": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  const: !0,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \">\" but found \"const\""
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  const: !0,\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j18": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"const\", {\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:20 Syntax Error"
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(\"const\", {\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "j19": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": true,
+    "out": "const x = jsxDEV_7x81h0kn(A, {\n  extends: !0,\n  b: \"1\",\n  children: \"y\"\n}, void 0, !1, void 0, this);\n"
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:23 Expected \"?\" but found \"=\"",
+     "1:27 Expected \":\" but found \">\"",
+     "1:30 Unexpected /"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:28 Expected \"(\" but found \"y\"",
+     "1:30 Expected JSX element name but found \"/\""
+    ]
+   }
+  },
+  "x01": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let x = 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let x = 1;\n"
+   }
+  },
+  "x02": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \"?\"",
+     "1:14 Expected \"{\" but found \":\"",
+     "1:22 Expected \";\" but found \")\"",
+     "1:23 Unexpected :"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \"?\"",
+     "1:14 Expected \"{\" but found \":\"",
+     "1:22 Expected \";\" but found \")\"",
+     "1:23 Unexpected :"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(a) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(a) {}\n"
+   }
+  },
+  "x03": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"I\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"I\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x04": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"T\"",
+     "1:8 Unexpected ="
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"T\"",
+     "1:8 Unexpected ="
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x05": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var E;\n((E) => E[E.A = 0] = \"A\")(E ||= {});\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var E;\n((E) => E[E.A = 0] = \"A\")(E ||= {});\n"
+   }
+  },
+  "x06": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"N\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"N\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x06b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \";\" but found \"M\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \";\" but found \"M\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x07": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"const\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"const\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x08": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:2 Unexpected !"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:2 Unexpected !"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x;\n"
+   }
+  },
+  "x08b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \";\" but found \"as\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \";\" but found \"as\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x;\n"
+   }
+  },
+  "x08c": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \";\" but found \"satisfies\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \";\" but found \"satisfies\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x;\n"
+   }
+  },
+  "x09": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \"{\" but found \"implements\"",
+     "1:22 Expected \";\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \"{\" but found \"implements\"",
+     "1:22 Expected \";\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x10": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \"{\" but found \"<\"",
+     "1:10 Expected \";\" but found \">\"",
+     "1:12 Expected identifier but found \"{\"",
+     "1:13 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \"{\" but found \"<\"",
+     "1:10 Expected \";\" but found \">\"",
+     "1:12 Expected identifier but found \"{\"",
+     "1:13 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x10b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \"(\" but found \"<\"",
+     "1:13 Expected \")\" but found \">\"",
+     "1:14 Expected \"{\" but found \"(\"",
+     "1:15 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \"(\" but found \"<\"",
+     "1:13 Expected \")\" but found \">\"",
+     "1:14 Expected \"{\" but found \"(\"",
+     "1:15 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f() {}\n"
+   }
+  },
+  "x10c": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:5 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:7 Expected \">\" but found \",\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = (y) => y;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = (y) => y;\n"
+   }
+  },
+  "x11": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \";\" but found \"x\"",
+     "1:29 Expected \";\" but found \"y\"",
+     "1:30 Expected identifier but found \"(\"",
+     "1:33 Expected \";\" but found \"{\"",
+     "1:46 Expected \";\" but found \"z\"",
+     "1:58 Expected \";\" but found \"u\"",
+     "1:62 Expected \"=>\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \";\" but found \"x\"",
+     "1:29 Expected \";\" but found \"y\"",
+     "1:30 Expected identifier but found \"(\"",
+     "1:33 Expected \";\" but found \"{\"",
+     "1:46 Expected \";\" but found \"z\"",
+     "1:58 Expected \";\" but found \"u\"",
+     "1:62 Expected \"=>\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x;\n  y() {}\n  z;\n  u() {}\n  static s;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x;\n  y() {}\n  z;\n  u() {}\n  static s;\n}\n"
+   }
+  },
+  "x11b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:20 Expected \";\" but found \"w\"",
+     "1:31 Expected \";\" but found \"v\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:20 Expected \";\" but found \"w\"",
+     "1:31 Expected \";\" but found \"v\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x12": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \")\" but found \"x\"",
+     "1:31 Expected \"{\" but found \")\"",
+     "1:36 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:30 Expected \")\" but found \"x\"",
+     "1:31 Expected \"{\" but found \")\"",
+     "1:36 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}\n"
+   }
+  },
+  "x13": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"from\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"from\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x13b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected type"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected type"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x13c": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \"}\" but found \"A\"",
+     "1:17 Expected \"from\" but found \"}\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \"}\" but found \"A\"",
+     "1:17 Expected \"from\" but found \"}\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x13d": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \"}\" but found \"A\"",
+     "1:24 Unexpected }"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:22 Expected \"}\" but found \"A\"",
+     "1:24 Unexpected }"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var A;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var A;\n"
+   }
+  },
+  "x14": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \"from\" but found \"=\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \"from\" but found \"=\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "const x = require(\"y\");\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = require(\"y\");\n"
+   }
+  },
+  "x14b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected ="
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected ="
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "module.exports = x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "module.exports = x;\n"
+   }
+  },
+  "x14c": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected as"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected as"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x15": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"{\" but found \";\"",
+     "1:29 Unexpected end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"{\" but found \";\"",
+     "1:29 Unexpected end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f() {}\n"
+   }
+  },
+  "x16": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \"{\" but found \";\"",
+     "1:20 Expected \";\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \"{\" but found \";\"",
+     "1:20 Expected \";\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  m() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  m() {}\n}\n"
+   }
+  },
+  "x18": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \"<\"",
+     "1:20 Expected \";\" but found \">\"",
+     "1:22 Expected identifier but found \"{\"",
+     "1:23 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \"<\"",
+     "1:20 Expected \";\" but found \">\"",
+     "1:22 Expected identifier but found \"{\"",
+     "1:23 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   }
+  },
+  "x19": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"this\"",
+     "1:16 Expected \")\" but found \":\"",
+     "1:18 Expected \"{\" but found \"any\"",
+     "1:21 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"this\"",
+     "1:16 Expected \")\" but found \":\"",
+     "1:18 Expected \"{\" but found \"any\"",
+     "1:21 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f() {}\n"
+   }
+  },
+  "x21": {
+   "js": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x21b": {
+   "js": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"m\")]() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"m\")]() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"m\")]() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    dec\n  ], \"m\")]() {}\n}\n"
+   }
+  },
+  "x21c": {
+   "js": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x21d": {
+   "js": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  dec\n];\n\nexport class A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x21e": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"@\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"@\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"@\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"@\""
+    ]
+   }
+  },
+  "x21f": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"@\"",
+     "1:13 Expected \")\" but found \"dec\"",
+     "1:17 Expected \"{\" but found \"x\"",
+     "1:18 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"@\"",
+     "1:13 Expected \")\" but found \"dec\"",
+     "1:17 Expected \"{\" but found \"x\"",
+     "1:18 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"@\"",
+     "1:13 Expected \")\" but found \"dec\"",
+     "1:17 Expected \";\" but found \"x\"",
+     "1:18 Unexpected )"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"@\"",
+     "1:13 Expected \")\" but found \"dec\"",
+     "1:17 Expected \";\" but found \"x\"",
+     "1:18 Unexpected )"
+    ]
+   }
+  },
+  "x22": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \"(\" but found \"<\"",
+     "1:21 Expected \")\" but found \">\"",
+     "1:22 Expected \"{\" but found \"(\"",
+     "1:23 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \"(\" but found \"<\"",
+     "1:21 Expected \")\" but found \">\"",
+     "1:22 Expected \"{\" but found \"(\"",
+     "1:23 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var v = function f() {};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var v = function f() {};\n"
+   }
+  },
+  "x23": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:16 Expected \")\" but found \":\"",
+     "1:18 Expected \"{\" but found \"any\"",
+     "1:21 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:16 Expected \")\" but found \":\"",
+     "1:18 Expected \"{\" but found \"any\"",
+     "1:21 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "try {} catch (e) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "try {} catch (e) {}\n"
+   }
+  },
+  "x25": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \";\" but found \"class\"",
+     "1:18 Expected \";\" but found \"{\"",
+     "1:19 Unexpected }"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \";\" but found \"class\"",
+     "1:18 Expected \";\" but found \"{\"",
+     "1:19 Unexpected }"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x27": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \";\" but found \"?\"",
+     "1:13 Expected identifier but found \":\"",
+     "1:24 Expected \";\" but found \"!\"",
+     "1:25 Expected identifier but found \":\"",
+     "1:36 Expected \";\" but found \"?\"",
+     "1:37 Expected identifier but found \"(\"",
+     "1:40 Expected \";\" but found \"{\"",
+     "1:43 Unexpected }"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \";\" but found \"?\"",
+     "1:13 Expected identifier but found \":\"",
+     "1:24 Expected \";\" but found \"!\"",
+     "1:25 Expected identifier but found \":\"",
+     "1:36 Expected \";\" but found \"?\"",
+     "1:37 Expected identifier but found \"(\"",
+     "1:40 Expected \";\" but found \"{\"",
+     "1:43 Unexpected }"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  x;\n  y;\n  m() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  x;\n  y;\n  m() {}\n}\n"
+   }
+  },
+  "x28": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:7 Expected identifier but found \"enum\"",
+     "1:12 Expected \";\" but found \"E\"",
+     "1:7 This constant must be initialized"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:7 Expected identifier but found \"enum\"",
+     "1:12 Expected \";\" but found \"E\"",
+     "1:7 This constant must be initialized"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var E;\n((E) => {})(E ||= {});\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var E;\n((E) => {})(E ||= {});\n"
+   }
+  },
+  "x28b": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"module\"",
+     "1:20 Expected \";\" but found \"{\"",
+     "1:21 Unexpected }"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"module\"",
+     "1:20 Expected \";\" but found \"{\"",
+     "1:21 Unexpected }"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x28c": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"global\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"global\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x29": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \";\" but found \"I\"",
+     "1:16 Unexpected \"interface\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:26 Expected \";\" but found \"I\"",
+     "1:16 Unexpected \"interface\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x31": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \":\"",
+     "1:15 Expected \"{\" but found \"number\"",
+     "1:22 Unexpected ="
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \":\"",
+     "1:15 Expected \"{\" but found \"number\"",
+     "1:22 Unexpected ="
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(a = 1, ...r) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(a = 1, ...r) {}\n"
+   }
+  },
+  "x32": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \")\" but found \":\"",
+     "1:13 Expected \";\" but found \"number\"",
+     "1:19 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \")\" but found \":\"",
+     "1:13 Expected \";\" but found \"number\"",
+     "1:19 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let f = (a) => \"\";\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let f = (a) => \"\";\n"
+   }
+  },
+  "x33": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected identifier but found \">\"",
+     "1:19 Expected \";\" but found \"(\"",
+     "1:24 Expected \";\" but found \")\"",
+     "1:26 Unexpected =>"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected identifier but found \">\"",
+     "1:19 Expected \";\" but found \"(\"",
+     "1:24 Expected \";\" but found \")\"",
+     "1:26 Unexpected =>"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let g = async (a) => a;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let g = async (a) => a;\n"
+   }
+  },
+  "x34": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Syntax Error"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let h = y;\n"
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:12 Syntax Error"
+    ]
+   }
+  },
+  "x35": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:10 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:10 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "new A;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "new A;\n"
+   }
+  },
+  "x36": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "f();\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "f();\n"
+   }
+  },
+  "x37": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"as\"",
+     "1:18 Expected identifier but found end of file",
+     "1:18 This constant must be initialized"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"as\"",
+     "1:18 Expected identifier but found end of file",
+     "1:18 This constant must be initialized"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let x = y;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let x = y;\n"
+   }
+  },
+  "x38": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"]\" but found \":\"",
+     "1:15 Expected \";\" but found \"string\"",
+     "1:21 Expected identifier but found \"]\"",
+     "1:24 Expected \";\" but found \"number\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"]\" but found \":\"",
+     "1:15 Expected \";\" but found \"string\"",
+     "1:21 Expected identifier but found \"]\"",
+     "1:24 Expected \";\" but found \"number\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x39": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:28 \"a\" has already been declared"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:28 \"a\" has already been declared"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:28 \"a\" has already been declared"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:28 \"a\" has already been declared"
+    ]
+   }
+  },
+  "x40": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var v;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var v;\n"
+   }
+  },
+  "x50": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"!\"",
+     "1:7 Unexpected :"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"!\"",
+     "1:7 Unexpected :"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let x;\n"
+   }
+  },
+  "x51": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \";\" but found \"x\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \";\" but found \"x\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _z$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _z$1, void 0);\n  }\n  static {\n    _z$1 = new WeakMap;\n  }\n  static y;\n  get z() {\n    return __privateGet_t4v9rzz2(this, _z$1);\n  }\n  set z(v) {\n    __privateSet_3ajc9ey2(this, _z$1, v);\n  }\n  async m() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _z$1;\n\nclass A {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _z$1, void 0);\n  }\n  static {\n    _z$1 = new WeakMap;\n  }\n  static y;\n  get z() {\n    return __privateGet_t4v9rzz2(this, _z$1);\n  }\n  set z(v) {\n    __privateSet_3ajc9ey2(this, _z$1, v);\n  }\n  async m() {}\n}\n"
+   }
+  },
+  "x52": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"function\"",
+     "1:21 Expected \")\" but found \":\"",
+     "1:23 Expected \";\" but found \"number\"",
+     "1:29 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:9 Expected \";\" but found \"function\"",
+     "1:21 Expected \")\" but found \":\"",
+     "1:23 Expected \";\" but found \"number\"",
+     "1:29 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x53": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \"?\"",
+     "1:14 Expected \"{\" but found \")\"",
+     "1:17 Unexpected end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \")\" but found \"?\"",
+     "1:14 Expected \"{\" but found \")\"",
+     "1:17 Unexpected end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(a) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(a) {}\n"
+   }
+  },
+  "x54": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:19 Expected identifier but found \"this\"",
+     "1:23 Expected \")\" but found \":\"",
+     "1:25 Expected \"{\" but found \"any\"",
+     "1:28 Unexpected ,"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:19 Expected identifier but found \"this\"",
+     "1:23 Expected \")\" but found \":\"",
+     "1:25 Expected \"{\" but found \"any\"",
+     "1:28 Unexpected ,"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var f = function(a) {};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var f = function(a) {};\n"
+   }
+  },
+  "x55": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \":\"",
+     "1:27 Expected \";\" but found \"{\"",
+     "1:47 Expected \")\" but found \":\"",
+     "1:49 Expected \"{\" but found \"number\"",
+     "1:55 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:18 Expected \"{\" but found \":\"",
+     "1:27 Expected \";\" but found \"{\"",
+     "1:47 Expected \")\" but found \":\"",
+     "1:49 Expected \"{\" but found \"number\"",
+     "1:55 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n  set x(v) {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  get x() {\n    return 1;\n  }\n  set x(v) {}\n}\n"
+   }
+  },
+  "x56": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \"{\" but found \";\"",
+     "1:39 Expected \")\" but found \":\"",
+     "1:41 Expected \";\" but found \"number\"",
+     "1:47 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:24 Expected \"{\" but found \";\"",
+     "1:39 Expected \")\" but found \":\"",
+     "1:41 Expected \";\" but found \"number\"",
+     "1:47 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  constructor(a) {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  constructor(a) {}\n}\n"
+   }
+  },
+  "x57": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \"{\" but found \"<\"",
+     "1:23 Expected \";\" but found \">\"",
+     "1:25 Expected identifier but found \"{\"",
+     "1:26 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:21 Expected \"{\" but found \"<\"",
+     "1:23 Expected \";\" but found \">\"",
+     "1:25 Expected identifier but found \"{\"",
+     "1:26 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "export default class {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export default class {\n}\n"
+   }
+  },
+  "x58": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \":\" but found \"<\"",
+     "1:16 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \":\" but found \"<\"",
+     "1:16 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var o = { m() {}, get x() {\n  return 1;\n} };\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var o = { m() {}, get x() {\n  return 1;\n} };\n"
+   }
+  },
+  "x59": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Unexpected !"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Unexpected !"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "const x = y.z();\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "const x = y.z();\n"
+   }
+  },
+  "x61": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"from\" but found \"X\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"from\" but found \"X\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x62": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected import"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected import"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "export const a = b.c;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export const a = b.c;\n"
+   }
+  },
+  "x63": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \"from\" but found \"=\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \"from\" but found \"=\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x64": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected declare"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Unexpected declare"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "export class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export class A {\n}\n"
+   }
+  },
+  "x65": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"A\"",
+     "1:12 Unexpected ."
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"A\"",
+     "1:12 Unexpected ."
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var A;\n((A) => {\n  let B;\n  ((B) => {})(B = A.B ||= {});\n})(A ||= {});\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var A;\n((A) => {\n  let B;\n  ((B) => {})(B = A.B ||= {});\n})(A ||= {});\n"
+   }
+  },
+  "x66": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\"",
+     "1:17 Expected \";\" but found \":\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \":\"",
+     "1:17 Expected \";\" but found \":\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "let x, y;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "let x, y;\n"
+   }
+  },
+  "x67": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \":\"",
+     "1:24 Unexpected ;"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \":\"",
+     "1:24 Unexpected ;"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "for (let i = 0;; )\n  ;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "for (let i = 0;; )\n  ;\n"
+   }
+  },
+  "x69": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \"{\" but found \"<\"",
+     "1:12 Expected \";\" but found \"out\"",
+     "1:17 Expected \";\" but found \">\"",
+     "1:19 Expected identifier but found \"{\"",
+     "1:20 Expected \"}\" but found end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:8 Expected \"{\" but found \"<\"",
+     "1:12 Expected \";\" but found \"out\"",
+     "1:17 Expected \";\" but found \">\"",
+     "1:19 Expected identifier but found \"{\"",
+     "1:20 Expected \"}\" but found end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x70": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \"{\" but found \":\"",
+     "1:18 Expected \";\" but found \"is\"",
+     "1:28 Expected \";\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:14 Expected \"{\" but found \":\"",
+     "1:18 Expected \";\" but found \"is\"",
+     "1:28 Expected \";\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(x) {\n  return !0;\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(x) {\n  return !0;\n}\n"
+   }
+  },
+  "x71": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"function\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"function\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"function\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"function\""
+    ]
+   }
+  },
+  "x72": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"var\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"var\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"var\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \"class\" but found \"var\""
+    ]
+   }
+  },
+  "x73": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"default\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"default\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"default\""
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:13 Expected \"class\" but found \"default\""
+    ]
+   }
+  },
+  "x74": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 TypeScript does not allow decorators on class constructors"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 TypeScript does not allow decorators on class constructors"
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:11 TypeScript does not allow decorators on class constructors"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:11 TypeScript does not allow decorators on class constructors"
+    ]
+   }
+  },
+  "x75": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:7 Expected \";\" but found \"satisfies\"",
+     "1:19 Expected \";\" but found \"as\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:7 Expected \";\" but found \"satisfies\"",
+     "1:19 Expected \";\" but found \"as\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "a = b;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "a = b;\n"
+   }
+  },
+  "x76": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:1 Unexpected enum"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var E;\n((E) => {\n  E[E.A = 1] = \"A\";\n  E[E.B = 2] = \"B\";\n})(E ||= {});\nvar G;\n((G) => {})(G ||= {});\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var E;\n((E) => {\n  E[E.A = 1] = \"A\";\n  E[E.B = 2] = \"B\";\n})(E ||= {});\nvar G;\n((G) => {})(G ||= {});\n"
+   }
+  },
+  "x80": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \";\" but found \"class\"",
+     "1:18 Expected \";\" but found \"{\"",
+     "1:29 Expected \";\" but found \"m\"",
+     "1:32 Expected \"=>\" but found \":\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:10 Expected \";\" but found \"class\"",
+     "1:18 Expected \";\" but found \"{\"",
+     "1:29 Expected \";\" but found \"m\"",
+     "1:32 Expected \"=>\" but found \":\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n}\n"
+   }
+  },
+  "x82": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"A\"",
+     "1:7 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"A\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x83": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"I\"",
+     "1:12 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \";\" but found \"I\"",
+     "1:36 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": ""
+   },
+   "tsx": {
+    "ok": true,
+    "out": ""
+   }
+  },
+  "x84": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \"(\" but found \"<\"",
+     "1:12 Expected identifier but found \"const\"",
+     "1:18 Expected \")\" but found \"T\"",
+     "1:19 Expected \"{\" but found \">\"",
+     "1:22 Expected \")\" but found \":\"",
+     "1:24 Expected \";\" but found \"T\"",
+     "1:25 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \"(\" but found \"<\"",
+     "1:12 Expected identifier but found \"const\"",
+     "1:18 Expected \")\" but found \"T\"",
+     "1:19 Expected \"{\" but found \">\"",
+     "1:22 Expected \")\" but found \":\"",
+     "1:24 Expected \";\" but found \"T\"",
+     "1:25 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f(x) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f(x) {}\n"
+   }
+  },
+  "x85": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \";\" but found \"<\"",
+     "1:14 Expected \";\" but found \">\"",
+     "1:15 Expected identifier but found \"(\"",
+     "1:20 Expected \";\" but found \":\"",
+     "1:23 Expected \";\" but found \",\"",
+     "1:25 Expected identifier but found \"...\"",
+     "1:29 Expected \";\" but found \":\"",
+     "1:32 Expected \";\" but found \"[\"",
+     "1:33 Expected identifier but found \"]\"",
+     "1:35 Expected \";\" but found \":\"",
+     "1:39 Expected \";\" but found \"is\"",
+     "1:46 Expected \";\" but found \"{\"",
+     "1:55 Expected \";\" but found \"true\"",
+     "1:62 Unexpected }"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected \";\" but found \"<\"",
+     "1:14 Expected \";\" but found \">\"",
+     "1:15 Expected identifier but found \"(\"",
+     "1:20 Expected \";\" but found \":\"",
+     "1:23 Expected \";\" but found \",\"",
+     "1:25 Expected identifier but found \"...\"",
+     "1:29 Expected \";\" but found \":\"",
+     "1:32 Expected \";\" but found \"[\"",
+     "1:33 Expected identifier but found \"]\"",
+     "1:35 Expected \";\" but found \":\"",
+     "1:39 Expected \";\" but found \"is\"",
+     "1:46 Expected \";\" but found \"{\"",
+     "1:55 Expected \";\" but found \"true\"",
+     "1:62 Unexpected }"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  m(...a) {\n    return !0;\n  }\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  m(...a) {\n    return !0;\n  }\n}\n"
+   }
+  },
+  "x86": {
+   "js": {
+    "ok": true,
+    "out": "var type;\n\nexport { type as default };\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var type;\n\nexport { type as default };\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var type;\n\nexport { type as default };\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var type;\n\nexport { type as default };\n"
+   }
+  },
+  "x87": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"this\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"this\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "function f() {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "function f() {}\n"
+   }
+  },
+  "x88": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"!\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \";\" but found \"!\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \":\" but found end of file"
+    ]
+   },
+   "tsx": {
+    "ok": false,
+    "err": [
+     "1:6 Expected \":\" but found end of file"
+    ]
+   }
+  },
+  "x89": {
+   "js": {
+    "ok": true,
+    "out": "class A {\n  static {}\n  static x;\n  static m() {}\n  static async* g() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A {\n  static {}\n  static x;\n  static m() {}\n  static async* g() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A {\n  static {}\n  static x;\n  static m() {}\n  static async* g() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A {\n  static {}\n  static x;\n  static m() {}\n  static async* g() {}\n}\n"
+   }
+  },
+  "x90": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:25 Expected \"(\" but found \"<\"",
+     "1:27 Expected \")\" but found \">\"",
+     "1:28 Expected \"{\" but found \"(\"",
+     "1:33 Expected \";\" but found \")\"",
+     "1:36 Unexpected end of file"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:25 Expected \"(\" but found \"<\"",
+     "1:27 Expected \")\" but found \">\"",
+     "1:28 Expected \"{\" but found \"(\"",
+     "1:33 Expected \";\" but found \")\"",
+     "1:36 Unexpected end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "export default function input_default(a) {}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "export default function input_default(a) {}\n"
+   }
+  },
+  "x91": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \"{\" but found \"implements\"",
+     "1:31 Expected \";\" but found \",\"",
+     "1:35 Expected \";\" but found \"{\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:19 Expected \"{\" but found \"implements\"",
+     "1:31 Expected \";\" but found \",\"",
+     "1:35 Expected \";\" but found \"{\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A extends B {\n}\n"
+   }
+  },
+  "x92": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \"(\" but found \"<\"",
+     "1:17 Expected \")\" but found \">\"",
+     "1:18 Expected \"{\" but found \"(\"",
+     "1:19 Unexpected )"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \"(\" but found \"<\"",
+     "1:17 Expected \")\" but found \">\"",
+     "1:18 Expected \"{\" but found \"(\"",
+     "1:19 Unexpected )"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = function* () {};\ny = async function() {};\nz = async () => {};\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = function* () {};\ny = async function() {};\nz = async () => {};\n"
+   }
+  },
+  "x93": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \"class\" but found \"<\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \"class\" but found \"<\"",
+     "1:16 Unexpected end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x94": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \"class\" but found \"<\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:3 Expected \"class\" but found \"<\"",
+     "1:18 Unexpected end of file"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x()\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x()\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x95": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:3 Unexpected !"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:3 Unexpected !"
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _A$3;\n_dec$2 = [\n  x\n];\n\nclass A {\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    _A$3 = __decorateElement_ggs2dd8p(_init$1, 0, \"A\", _dec$2, this);\n  }\n}\nA = _A$3;\n__runInitializers_cst8seht(_init$1, 1, _A$3);\n"
+   }
+  },
+  "x96": {
+   "js": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    a < b > c\n  ], \"m\")]() {}\n}\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    a < b > c\n  ], \"m\")]() {}\n}\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    a(c)\n  ], \"m\")]() {}\n}\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2;\n\nclass A {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n  }\n  static {\n    _init$1 = __decoratorStart_x73frcn4(void 0);\n    __decorateElement_ggs2dd8p(_init$1, 1, \"m\", _dec$2, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  [(_dec$2 = [\n    a(c)\n  ], \"m\")]() {}\n}\n"
+   }
+  },
+  "x97": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"<\""
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:12 Expected identifier but found \"<\""
+    ]
+   },
+   "ts": {
+    "ok": true,
+    "out": "var a = b?.(d);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var a = b?.(d);\n"
+   }
+  },
+  "x98": {
+   "js": {
+    "ok": false,
+    "err": [
+     "1:9 Unexpected <"
+    ]
+   },
+   "jsx": {
+    "ok": false,
+    "err": [
+     "1:11 Expected \">\" but found \"<\""
+    ]
+   },
+   "ts": {
+    "ok": false,
+    "err": [
+     "1:15 Expected \">\" but found \"/\""
+    ]
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var a = jsxDEV_7x81h0kn(A, {}, void 0, !1, void 0, this);\n"
+   }
+  },
+  "p01": {
+   "js": {
+    "ok": true,
+    "out": "var x = y;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var x = y;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var x = y;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var x = y;\n"
+   }
+  },
+  "p02": {
+   "js": {
+    "ok": true,
+    "out": "var x = (1, 2);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var x = (1, 2);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var x = (1, 2);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var x = (1, 2);\n"
+   }
+  },
+  "p03": {
+   "js": {
+    "ok": true,
+    "out": "var x;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var x;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var x;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var x;\n"
+   }
+  },
+  "p04": {
+   "js": {
+    "ok": true,
+    "out": "var x = a, y = (a) => b, z = typeof a, w = a.b, v = (a, b);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "var x = a, y = (a) => b, z = typeof a, w = a.b, v = (a, b);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "var x = a, y = (a) => b, z = typeof a, w = a.b, v = (a, b);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "var x = a, y = (a) => b, z = typeof a, w = a.b, v = (a, b);\n"
+   }
+  },
+  "p05": {
+   "js": {
+    "ok": true,
+    "out": "delete a.b;\na = 1;\na.b++;\n[a] = b;\n({ x: a } = b);\nfor (a of b)\n  ;\na?.b;\n(a?.b).c;\nnew (a.b());\n(function() {})();\n(() => 1)();\n(a, b) => 1;\nasync (a) => 1;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "delete a.b;\na = 1;\na.b++;\n[a] = b;\n({ x: a } = b);\nfor (a of b)\n  ;\na?.b;\n(a?.b).c;\nnew (a.b());\n(function() {})();\n(() => 1)();\n(a, b) => 1;\nasync (a) => 1;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "delete a.b;\na = 1;\na.b++;\n[a] = b;\n({ x: a } = b);\nfor (a of b)\n  ;\na?.b;\n(a?.b).c;\nnew (a.b());\n(function() {})();\n(() => 1)();\n(a, b) => 1;\nasync (a) => 1;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "delete a.b;\na = 1;\na.b++;\n[a] = b;\n({ x: a } = b);\nfor (a of b)\n  ;\na?.b;\n(a?.b).c;\nnew (a.b());\n(function() {})();\n(() => 1)();\n(a, b) => 1;\nasync (a) => 1;\n"
+   }
+  },
+  "p06": {
+   "js": {
+    "ok": true,
+    "out": "if (a)\n  b;\nwhile (a)\n  ;\ndo\n  ;\nwhile (a);\nfor (a;b; c)\n  ;\nswitch (a) {\n  case b:\n}\nwith (a)\n  ;\nthrow a;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "if (a)\n  b;\nwhile (a)\n  ;\ndo\n  ;\nwhile (a);\nfor (a;b; c)\n  ;\nswitch (a) {\n  case b:\n}\nwith (a)\n  ;\nthrow a;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "if (a)\n  b;\nwhile (a)\n  ;\ndo\n  ;\nwhile (a);\nfor (a;b; c)\n  ;\nswitch (a) {\n  case b:\n}\nwith (a)\n  ;\nthrow a;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "if (a)\n  b;\nwhile (a)\n  ;\ndo\n  ;\nwhile (a);\nfor (a;b; c)\n  ;\nswitch (a) {\n  case b:\n}\nwith (a)\n  ;\nthrow a;\n"
+   }
+  },
+  "p07": {
+   "js": {
+    "ok": true,
+    "out": "x = a ? b : c;\ny = `${a}`;\nz = [a, ...b];\nw = { ...a, [b]: c };\nf(a, ...b);\nnew A(a);\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "x = a ? b : c;\ny = `${a}`;\nz = [a, ...b];\nw = { ...a, [b]: c };\nf(a, ...b);\nnew A(a);\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "x = a ? b : c;\ny = `${a}`;\nz = [a, ...b];\nw = { ...a, [b]: c };\nf(a, ...b);\nnew A(a);\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "x = a ? b : c;\ny = `${a}`;\nz = [a, ...b];\nw = { ...a, [b]: c };\nf(a, ...b);\nnew A(a);\n"
+   }
+  },
+  "p08": {
+   "js": {
+    "ok": true,
+    "out": "class A extends B {\n  [a] = b;\n  static {\n    c;\n  }\n}\nexport default a;\n"
+   },
+   "jsx": {
+    "ok": true,
+    "out": "class A extends B {\n  [a] = b;\n  static {\n    c;\n  }\n}\nexport default a;\n"
+   },
+   "ts": {
+    "ok": true,
+    "out": "class A extends B {\n  [a] = b;\n  static {\n    c;\n  }\n}\nexport default a;\n"
+   },
+   "tsx": {
+    "ok": true,
+    "out": "class A extends B {\n  [a] = b;\n  static {\n    c;\n  }\n}\nexport default a;\n"
+   }
+  }
+ }
+}

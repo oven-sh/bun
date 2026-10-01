@@ -1,0 +1,39 @@
+c00045u0_file.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03079u0_a.js	flags KindJSDocTypeExpression xor=0x8000		
+c03089u0_0.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType,JSDocUnknownType	
+c03090u0_0.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03097u0_0.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03098u0_0.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03125u0_index.js	shape go<.Tags:> ts<.Tags:>	JSDocEnumTag,JSDocFunctionType	
+c03165u0_file.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03166u0_index.js	kind go<KindTypeReference> ts<KindJSDocNamepathType>	JSDocNamepathType	
+c03181u0_bug38550.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03182u0_index.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType,JSDocUnknownType	
+c03199u0_a.js	shape go<.Tags:> ts<.Tags:>	JSDocEnumTag,JSDocFunctionType	
+c03207u0_exportedAliasedEnumTag.js	shape go<.TagName: KindIdentifier> ts<.Comment:>	JSDocEnumTag	
+c03256u0_functions.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocClassTag,JSDocFunctionType	
+c03257u0_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03261u1_a.js	shape go<.Tags:> ts<.Tags:>		
+c03290u0_a.js	pos KindJSDocTypeExpression		
+c03291u0_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03293u0_paren.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03295u0_paren.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03296u0_a.js	label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken>	JSDocFunctionType	
+c03298u0_prefixPostfix.js	kind go<KindJSDocNonNullableType> ts<KindArrayType>		
+c03309u0_forgot.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03319u1_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03335u0_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03336u0_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03338u0_a.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	
+c03342u0_bug26693.js	pos KindJSTypeAliasDeclaration	JSDocNamepathType	parse-errors
+c03356u1_bad.js	flags KindIdentifier xor=0x8000		
+c03365u0_templateInsideCallback.js	shape go<.Statements:> ts<.Statements:>		
+c03386u0_typedefDuplicateTypeDeclaration.js	pos KindJSTypeAliasDeclaration		
+c03387u0_bug25104.js	pos KindIdentifier		parse-errors
+c03395u0_mod1.js	pos KindJSTypeAliasDeclaration	JSDocFunctionType	parse-errors
+c03395u2_mod3.js	pos KindJSTypeAliasDeclaration	JSDocFunctionType	parse-errors
+c03395u3_mod4.js	pos KindJSTypeAliasDeclaration	JSDocFunctionType	parse-errors
+c03432u1_file.jsx	flags KindCommaToken xor=0x10000		parse-errors
+c09618u0_jsFileAlternativeUseOfOverloadTag.js	shape go<.Tags:> ts<.Tags:>		
+c09672u0_a.jsx	flags KindCommaToken xor=0x10000		parse-errors
+c09722u0_example.js	kind go<KindTypeReference> ts<KindJSDocFunctionType>	JSDocFunctionType	

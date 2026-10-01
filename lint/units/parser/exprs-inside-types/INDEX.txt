@@ -1,0 +1,23 @@
+exprs-inside-types, lens "start from the code". Base: worktree /workspace/wt/parser at e3566be889, build/release/bun, typescript 6.0.2.
+The directory top-down/ belongs to the other lens.
+
+gen-inputs.cjs > inputs.json            380 inputs, sites A (computed names), B (parameter initializers), C (binding patterns), D (decorators and
+                                        modifiers of parameters), E (property initializers), F (accessors), G (type parameter constraints),
+                                        H (import attributes), I (heritage entries), K (what the statement-level discards of today leave behind)
+oracle.cjs inputs.json > oracle.jsonl   tsc: parse diagnostics, grammar codes of the checker (TS1xxx), other codes, emit
+<bun> bunprobe.mjs inputs.json > bun.jsonl      base build: output or first error, scanImports, scan
+join.cjs [site] [--emit]                the two joined, one block per input
+expected.cjs [changed.jsonl] > expected.json    364 test inputs: tsc expectation, base result, expected result without lint and with lint
+freq.cjs label=dir ... > freq.txt, freq2.txt    how often each site occurs (lib files, bun-types, src/js; TypeScript tests/cases, test/)
+<bun> early-errors.mjs > early-errors.txt       errors of Bun's expression and statement parsers that tsc's parser does not report
+import-elision-tsc.cjs, <bun> import-elision-bun.mjs   which imports tsc and bun keep when only a type-level expression uses them
+<bun> speculation-flip.mjs              inputs whose meaning would change if the new forms were read inside speculation
+<bun> valid-ts-misparsed-in-speculation.mjs     f<{ [+1]: number }>(y): valid TypeScript that the base build prints as a comparison
+<bun> snapshot-stale-symbol-repro.mjs, snapshot-stale-symbol-tsc.cjs   design:type names a wrong symbol after restore_parser_snapshot (base build)
+prototype-patch.py <copy of src/js_parser>      the erased parse and the cold edges of the grammar (compiles)
+prototype-patch2.py <the same copy>             + Lexer::rewind_to, the retry for "(" and "[", restore_parser_snapshot that keeps the symbols (compiles)
+prototype-codegen.txt, fnasm.py, seqdiff.py     crate-level code of the prototype against the base (run.py + scmp.py of build-sink-positions/quick)
+dbg.sh <tag> <copy>, rlib-debug.py, link-debug.py   debug rlib of the copy and link of bun-debug under /tmp/eit (nothing is written into the worktree)
+run-proto.sh <bun of the prototype>             every probe above against a changed build; writes bun-proto2.jsonl, prototype-summary.txt, state-leaks.txt
+<bun> state-leaks.mjs                   pairs "type with an expression" / "the same type without": output and import scan must be equal
+<bun> regress.mjs out.jsonl dir...      hash of the output of every TypeScript file under the directories (base: /tmp/eit/regress-base.jsonl, 3,227 files)

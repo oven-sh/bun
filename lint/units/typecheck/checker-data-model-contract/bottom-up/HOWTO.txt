@@ -1,0 +1,29 @@
+Scratch of the research pass "checker-data-model-contract" (bottom-up). Nothing here is part of the repository.
+
+crate/      cargo package bun_typecheck_dm: ONE crate with the node table prototype, the diagnostics block and the checker data model.
+            Path dependencies into /workspace/wt/typecheck (bun_collections, bun_wyhash, bun_core); the workspace lint tables are
+            copied into Cargo.toml. src/lib.rs compiles the modules ast, bindprobe, testimport and the tests of
+            ../../node-table-id-contract/bottom-up/crate/src in by #[path], unchanged, and its native_test_shims.rs for the tests.
+            src/tscore    the node table's tscore (ids, golang, internal, stable, text, flags, deps) with what the checker adds:
+                          ids.rs (15 more ids), golang.rs (LiveList, Memo, Set, OrderedSet, Tristate, SliceBuf set/truncate/clone_of,
+                          key bound Hash + Eq), internal.rs (Assert, NilRead, StackLimit, LoopLimit, the first 64 faults, StandIns,
+                          LoopGuard), text.rs (Go's zero value as the default, pos(), end(), undefined()), records.rs
+                          (Records<I, T>), linkstore.rs (LinkStore, Link), slices.rs (Go's sort, copied from
+                          ../../diagnostics-groundtruth/diff/slices.rs), deps.rs (no rustc-alone shim), core_text.rs (imported).
+            src/checker   arena.rs (CheckerArena), types.rs, c01_data.rs, c02_checker_generated.rs, checker.rs (sinks, fallbacks,
+                          lists, links), program.rs, mapper.rs, c30_type_keys.rs, c41_new_types.rs, c32_type_resolution.rs,
+                          c37_instantiation.rs, c36_properties_apparent_types.rs, c35_resolve_members.rs, c27_resolve_alias.rs,
+                          c22_symbols_merge.rs, c21_resolved_symbols_diagnostics.rs, relater.rs, inference.rs, flow.rs,
+                          nodebuilder.rs, utilities.rs, core_lists.rs, flags_generated.rs, standins.rs (the callees that are not
+                          ported, some with a script for the tests).
+            src/diagnostics/, ast_diagnostic.rs, compiler_program.rs, diagnosticwriter.rs, diagnostics_tests.rs
+                          the diagnostics block, written by py/import_diagnostics.py: the five changes are listed in that script.
+            src/tests.rs  18 tests, one or more for each decision. With the 10 tests of the node table and the 10 of the
+                          diagnostics block the crate runs 38.
+py/         genflags.py (41 flag sets and iota kinds from the Go constants), genchecker.py (the Checker record from
+            ../../checker-core-scratch/data/fields.tsv), settle.py (layers, landing steps, PORT_STATUS rows), k4path.py, import_diagnostics.py.
+goanal/     go/types analyses of the reference: slicewrites, same, funcvalues, loops, structs.
+goprobe/    a Go program that prints Go's answers for the slice cases that tests.rs asserts.
+data/       README.txt lists every file.
+run.sh      everything above, in order. The last full run is data/run.log.
+Miri was not part of run.sh: MIRIFLAGS=-Zmiri-tree-borrows cargo miri test --offline --manifest-path crate/Cargo.toml --target-dir /tmp/cdm/miri-target

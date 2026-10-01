@@ -1,0 +1,5 @@
+START N 02:43:02 load=695.09 699.66 712.94
+WAIT 03:35:44 single lock for N T X W
+WAIT 03:47:54 single lock for N2 X2 T2 W2 E (refined forms; the earlier wait was cancelled)
+WAIT 04:11:01 single lock for N3 X3 T3 W2 E (final forms; the earlier wait was cancelled)
+CANCELLED 04:46:16: the lock was held from before 02:43 to after 04:44 by the chain of the parallel pass (/tmp/paren-seam/linkall.sh); N3 X3 T3 W2 E were not linked. Rerun: /workspace/tools/lk /tmp/pes/tools/chain-link.sh N3 X3 T3 W2 E ; then tools/after-link.sh <tag>

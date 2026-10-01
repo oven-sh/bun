@@ -1,0 +1,81 @@
+layer	function	where	parameters	result	caller modules
+D-DRIVER	c.checkSourceFile	checker.go:2202	ctx context.Context, sourceFile *ast.SourceFile, checkUnused bool	-	c21_resolved_symbols_diagnostics
+D-DRIVER	c.checkSourceElements	checker.go:2238	nodes []*ast.Node	-	c15_calls, c16_function_expressions_collisions, c17_unary_meta_yield
+D-DRIVER	c.checkSourceElement	checker.go:2247	node *ast.Node	bool	c16_function_expressions_collisions, c17_unary_meta_yield, c19_assertions_binary_operators
+D-DRIVER	c.checkNodeDeferred	checker.go:2490	node *ast.Node	-	c15_calls, c16_function_expressions_collisions, c17_unary_meta_yield, c19_assertions_binary_operators, c20_object_literals_spread
+D-TYPENODE	c.shouldCheckErasableSyntax	checker.go:2658	node *ast.Node	bool	c19_assertions_binary_operators
+D-TYPENODE	c.getDeprecatedSuggestionNode	checker.go:3041	node *ast.Node	*ast.Node	c15_calls
+D-TYPENODE	c.getResolutionModeOverride	checker.go:3340	node *ast.ImportAttributes, reportErrors bool	core.ResolutionMode	nodecopy.go
+D-FUNC	c.checkSignatureDeclaration	checker.go:2731	node *ast.Node	-	c16_function_expressions_collisions
+D-FUNC	c.checkAllCodePathsInNonVoidFunctionReturnOrThrow	checker.go:3736	fn *ast.Node, returnType *Type	-	c16_function_expressions_collisions
+D-STMT	c.checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType	checker.go:3822	condExpr *ast.Node, condType *Type, body *ast.Node	-	c17_unary_meta_yield, c19_assertions_binary_operators
+D-STMT	c.checkReturnExpression	checker.go:4139	container *ast.Node, unwrappedReturnType *Type, node *ast.Node, expr *ast.Node, exprType *Type, inConditionalExpression bool	-	c16_function_expressions_collisions
+D-CLASS	c.checkClassLikeDeclaration	checker.go:4301	node *ast.Node	-	c16_function_expressions_collisions
+D-CLASS	c.isPropertyWithoutInitializer	checker.go:5032	node *ast.Node	bool	c18_identifiers_property_access_this
+D-CLASS	c.isPropertyInitializedInStaticBlocks	checker.go:5036	propName *ast.Node, propType *Type, staticBlocks []*ast.Node, startPos int, endPos int	bool	c04_name_resolution_hooks
+D-ENUMNS	c.getIsolatedModulesLikeFlagName	checker.go:5312		string	c14_expressions
+D-IMPEXP	isContainedByNamespace	checker.go:5665	node *ast.Node	bool	c23_alias_targets
+U-ALIASMARK	c.markLinkedReferences	checker.go:28312	location *ast.Node, hint ReferenceHint, propSymbol *ast.Symbol, parentType *Type	-	c18_identifiers_property_access_this
+U-ALIASMARK	shouldMarkIdentifierAliasReferenced	checker.go:28494	node *ast.IdentifierNode	bool	c18_identifiers_property_access_this
+D-UNUSED	c.registerForUnusedIdentifiersCheck	checker.go:7130	node *ast.Node	-	c16_function_expressions_collisions
+D-ITER	c.checkIteratedTypeOrElementType	checker.go:6185	use IterationUse, inputType *Type, sentType *Type, errorNode *ast.Node	*Type	c14_expressions, c17_unary_meta_yield, c19_assertions_binary_operators, c31_binding_patterns_widening, c48_contextual_types, flow.go
+D-ITER	c.getIteratedTypeOrElementType	checker.go:6196	use IterationUse, inputType *Type, sentType *Type, errorNode *ast.Node, checkAssignability bool	*Type	c14_expressions, c48_contextual_types
+D-ITER	c.getIterationTypeOfGeneratorFunctionReturnType	checker.go:6306	typeKind IterationTypeKind, returnType *Type, isAsyncGenerator bool	*Type	c17_unary_meta_yield, c34_return_types, c48_contextual_types
+D-ITER	c.getIterationTypesOfGeneratorFunctionReturnType	checker.go:6314	t *Type, isAsyncGenerator bool	IterationTypes	c17_unary_meta_yield, c48_contextual_types
+D-ITER	c.getIterationTypeOfIterable	checker.go:6328	use IterationUse, typeKind IterationTypeKind, inputType *Type, errorNode *ast.Node	*Type	c17_unary_meta_yield
+D-ITER	c.getIterationTypesOfIterable	checker.go:6355	t *Type, use IterationUse, errorNode *ast.Node	IterationTypes	c34_return_types
+D-ITER	c.isReferenceToType	checker.go:6482	t *Type, target *Type	bool	nodebuilderimpl.go
+D-ITER	c.getBuiltinIteratorReturnType	checker.go:6490		*Type	c39_declared_types_enums
+E-AWAIT	c.checkAwaitExpression	checker.go:10935	node *ast.Node	*Type	c14_expressions
+E-AWAIT	c.GetPromisedTypeOfPromise	checker.go:29042	t *Type	*Type	c18_identifiers_property_access_this, c34_return_types
+E-AWAIT	c.checkAwaitedType	checker.go:31355	t *Type, withAlias bool, errorNode *ast.Node, diagnosticMessage *diagnostics.Message	*Type	c34_return_types
+E-AWAIT	c.getAwaitedType	checker.go:31376	t *Type	*Type	c14_expressions, c15_calls
+E-AWAIT	c.getAwaitedTypeEx	checker.go:31380	t *Type, errorNode *ast.Node, diagnosticMessage *diagnostics.Message, args ...any	*Type	c03_init, c17_unary_meta_yield
+E-AWAIT	c.getAwaitedTypeNoAlias	checker.go:31389	t *Type	*Type	c19_assertions_binary_operators, c34_return_types, c48_contextual_types
+E-AWAIT	c.unwrapAwaitedType	checker.go:31562	t *Type	*Type	c34_return_types
+E-AWAIT	c.getAwaitedTypeOfPromise	checker.go:31581	t *Type	*Type	c15_calls, c19_assertions_binary_operators, c48_contextual_types
+E-DECOR	c.resolveDecorator	checker.go:8833	node *ast.Node, candidatesOutArray *[]*Signature, checkMode CheckMode	*Signature	c15_calls
+E-DECOR	c.getDecoratorArgumentCount	checker.go:9273	node *ast.Node, signature *Signature	int	c15_calls
+E-DECOR	c.getContextualTypeForDecorator	checker.go:29924	decorator *ast.Node	*Type	c48_contextual_types
+E-DECOR	c.getEffectiveDecoratorArguments	checker.go:30265	node *ast.Node	[]*ast.Node	c49_call_arguments_decorator_signatures
+D-HELPERS	c.checkClassExpressionExternalHelpers	checker.go:10171	node *ast.ClassExpressionNode	-	c16_function_expressions_collisions
+D-HELPERS	c.checkExternalEmitHelpers	checker.go:28699	location *ast.Node, helpers ExternalEmitHelpers	-	c17_unary_meta_yield, c18_identifiers_property_access_this, c19_assertions_binary_operators
+E-COLLIDE	c.checkCollisionsForDeclarationName	checker.go:10534	node *ast.Node, name *ast.Node	-	c16_function_expressions_collisions
+G-GRAMMAR	c.grammarErrorOnNode	grammarchecks.go:38	node *ast.Node, message *diagnostics.Message, args ...any	bool	c18_identifiers_property_access_this, c19_assertions_binary_operators
+G-GRAMMAR	c.checkGrammarRegularExpressionLiteral	grammarchecks.go:69	node *ast.RegularExpressionLiteral	bool	c14_expressions
+G-GRAMMAR	c.checkGrammarPrivateIdentifierExpression	grammarchecks.go:100	privId *ast.PrivateIdentifier	bool	c14_expressions
+G-GRAMMAR	c.checkGrammarForDisallowedTrailingComma	grammarchecks.go:671	list *ast.NodeList, diag *diagnostics.Message	bool	c19_assertions_binary_operators
+G-GRAMMAR	c.checkGrammarFunctionLikeDeclaration	grammarchecks.go:758	node *ast.Node	bool	c16_function_expressions_collisions
+G-GRAMMAR	c.checkGrammarTypeArguments	grammarchecks.go:855	node *ast.Node, typeArguments *ast.NodeList	bool	c15_calls
+G-GRAMMAR	c.checkGrammarTaggedTemplateChain	grammarchecks.go:859	node *ast.TaggedTemplateExpression	bool	c15_calls
+G-GRAMMAR	c.checkGrammarExpressionWithTypeArguments	grammarchecks.go:885	node *ast.Node /*Union[ExpressionWithTypeArguments, TypeQuery]*/	bool	c17_unary_meta_yield
+G-GRAMMAR	c.checkGrammarForGenerator	grammarchecks.go:974	node *ast.Node	bool	c16_function_expressions_collisions
+G-GRAMMAR	c.checkGrammarObjectLiteralExpression	grammarchecks.go:998	node *ast.ObjectLiteralExpression, inDestructuring bool	bool	c20_object_literals_spread
+G-GRAMMAR	c.checkGrammarMethod	grammarchecks.go:1414	node *ast.Node /*Union[MethodDeclaration, MethodSignature]*/	bool	c20_object_literals_spread
+G-GRAMMAR	c.checkGrammarYieldExpression	grammarchecks.go:1759	node *ast.Node	bool	c17_unary_meta_yield
+G-GRAMMAR	c.checkGrammarMetaProperty	grammarchecks.go:1813	node *ast.MetaProperty	bool	c17_unary_meta_yield
+G-GRAMMAR	c.checkGrammarStatementInAmbientContext	grammarchecks.go:2029	node *ast.Node	bool	c14_expressions
+G-GRAMMAR	c.checkGrammarNumericLiteral	grammarchecks.go:2059	node *ast.NumericLiteral	-	c14_expressions
+G-GRAMMAR	c.checkGrammarBigIntLiteral	grammarchecks.go:2087	node *ast.BigIntLiteral	bool	c14_expressions
+G-GRAMMAR	c.checkGrammarImportCallExpression	grammarchecks.go:2144	node *ast.Node	bool	c14_expressions
+X-JSX	c.checkJsxElement	jsx.go:72	node *ast.Node, checkMode CheckMode	*Type	c14_expressions
+X-JSX	c.checkJsxExpression	jsx.go:89	node *ast.Node, checkMode CheckMode	*Type	c14_expressions
+X-JSX	c.checkJsxSelfClosingElement	jsx.go:101	node *ast.Node, checkMode CheckMode	*Type	c14_expressions
+X-JSX	c.checkJsxFragment	jsx.go:110	node *ast.Node	*Type	c14_expressions
+X-JSX	c.checkJsxAttributes	jsx.go:126	node *ast.Node, checkMode CheckMode	*Type	c14_expressions
+X-JSX	c.inferJsxTypeArguments	jsx.go:198	node *ast.Node, signature *Signature, checkMode CheckMode, context *InferenceContext	[]*Type	c15_calls
+X-JSX	c.getContextualTypeForJsxExpression	jsx.go:205	node *ast.Node, contextFlags ContextFlags	*Type	c48_contextual_types
+X-JSX	c.getContextualTypeForJsxAttribute	jsx.go:215	attribute *ast.Node, contextFlags ContextFlags	*Type	c48_contextual_types
+X-JSX	c.getContextualJsxElementAttributesType	jsx.go:229	node *ast.Node, contextFlags ContextFlags	*Type	c48_contextual_types
+X-JSX	c.discriminateContextualTypeByJSXAttributes	jsx.go:266	node *ast.Node, contextualType *Type	*Type	c50_contextual_properties_inference_context
+X-JSX	c.elaborateJsxComponents	jsx.go:296	node *ast.Node, source *Type, target *Type, relation *Relation, diagnosticOutput *[]*ast.Diagnostic	bool	relater.go
+X-JSX	c.getSuggestedSymbolForNonexistentJSXAttribute	jsx.go:485	name string, containingType *Type	*ast.Symbol	relater.go
+X-JSX	c.resolveJsxOpeningLikeElement	jsx.go:545	node *ast.Node, candidatesOutArray *[]*Signature, checkMode CheckMode	*Signature	c15_calls
+X-JSX	c.checkApplicableSignatureForJsxCallLikeElement	jsx.go:591	node *ast.Node, signature *Signature, relation *Relation, checkMode CheckMode, reportErrors bool, diagnosticOutput *[]*ast.Diagnostic	bool	c15_calls
+X-JSX	c.checkJsxAttribute	jsx.go:869	node *ast.Node, checkMode CheckMode	*Type	c28_types_of_symbols
+X-JSX	c.getEffectiveFirstArgumentForJsxSignature	jsx.go:925	signature *Signature, node *ast.Node	*Type	c48_contextual_types
+X-JSX	c.getJsxType	jsx.go:1293	name string, location *ast.Node	*Type	relater.go
+T-JSDECL	c.getTypeOfPrototypeProperty	checker.go:18151	prototype *ast.Symbol	*Type	c28_types_of_symbols
+T-JSDECL	c.getWidenedTypeForAssignmentDeclaration	checker.go:18173	symbol *ast.Symbol	*Type	c28_types_of_symbols
+T-JSDECL	c.isConstructorDeclaredThisProperty	checker.go:18301	symbol *ast.Symbol) (thisAssignmentDeclarationKind, *ast.Node	-	c44_index_indexed_access
+T-JSDECL	c.isGlobalSymbolConstructor	checker.go:18346	node *ast.Node	bool	c31_binding_patterns_widening

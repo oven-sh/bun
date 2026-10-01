@@ -1,0 +1,87 @@
+file /expressions.ts scriptKind=3 variant=0 dts=false textLen=201
+externalModuleIndicator KindMetaProperty[69,81)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=75 identifiers=26 text=26 reparsedClones=0
+root KindSourceFile [0,201) f=0x100000
+  .Statements: list [0,200) n=9
+    - KindExpressionStatement [0,16) f=0x0
+      .Expression: KindNonNullExpression [0,15) f=0x0
+        .Expression: KindCallExpression [0,14) f=0x20
+          .Arguments: list [12,13) n=1
+            - KindIdentifier [12,13) f=0x0 Text="d"
+          .Expression: KindElementAccessExpression [0,9) f=0x20
+            .ArgumentExpression: KindIdentifier [7,8) f=0x0 Text="c"
+            .Expression: KindPropertyAccessExpression [0,4) f=0x20
+              .Expression: KindIdentifier [0,1) f=0x0 Text="a"
+              .QuestionDotToken: KindQuestionDotToken [1,3) f=0x0
+              .name: KindIdentifier [3,4) f=0x0 Text="b"
+            .QuestionDotToken: KindQuestionDotToken [4,6) f=0x0
+          .QuestionDotToken: KindQuestionDotToken [9,11) f=0x0
+    - KindExpressionStatement [16,35) f=0x0
+      .Expression: KindBinaryExpression [16,34) f=0x0
+        .Left: KindIdentifier [16,18) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [18,20) f=0x0
+        .Right: KindAsExpression [20,34) f=0x0
+          .Expression: KindAsExpression [20,29) f=0x0
+            .Expression: KindIdentifier [20,22) f=0x0 Text="y"
+            .Type: KindAnyKeyword [25,29) f=0x0
+          .Type: KindTypeReference [32,34) f=0x0
+            .TypeName: KindIdentifier [32,34) f=0x0 Text="T"
+    - KindExpressionStatement [35,57) f=0x0
+      .Expression: KindBinaryExpression [35,56) f=0x0
+        .Left: KindIdentifier [35,37) f=0x0 Text="z"
+        .OperatorToken: KindEqualsToken [37,39) f=0x0
+        .Right: KindSatisfiesExpression [39,56) f=0x0
+          .Expression: KindTypeAssertionExpression [39,44) f=0x0
+            .Expression: KindIdentifier [43,44) f=0x0 Text="w"
+            .Type: KindTypeReference [41,42) f=0x0
+              .TypeName: KindIdentifier [41,42) f=0x0 Text="T"
+          .Type: KindTypeReference [54,56) f=0x0
+            .TypeName: KindIdentifier [54,56) f=0x0 Text="U"
+    - KindExpressionStatement [57,69) f=0x0
+      .Expression: KindMetaProperty [57,68) f=0x0 KeywordToken=KindNewKeyword
+        .name: KindIdentifier [62,68) f=0x0 Text="target"
+    - KindExpressionStatement [69,86) f=0x0
+      .Expression: KindPropertyAccessExpression [69,85) f=0x0
+        .Expression: KindMetaProperty [69,81) f=0x0 KeywordToken=KindImportKeyword
+          .name: KindIdentifier [77,81) f=0x0 Text="meta"
+        .name: KindIdentifier [82,85) f=0x0 Text="url"
+    - KindLabeledStatement [86,132) f=0x0
+      .Label: KindIdentifier [86,92) f=0x0 Text="label"
+      .Statement: KindForInStatement [93,132) f=0x0
+        .Expression: KindIdentifier [109,111) f=0x0 Text="o"
+        .Initializer: KindVariableDeclarationList [99,106) f=0x2
+          .Declarations: list [104,106) n=1
+            - KindVariableDeclaration [104,106) f=0x400
+              .name: KindIdentifier [104,106) f=0x400 Text="k"
+        .Statement: KindBlock [112,132) f=0x0
+          .Statements: list [114,130) n=1
+            - KindContinueStatement [114,130) f=0x0
+              .Label: KindIdentifier [123,129) f=0x0 Text="label"
+    - KindForOfStatement [132,160) f=0x0
+      .AwaitModifier: KindAwaitKeyword [136,142) f=0x0
+      .Expression: KindIdentifier [154,156) f=0x0 Text="g"
+      .Initializer: KindVariableDeclarationList [144,151) f=0x2
+        .Declarations: list [149,151) n=1
+          - KindVariableDeclaration [149,151) f=0x400
+            .name: KindIdentifier [149,151) f=0x400 Text="v"
+      .Statement: KindBlock [157,160) f=0x0
+        .Statements: list [159,159) n=0
+    - KindVariableStatement [160,177) f=0x0
+      .DeclarationList: KindVariableDeclarationList [160,176) f=0x4
+        .Declarations: list [166,176) n=1
+          - KindVariableDeclaration [166,176) f=0x0
+            .Initializer: KindCallExpression [170,176) f=0x0
+              .Arguments: list [175,175) n=0
+              .Expression: KindIdentifier [170,174) f=0x0 Text="res"
+            .name: KindIdentifier [166,168) f=0x0 Text="r"
+    - KindVariableStatement [177,200) f=0x0
+      .DeclarationList: KindVariableDeclarationList [177,199) f=0x6
+        .Declarations: list [189,199) n=1
+          - KindVariableDeclaration [189,199) f=0x0
+            .Initializer: KindCallExpression [193,199) f=0x0
+              .Arguments: list [198,198) n=0
+              .Expression: KindIdentifier [193,197) f=0x0 Text="res"
+            .name: KindIdentifier [189,191) f=0x0 Text="s"
+  .EndOfFileToken: KindEndOfFile [200,201) f=0x0

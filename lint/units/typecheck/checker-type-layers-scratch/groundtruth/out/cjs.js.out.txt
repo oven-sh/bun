@@ -1,0 +1,4 @@
+cjs.js(1,1): error TS2309: An export assignment cannot be used in a module with other exported elements.
+cjs.js(2,16): error TS2339: Property 'b' does not exist on type '{ a: number; }'.
+RESOLUTIONDEPTH 3 [symbol:module symbol:exports symbol:e]
+COUNTS TypeCount=97 SymbolCount=8 SignatureCount=4 TotalInstantiationCount=0

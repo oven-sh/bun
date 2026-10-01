@@ -1,0 +1,26 @@
+## tslib: 108 files, 3.78 MB, 0 with parse diagnostics
+       65  accessor in type member (all)
+      174  computed name in type member: dotted-name   e.g. lib.dom.d.ts:44511
+    12667  property signature (all)
+    14636  signature parameter (all)
+        4  signature parameter with binding pattern   e.g. lib.es2015.generator.d.ts:21
+     1166  type heritage entry (all)
+     1206  type parameter (all)
+## bun-types: 32 files, 1.08 MB, 1 with parse diagnostics
+       49  computed name in type member: dotted-name   e.g. bun.d.ts:7097
+       18  computed name in type member: identifier   e.g. messages.d.ts:257
+       35  computed name in type member: string-literal   e.g. ffi.d.ts:403
+       82  import type (all)
+     1819  property signature (all)
+     1308  signature parameter (all)
+      144  type heritage entry (all)
+      749  type parameter (all)
+## src-js: 193 files, 3.27 MB, 0 with parse diagnostics
+        3  accessor in type member (all)
+        1  computed name in type member: dotted-name   e.g. timers.promises.ts:20
+       15  computed name in type member: identifier   e.g. builtins.d.ts:340
+      168  import type (all)
+     1353  property signature (all)
+      742  signature parameter (all)
+       60  type heritage entry (all)
+      120  type parameter (all)

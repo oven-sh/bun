@@ -1,0 +1,16 @@
+# N import elision around expressions inside types
+import { x } from "y"; export {}
+import { x } from "y"; let v: x; export {}
+import { x } from "y"; type A = { [x]: 1 }; export {}
+import { x } from "y"; type A = { [x.y]: 1 }; export {}
+import { x } from "y"; interface I { [x](): void }; export {}
+import { x } from "y"; let v: typeof x; export {}
+import { x } from "y"; let g: (a = x) => void; export {}
+import { x } from "y"; type A = { a: number = x }; export {}
+import { x } from "y"; type A = { get p() { return x } }; export {}
+import { x } from "y"; type A = { m(@x a): void }; export {}
+import { x } from "y"; type A<T extends -x> = T; export {}
+import { x } from "y"; interface I extends x.y {}; export {}
+import { x } from "y"; class C implements x.y {}; export {}
+import { x } from "y"; type A = { [x + 1]: 1 }; export {}
+import { x } from "y"; let g: ({ [x]: v }: any) => typeof v; export {}

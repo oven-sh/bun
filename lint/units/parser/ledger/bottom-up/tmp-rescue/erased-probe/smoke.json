@@ -1,0 +1,8 @@
+[
+ {"name":"smoke-1","text":"interface A {}\nconst x = 1;\ntype B = A;\ndeclare const y: number;\nfunction f(): void;\nfunction f() {}\n"},
+ {"name":"smoke-2","text":"declare namespace N.M { interface X {} const c: number; function g(): void; class K { m(): void } }\nnamespace P.Q { interface Y {} }\n"},
+ {"name":"smoke-3","text":"if (x) interface A {}\nswitch (x) { case 1: type T = 1; break }\nlabel: declare var y: number;\n"},
+ {"name":"smoke-4","text":"class C { m(): void; m() {} abstract n(): void; declare x: number; [k: string]: any; static [k: number]: string; constructor(); constructor(a?: any) {} }\n"},
+ {"name":"smoke-5","text":"import type A from 'a'; import type * as B from 'b'; import type { C, D as E } from 'c'; import { type F } from 'f'; import type G = require('g'); import type H = A.B;\nexport type { A } from 'a'; export type * from 'b'; export type * as C2 from 'c'; export { type D } from 'd'; export { type E }; export type { F };\nexport as namespace ns;\n"},
+ {"name":"smoke-6","text":"namespace N { export declare const x: number; export function f(): void; export function f() {} }\n@dec export declare abstract class Z {}\nexport default interface I {}\n"}
+]

@@ -1,0 +1,103 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/esbuild/ts.test.ts
+bun test v1.4.3 (e3566be88)
+
+test/bundler/esbuild/ts.test.ts:
+(pass) bundler > ts/DeclareConst [1968.70ms]
+(pass) bundler > ts/DeclareLet [511.95ms]
+(pass) bundler > ts/DeclareVar [302.30ms]
+(pass) bundler > ts/DeclareClass [644.98ms]
+(pass) bundler > ts/DeclareClassFields [1588.09ms]
+(pass) bundler > ts/DeclareFunction [359.83ms]
+(pass) bundler > ts/DeclareNamespace [311.21ms]
+(pass) bundler > ts/DeclareEnum [294.67ms]
+(pass) bundler > ts/DeclareConstEnum [234.35ms]
+(pass) bundler > ts/ConstEnumComments [1085.28ms]
+(pass) bundler > ts/ImportEmptyNamespace [871.50ms]
+(pass) bundler > ts/ImportMissingES6 [386.83ms]
+(pass) bundler > ts/ImportMissingUnusedES6 [210.05ms]
+(todo) bundler > ts/ExportMissingES6
+(pass) bundler > ts/ImportMissingFile [362.93ms]
+(pass) bundler > ts/ImportTypeOnlyFile [832.26ms]
+(pass) bundler > ts/ExportEquals [746.76ms]
+(pass) bundler > ts/ExportNamespace [3935.01ms]
+(todo) bundler > ts/MinifyEnum
+(pass) bundler > ts/MinifyEnumExported [459.73ms]
+(pass) bundler > ts/MinifyNestedEnum [791.11ms]
+(todo) bundler > ts/MinifyNestedEnumNoLogicalAssignment
+(todo) bundler > ts/MinifyNestedEnumNoArrow
+(pass) bundler > ts/MinifyNamespace [435.04ms]
+(todo) bundler > ts/MinifyNamespaceNoLogicalAssignment
+(todo) bundler > ts/MinifyNamespaceNoArrow
+(pass) bundler > ts/MinifyDerivedClass [1480.43ms]
+(pass) bundler > ts/ImportVsLocalCollisionAllTypes [699.03ms]
+(pass) bundler > ts/ImportVsLocalCollisionMixed [977.79ms]
+(todo) bundler > ts/ImportEqualsEliminationTest
+(pass) bundler > ts/ImportEqualsTreeShakingFalse [243.60ms]
+(todo) bundler > ts/ImportEqualsTreeShakingTrue
+(todo) bundler > ts/ImportEqualsBundle
+(pass) bundler > ts/MinifiedBundleES6 [954.72ms]
+(pass) bundler > ts/MinifiedBundleCommonJS [634.17ms]
+(pass) bundler > ts/TypeScriptDecoratorsSimpleCase [881.15ms]
+(todo) bundler > ts/TypeScriptDecorators
+(pass) bundler > ts/TypeScriptDecoratorsKeepNames [266.65ms]
+(pass) bundler > ts/TypeScriptDecoratorScopeESBuildIssue2147 [1174.01ms]
+(pass) bundler > ts/ExportTypeSTAR [1351.96ms]
+(pass) bundler > ts/ExportDefaultTypeESBuildIssue316 [2254.30ms]
+(pass) bundler > ts/ImplicitExtensions [4071.35ms]
+(pass) bundler > ts/ImplicitExtensionsMissing [183.73ms]
+(pass) bundler > ts/ExportTypeESBuildIssue379 [1125.10ms]
+(pass) bundler > ts/ThisInsideFunctionTS [2106.99ms]
+(pass) bundler > ts/ThisInsideFunctionTSUseDefineForClassFields [1431.82ms]
+(pass) bundler > ts/ThisInsideFunctionTSNoBundle [1382.02ms]
+(pass) bundler > ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields [1145.89ms]
+(todo) bundler > ts/ComputedClassFieldUseDefineFalse
+(todo) bundler > ts/ComputedClassFieldUseDefineTrue
+(todo) bundler > ts/ComputedClassFieldUseDefineTrueLower
+(todo) bundler > ts/AbstractClassFieldUseAssign
+(pass) bundler > ts/AbstractClassFieldUseDefine [412.70ms]
+(pass) bundler > ts/ImportMTS [663.02ms]
+(pass) bundler > ts/ImportCTS [688.44ms]
+(pass) bundler > ts/ImportRewrittenExtensions [4390.47ms]
+(pass) bundler > ts/ImportRewrittenExtensionsStayInFamily [242.63ms]
+(pass) bundler > ts/SideEffectsFalseWarningTypeDeclarations [280.03ms]
+(pass) bundler > ts/SiblingNamespaceLet [430.86ms]
+(pass) bundler > ts/SiblingNamespaceFunction [548.03ms]
+(pass) bundler > ts/SiblingNamespaceClass [221.57ms]
+(pass) bundler > ts/SiblingNamespaceNamespace [205.12ms]
+(pass) bundler > ts/SiblingNamespaceEnum [188.06ms]
+(pass) bundler > ts/SiblingEnum [3858.72ms]
+(pass) bundler > ts/EnumTreeShaking [5548.91ms]
+(todo) bundler > ts/EnumJSX
+(todo) bundler > ts/EnumDefine
+(pass) bundler > ts/EnumSameModuleInliningAccess [884.60ms]
+(pass) bundler > ts/EnumCrossModuleInliningAccess [182.84ms]
+(pass) bundler > ts/EnumCrossModuleInliningDefinitions [203.28ms]
+(pass) bundler > ts/EnumCrossModuleInliningReExport [189.82ms]
+(pass) bundler > ts/EnumCrossModuleTreeShaking [220.81ms]
+(pass) bundler > ts/EnumExportClause [214.94ms]
+(pass) bundler > ts/EnumRulesFrom_TypeScript_5_0 [3271.93ms]
+(pass) bundler > ts/EnumUseBeforeDeclare [899.93ms]
+
+16 tests todo:
+(todo) bundler > ts/ExportMissingES6
+(todo) bundler > ts/MinifyEnum
+(todo) bundler > ts/MinifyNestedEnumNoLogicalAssignment
+(todo) bundler > ts/MinifyNestedEnumNoArrow
+(todo) bundler > ts/MinifyNamespaceNoLogicalAssignment
+(todo) bundler > ts/MinifyNamespaceNoArrow
+(todo) bundler > ts/ImportEqualsEliminationTest
+(todo) bundler > ts/ImportEqualsTreeShakingTrue
+(todo) bundler > ts/ImportEqualsBundle
+(todo) bundler > ts/TypeScriptDecorators
+(todo) bundler > ts/ComputedClassFieldUseDefineFalse
+(todo) bundler > ts/ComputedClassFieldUseDefineTrue
+(todo) bundler > ts/ComputedClassFieldUseDefineTrueLower
+(todo) bundler > ts/AbstractClassFieldUseAssign
+(todo) bundler > ts/EnumJSX
+(todo) bundler > ts/EnumDefine
+
+ 59 pass
+ 16 todo
+ 0 fail
+ 43 expect() calls
+Ran 75 tests across 1 file. [78.72s]

@@ -1,0 +1,43 @@
+diff --git a/src/jsc/VirtualMachine.rs b/src/jsc/VirtualMachine.rs
+index a0395b3..f8609b6 100644
+--- a/src/jsc/VirtualMachine.rs
++++ b/src/jsc/VirtualMachine.rs
+@@ -3609,7 +3609,9 @@ pub fn process_fetch_log(
+ 
+     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+         take(match msg.metadata {
+-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
++            bun_ast::Metadata::Build | bun_ast::Metadata::Code(_) => {
++                BuildMessage::create(global_this, msg)
++            }
+             bun_ast::Metadata::Resolve(_) => {
+                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+             }
+diff --git a/src/jsc/lib.rs b/src/jsc/lib.rs
+index 7c9a1c4..1824b1a 100644
+--- a/src/jsc/lib.rs
++++ b/src/jsc/lib.rs
+@@ -1376,7 +1376,9 @@ pub trait LogJsc {
+ /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
+ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
+     match msg.metadata {
+-        bun_ast::Metadata::Build => BuildMessage::create(global, msg.clone()),
++        bun_ast::Metadata::Build | bun_ast::Metadata::Code(_) => {
++            BuildMessage::create(global, msg.clone())
++        }
+         bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
+     }
+ }
+diff --git a/src/runtime/server/DevErrorPage.rs b/src/runtime/server/DevErrorPage.rs
+index 123ad68..3a59c1b 100644
+--- a/src/runtime/server/DevErrorPage.rs
++++ b/src/runtime/server/DevErrorPage.rs
+@@ -156,7 +156,7 @@ fn write_message(w: &mut Vec<u8>, msg: &Msg) {
+     w.extend_from_slice(b"],\"on\":{\"resolve\":");
+     let specifier: &[u8] = match &msg.metadata {
+         Metadata::Resolve(resolve) => resolve.specifier.slice(&msg.data.text),
+-        Metadata::Build => b"",
++        Metadata::Build | Metadata::Code(_) => b"",
+     };
+     write_string(w, specifier);
+     write!(w, ",\"build\":{}}}}}", specifier.is_empty()).unwrap();

@@ -1,0 +1,18 @@
+exprs-inside-types, lens top-down. Base: worktree e3566be889, build/release/bun 1.4.3-canary.1+e3566be88, typescript 6.0.2.
+
+probe.cjs <inputs>      tsc parse diagnostics, checker diagnostics (noLib), transpileModule emit, Bun.Transpiler of the running binary
+  in1.txt  A  computed property names of type members            -> in1.out.txt
+  in2.txt  B  parameter initializers, C binding patterns, H decorators in function types  -> in2.out.txt
+  in3.txt  D  property signature initializers, E accessors, F import type attributes       -> in3.out.txt
+  in4.txt  G  type parameter constraint expressions, I index signature parameters, J heritage, H2 decorators without lookahead -> in4.out.txt
+  in5.txt  K  inputs accepted today whose reading must stay (attempts that a new form would flip) -> in5.out.txt
+  in6.txt  L  syntax errors inside the sites (tsc codes), M inputs for the leak checks             -> in6.out.txt
+  in7.txt  N  import elision around expressions inside types                                        -> in7.out.txt
+diag.cjs "<source>"     every tsc diagnostic of one input, unfiltered
+elide.cjs               tsc keeps an import used only by a computed name of a type member (program emit and transpileModule)
+meta.cjs in-meta.txt    design:type of tsc for types that contain the sites
+early.cjs in-early.txt  early errors: tsc parser inside the type vs Bun's expression parser in a real default value -> in-early.module.out.txt
+corpus.cjs <label> <dirs>   counts of every site over a corpus; corpus-tests.txt = TypeScript tests/cases compiler + conformance
+proto/patch.py <copy of src/js_parser> [sites]   prototype: helper in p.rs, Lexer::rewind_to, cold edges in the grammar (compiles, was not linked or run)
+proto/runvariants.sh, proto/fnasm.py, proto/results.txt   codegen of each site against the base grammar (run.py + scmp.py of build-sink-positions/quick)
+proto/fn_args.base.s, fn_args.B.s, object_type.A.s        the functions whose valid paths were read instruction by instruction

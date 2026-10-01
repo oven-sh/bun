@@ -1,0 +1,5 @@
+stage_scope.ts(8,7): error TS2322: Type '{ a: Hidden; b: Shown; c: Hidden[]; d: (x: Hidden) => Shown; e: 1; f: string; g: null; h: undefined; i: number; j: bigint; }' is not assignable to type 'string'.
+stage_scope.ts(11,7): error TS2322: Type 'outer.L' is not assignable to type 'string'.
+stage_scope.ts(12,7): error TS2322: Type 'typeof L' is not assignable to type 'string'.
+stage_scope.ts(15,7): error TS2322: Type '{ next: { next: { next: { next: { next: { next: { next: { next: { next: { next: { next: R; }; }; }; }; }; }; }; }; }; }; }' is not assignable to type 'string'.
+stage_scope.ts(17,7): error TS2322: Type '{ a: ...; b: 1; }' is not assignable to type 'string'.

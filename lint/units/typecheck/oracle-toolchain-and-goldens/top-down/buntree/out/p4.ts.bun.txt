@@ -1,0 +1,29 @@
+file p4.ts bytes=91 statements=14
+s_expr @0
+  e_number @0
+s_expr @6
+  e_number @6
+s_expr @12
+  e_number @12
+s_expr @18
+  e_number @18
+s_expr @25
+  e_number @25
+s_expr @30
+  e_number @30
+s_expr @36
+  e_number @36
+s_expr @40
+  e_number @40
+s_expr @44
+  e_big_int @44
+s_expr @49
+  e_big_int @49
+s_expr @56
+  e_string @56
+s_expr @63
+  e_string @63
+s_expr @73
+  e_string @73
+s_expr @86
+  e_string @86

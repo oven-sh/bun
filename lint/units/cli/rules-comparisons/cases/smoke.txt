@@ -1,0 +1,15 @@
+x === -0
+----
+(x) === -0
+----
+(x === -0)
+----
+if ((!a) in b) {}
+----
+if (!a in b) {}
+----
+typeof a === "strnig"
+----
+x == NaN
+----
+switch (NaN) { case NaN: break; }

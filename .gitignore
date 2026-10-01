@@ -1,0 +1,5 @@
+lint/benchroot/
+lint/measure/*/bin/
+*.cg
+lint/goals/*.mjs
+lint/internal/

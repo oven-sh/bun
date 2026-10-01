@@ -1,0 +1,349 @@
+A2  "global {}"
+     bun: Expected ";" but found "{" @7 | Unexpected } @8
+     tsc check: TS2669@0+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@0+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\n"
+A2  "global { var x: number; }"
+     bun: Expected ";" but found "{" @7 | Unexpected } @24
+     tsc check: TS2669@0+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@0+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\nvar global;\n(function (global) {\n    var x;\n})(global || (global = {}));\n"
+A2  "global { interface A {} }"
+     bun: Expected ";" but found "{" @7 | Unexpected } @24
+     tsc check: TS2669@0+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@0+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\n"
+AAg "declare global {}"
+     bun: ok ""
+     tsc check: TS2669@8+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations.
+     tsc emit: "\"use strict\";\n"
+AAg "declare global { var x: number }"
+     bun: ok ""
+     tsc check: TS2669@8+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations.
+     tsc emit: "\"use strict\";\n"
+A2  "declare\nglobal {}"
+     bun: Expected ";" but found "{" @15 | Unexpected } @16
+     tsc check: TS2669@8+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@8+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context. ; (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\n"
+A1  "declare global;"
+     bun: Expected "{" but found ";" @14 | Unexpected end of file @15
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\nglobal;\n"
+A2  "namespace N { global {} }"
+     bun: Expected ";" but found "{" @21 | Unexpected } @24
+     tsc check: TS2669@14+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@14+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\n"
+AAg "declare namespace N { global {} }"
+     bun: ok ""
+     tsc check: TS2669@22+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations.
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { global { var x: number } }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "module \"m\" { global { var x: number } }"
+     bun: Expected ";" but found ""m"" @7 | Expected ";" but found "{" @20 | Unexpected } @38
+     tsc check: TS1035@7+3 Only ambient modules can use quoted names. ; TS2670@13+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\nvar \"m\";\n(function (\"m\") {\n    let global;\n    (function (global) {\n        var x;\n    })(global || (global = {}));\n})(\"m\" || (\"m\" = {}));\n"
+AA  "export {}; declare global { var x: number }"
+     bun: ok "export {};\n"
+     tsc emit: "export {};\n"
+A2  "export {}; global { var x: number }"
+     bun: Expected ";" but found "{" @18 | Unexpected } @34
+     tsc check: TS2670@11+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "var global;\n(function (global) {\n    var x;\n})(global || (global = {}));\nexport {};\n"
+AA  "global"
+     bun: ok "global;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nglobal;\n"
+AA  "global;"
+     bun: ok "global;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nglobal;\n"
+AA  "global.x = 1;"
+     bun: ok "global.x = 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nglobal.x = 1;\n"
+AAg "global\n{}"
+     bun: ok "global;\n{}\n"
+     tsc check: TS2669@0+6 Augmentations for the global scope can only be directly nested in external modules or ambient module declarations. ; TS2670@0+6 Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context.
+     tsc emit: "\"use strict\";\n"
+A2  "{ namespace N {} }"
+     bun: Expected ";" but found "N" @12
+     tsc check: TS1235@2+9 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\n{\n}\n"
+A2  "{ namespace N { export const a = 1 } }"
+     bun: Expected ";" but found "N" @12 | Unexpected export @16
+     tsc check: TS1235@2+9 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\n{\n    let N;\n    (function (N) {\n        N.a = 1;\n    })(N || (N = {}));\n}\n"
+A2  "if (a) { namespace N { export const a = 1 } }"
+     bun: Expected ";" but found "N" @19 | Unexpected export @23
+     tsc check: TS1235@9+9 A namespace declaration is only allowed at the top level of a namespace or module. ; (noise 2304)
+     tsc emit: "\"use strict\";\nif (a) {\n    let N;\n    (function (N) {\n        N.a = 1;\n    })(N || (N = {}));\n}\n"
+A2  "function f() { namespace N { export const a = 1 } }"
+     bun: Expected ";" but found "N" @25 | Unexpected export @29
+     tsc check: TS1235@15+9 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\nfunction f() { let N; (function (N) {\n    N.a = 1;\n})(N || (N = {})); }\n"
+A2  "function f() { module N { export const a = 1 } }"
+     bun: Expected ";" but found "N" @22 | Unexpected export @26
+     tsc check: TS1235@15+6 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\nfunction f() { let N; (function (N) {\n    N.a = 1;\n})(N || (N = {})); }\n"
+A2  "{ declare namespace N {} }"
+     bun: Expected ";" but found "N" @20 | Unexpected "namespace" @10
+     tsc check: TS1235@2+7 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\n{\n}\n"
+A2  "{ module N {} }"
+     bun: Expected ";" but found "N" @9
+     tsc check: TS1235@2+6 A namespace declaration is only allowed at the top level of a namespace or module.
+     tsc emit: "\"use strict\";\n{\n}\n"
+A2  "{ declare module \"m\" {} }"
+     bun: Expected ";" but found ""m"" @17 | Unexpected "module" @10
+     tsc check: TS1234@2+7 An ambient module declaration is only allowed at the top level in a file.
+     tsc emit: "\"use strict\";\n{\n}\n"
+AA  "{ enum E { A } }"
+     bun: ok "{\n  let E;\n  ((E) => {\n    E[E[\"A\"] = 0] = \"A\";\n  })(E ||= {});\n}\n"
+     tsc emit: "\"use strict\";\n{\n    let E;\n    (function (E) {\n        E[E[\"A\"] = 0] = \"A\";\n    })(E || (E = {}));\n}\n"
+AA  "{ type T = 1 }"
+     bun: ok "{}\n"
+     tsc emit: "\"use strict\";\n{\n}\n"
+AA  "{ interface I {} }"
+     bun: ok "{}\n"
+     tsc emit: "\"use strict\";\n{\n}\n"
+AAg "{ declare const x: number }"
+     bun: ok "{}\n"
+     tsc check: TS1184@2+7 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\n{\n}\n"
+AAg "{ declare function f(): void }"
+     bun: ok "{}\n"
+     tsc check: TS1184@2+7 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\n{\n}\n"
+AA  "{ abstract class C {} }"
+     bun: ok "{\n  class C {\n  }\n}\n"
+     tsc emit: "\"use strict\";\n{\n    class C {\n    }\n}\n"
+AAg "{ declare class C {} }"
+     bun: ok "{}\n"
+     tsc check: TS1184@2+7 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\n{\n}\n"
+A2  "{ import x = require(\"y\") }"
+     bun: Unexpected x @9
+     tsc check: TS1232@2+6 An import declaration can only be used at the top level of a namespace or module. ; (noise 2307)
+     tsc emit: "\"use strict\";\n{\n    import x = require(\"y\");\n}\n"
+A2  "{ export const a = 1 }"
+     bun: Unexpected export @2
+     tsc check: TS1184@2+6 Modifiers cannot appear here.
+     tsc emit: "\"use strict\";\n{\n    export const a = 1;\n}\n"
+AA  "namespace N {}\nnamespace N { export const a = 1 }"
+     bun: ok "var N;\n((N) => {\n  N.a = 1;\n})(N ||= {});\n"
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    N.a = 1;\n})(N || (N = {}));\n"
+RR  "namespace\nN {}"
+     bun: Expected ";" but found "{" @12 | Unexpected } @13
+     tsc parse: TS1434@10+1 Unexpected keyword or identifier.
+RR  "module\nN {}"
+     bun: Expected ";" but found "{" @9 | Unexpected } @10
+     tsc parse: TS1434@7+1 Unexpected keyword or identifier.
+AA  "namespace N.M {}"
+     bun: ok "var N;\n((N) => {})(N ||= {});\n"
+     tsc emit: "\"use strict\";\n"
+AA  "namespace N.M.O { export const a = 1 }"
+     bun: ok "var N;\n((N) => {\n  let M;\n  ((M) => {\n    let O;\n    ((O) => {\n      O.a = 1;\n    })(O = M.O ||= {});\n  })(M = N.M ||= {});\n})(N ||= {});\n"
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    var M;\n    (function (M) {\n        var O;\n        (function (O) {\n            O.a = 1;\n        })(O = M.O || (M.O = {}));\n    })(M = N.M || (N.M = {}));\n})(N || (N = {}));\n"
+AAg "declare module N.M {}"
+     bun: ok ""
+     tsc check: TS1540@15+1 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead. ; TS1540@17+1 A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead.
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\";"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare module \"m\" { export const a: number }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "module \"m\" {}"
+     bun: Expected ";" but found ""m"" @7
+     tsc check: TS1035@7+3 Only ambient modules can use quoted names.
+     tsc emit: "\"use strict\";\n"
+RR  "namespace \"m\" {}"
+     bun: Expected ";" but found ""m"" @10
+     tsc parse: TS1003@10+3 Identifier expected. ; TS1005@14+1 ';' expected.
+B  "declare namespace \"m\" {}"
+     bun: ok ""
+     tsc parse: TS1003@18+3 Identifier expected. ; TS1005@22+1 ';' expected.
+AA  "abstract class C {}"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "abstract\nclass C {}"
+     bun: ok "abstract;\n\nclass C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nabstract;\nclass C {\n}\n"
+AA  "declare abstract class C {}"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A1  "abstract declare class C {}"
+     bun: Expected ";" but found "declare" @9
+     tsc emit: "\"use strict\";\n"
+AA  "declare class C {}"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare\nclass C {}"
+     bun: ok "declare;\n\nclass C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\nclass C {\n}\n"
+AA  "declare function f(): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AAg "declare async function f(): Promise<void>;"
+     bun: ok ""
+     tsc check: TS1040@8+5 'async' modifier cannot be used in an ambient context. ; (noise 2583)
+     tsc emit: "\"use strict\";\n"
+AAg "declare function* f(): void;"
+     bun: ok ""
+     tsc check: TS1221@16+1 Generators are not allowed in an ambient context.
+     tsc emit: "\"use strict\";\n"
+AA  "declare enum E { A }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare const enum E { A }"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare const x: number;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare let x: number;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare var x: number;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A2  "declare using x: number;"
+     bun: Cannot use "declare" with a "using" declaration @8
+     tsc check: TS1491@0+7 'declare' modifier cannot appear on a 'using' declaration.
+     tsc emit: "\"use strict\";\n"
+AA  "declare interface I {}"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "declare type T = 1;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+RR  "declare type\nT = 1;"
+     bun: Unexpected "type" @8
+     tsc parse: TS1142@13+1 Line break not permitted here.
+AAg "declare import x = require(\"y\");"
+     bun: ok ""
+     tsc check: TS1079@0+7 A 'declare' modifier cannot be used with an import declaration. ; (noise 2307)
+     tsc emit: "export {};\n"
+A2  "declare import x from \"y\";"
+     bun: Unexpected "import" @8
+     tsc check: TS1079@0+7 A 'declare' modifier cannot be used with an import declaration. ; (noise 2307)
+     tsc emit: "export {};\n"
+AAg "declare export const x: number;"
+     bun: ok ""
+     tsc check: TS1029@8+6 'export' modifier must precede 'declare' modifier.
+     tsc emit: "export {};\n"
+AA  "export declare const x: number;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export declare function f(): void;"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AA  "export declare namespace N {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+AAg "export declare global {}"
+     bun: ok ""
+     tsc check: TS2668@0+6 'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.
+     tsc emit: "export {};\n"
+AA  "export abstract class C {}"
+     bun: ok "export class C {\n}\n"
+     tsc emit: "export class C {\n}\n"
+AA  "export default abstract class C {}"
+     bun: ok "export default class C {\n}\n"
+     tsc emit: "export default class C {\n}\n"
+AA  "export default abstract class {}"
+     bun: ok "export default class {\n}\n"
+     tsc emit: "export default class {\n}\n"
+AA  "export declare abstract class C {}"
+     bun: ok ""
+     tsc emit: "export {};\n"
+A1  "export abstract declare class C {}"
+     bun: Expected ";" but found "declare" @16
+     tsc emit: "export {};\n"
+AAg "declare declare const x: number;"
+     bun: ok ""
+     tsc check: TS1030@8+7 'declare' modifier already seen.
+     tsc emit: "\"use strict\";\n"
+A1  "declare"
+     bun: Unexpected end of file @7
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\n"
+AA  "declare;"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\n"
+A1  "declare x"
+     bun: Unexpected "x" @8
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\nx;\n"
+AA  "declare\nx"
+     bun: ok "declare;\nx;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ndeclare;\nx;\n"
+AA  "abstract"
+     bun: ok "abstract;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nabstract;\n"
+AA  "abstract;"
+     bun: ok "abstract;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nabstract;\n"
+AA  "abstract\nclass C {}"
+     bun: ok "abstract;\n\nclass C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nabstract;\nclass C {\n}\n"
+AA  "type"
+     bun: ok "type;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntype;\n"
+AA  "type;"
+     bun: ok "type;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntype;\n"
+AA  "type\nT = 1;"
+     bun: ok "type;\nT = 1;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntype;\nT = 1;\n"
+A2  "interface"
+     bun: Expected identifier but found end of file @9
+     tsc check: TS1212@0+9 Identifier expected. 'interface' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\ninterface;\n"
+A2  "interface;"
+     bun: Expected identifier but found ";" @9 | Expected "{" but found end of file @10
+     tsc check: TS1212@0+9 Identifier expected. 'interface' is a reserved word in strict mode. ; (noise 2304)
+     tsc emit: "\"use strict\";\ninterface;\n"
+RR  "interface\nI {}"
+     bun: Expected ";" but found "{" @12 | Unexpected } @13
+     tsc parse: TS1434@10+1 Unexpected keyword or identifier.
+AA  "namespace"
+     bun: ok "namespace;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnamespace;\n"
+AA  "namespace;"
+     bun: ok "namespace;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nnamespace;\n"
+AA  "module"
+     bun: ok ""
+     tsc check: (noise 2591)
+     tsc emit: "\"use strict\";\nmodule;\n"
+AA  "module;"
+     bun: ok ""
+     tsc check: (noise 2591)
+     tsc emit: "\"use strict\";\nmodule;\n"
+AA  "module.exports = 1;"
+     bun: ok "module.exports = 1;\n"
+     tsc check: (noise 2591)
+     tsc emit: "\"use strict\";\nmodule.exports = 1;\n"
+AA  "type T = 1"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+AA  "type\nT"
+     bun: ok "type;\nT;\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\ntype;\nT;\n"
+AA  "interface I {} interface J {}"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"

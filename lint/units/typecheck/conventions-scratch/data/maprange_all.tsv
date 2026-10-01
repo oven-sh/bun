@@ -1,0 +1,119 @@
+ast/diagnostic.go:359	(*DiagnosticsCollection).GetDiagnostics	range	c.fileDiagnostics	map[tspath.Path][]*ast.Diagnostic	k=_ v=diags
+core/bfs.go:34	(*BreadthFirstSearchLevel[K, N]).Range	range-func	l.jobs.Values()	iter.Seq[*core.breadthFirstSearchJob[N]]	
+core/bfs.go:98	BreadthFirstSearchParallelEx	range-func	jobs.Values()	iter.Seq[*core.breadthFirstSearchJob[N]]	
+core/core.go:280	FirstOrNilSeq	range-func	seq	iter.Seq[T]	
+core/core.go:601	getSpellingSuggestion	range-func	candidates	iter.Seq[T]	
+core/core.go:743	ConcatenateSeq	range-func	seq	iter.Seq[T]	
+core/core.go:756	Enumerate	range-func	seq	iter.Seq[T]	
+core/core.go:783	DiffMapsFunc	range	m2	map[K]V2	k=k v=v2
+core/core.go:792	DiffMapsFunc	range	m1	map[K]V1	k=k v=v1
+core/core.go:807	CopyMapInto	maps.Clone	maps.Clone(src)		
+core/core.go:809	CopyMapInto	maps.Copy	maps.Copy(dst, src)		
+core/nodemodules.go:77	<toplevel>	range	UnprefixedNodeCoreModules	map[string]bool	k=unprefixed v=_
+core/nodemodules.go:81	<toplevel>	maps.Copy	maps.Copy(nodeCoreModules, ExclusivelyPrefixedNodeCoreModules)		
+collections/cow.go:40	(*CopyOnWriteMap[K, V]).ensureOwned	maps.Clone	maps.Clone(c.m)		
+collections/multimap.go:66	(*MultiMap[K, V]).Keys	maps.Keys	maps.Keys(s.M)		
+collections/multimap.go:70	(*MultiMap[K, V]).Values	maps.Values	maps.Values(s.M)		
+collections/ordered_map.go:211	(*OrderedMap[K, V]).clone	maps.Clone	maps.Clone(m.mp)		
+collections/ordered_map.go:302	DiffOrderedMapsFunc	range-func	m2.Entries()	iter.Seq2[K, V]	
+collections/ordered_map.go:307	DiffOrderedMapsFunc	range-func	m1.Entries()	iter.Seq2[K, V]	
+collections/set.go:69	(*Set[T]).Clone	maps.Clone	maps.Clone(s.M)		
+collections/set.go:81	(*Set[T]).Union	maps.Clone	maps.Clone(other.M)		
+collections/set.go:84	(*Set[T]).Union	maps.Copy	maps.Copy(s.M, other.M)		
+collections/set.go:99	(*Set[T]).UnionedWith	maps.Copy	maps.Copy(result.M, other.M)		
+collections/set.go:111	(*Set[T]).Equals	maps.Equal	maps.Equal(s.M, other.M)		
+collections/set.go:118	(*Set[T]).IsSubsetOf	range	s.M	map[T]struct{}	k=key v=_
+collections/set.go:130	(*Set[T]).Intersects	range	s.M	map[T]struct{}	k=key v=_
+scanner/regexp.go:170	(*regExpParser).scanDisjunction	range	alternativeNames	map[string]bool	k=name v=_
+scanner/regexp.go:180	(*regExpParser).scanDisjunction	range	disjunctionNames.Keys()	map[string]struct{}	k=name v=_
+scanner/regexp.go:986	(*regExpParser).getSpellingSuggestionForUnicodePropertyName	maps.Keys	maps.Keys(nonBinaryUnicodeProperties)		
+scanner/regexp.go:994	(*regExpParser).getSpellingSuggestionForUnicodePropertyValue	maps.Keys	maps.Keys(values.Keys())		
+scanner/regexp.go:999	(*regExpParser).getSpellingSuggestionForUnicodePropertyNameOrValue	maps.Keys	maps.Keys(valuesOfNonBinaryUnicodeProperties["General_Category"].Keys())		
+scanner/regexp.go:1000	(*regExpParser).getSpellingSuggestionForUnicodePropertyNameOrValue	maps.Keys	maps.Keys(binaryUnicodeProperties.Keys())		
+scanner/regexp.go:1001	(*regExpParser).getSpellingSuggestionForUnicodePropertyNameOrValue	maps.Keys	maps.Keys(binaryUnicodePropertiesOfStrings.Keys())		
+scanner/regexp.go:1087	(*regExpParser).run	maps.Keys	maps.Keys(p.groupSpecifiers)		
+scanner/scanner.go:188	<toplevel>	maps.Copy	maps.Copy(m, textToKeyword)		
+scanner/scanner.go:2257	IsIdentifierPartEx	range	textToToken	map[string]ast.Kind	k=text v=kind
+scanner/scanner.go:2277	GetViableKeywordSuggestions	range	textToKeyword	map[string]ast.Kind	k=text v=_
+binder/binder.go:1041	(*Binder).bindCommonJSTypeExports	range	moduleExports	map[string]*ast.Symbol	k=_ v=symbol
+checker/checker.go:1058	NewChecker	maps.Keys	maps.Keys(typeofNEFacts)		
+checker/checker.go:1314	(*Checker).initializeChecker	range	file.Locals	map[string]*ast.Symbol	k=_ v=symbol
+checker/checker.go:1328	(*Checker).initializeChecker	range	file.GlobalExports	map[string]*ast.Symbol	k=name v=symbol
+checker/checker.go:1443	(*Checker).mergeModuleAugmentation	range	moduleAugmentation.Symbol.Exports	map[string]*ast.Symbol	k=key v=value
+checker/checker.go:1771	getPrimitiveTypeAliasSuggestions	range	primitiveTypeAliasSuggestions()	map[string]*ast.Symbol	k=builtinName v=suggestion
+checker/checker.go:1790	(*Checker).getSuggestionForSymbolNameLookup	maps.Values	maps.Values(symbols)		
+checker/checker.go:2500	(*Checker).checkDeferredNodes	range-func	links.deferredNodes.Values()	iter.Seq[*ast.Node]	
+checker/checker.go:3516	(*Checker).checkFunctionOrConstructorSymbolWorker	range	groups	map[*ast.SourceFile][]*ast.Node	k=_ v=overloadsInFile
+checker/checker.go:4270	(*Checker).checkCatchClause	range	node.Locals()	map[string]*ast.Symbol	k=caughtName v=_
+checker/checker.go:4701	(*Checker).checkKindsOfPropertyMemberOverrides	range	notImplementedInfo	map[*ast.Node]checker.MemberInfo	k=errorNode v=memberInfo
+checker/checker.go:5000	(*Checker).checkTypeForDuplicateIndexSignatures	range	indexSignatureMap	map[*checker.Type][]*ast.Node	k=t v=declarations
+checker/checker.go:5118	(*Checker).checkInheritedPropertiesAreIdentical	range	c.resolveDeclaredMembers(t).declaredMembers	map[string]*ast.Symbol	k=id v=p
+checker/checker.go:5797	(*Checker).checkExternalModuleExports	range	c.getExportsOfModule(moduleSymbol)	map[string]*ast.Symbol	k=id v=symbol
+checker/checker.go:5829	(*Checker).hasExportedMembersOfKind	range	moduleSymbol.Exports	map[string]*ast.Symbol	k=_ v=symbol
+checker/checker.go:7233	(*Checker).checkUnusedLocalsAndParameters	range	node.Locals()	map[string]*ast.Symbol	k=_ v=local
+checker/checker.go:7259	(*Checker).checkUnusedLocalsAndParameters	range	variableParents.Keys()	map[*ast.Node]struct{}	k=declaration v=_
+checker/checker.go:7266	(*Checker).checkUnusedLocalsAndParameters	range	importClauses	map[*ast.Node][]*ast.Node	k=declaration v=unuseds
+checker/checker.go:14210	(*Checker).mergeSymbolTable	range	source	map[string]*ast.Symbol	k=id v=sourceSymbol
+checker/checker.go:14443	(*Checker).cloneSymbol	maps.Clone	maps.Clone(symbol.Members)		
+checker/checker.go:14444	(*Checker).cloneSymbol	maps.Clone	maps.Clone(symbol.Exports)		
+checker/checker.go:14878	(*Checker).combineValueAndTypeSymbols	maps.Clone	maps.Clone(typeSymbol.Members)		
+checker/checker.go:14879	(*Checker).combineValueAndTypeSymbols	maps.Clone	maps.Clone(valueSymbol.Exports)		
+checker/checker.go:15641	(*Checker).GetAmbientModules	range	c.globals	map[string]*ast.Symbol	k=sym v=global
+checker/checker.go:15819	(*Checker).cloneTypeAsModuleType	maps.Clone	maps.Clone(symbol.Members)		
+checker/checker.go:15820	(*Checker).cloneTypeAsModuleType	maps.Clone	maps.Clone(symbol.Exports)		
+checker/checker.go:16004	(*Checker).getSuggestedSymbolForNonexistentModule	maps.Values	maps.Values(c.getExportsOfModule(targetModule))		
+checker/checker.go:16253	(*Checker).getExportsOfModuleWorker	range	symbol.Exports	map[string]*ast.Symbol	k=name v=_
+checker/checker.go:16261	(*Checker).getExportsOfModuleWorker	maps.Clone	maps.Clone(symbol.Exports)		
+checker/checker.go:16272	(*Checker).getExportsOfModuleWorker	range	lookupTable	map[string]*checker.ExportCollision	k=id v=s
+checker/checker.go:16287	(*Checker).getExportsOfModuleWorker	range	symbols	map[string]*ast.Symbol	k=name v=_
+checker/checker.go:16307	(*Checker).getExportsOfModuleWorker	range	originalModule.Exports	map[string]*ast.Symbol	k=_ v=symbol
+checker/checker.go:16319	(*Checker).getExportsOfModuleWorker	range	nonTypeOnlyNames.Keys()	map[string]struct{}	k=name v=_
+checker/checker.go:16330	(*Checker).extendExportSymbols	range	source	map[string]*ast.Symbol	k=id v=sourceSymbol
+checker/checker.go:19244	(*Checker).resolveObjectTypeMembers	maps.Clone	maps.Clone(members)		
+checker/checker.go:19742	(*Checker).getIndexInfosOfSymbol	maps.Values	maps.Values(c.getMembersOfSymbol(symbol))		
+checker/checker.go:20790	(*Checker).resolveAnonymousTypeMembers	range	members	map[string]*ast.Symbol	k=_ v=p
+checker/checker.go:20803	(*Checker).resolveAnonymousTypeMembers	maps.Clone	maps.Clone(members)		
+checker/checker.go:20812	(*Checker).resolveAnonymousTypeMembers	maps.Values	maps.Values(members)		
+checker/checker.go:20859	(*Checker).instantiateSymbolTable	range	symbols	map[string]*ast.Symbol	k=id v=symbol
+checker/checker.go:21710	(*Checker).createUnionOrIntersectionProperty	range-func	propSet.Values()	iter.Seq[*ast.Symbol]	
+checker/checker.go:21795	(*Checker).hasCommonDeclaration	range-func	symbols.Values()	iter.Seq[*ast.Symbol]	
+checker/checker.go:21805	(*Checker).hasCommonDeclaration	range	commonDeclarations.Keys()	map[*ast.Node]struct{}	k=d v=_
+checker/checker.go:22173	(*Checker).getNamedMembers	range	members	map[string]*ast.Symbol	k=id v=symbol
+checker/checker.go:22180	(*Checker).getNamedMembers	range	members	map[string]*ast.Symbol	k=id v=symbol
+checker/checker.go:23919	(*Checker).getInferTypeParameters	range	node.Locals()	map[string]*ast.Symbol	k=_ v=symbol
+checker/checker.go:25881	(*Checker).UnionTypes	maps.Values	maps.Values(c.unionTypes)		
+checker/emitresolver.go:463	(*EmitResolver).hasVisibleDeclarations	maps.Values	maps.Values(aliasesToMakeVisibleSet)		
+checker/emitresolver.go:528	(*EmitResolver).IsImportRequiredByAugmentation	range-func	maps.Values(exports)	iter.Seq[*ast.Symbol]	
+checker/emitresolver.go:528	(*EmitResolver).IsImportRequiredByAugmentation	maps.Values	maps.Values(exports)		
+checker/emitresolver.go:1071	(*EmitResolver).CreateLateBoundIndexSignatures	maps.Values	maps.Values(r.checker.getMembersOfSymbol(sym))		
+checker/jsx.go:429	(*Checker).elaborateIterableOrArrayLikeTargetElementwise	range-func	iterator	iter.Seq[checker.JsxElaborationElement]	
+checker/nodebuilder_hover.go:415	(*NodeBuilderImpl).expandModuleDecl	range	exports	map[string]*ast.Symbol	k=_ v=sym
+checker/nodebuilderimpl.go:421	(*NodeBuilderImpl).mapToTypeNodes	range-func	seenNames.Values()	iter.Seq[[]checker.seenName]	
+checker/nodebuilderimpl.go:785	(*NodeBuilderImpl).createAccessFromSymbolChain	range	exports	map[string]*ast.Symbol	k=name v=ex
+checker/nodebuilderimpl.go:791	(*NodeBuilderImpl).createAccessFromSymbolChain	maps.Keys	maps.Keys(results)		
+checker/services.go:46	(*Checker).getSymbolsInScope	range	source	map[string]*ast.Symbol	k=_ v=symbol
+checker/services.go:54	(*Checker).getSymbolsInScope	range	source	map[string]*ast.Symbol	k=_ v=symbol
+checker/services.go:126	(*Checker).ForEachExportAndPropertyOfModule	range	c.getExportsOfModule(moduleSymbol)	map[string]*ast.Symbol	k=key v=exportedSymbol
+checker/services.go:147	(*Checker).ForEachExportAndPropertyOfModule	range	c.resolveStructuredTypeMembers(reducedType).members	map[string]*ast.Symbol	k=name v=symbol
+checker/services.go:218	(*Checker).GetAllPossiblePropertiesOfTypes	maps.Values	maps.Values(props)		
+checker/services.go:374	runWithoutResolvedSignatureCaching	range	cachedResolvedSignatures	map[*checker.SignatureLinks]*checker.Signature	k=signatureLinks v=resolvedSignature
+checker/services.go:377	runWithoutResolvedSignatureCaching	range	cachedTypes	map[*checker.ValueSymbolLinks]*checker.Type	k=symbolLinks v=resolvedType
+checker/symbolaccessibility.go:146	(*Checker).getWithAlternativeContainers	range	t	map[string]*ast.Symbol	k=_ v=s
+checker/symbolaccessibility.go:361	(*Checker).getAliasForSymbolInContainer	range	exports	map[string]*ast.Symbol	k=_ v=exported
+checker/symbolaccessibility.go:521	(*Checker).getSymbolTableAliases	range	symbols	map[string]*ast.Symbol	k=_ v=sym
+checker/symbolaccessibility.go:777	(*Checker).someSymbolTableInScope	range	sym.Members	map[string]*ast.Symbol	k=key v=memberSymbol
+checker/tracer.go:51	(*Tracer).copyWithCheckerIndex	maps.Copy	maps.Copy(withCheckerIndex, args)		
+checker/utilities.go:40	findInMap	range	m	map[K]V	k=_ v=value
+checker/utilities.go:1638	symbolsToArray	range	symbols	map[string]*ast.Symbol	k=id v=symbol
+checker/utilities.go:1673	(*Checker).getPackagesMap	range	resolvedModules	map[tspath.Path]module.ModeAwareCache[*module.ResolvedModule]	k=_ v=resolvedModulesInFile
+checker/utilities.go:1674	(*Checker).getPackagesMap	range	resolvedModulesInFile	map[module.ModeAwareCacheKey]*module.ResolvedModule	k=_ v=module
+printer/emitcontext.go:567	(*emitNode).copyFrom	maps.Clone	maps.Clone(source.tokenSourceMapRanges)		
+printer/printer.go:860	(*Printer).hasCommentsAtPosition	range-func	scanner.GetTrailingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pos+1)	iter.Seq[ast.CommentRange]	
+printer/printer.go:863	(*Printer).hasCommentsAtPosition	range-func	scanner.GetLeadingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pos+1)	iter.Seq[ast.CommentRange]	
+printer/printer.go:3070	(*Printer).willEmitLeadingNewLine	range-func	scanner.GetLeadingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), node.Pos())	iter.Seq[ast.CommentRange]	
+printer/printer.go:3091	(*Printer).willEmitLeadingNewLine	range-func	scanner.GetTrailingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pee.Expression.Pos())	iter.Seq[ast.CommentRange]	
+printer/printer.go:5557	(*Printer).emitLeadingComments	range-func	scanner.GetLeadingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pos)	iter.Seq[ast.CommentRange]	
+printer/printer.go:5607	(*Printer).emitTrailingComments	range-func	scanner.GetTrailingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pos)	iter.Seq[ast.CommentRange]	
+printer/printer.go:5626	(*Printer).emitTrailingCommentsOfPosition	range-func	scanner.GetTrailingCommentRanges(p.emitContext.Factory.AsNodeFactory(), p.currentSourceFile.Text(), pos)	iter.Seq[ast.CommentRange]	
+printer/printer.go:5687	(*Printer).emitDetachedComments	range-func	scanner.GetLeadingCommentRanges(p.emitContext.Factory.AsNodeFactory(), text, textRange.Pos())	iter.Seq[ast.CommentRange]	
+printer/textwriter.go:101	(*textWriter).updateLineCountAndPosFor	range-func	core.ComputeECMALineStartsSeq(s)	iter.Seq[core.TextPos]	

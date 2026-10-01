@@ -1,0 +1,320 @@
+586	id	uint32	u32	912	C-INIT
+587	program	Program	Program	914	A-ALIAS,C-INIT,M-MODULE,UTIL
+588	compilerOptions	*core.CompilerOptions	CompilerOptions	915	A-ALIAS,C-INIT,D-SINK,M-MODULE,N-DIAG,N-RESOLVE,Q-ENTITY,S-MERGE,UTIL
+589	files	[]*ast.SourceFile	Vec<NodeId>	916	C-INIT
+590	fileIndexMap	map[*ast.SourceFile]int	Map<NodeId, isize>	917	C-INIT,UTIL
+591	compareSymbols	func(*ast.Symbol, *ast.Symbol) int	func(*ast.Symbol, *ast.Symbol) int	918	C-INIT,N-DIAG,UTIL
+592	compareSymbolChains	func([]*ast.Symbol, []*ast.Symbol) int	func([]*ast.Symbol, []*ast.Symbol) int	919	C-INIT
+593	TypeCount	uint32	u32		K-OBJ
+594	SymbolCount	uint32	u32		S-MERGE
+595	SignatureCount	uint32	u32		K-OBJ
+596	TotalInstantiationCount	uint32	u32		
+597	instantiationCount	uint32	u32		
+598	instantiationDepth	uint32	u32		
+599	conditionalConstraintDepth	uint32	u32		
+600	inlineLevel	int	isize		
+601	serializationLevel	int	isize		D-SINK
+602	currentNode	*ast.Node	NodeId		
+603	varianceTypeParameter	*Type	TypeId		
+604	languageVersion	core.ScriptTarget	ScriptTarget	920	C-INIT
+605	moduleKind	core.ModuleKind	ModuleKind	921	A-ALIAS,C-INIT,M-MODULE
+606	moduleResolutionKind	core.ModuleResolutionKind	ModuleResolutionKind	922	C-INIT,M-MODULE
+607	isInferencePartiallyBlocked	bool	bool		
+608	legacyDecorators	bool	bool	923	C-INIT,N-DIAG
+609	emitStandardClassFields	bool	bool	924	C-INIT,N-DIAG
+610	strictNullChecks	bool	bool	925	C-INIT,K-OBJ
+611	strictFunctionTypes	bool	bool	926	C-INIT
+612	strictBindCallApply	bool	bool	927	C-INIT
+613	strictPropertyInitialization	bool	bool	928	C-INIT
+614	strictBuiltinIteratorReturn	bool	bool	929	C-INIT
+615	noImplicitAny	bool	bool	930	C-INIT,M-MODULE,T-RSTACK,UTIL
+616	noImplicitThis	bool	bool	931	C-INIT
+617	useUnknownInCatchVariables	bool	bool	932	C-INIT
+618	exactOptionalPropertyTypes	bool	bool	933	C-INIT
+619	canCollectSymbolAliasAccessibilityData	bool	bool	934	C-INIT
+620	wasCanceled	bool	bool		D-SINK,UTIL
+621	arrayVariances	[]VarianceFlags	Vec<VarianceFlags>	935	C-INIT
+622	globals	ast.SymbolTable	SymbolTableId	936	C-INIT,M-MODULE,N-DIAG
+623	evaluate	evaluator.Evaluator	evaluator.Evaluator	937	C-INIT
+624	stringLiteralTypes	map[string]*Type	Map<Text<'a>, TypeId>	938	C-INIT
+625	numberLiteralTypes	map[jsnum.Number]*Type	Map<Number, TypeId>	939	C-INIT
+626	nanType	*Type	TypeId		
+627	bigintLiteralTypes	map[jsnum.PseudoBigInt]*Type	Map<PseudoBigInt, TypeId>	940	C-INIT
+628	enumLiteralTypes	map[EnumLiteralKey]*Type	Map<EnumLiteralKey, TypeId>	941	C-INIT
+629	enumNaNLiteralTypes	map[*ast.Symbol]*Type	Map<SymbolId, TypeId>	942	C-INIT
+630	indexedAccessTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	943	C-INIT
+631	templateLiteralTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	944	C-INIT
+632	stringMappingTypes	map[StringMappingKey]*Type	Map<StringMappingKey, TypeId>	945	C-INIT
+633	uniqueESSymbolTypes	map[*ast.Symbol]*Type	Map<SymbolId, TypeId>	946	C-INIT
+634	thisExpandoKinds	map[*ast.Symbol]thisAssignmentDeclarationKind	Map<SymbolId, thisAssignmentDeclarationKind>	947	C-INIT
+635	thisExpandoLocations	map[*ast.Symbol]*ast.Node	Map<SymbolId, NodeId>	948	C-INIT
+636	subtypeReductionCache	map[CacheHashKey][]*Type	Map<CacheHashKey, Vec<TypeId>>	949	C-INIT
+637	cachedTypes	map[CachedTypeKey]*Type	Map<CachedTypeKey, TypeId>	950	C-INIT,M-MODULE
+638	cachedSignatures	map[CachedSignatureKey]*Signature	Map<CachedSignatureKey, SignatureId>	951	C-INIT
+639	undefinedProperties	map[string]*ast.Symbol	Map<Text<'a>, SymbolId>	952	C-INIT
+640	narrowedTypes	map[NarrowedTypeKey]*Type	Map<NarrowedTypeKey, TypeId>	953	C-INIT
+641	assignmentReducedTypes	map[AssignmentReducedKey]*Type	Map<AssignmentReducedKey, TypeId>	954	C-INIT
+642	discriminatedContextualTypes	map[DiscriminatedContextualTypeKey]*Type	Map<DiscriminatedContextualTypeKey, TypeId>	955	C-INIT
+643	instantiationExpressionTypes	map[InstantiationExpressionKey]*Type	Map<InstantiationExpressionKey, TypeId>	956	C-INIT
+644	substitutionTypes	map[SubstitutionTypeKey]*Type	Map<SubstitutionTypeKey, TypeId>	957	C-INIT
+645	reverseMappedCache	map[ReverseMappedTypeKey]*Type	Map<ReverseMappedTypeKey, TypeId>	958	C-INIT
+646	reverseHomomorphicMappedCache	map[ReverseMappedTypeKey]*Type	Map<ReverseMappedTypeKey, TypeId>	959	C-INIT
+647	iterationTypesCache	map[IterationTypesKey]IterationTypes	Map<IterationTypesKey, IterationTypes>	960	C-INIT
+648	markerTypes	collections.Set[*Type]	Set<TypeId>		
+649	resolvingExplicitTypeOfSymbol	collections.Set[*ast.Symbol]	Set<SymbolId>		
+650	undefinedSymbol	*ast.Symbol	SymbolId	961	C-INIT
+651	argumentsSymbol	*ast.Symbol	SymbolId	962	C-INIT
+652	requireSymbol	*ast.Symbol	SymbolId	963	C-INIT,M-MODULE
+653	unknownSymbol	*ast.Symbol	SymbolId	964	A-ALIAS,C-INIT,N-RESOLVE,Q-ENTITY,S-MERGE
+654	unresolvedSymbols	map[string]*ast.Symbol	Map<Text<'a>, SymbolId>	965	C-INIT
+655	errorTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	966	C-INIT
+656	moduleSymbols	map[*ast.Node]*ast.Symbol	Map<NodeId, SymbolId>	967	C-INIT
+657	globalThisSymbol	*ast.Symbol	SymbolId	968	C-INIT,S-MERGE
+658	symbolTableAliasCache	map[symbolTableID][]*ast.Symbol	Map<symbolTableID, Vec<SymbolId>>		
+659	classExpressionNameTables	map[ast.NodeId]ast.SymbolTable	Map<NodeId, SymbolTableId>		
+660	resolveName	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	971	C-INIT,M-MODULE,N-DIAG,N-RESOLVE,Q-ENTITY
+661	resolveNameForSymbolSuggestion	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	func(location *ast.Node, name string, meaning ast.SymbolFlags, nameNotFoundMessage *diagnostics.Message, isUse bool, excludeGlobals bool) *ast.Symbol	972	C-INIT,N-DIAG
+662	tupleTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	973	C-INIT
+663	unionTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	974	C-INIT
+664	unionOfUnionTypes	map[UnionOfUnionKey]*Type	Map<UnionOfUnionKey, TypeId>	975	C-INIT
+665	intersectionTypes	map[CacheHashKey]*Type	Map<CacheHashKey, TypeId>	976	C-INIT
+666	propertiesTypes	map[PropertiesTypesKey]*Type	Map<PropertiesTypesKey, TypeId>	977	C-INIT
+667	diagnostics	ast.DiagnosticsCollection	ast.DiagnosticsCollection		D-SINK
+668	suggestionDiagnostics	ast.DiagnosticsCollection	ast.DiagnosticsCollection		D-SINK
+669	symbolArena	core.Arena[ast.Symbol]	Arena[ast.Symbol]		S-MERGE
+670	signatureArena	core.Arena[Signature]	Arena[Signature]		K-OBJ
+671	indexInfoArena	core.Arena[IndexInfo]	Arena[IndexInfo]		K-OBJ
+672	mergedSymbols	map[*ast.Symbol]*ast.Symbol	Map<SymbolId, SymbolId>	978	C-INIT,S-MERGE
+673	factory	ast.NodeFactory	ast.NodeFactory		
+674	nodeLinks	core.LinkStore[*ast.Node, NodeLinks]	LinkStore<NodeId, NodeLinks>		N-DIAG,T-RSTACK
+675	signatureLinks	core.LinkStore[*ast.Node, SignatureLinks]	LinkStore<NodeId, SignatureLinks>		
+676	symbolNodeLinks	nodeLinkStore[SymbolNodeLinks]	LinkStore<NodeId, SymbolNodeLinks>		M-MODULE,N-RESOLVE
+677	typeNodeLinks	core.LinkStore[*ast.Node, TypeNodeLinks]	LinkStore<NodeId, TypeNodeLinks>		
+678	enumMemberLinks	core.LinkStore[*ast.Node, EnumMemberLinks]	LinkStore<NodeId, EnumMemberLinks>		
+679	assertionLinks	core.LinkStore[*ast.Node, AssertionLinks]	LinkStore<NodeId, AssertionLinks>		
+680	arrayLiteralLinks	core.LinkStore[*ast.Node, ArrayLiteralLinks]	LinkStore<NodeId, ArrayLiteralLinks>		
+681	switchStatementLinks	core.LinkStore[*ast.Node, SwitchStatementLinks]	LinkStore<NodeId, SwitchStatementLinks>		
+682	jsxElementLinks	core.LinkStore[*ast.Node, JsxElementLinks]	LinkStore<NodeId, JsxElementLinks>		
+683	computedNameLinks	core.LinkStore[*ast.Node, ComputedNameNodeLinks]	LinkStore<NodeId, ComputedNameNodeLinks>		
+684	symbolReferenceLinks	core.LinkStore[*ast.Symbol, SymbolReferenceLinks]	LinkStore<SymbolId, SymbolReferenceLinks>		N-DIAG
+685	valueSymbolLinks	symbolArenaLinkStore[ValueSymbolLinks]	LinkStore<u64, ValueSymbolLinks>		C-INIT,M-MODULE,S-MERGE,T-RSTACK
+686	mappedSymbolLinks	core.LinkStore[*ast.Symbol, MappedSymbolLinks]	LinkStore<SymbolId, MappedSymbolLinks>		
+687	deferredSymbolLinks	core.LinkStore[*ast.Symbol, DeferredSymbolLinks]	LinkStore<SymbolId, DeferredSymbolLinks>		
+688	aliasSymbolLinks	core.LinkStore[*ast.Symbol, AliasSymbolLinks]	LinkStore<SymbolId, AliasSymbolLinks>		A-ALIAS,M-MODULE,N-DIAG,T-RSTACK
+689	moduleSymbolLinks	core.LinkStore[*ast.Symbol, ModuleSymbolLinks]	LinkStore<SymbolId, ModuleSymbolLinks>		A-ALIAS,M-MODULE
+690	lateBoundLinks	core.LinkStore[*ast.Symbol, LateBoundLinks]	LinkStore<SymbolId, LateBoundLinks>		M-MODULE,S-MERGE
+691	exportTypeLinks	core.LinkStore[*ast.Symbol, ExportTypeLinks]	LinkStore<SymbolId, ExportTypeLinks>		M-MODULE
+692	membersAndExportsLinks	core.LinkStore[*ast.Symbol, MembersAndExportsLinks]	LinkStore<SymbolId, MembersAndExportsLinks>		M-MODULE
+693	typeAliasLinks	core.LinkStore[*ast.Symbol, TypeAliasLinks]	LinkStore<SymbolId, TypeAliasLinks>		C-INIT,T-RSTACK
+694	declaredTypeLinks	core.LinkStore[*ast.Symbol, DeclaredTypeLinks]	LinkStore<SymbolId, DeclaredTypeLinks>		
+695	spreadLinks	core.LinkStore[*ast.Symbol, SpreadLinks]	LinkStore<SymbolId, SpreadLinks>		
+696	varianceLinks	core.LinkStore[*ast.Symbol, VarianceLinks]	LinkStore<SymbolId, VarianceLinks>		
+697	ReverseMappedSymbolLinks	core.LinkStore[*ast.Symbol, ReverseMappedSymbolLinks]	LinkStore<SymbolId, ReverseMappedSymbolLinks>		
+698	markedAssignmentSymbolLinks	core.LinkStore[*ast.Symbol, MarkedAssignmentSymbolLinks]	LinkStore<SymbolId, MarkedAssignmentSymbolLinks>		
+699	symbolContainerLinks	core.LinkStore[*ast.Symbol, ContainingSymbolLinks]	LinkStore<SymbolId, ContainingSymbolLinks>		
+700	sourceFileLinks	core.LinkStore[*ast.SourceFile, SourceFileLinks]	LinkStore<NodeId, SourceFileLinks>		
+701	regExpScanner	*scanner.Scanner	scanner.Scanner		
+702	patternForType	map[*Type]*ast.Node	Map<TypeId, NodeId>	979	C-INIT
+703	contextFreeTypes	map[*ast.Node]*Type	Map<NodeId, TypeId>	980	C-INIT
+704	anyType	*Type	TypeId	981	A-ALIAS,C-INIT,T-RSTACK
+705	autoType	*Type	TypeId	982	C-INIT
+706	wildcardType	*Type	TypeId	983	C-INIT
+707	blockedStringType	*Type	TypeId	984	C-INIT
+708	errorType	*Type	TypeId	985	C-INIT,T-RSTACK
+709	unresolvedType	*Type	TypeId	986	C-INIT
+710	nonInferrableAnyType	*Type	TypeId	987	C-INIT
+711	intrinsicMarkerType	*Type	TypeId	988	C-INIT
+712	unknownType	*Type	TypeId	989	C-INIT,K-OBJ,MAPPER
+713	undefinedType	*Type	TypeId	990	C-INIT,K-OBJ
+714	undefinedWideningType	*Type	TypeId	991	C-INIT
+715	missingType	*Type	TypeId	992	C-INIT,UTIL
+716	undefinedOrMissingType	*Type	TypeId	993	C-INIT
+717	optionalType	*Type	TypeId	994	C-INIT
+718	nullType	*Type	TypeId	995	C-INIT,K-OBJ
+719	nullWideningType	*Type	TypeId	996	C-INIT
+720	stringType	*Type	TypeId	997	C-INIT
+721	numberType	*Type	TypeId	998	C-INIT
+722	bigintType	*Type	TypeId	999	C-INIT
+723	regularFalseType	*Type	TypeId	1000	C-INIT
+724	falseType	*Type	TypeId	1001	C-INIT
+725	regularTrueType	*Type	TypeId	1004	C-INIT
+726	trueType	*Type	TypeId	1005	C-INIT
+727	booleanType	*Type	TypeId	1008	C-INIT
+728	esSymbolType	*Type	TypeId	1009	C-INIT
+729	voidType	*Type	TypeId	1010	C-INIT
+730	neverType	*Type	TypeId	1011	C-INIT
+731	silentNeverType	*Type	TypeId	1012	C-INIT
+732	implicitNeverType	*Type	TypeId	1013	C-INIT
+733	unreachableNeverType	*Type	TypeId	1014	C-INIT
+734	nonPrimitiveType	*Type	TypeId	1015	C-INIT
+735	stringOrNumberType	*Type	TypeId	1016	C-INIT
+736	stringNumberSymbolType	*Type	TypeId	1017	C-INIT
+737	numberOrBigIntType	*Type	TypeId	1018	C-INIT
+738	templateConstraintType	*Type	TypeId	1020	C-INIT
+739	numericStringType	*Type	TypeId	1019	C-INIT
+740	uniqueLiteralType	*Type	TypeId	1021	C-INIT
+741	uniqueLiteralMapper	*TypeMapper	TypeMapperId	1022	C-INIT
+742	reliabilityFlags	RelationComparisonResult	RelationComparisonResult		C-INIT
+743	reportUnreliableMapper	*TypeMapper	TypeMapperId	1023	C-INIT
+744	reportUnmeasurableMapper	*TypeMapper	TypeMapperId	1024	C-INIT
+745	restrictiveMapper	*TypeMapper	TypeMapperId	1025	C-INIT
+746	permissiveMapper	*TypeMapper	TypeMapperId	1026	C-INIT
+747	emptyObjectType	*Type	TypeId	1027	C-INIT
+748	emptyJsxObjectType	*Type	TypeId	1028	C-INIT
+749	emptyFreshJsxObjectType	*Type	TypeId	1029	C-INIT
+750	emptyTypeLiteralType	*Type	TypeId	1030	C-INIT
+751	unknownEmptyObjectType	*Type	TypeId	1031	C-INIT,K-OBJ
+752	unknownUnionType	*Type	TypeId	1032	C-INIT
+753	emptyGenericType	*Type	TypeId	1033	C-INIT,K-OBJ
+754	anyFunctionType	*Type	TypeId	1035	C-INIT
+755	noConstraintType	*Type	TypeId	1037	C-INIT
+756	circularConstraintType	*Type	TypeId	1038	C-INIT
+757	resolvingDefaultType	*Type	TypeId	1039	C-INIT
+758	markerSuperType	*Type	TypeId	1040	C-INIT
+759	markerSubType	*Type	TypeId	1041	C-INIT
+760	markerOtherType	*Type	TypeId	1043	C-INIT
+761	markerSuperTypeForCheck	*Type	TypeId	1044	C-INIT
+762	markerSubTypeForCheck	*Type	TypeId	1045	C-INIT
+763	noTypePredicate	*TypePredicate	TypePredicateId	1047	C-INIT
+764	anySignature	*Signature	SignatureId	1048	C-INIT
+765	unknownSignature	*Signature	SignatureId	1049	C-INIT
+766	resolvingSignature	*Signature	SignatureId	1050	C-INIT
+767	silentNeverSignature	*Signature	SignatureId	1051	C-INIT
+768	cachedArgumentsReferenced	map[*ast.Node]bool	Map<NodeId, bool>	1052	C-INIT
+769	enumNumberIndexInfo	*IndexInfo	IndexInfoId	1053	C-INIT
+770	anyBaseTypeIndexInfo	*IndexInfo	IndexInfoId	1054	C-INIT
+771	patternAmbientModules	[]*ast.PatternAmbientModule	Vec<ast.PatternAmbientModule>		C-INIT,M-MODULE
+772	patternAmbientModuleAugmentations	ast.SymbolTable	SymbolTableId		C-INIT,M-MODULE
+773	globalObjectType	*Type	TypeId	1357	C-INIT,Q-ENTITY
+774	globalFunctionType	*Type	TypeId	1358	C-INIT
+775	globalCallableFunctionType	*Type	TypeId	1359	C-INIT
+776	globalNewableFunctionType	*Type	TypeId	1360	C-INIT
+777	globalArrayType	*Type	TypeId	1356	C-INIT
+778	globalReadonlyArrayType	*Type	TypeId	1371	C-INIT
+779	globalStringType	*Type	TypeId	1361	C-INIT
+780	globalNumberType	*Type	TypeId	1362	C-INIT
+781	globalBooleanType	*Type	TypeId	1363	C-INIT
+782	globalRegExpType	*Type	TypeId	1364	C-INIT
+783	globalThisType	*Type	TypeId	1376	C-INIT
+784	anyArrayType	*Type	TypeId	1365	C-INIT
+785	autoArrayType	*Type	TypeId	1366	C-INIT
+786	anyReadonlyArrayType	*Type	TypeId	1375	C-INIT
+787	deferredGlobalImportMetaExpressionType	*Type	TypeId		
+788	contextualBindingPatterns	[]*ast.Node	Vec<NodeId>		
+789	emptyStringType	*Type	TypeId	1055	C-INIT
+790	zeroType	*Type	TypeId	1056	C-INIT
+791	zeroBigIntType	*Type	TypeId	1057	C-INIT
+792	typeofType	*Type	TypeId	1058	C-INIT
+793	typeResolutions	[]TypeResolution	Vec<TypeResolution>		T-RSTACK
+794	resolutionStart	int	isize		T-RSTACK
+795	varianceStack	[]VarianceStackEntry	Vec<VarianceStackEntry>		
+796	apparentArgumentCount	*int	int		
+797	lastGetCombinedNodeFlagsNode	*ast.Node	NodeId		
+798	lastGetCombinedNodeFlagsResult	ast.NodeFlags	NodeFlags		
+799	lastGetCombinedModifierFlagsNode	*ast.Node	NodeId		
+800	lastGetCombinedModifierFlagsResult	ast.ModifierFlags	ModifierFlags		
+801	freeinferenceState	*InferenceState	InferenceState		
+802	freeFlowState	*FlowState	FlowState		
+803	flowLoopCache	map[FlowLoopKey]*Type	Map<FlowLoopKey, TypeId>	1059	C-INIT
+804	flowLoopStack	[]FlowLoopInfo	Vec<FlowLoopInfo>		
+805	sharedFlows	[]SharedFlow	Vec<SharedFlow>		
+806	antecedentTypes	[]*Type	Vec<TypeId>		
+807	flowAnalysisDisabled	bool	bool		
+808	flowInvocationCount	int	isize		
+809	flowTypeCache	map[*ast.Node]*Type	Map<NodeId, TypeId>		
+810	lastFlowNode	*ast.FlowNode	FlowNodeId		
+811	lastFlowNodeReachable	bool	bool		
+812	flowNodeReachable	map[*ast.FlowNode]bool	Map<FlowNodeId, bool>	1060	C-INIT
+813	flowNodePostSuper	map[*ast.FlowNode]bool	Map<FlowNodeId, bool>	1061	C-INIT
+814	renamedBindingElementsInTypes	[]*ast.Node	Vec<NodeId>		
+815	contextualInfos	[]ContextualInfo	Vec<ContextualInfo>		
+816	inferenceContextInfos	[]InferenceContextInfo	Vec<InferenceContextInfo>		
+817	awaitedTypeStack	[]*Type	Vec<TypeId>		
+818	reverseMappedSourceStack	[]*Type	Vec<TypeId>		
+819	reverseMappedTargetStack	[]*Type	Vec<TypeId>		
+820	reverseExpandingFlags	ExpandingFlags	ExpandingFlags		
+821	freeRelater	*Relater	Relater		
+822	subtypeRelation	*Relation	Relation	1062	C-INIT
+823	strictSubtypeRelation	*Relation	Relation	1063	C-INIT
+824	assignableRelation	*Relation	Relation	1064	C-INIT
+825	comparableRelation	*Relation	Relation	1065	C-INIT
+826	identityRelation	*Relation	Relation	1066	C-INIT
+827	enumRelation	map[EnumRelationKey]RelationComparisonResult	Map<EnumRelationKey, RelationComparisonResult>	1067	C-INIT
+828	getGlobalESSymbolType	func() *Type	Memo<TypeId>	1068	C-INIT
+829	getGlobalBigIntType	func() *Type	Memo<TypeId>	1069	C-INIT
+830	getGlobalImportMetaType	func() *Type	Memo<TypeId>	1070	C-INIT
+831	getGlobalImportAttributesType	func() *Type	Memo<TypeId>	1071	C-INIT
+832	getGlobalImportAttributesTypeChecked	func() *Type	Memo<TypeId>	1072	C-INIT
+833	getGlobalNonNullableTypeAliasOrNil	func() *ast.Symbol	Memo<SymbolId>	1073	C-INIT
+834	getGlobalExtractSymbol	func() *ast.Symbol	Memo<SymbolId>	1074	C-INIT
+835	getGlobalDisposableType	func() *Type	Memo<TypeId>	1075	C-INIT
+836	getGlobalAsyncDisposableType	func() *Type	Memo<TypeId>	1076	C-INIT
+837	getGlobalAwaitedSymbol	func() *ast.Symbol	Memo<SymbolId>	1077	C-INIT
+838	getGlobalAwaitedSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1078	C-INIT
+839	getGlobalNaNSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1079	C-INIT
+840	getGlobalRecordSymbol	func() *ast.Symbol	Memo<SymbolId>	1080	C-INIT
+841	getGlobalTemplateStringsArrayType	func() *Type	Memo<TypeId>	1081	C-INIT
+842	getGlobalESSymbolConstructorSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1082	C-INIT
+843	getGlobalESSymbolConstructorTypeSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1083	C-INIT
+844	getGlobalImportCallOptionsType	func() *Type	Memo<TypeId>	1084	C-INIT
+845	getGlobalImportCallOptionsTypeChecked	func() *Type	Memo<TypeId>	1085	C-INIT
+846	getGlobalPromiseType	func() *Type	Memo<TypeId>	1086	C-INIT
+847	getGlobalPromiseTypeChecked	func() *Type	Memo<TypeId>	1087	C-INIT
+848	getGlobalPromiseLikeType	func() *Type	Memo<TypeId>	1088	C-INIT
+849	getGlobalPromiseConstructorSymbol	func() *ast.Symbol	Memo<SymbolId>	1089	C-INIT
+850	getGlobalPromiseConstructorSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1090	C-INIT
+851	getGlobalOmitSymbol	func() *ast.Symbol	Memo<SymbolId>	1091	C-INIT
+852	getGlobalNoInferSymbolOrNil	func() *ast.Symbol	Memo<SymbolId>	1092	C-INIT
+853	getGlobalIteratorType	func() *Type	Memo<TypeId>	1093	C-INIT
+854	getGlobalIterableType	func() *Type	Memo<TypeId>	1094	C-INIT
+855	getGlobalIterableTypeChecked	func() *Type	Memo<TypeId>	1095	C-INIT
+856	getGlobalIterableIteratorType	func() *Type	Memo<TypeId>	1096	C-INIT
+857	getGlobalIterableIteratorTypeChecked	func() *Type	Memo<TypeId>	1097	C-INIT
+858	getGlobalIteratorObjectType	func() *Type	Memo<TypeId>	1098	C-INIT
+859	getGlobalGeneratorType	func() *Type	Memo<TypeId>	1099	C-INIT
+860	getGlobalAsyncIteratorType	func() *Type	Memo<TypeId>	1100	C-INIT
+861	getGlobalAsyncIterableType	func() *Type	Memo<TypeId>	1101	C-INIT
+862	getGlobalAsyncIterableTypeChecked	func() *Type	Memo<TypeId>	1102	C-INIT
+863	getGlobalAsyncIterableIteratorType	func() *Type	Memo<TypeId>	1103	C-INIT
+864	getGlobalAsyncIterableIteratorTypeChecked	func() *Type	Memo<TypeId>	1104	C-INIT
+865	getGlobalAsyncIteratorObjectType	func() *Type	Memo<TypeId>	1105	C-INIT
+866	getGlobalAsyncGeneratorType	func() *Type	Memo<TypeId>	1106	C-INIT
+867	getGlobalIteratorYieldResultType	func() *Type	Memo<TypeId>	1107	C-INIT
+868	getGlobalIteratorReturnResultType	func() *Type	Memo<TypeId>	1108	C-INIT
+869	getGlobalTypedPropertyDescriptorType	func() *Type	Memo<TypeId>	1109	C-INIT
+870	getGlobalClassDecoratorContextType	func() *Type	Memo<TypeId>	1110	C-INIT
+871	getGlobalClassMethodDecoratorContextType	func() *Type	Memo<TypeId>	1111	C-INIT
+872	getGlobalClassGetterDecoratorContextType	func() *Type	Memo<TypeId>	1112	C-INIT
+873	getGlobalClassSetterDecoratorContextType	func() *Type	Memo<TypeId>	1113	C-INIT
+874	getGlobalClassAccessorDecoratorContxtType	func() *Type	Memo<TypeId>		
+875	getGlobalClassAccessorDecoratorContextType	func() *Type	Memo<TypeId>	1114	C-INIT
+876	getGlobalClassAccessorDecoratorTargetType	func() *Type	Memo<TypeId>	1115	C-INIT
+877	getGlobalClassAccessorDecoratorResultType	func() *Type	Memo<TypeId>	1116	C-INIT
+878	getGlobalClassFieldDecoratorContextType	func() *Type	Memo<TypeId>	1117	C-INIT
+879	syncIterationTypesResolver	*IterationTypesResolver	IterationTypesResolver	1266	C-INIT
+880	asyncIterationTypesResolver	*IterationTypesResolver	IterationTypesResolver	1283	C-INIT
+881	isPrimitiveOrObjectOrEmptyType	func(*Type) bool	method	1253	C-INIT
+882	containsMissingType	func(*Type) bool	method	1256	C-INIT
+883	couldContainTypeVariables	func(*Type) bool	method	1259	C-INIT
+884	isStringIndexSignatureOnlyType	func(*Type) bool	method	1260	C-INIT
+885	markNodeAssignments	func(*ast.Node) bool	func(*ast.Node) bool	1261	C-INIT
+886	compareTypesAssignable	TypeComparer	method	1262	C-INIT
+887	emitResolver	*EmitResolver	EmitResolver		
+888	emitResolverOnce	sync.Once	sync.Once		
+889	_jsxNamespace	string	Text<'a>		
+890	_jsxFactoryEntity	*ast.Node	NodeId		
+891	skipDirectInferenceNodes	collections.Set[*ast.Node]	Set<NodeId>		
+892	ctx	context.Context	context.Context		UTIL
+893	packagesMap	map[string]bool	Map<Text<'a>, bool>		UTIL
+894	activeMappers	[]*TypeMapper	Vec<TypeMapperId>		
+895	activeTypeMappersCaches	[]map[CacheHashKey]*Type	Vec<Map<CacheHashKey, TypeId>>		
+896	ambientModulesOnce	sync.Once	sync.Once		M-MODULE
+897	ambientModules	[]*ast.Symbol	Vec<SymbolId>		M-MODULE
+898	withinUnreachableCode	bool	bool		
+899	reportedUnreachableNodes	collections.Set[*ast.Node]	Set<NodeId>		
+900	nonExistentProperties	collections.Set[NonExistentPropertyKey]	Set<NonExistentPropertyKey>		
+901	deferredDiagnosticCallbacks	[]func()	Vec<func()>		D-SINK
+902	typeToStringNodebuilder	*NodeBuilder	NodeBuilder		
+904	mu	sync.Mutex	sync.Mutex		C-INIT
+905	tracer	*Tracer	Tracer	913	C-INIT,K-OBJ
+319

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs at most two heavy commands (build, cargo, test) at a time on this machine, for every worktree.
+# usage: /workspace/tools/lk <command> [args...]
+exec 8>/workspace/tools/heavy.1.lock
+if flock -n 8; then exec "$@"; fi
+exec 8>&-
+exec 9>/workspace/tools/heavy.2.lock
+if flock -n 9; then exec "$@"; fi
+exec 9>&-
+exec flock /workspace/tools/heavy.$(( $$ % 2 + 1 )).lock "$@"

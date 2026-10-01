@@ -1,0 +1,37 @@
+--- a/src/jsc/VirtualMachine.rs
++++ b/src/jsc/VirtualMachine.rs
+@@ -3609,7 +3609,9 @@
+ 
+     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+         take(match msg.metadata {
+-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
++            bun_ast::Metadata::Build | bun_ast::Metadata::Code(_) => {
++                BuildMessage::create(global_this, msg)
++            }
+             bun_ast::Metadata::Resolve(_) => {
+                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+             }
+--- a/src/jsc/lib.rs
++++ b/src/jsc/lib.rs
+@@ -1376,7 +1376,9 @@
+ /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
+ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
+     match msg.metadata {
+-        bun_ast::Metadata::Build => BuildMessage::create(global, msg.clone()),
++        bun_ast::Metadata::Build | bun_ast::Metadata::Code(_) => {
++            BuildMessage::create(global, msg.clone())
++        }
+         bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
+     }
+ }
+--- a/src/runtime/server/DevErrorPage.rs
++++ b/src/runtime/server/DevErrorPage.rs
+@@ -156,7 +156,7 @@
+     w.extend_from_slice(b"],\"on\":{\"resolve\":");
+     let specifier: &[u8] = match &msg.metadata {
+         Metadata::Resolve(resolve) => resolve.specifier.slice(&msg.data.text),
+-        Metadata::Build => b"",
++        Metadata::Build | Metadata::Code(_) => b"",
+     };
+     write_string(w, specifier);
+     write!(w, ",\"build\":{}}}}}", specifier.is_empty()).unwrap();

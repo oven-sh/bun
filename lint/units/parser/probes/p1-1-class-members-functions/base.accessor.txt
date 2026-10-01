@@ -1,0 +1,171 @@
+# bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889  typescript 6.0.2
+"class C { accessor x: T; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { accessor x = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x = 1;\n}\n"
+"class C { static accessor x = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  static {\n    _x$1 = new WeakMap;\n  }\n  static get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  static set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  static {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    static accessor x = 1;\n}\n"
+"class C { accessor #x = 1; }"
+    tsc  ok
+    bun  ok "class C {\n  #x = 1;\n}\n"
+    bun deco  ERR "Expected \";\" but found \"#x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor #x = 1;\n}\n"
+"class C { accessor [x] = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1, _computedKey$2;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get [_computedKey$2 = x]() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set [_computedKey$2](v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"[\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor [x] = 1;\n}\n"
+"class C { accessor \"x\" = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"\"x\"\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor \"x\" = 1;\n}\n"
+"class C { accessor 1 = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor_storage$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor_storage$1, 1);\n  }\n  static {\n    _accessor_storage$1 = new WeakMap;\n  }\n  get 1() {\n    return __privateGet_t4v9rzz2(this, _accessor_storage$1);\n  }\n  set 1(v) {\n    __privateSet_3ajc9ey2(this, _accessor_storage$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"1\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor 1 = 1;\n}\n"
+"class C { accessor x\n= 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x = 1;\n}\n"
+"class C { accessor\nx = 1; }"
+    tsc  ok other 7008
+    bun  ok "class C {\n  accessor;\n  x = 1;\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    accessor;\n    x = 1;\n}\n"
+"class C { accessor; }"
+    tsc  ok other 7008
+    bun  ok "class C {\n  accessor;\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    accessor;\n}\n"
+"class C { accessor = 1; }"
+    tsc  ok
+    bun  ok "class C {\n  accessor = 1;\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    accessor = 1;\n}\n"
+"class C { accessor() {} }"
+    tsc  ok
+    bun  ok "class C {\n  accessor() {}\n}\n"
+    tsc emit  "\"use strict\";\nclass C {\n    accessor() { }\n}\n"
+"class C { accessor accessor; }"
+    tsc  ok other 7008
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _accessor$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _accessor$1, undefined);\n  }\n  static {\n    _accessor$1 = new WeakMap;\n  }\n  get accessor() {\n    return __privateGet_t4v9rzz2(this, _accessor$1);\n  }\n  set accessor(v) {\n    __privateSet_3ajc9ey2(this, _accessor$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"accessor\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor accessor;\n}\n"
+"class C { accessor static; }"
+    tsc  ok other 7008
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _static$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _static$1, undefined);\n  }\n  static {\n    _static$1 = new WeakMap;\n  }\n  get static() {\n    return __privateGet_t4v9rzz2(this, _static$1);\n  }\n  set static(v) {\n    __privateSet_3ajc9ey2(this, _static$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"static\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor static;\n}\n"
+"class C { public accessor x: T; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { override accessor x: T; }"
+    tsc  ok other 4112
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { readonly accessor x: T; }"
+    tsc  ok grammar TS1243@19
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { declare accessor x: T; }"
+    tsc  ok grammar TS1243@18
+    bun  ok "class C {\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"abstract class C { abstract accessor x: T; }"
+    tsc  ok
+    bun  ok "class C {\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { accessor x?: T; }"
+    tsc  ok grammar TS1276@20
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { accessor x!: T; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, undefined);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x;\n}\n"
+"class C { @d accessor x = 1; }"
+    tsc  ok
+    bun  ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _dec$2, _x$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 5, this);\n    __privateAdd_jy12bb7f(this, _x$3, __runInitializers_cst8seht(_init$1, 8, this, 1));\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$3 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 4, \"x\", _dec$2, this, _x$3);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get [(_dec$2 = [\n    d\n  ], \"x\")]() {\n    return __privateGet_t4v9rzz2(this, _x$3);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    @d\n    accessor x = 1;\n}\n"
+    tsc emit deco  "\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nclass C {\n    accessor x = 1;\n}\n__decorate([\n    d,\n    __metadata(\"design:type\", Object)\n], C.prototype, \"x\", null);\n"
+"@d class C { accessor x = 1; }"
+    tsc  ok
+    bun  ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _x$2, _dec$3, _C$4;\n_dec$3 = [\n  d\n];\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$2, 1);\n  }\n  static {\n    _x$2 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    _C$4 = __decorateElement_ggs2dd8p(_init$1, 0, \"C\", _dec$3, this);\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$2);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$2, v);\n  }\n}\nC = _C$4;\n__runInitializers_cst8seht(_init$1, 1, _C$4);\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\n@d\nclass C {\n    accessor x = 1;\n}\n"
+    tsc emit deco  "\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nlet C = class C {\n    accessor x = 1;\n};\nC = __decorate([\n    d\n], C);\n"
+"class C { accessor x = 1; @d y = 2; }"
+    tsc  ok
+    bun  ok "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorMetadata as __decoratorMetadata_0rk0ydtx, __decoratorStart as __decoratorStart_x73frcn4, __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2, __runInitializers as __runInitializers_cst8seht } from \"bun:wrap\";\nvar _init$1, _x$2, _dec$3;\n\nclass C {\n  constructor() {\n    __runInitializers_cst8seht(_init$1, 11, this);\n  }\n  static {\n    _x$2 = new WeakMap;\n    _init$1 = __decoratorStart_x73frcn4(undefined);\n    __decorateElement_ggs2dd8p(_init$1, 5, \"y\", _dec$3, this);\n    __decoratorMetadata_0rk0ydtx(_init$1, this);\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$2);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$2, v);\n  }\n  [(_dec$3 = [\n    d\n  ], \"y\")] = (__privateAdd_jy12bb7f(this, _x$2, 1), __runInitializers_cst8seht(_init$1, 8, this, 2));\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x = 1;\n    @d\n    y = 2;\n}\n"
+    tsc emit deco  "\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nclass C {\n    accessor x = 1;\n    y = 2;\n}\n__decorate([\n    d,\n    __metadata(\"design:type\", Object)\n], C.prototype, \"y\", void 0);\n"
+"class C { accessor x = 1; m(@d a) {} }"
+    tsc  ok grammar TS1206@28 other 7006   | deco: ok other 7006
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\n\nclass C {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n  m(a) {}\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor x = 1;\n    m(\n    @d\n    a) { }\n}\n"
+    tsc emit deco  "\"use strict\";\nvar __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {\n    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;\n    if (typeof Reflect === \"object\" && typeof Reflect.decorate === \"function\") r = Reflect.decorate(decorators, target, key, desc);\n    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;\n    return c > 3 && r && Object.defineProperty(target, key, r), r;\n};\nvar __metadata = (this && this.__metadata) || function (k, v) {\n    if (typeof Reflect === \"object\" && typeof Reflect.metadata === \"function\") return Reflect.metadata(k, v);\n};\nvar __param = (this && this.__param) || function (paramIndex, decorator) {\n    return function (target, key) { decorator(target, key, paramIndex); }\n};\nclass C {\n    accessor x = 1;\n    m(a) { }\n}\n__decorate([\n    __param(0, d),\n    __metadata(\"design:type\", Function),\n    __metadata(\"design:paramtypes\", [Object]),\n    __metadata(\"design:returntype\", void 0)\n], C.prototype, \"m\", null);\n"
+"declare class C { accessor x: T; }"
+    tsc  ok
+    bun  ok ""
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\n"
+"declare class C { @d accessor x: T; }"
+    tsc  ok
+    bun  ok ""
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\n"
+"const c = class { accessor x = 1; };"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\nconst c = class {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n};\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "\"use strict\";\nconst c = class {\n    accessor x = 1;\n};\n"
+"export default class { accessor x = 1; }"
+    tsc  ok
+    bun  ok "import { __privateAdd as __privateAdd_jy12bb7f, __privateGet as __privateGet_t4v9rzz2, __privateSet as __privateSet_3ajc9ey2 } from \"bun:wrap\";\nvar _x$1;\nexport default class input_default {\n  constructor() {\n    __privateAdd_jy12bb7f(this, _x$1, 1);\n  }\n  static {\n    _x$1 = new WeakMap;\n  }\n  get x() {\n    return __privateGet_t4v9rzz2(this, _x$1);\n  }\n  set x(v) {\n    __privateSet_3ajc9ey2(this, _x$1, v);\n  }\n}\n"
+    bun deco  ERR "Expected \";\" but found \"x\""
+    tsc emit  "export default class {\n    accessor x = 1;\n}\n"
+"class C { accessor m() {} }"
+    tsc  ok grammar TS1275@10
+    bun  ERR "auto-accessor properties cannot have a method body"
+    bun deco  ERR "Expected \";\" but found \"m\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor m() { }\n}\n"
+"class C { accessor get x() { return 1 } }"
+    tsc  ok grammar TS1275@10
+    bun  ERR "Expected \";\" but found \"x\""
+    bun deco  ERR "Expected \";\" but found \"get\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor get x() { return 1; }\n}\n"
+"class C { accessor *m() {} }"
+    tsc  ok grammar TS1275@10 other 2318
+    bun  ERR "Unexpected *"
+    bun deco  ERR "Expected \";\" but found \"*\""
+    tsc emit  "\"use strict\";\nclass C {\n    accessor *m() { }\n}\n"
+"class C { accessor constructor; }"
+    tsc  parse TS1005@30
+    bun  ERR "Invalid field name"
+    bun deco  ERR "Expected \";\" but found \"constructor\""
+    tsc emit  "\"use strict\";\nclass C {\n}\n"
+"class C { static accessor prototype; }"
+    tsc  ok other 2300,2699,7008
+    bun  ERR "Invalid field name"
+    bun deco  ERR "Expected \";\" but found \"prototype\""
+    tsc emit  "\"use strict\";\nclass C {\n    static accessor prototype;\n}\n"

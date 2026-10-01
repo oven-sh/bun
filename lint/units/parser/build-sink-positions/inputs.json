@@ -1,0 +1,267 @@
+[
+ {
+  "name": "call-nested",
+  "file": "a.ts",
+  "text": "f<A<B>>(x)"
+ },
+ {
+  "name": "annotation-nested",
+  "file": "a.ts",
+  "text": "let x: A<B<C>>"
+ },
+ {
+  "name": "close-ge",
+  "file": "a.ts",
+  "text": "let x: A<B>= y"
+ },
+ {
+  "name": "close-gge",
+  "file": "a.ts",
+  "text": "let x: A<B<C>>= y"
+ },
+ {
+  "name": "close-ggg",
+  "file": "a.ts",
+  "text": "let x: A<B<C<D>>>"
+ },
+ {
+  "name": "close-ggge",
+  "file": "a.ts",
+  "text": "let x: A<B<C<D>>>= y"
+ },
+ {
+  "name": "close-ge-arrow",
+  "file": "a.ts",
+  "text": "let f = (a): a is A<B>=> a"
+ },
+ {
+  "name": "open-ll",
+  "file": "a.ts",
+  "text": "f<<T>(a: T) => void>(g)"
+ },
+ {
+  "name": "new-nested",
+  "file": "a.ts",
+  "text": "new F<A<B>>()"
+ },
+ {
+  "name": "tagged",
+  "file": "a.ts",
+  "text": "f<A<B>>`x`"
+ },
+ {
+  "name": "instantiation",
+  "file": "a.ts",
+  "text": "const g = f<A<B>>;"
+ },
+ {
+  "name": "typeparams-default",
+  "file": "a.ts",
+  "text": "function f<T = A<B>>() {}"
+ },
+ {
+  "name": "typeparams-ge",
+  "file": "a.ts",
+  "text": "type X<T extends A<B>>= T"
+ },
+ {
+  "name": "jsx-simple",
+  "file": "a.tsx",
+  "text": "const e = <Foo<string> a=\"1\" />;"
+ },
+ {
+  "name": "jsx-nested",
+  "file": "a.tsx",
+  "text": "const e = <Foo<A<B>>>x</Foo>;"
+ },
+ {
+  "name": "jsx-comment",
+  "file": "a.tsx",
+  "text": "const e = <Foo<T> /* c */ a />;"
+ },
+ {
+  "name": "jsx-selfclose",
+  "file": "a.tsx",
+  "text": "const e = <Foo<A<B>>/>;"
+ },
+ {
+  "name": "template",
+  "file": "a.ts",
+  "text": "type T = `a${B}c${ D<E> }e`"
+ },
+ {
+  "name": "union-leading",
+  "file": "a.ts",
+  "text": "type T = | A | B<C>"
+ },
+ {
+  "name": "union-single-leading",
+  "file": "a.ts",
+  "text": "type T = | A"
+ },
+ {
+  "name": "conditional",
+  "file": "a.ts",
+  "text": "type T = A | B extends C ? D : E[]"
+ },
+ {
+  "name": "array-indexed",
+  "file": "a.ts",
+  "text": "type T = A [ ] [ K ]"
+ },
+ {
+  "name": "tuple",
+  "file": "a.ts",
+  "text": "type T = [a: A, b?: B, ...c: C[], D?, ...E]"
+ },
+ {
+  "name": "tuple-trailing",
+  "file": "a.ts",
+  "text": "type T = [A, B , ]"
+ },
+ {
+  "name": "object",
+  "file": "a.ts",
+  "text": "type T = { a: A; b?: B, c(x: X): Y\n readonly [k: string]: V ; new <U>(u: U): W }"
+ },
+ {
+  "name": "mapped",
+  "file": "a.ts",
+  "text": "type T = { -readonly [K in keyof U as N<K>]+?: U[K] ; }"
+ },
+ {
+  "name": "fn",
+  "file": "a.ts",
+  "text": "type T = <U extends V = W>(this: X, a?: A, ...r: R[]) => a is B"
+ },
+ {
+  "name": "ctor",
+  "file": "a.ts",
+  "text": "type T = abstract new (a: A) => B"
+ },
+ {
+  "name": "operators",
+  "file": "a.ts",
+  "text": "type T = keyof readonly A[] | unique symbol"
+ },
+ {
+  "name": "infer",
+  "file": "a.ts",
+  "text": "type T = A extends (infer U extends V)[] ? U : never"
+ },
+ {
+  "name": "import",
+  "file": "a.ts",
+  "text": "type T = typeof import(\"m\", { with: { a: \"b\" } }).Q.R<S>"
+ },
+ {
+  "name": "typeof",
+  "file": "a.ts",
+  "text": "type T = typeof a.b<C>"
+ },
+ {
+  "name": "predicates",
+  "file": "a.ts",
+  "text": "declare function f(x: any): asserts x is A<B>"
+ },
+ {
+  "name": "asserts-this",
+  "file": "a.ts",
+  "text": "declare class C { m(): asserts this }"
+ },
+ {
+  "name": "literal",
+  "file": "a.ts",
+  "text": "type T = - 1 | -2n | \"s\" | `t` | true | null"
+ },
+ {
+  "name": "paren",
+  "file": "a.ts",
+  "text": "type T = ( A | B )[]"
+ },
+ {
+  "name": "nonnull",
+  "file": "a.ts",
+  "text": "type T = A!"
+ },
+ {
+  "name": "qualified",
+  "file": "a.ts",
+  "text": "type T = a . b . C<D>"
+ },
+ {
+  "name": "typeargs-trailing-comma",
+  "file": "a.ts",
+  "text": "type T = A<B, >"
+ },
+ {
+  "name": "comments",
+  "file": "a.ts",
+  "text": "type T = /*1*/ A /*2*/ < /*3*/ B /*4*/ > /*5*/ ;"
+ },
+ {
+  "name": "cast-angle",
+  "file": "a.ts",
+  "text": "const v = <A<B>>x;"
+ },
+ {
+  "name": "as-nested",
+  "file": "a.ts",
+  "text": "const v = x as A<B<C>>;"
+ },
+ {
+  "name": "satisfies-ge",
+  "file": "a.ts",
+  "text": "let v = x satisfies A<B>; v = y as A<B<C>>"
+ },
+ {
+  "name": "heritage",
+  "file": "a.ts",
+  "text": "class C<T> extends B<A<T>> implements I<J<K>> {}"
+ },
+ {
+  "name": "interface-heritage",
+  "file": "a.ts",
+  "text": "interface I<T> extends A<B<T>> {}"
+ },
+ {
+  "name": "arrow-generic-tsx",
+  "file": "a.tsx",
+  "text": "const f = <T,>(x: A<B<T>>) => x;"
+ },
+ {
+  "name": "return-type-gge",
+  "file": "a.ts",
+  "text": "function f(): A<B<C>> {}"
+ },
+ {
+  "name": "optional-chain-call",
+  "file": "a.ts",
+  "text": "a?.b<A<B>>(c)"
+ },
+ {
+  "name": "typeparams-nested-close",
+  "file": "a.ts",
+  "text": "type X<T extends A<B<C>>> = T"
+ },
+ {
+  "name": "empty-type-arguments",
+  "file": "a.ts",
+  "text": "type T = A<>"
+ },
+ {
+  "name": "accessor-members",
+  "file": "a.ts",
+  "text": "type T = { get a(): A; set a(v: A) }"
+ },
+ {
+  "name": "binding-parameter",
+  "file": "a.ts",
+  "text": "type T = ({ a, b: [c] }: X, [d]?: Y) => void"
+ },
+ {
+  "name": "initializer-parameter",
+  "file": "a.ts",
+  "text": "type T = (a = 1) => void"
+ }
+]

@@ -1,0 +1,20 @@
+# Probe: does a test binary that runs bun_js_parser link and run with plain cargo?
+# usage (from /workspace/wt/parser, after `bun bd`):
+#   cp /workspace/wt/parser/Cargo.lock /workspace/notes/lint/units/parser/measure/linkprobe/Cargo.lock
+#   cargo test --manifest-path /workspace/notes/lint/units/parser/measure/linkprobe/Cargo.toml --offline \
+#     --target-dir /tmp/parser-base/tgt-linkprobe -- --test-threads=1
+[package]
+name = "linkprobe"
+version = "0.0.0"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bun_js_parser = { path = "/workspace/wt/parser/src/js_parser" }
+bun_ast = { path = "/workspace/wt/parser/src/ast" }
+bun_alloc = { path = "/workspace/wt/parser/src/bun_alloc" }
+
+[workspace]

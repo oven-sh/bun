@@ -1,0 +1,58 @@
+file /p1.ts scriptKind=3 variant=0 dts=false textLen=120
+externalModuleIndicator KindClassDeclaration[0,57)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=38 identifiers=12 text=15 reparsedClones=0
+root KindSourceFile [0,120) f=0x0
+  .Statements: list [0,119) n=3
+    - KindClassDeclaration [0,57) f=0x0
+      .HeritageClauses: list [14,24) n=1
+        - KindHeritageClause [14,24) f=0x2000 Token=KindExtendsKeyword
+          .Types: list [22,24) n=1
+            - KindExpressionWithTypeArguments [22,24) f=0x2000
+              .Expression: KindIdentifier [22,24) f=0x2000 Text="B"
+      .Members: list [26,55) n=3
+        - KindPropertyDeclaration [26,33) f=0x2000
+          .Initializer: KindNumericLiteral [30,32) f=0x0 Text="1" TokenFlags=0x0
+          .name: KindIdentifier [26,28) f=0x2000 Text="x"
+        - KindMethodDeclaration [33,41) f=0x2000
+          .Body: KindBlock [38,41) f=0x0
+            .Statements: list [40,40) n=0
+          .Parameters: list [36,37) n=1
+            - KindParameter [36,37) f=0x0
+              .name: KindIdentifier [36,37) f=0x0 Text="a"
+          .name: KindIdentifier [33,35) f=0x2000 Text="m"
+        - KindClassStaticBlockDeclaration [41,55) f=0x2000
+          .Body: KindBlock [48,55) f=0x2000
+            .Statements: list [50,53) n=1
+              - KindExpressionStatement [50,53) f=0x2000
+                .Expression: KindIdentifier [50,52) f=0x2000 Text="s"
+      .modifiers.flags=0x20
+      .modifiers: list [0,6) n=1
+        - KindExportKeyword [0,6) f=0x0
+      .name: KindIdentifier [12,14) f=0x0 Text="K"
+    - KindClassDeclaration [57,86) f=0x0
+      .HeritageClauses: list [65,75) n=1
+        - KindHeritageClause [65,75) f=0x0 Token=KindExtendsKeyword
+          .Types: list [73,75) n=1
+            - KindExpressionWithTypeArguments [73,75) f=0x0
+              .Expression: KindIdentifier [73,75) f=0x0 Text="B"
+      .Members: list [77,84) n=1
+        - KindPropertyDeclaration [77,84) f=0x0
+          .Initializer: KindNumericLiteral [81,83) f=0x0 Text="1" TokenFlags=0x0
+          .name: KindIdentifier [77,79) f=0x0 Text="x"
+      .name: KindIdentifier [63,65) f=0x0 Text="L"
+    - KindBlock [86,119) f=0x0
+      .Statements: list [88,117) n=1
+        - KindClassDeclaration [88,117) f=0x0
+          .HeritageClauses: list [96,106) n=1
+            - KindHeritageClause [96,106) f=0x0 Token=KindExtendsKeyword
+              .Types: list [104,106) n=1
+                - KindExpressionWithTypeArguments [104,106) f=0x0
+                  .Expression: KindIdentifier [104,106) f=0x0 Text="B"
+          .Members: list [108,115) n=1
+            - KindPropertyDeclaration [108,115) f=0x0
+              .Initializer: KindNumericLiteral [112,114) f=0x0 Text="1" TokenFlags=0x0
+              .name: KindIdentifier [108,110) f=0x0 Text="x"
+          .name: KindIdentifier [94,96) f=0x0 Text="M"
+  .EndOfFileToken: KindEndOfFile [119,120) f=0x0

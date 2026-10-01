@@ -1,0 +1,167 @@
+# decorators and modifiers on signature parameters
+type A = { m(@dec a): void }
+type A = { m(@dec() a: number): void }
+type A = { m(@a.b.c(1, 2) x): void }
+type A = { m(a, @dec b): void }
+type A = { (@dec a): void }
+type A = { new (@dec a): void }
+let g: (a, @dec b) => void
+let g: (a, @dec() b: number) => void
+let g: (a: number, public @dec b) => void
+let g: (a: number, @dec public b) => void
+let g: (public public a) => void
+let g: (public static a) => void
+let g: (static static a) => void
+let g: (public\na) => void
+let g: (static\na) => void
+let g: (readonly [a]) => void
+let g: (readonly {a}) => void
+let g: (public ...a) => void
+let g: (...public a) => void
+let g: (public this) => void
+let g: (public) => void
+let g: (public, private) => void
+let g: (public: number) => void
+let g: (public?: number) => void
+let g: (public = 1) => void
+let g: (static) => void
+let g: (readonly) => void
+let g: (readonly: number) => void
+let g: (async) => void
+let g: (async: number) => void
+let g: (declare) => void
+let g: (abstract) => void
+let g: (override) => void
+let g: (accessor) => void
+let g: (out) => void
+let g: (get a) => void
+let g: (set a) => void
+let g: (public get) => void
+let g: (const a: number) => void
+let g: (a: number, const b) => void
+let g: (a: number, export b) => void
+let g: (a: number, default b) => void
+let g: (a: number, in b) => void
+let g: (a: number, export default b) => void
+let g: (export default a) => void
+let g: (export type a) => void
+let g: (export class) => void
+let g: (public 'a') => void
+let g: (public 1) => void
+let g: (public *a) => void
+let g: (a: number, this: X) => void
+let g: (a: number, this) => void
+let g: (this = 1) => void
+let g: (this: X = 1) => void
+let g: (...this) => void
+let g: (this, ...a) => void
+let g: (#a) => void
+let g: (a: number, #b) => void
+let g: ({#a: b}) => void
+let g: ({a, ...b}) => void
+let g: ({...a, b}) => void
+let g: ({...{a}}) => void
+let g: ({...[a]}) => void
+let g: ({...1}) => void
+let g: ({: a}) => void
+let g: ([...a, b]) => void
+let g: ([...a = 1]) => void
+let g: ([...]) => void
+let g: ([a,]) => void
+let g: ([,]) => void
+let g: ([,,]) => void
+let g: ([]) => void
+let g: ({}) => void
+let g: ({,}) => void
+let g: ({a,}) => void
+let g: ({a,,}) => void
+let g: ({a b}) => void
+let g: ({a: b c}) => void
+let g: ({a: 1}) => void
+let g: ({a: 'b'}) => void
+let g: ({a: b.c}) => void
+let g: ({a: this}) => void
+let g: ({this}) => void
+let g: ({a: if}) => void
+let g: ({yield}) => void
+let g: ({await}) => void
+let g: ({let}) => void
+let g: ({static}) => void
+let g: ({"a"}) => void
+let g: ({1}) => void
+let g: ({[a]}) => void
+let g: ({[a]: b = c}) => void
+let g: ({[a]: {b}}) => void
+let g: ({[a + b]: c}) => void
+let g: ({[a, b]: c}) => void
+let g: ({[a = 1]: c}) => void
+let g: ({[() => 1]: c}) => void
+let g: ({[function f() { return 1 }]: c}) => void
+let g: ({[class { m() {} }]: c}) => void
+let g: ({[(x: number): number => x]: c}) => void
+let g: ({[<T>(x: T) => x]: c}) => void
+let g: ({[a as any]: c}) => void
+let g: ({[a!]: c}) => void
+let g: ({[await a]: c}) => void
+let g: ({[yield]: c}) => void
+let g: ({[import("x")]: c}) => void
+let g: ({[import.meta]: c}) => void
+let g: ({[new.target]: c}) => void
+let g: ({[this]: c}) => void
+let g: ({[super.a]: c}) => void
+let g: ({[arguments]: c}) => void
+let g: ({[a in b]: c}) => void
+let g: ({[`a${b}`]: c}) => void
+let g: ({[/re/]: c}) => void
+let g: ({[<div/>]: c}) => void
+let g: ([a = b in c]) => void
+let g: ([a = () => { let x: number = 1; return x }]) => void
+let g: ([a = function* () { yield 1 }]) => void
+let g: ([a = async () => { await 1 }]) => void
+let g: ([a = class A<T> extends B<T> implements C { x: T }]) => void
+let g: ([a = (b = (c = 1) => 2) => 3]) => void
+let g: (a = (b: (c = 1) => void) => 1) => void
+let g: (a = <T,>(b: T): (c: T) => void => () => {}) => void
+let g: (a = 1, b = 2, ...c) => void
+let g: (a = yield) => void
+let g: (a = await) => void
+let g: (a = await b) => void
+let g: (a = arguments) => void
+let g: (a = this) => void
+let g: (a = super.b) => void
+let g: (a = new.target) => void
+let g: (a = import.meta) => void
+let g: (a = b, c = a) => void
+let g: (a = 1,) => void
+let g: (a = ) => void
+let g: (a = 1 2) => void
+let g: (a = b = c) => void
+let g: (a = b, c) => void
+let g: (a = (b, c)) => void
+let g: (a = b ? c : d, e) => void
+let g: (a = b as c) => void
+let g: (a = b satisfies c) => void
+let g: (a = <c>b) => void
+let g: (a = b!) => void
+let g: (a = b<c>(d)) => void
+let g: (a = x => x) => void
+let g: (a = async x => x) => void
+let g: (a = {b: 1}) => void
+let g: (a = [1, 2]) => void
+let g: (a = `x${y}`) => void
+let g: (a = /x/g) => void
+let g: (a = -1) => void
+let g: (a = typeof b) => void
+let g: (a = void 0) => void
+let g: (a = delete b.c) => void
+let g: (a = ++b) => void
+let g: (a = b++) => void
+let g: (a = new B()) => void
+let g: (a = new B) => void
+let g: (a = b.c.d) => void
+let g: (a = b?.c) => void
+let g: (a = b ?? c) => void
+let g: (a = b || c && d) => void
+let g: (a = b in c) => void
+let g: (a = b instanceof c) => void
+let g: (a = function () { return this }) => void

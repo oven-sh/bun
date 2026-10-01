@@ -1,0 +1,32 @@
+file /j2.ts scriptKind=3 variant=0 dts=false textLen=39
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=21 identifiers=6 text=8 reparsedClones=0
+diagnostic [8,11) TS1121 cat=1 "Octal literals are not allowed. Use the syntax '0o10'."
+diagnostic [22,25) TS1487 cat=1 "Octal escape sequences are not allowed. Use the syntax '\\x07'."
+diagnostic [30,30) TS1003 cat=1 "Identifier expected."
+root KindSourceFile [0,39) f=0x0
+  .Statements: list [0,38) n=4
+    - KindVariableStatement [0,12) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,11) f=0x0
+        .Declarations: list [3,11) n=1
+          - KindVariableDeclaration [3,11) f=0x0
+            .Initializer: KindNumericLiteral [7,11) f=0x8000 Text="8" TokenFlags=0x20
+            .name: KindIdentifier [3,5) f=0x0 Text="a"
+    - KindVariableStatement [12,27) f=0x0
+      .DeclarationList: KindVariableDeclarationList [12,26) f=0x0
+        .Declarations: list [16,26) n=1
+          - KindVariableDeclaration [16,26) f=0x0
+            .Initializer: KindStringLiteral [20,26) f=0x8000 Text="\a" TokenFlags=0x800
+            .name: KindIdentifier [16,18) f=0x0 Text="b"
+    - KindExpressionStatement [27,30) f=0x0
+      .Expression: KindPropertyAccessExpression [27,30) f=0x0
+        .Expression: KindIdentifier [27,29) f=0x0 Text="x"
+        .name: KindIdentifier [30,30) f=0x8000 Text=""
+    - KindExpressionStatement [30,38) f=0x0
+      .Expression: KindBinaryExpression [30,37) f=0x0
+        .Left: KindIdentifier [30,32) f=0x0 Text="y"
+        .OperatorToken: KindInKeyword [32,35) f=0x0
+        .Right: KindIdentifier [35,37) f=0x0 Text="z"
+  .EndOfFileToken: KindEndOfFile [38,39) f=0x0

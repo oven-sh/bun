@@ -1,0 +1,35 @@
+# What each check of a committed fixture costs. Driver: probes/cost.ts <assembled runner set> <conformance directory of the scratch repository> <step>; one step per process unless a row says otherwise.
+# Measured on 2026-09-30 on the shared machine: 16 processors, load average 590 to 820 the whole time. Wall time there is 1 to 9 times the processor time, most where files are read for the first time.
+# Read the processor time (user + system of the process) as the figure of an idle machine; the wall time is given to show the spread.
+# release = /workspace/bun/build/release/bun 1.4.3 (367d939d9), the installed bun. debug = /workspace/bun/build/debug/bun-debug 1.4.3-debug+367d939d9, BUN_DEBUG_QUIET_LOGS=1 (a debug build with ASAN).
+# tier: T = conformance.test.ts in every build, R = conformance.test.ts in release builds only, S = sweep.ts, Y = sync time. Not measured: a release build with ASAN, Windows, macOS.
+check	step of cost.ts	fixture	tier	amount	release cpu ms	release wall ms	debug cpu ms	debug wall ms
+parse of the constants	-	reference_counts.json	T	2441 bytes	below 1	below 1	about 12 (JSON.parse of 5 KB, the other pass)	-
+read, split and count of the list	instances-load	fixtures/instances.tsv	T	14915 lines	9 to 13	6 to 13	1065	972
+the instances of one of 200 cases against their lines	instances-check-sample200	fixtures/instances.tsv	T	59 cases, 65 instances	81	228	8054	5963
+the instances of one of 40 cases against their lines	instances-check-sample40	fixtures/instances.tsv	T	333 cases, 383 instances	159	529	10508	6096
+the same enumeration without the list, a second run when the machine was busier	enumerate-sample40	-	T	333 cases, 383 instances	199	485	13578	17159
+every instance against its line, with its kind	instances-check	fixtures/instances.tsv	R	12444 cases, 14915 instances	1240 to 1925	866 (third run in a row) to 7658 (first)	156796	93471
+the 120 inputs of the directive parser	directives	fixtures/directives-inputs.json, directives-expected.json	T	120 inputs, 118 compared, 2 refused as no UTF-8	19 to 26	28 to 374	1240 to 1943	860 to 1524
+the four digests of Go's tables, every code point	tables-go-form	reference_counts.json (go.tables)	T	1114112 code points	94 to 127	67 to 86	3433	1181
+the digest of the corpus, every file read	corpus-digest	reference_counts.json (corpus)	R	22186 files, 32485872 bytes	404 to 878	391 (warm) to 8657 (first read)	18312	17250
+the digest of one of 40 files of the corpus (the walk of every directory is in it)	corpus-digest-sample40	-	not proposed	555 files of 22186	76	511	6257	12908
+the map of the case names (the walk of the two suites)	index	corpus	T	12444 cases	22	36	1564	1661
+round trip of the sample of baselines	round-trip-sample	corpus	T	191 files, 480587 bytes	218	494	21243 to 25178	13001 to 16830
+the directive record of every case against Go's 12444 digests	canon	notes: directive-grammar/vectors/cases.tsv.gz	Y, notes	12444 cases	727 to 964	829 to 2085	122196	85482
+the same for one of 40 cases	canon-sample40	notes	not proposed	333 cases	118	1024	7132	8996
+the five checks T and R of this unit in one process (list, directives, tables, every instance, corpus digest)	instances-load directives tables-go-form instances-check corpus-digest	all	T and R	-	2000 to 2900 (user 1470 to 1890, sys 480 to 1010)	1865 (third run) to 13111 (first run)	-	-
+the blocks of prototype/reference_blocks.ts as a test file of their own (the runner is imported and the suites are walked in it)	bun test	reference_counts.json, fixtures/instances.tsv, the corpus	T and R	release: 16 tests; debug: 14 tests and the 2 of tier R skipped	2470 to 3120	5510 to 11790; by test: every instance 1961 to 4123, corpus digest 487 to 8008, tables 117 to 121, the list and its counts 91 to 880, the nine groups of the sample 135 together	24025	17980; by test: the list and its counts 2803, tables 1716, the nine groups 124 to 1767 each and 5295 together
+the assembled conformance.test.ts as it is today (reference layout, TFS_CHECK=replay)	bun test	go-subtests.tsv.gz and the directive vectors from the notes	T and R	49 tests	2225 (user 1828, sys 397)	6670; the test that spawns three processes is 2247 of it	-	-
+round trip of every baseline of typescript-go	sweep.ts --round-trip	corpus	S	7027 files	2785	7054	not run	not run
+replay of every run instance and the report	sweep.ts --check replay	corpus	S	12797 run instances: 12796 pass, 1 cannot be written (undecided roots)	5998	9687	not run	not run
+the two reference files and the check against the baseline directories of the clone	prototype/gen_reference.ts	the corpus and the clone	Y	everything	4231 (user 2849, sys 1382)	32394 on the first run	-	-
+the option table from three Go source files	probes/options_from_git.ts	the clone	Y	126 declarations, 10 maps	36	2822	-	-
+the two name lists of compiler_runner.go against the port	probes/source_lists.ts	the clone	Y	45 and 8 names	-	below 1000	-	-
+sync.sh twice and two commits (validate.sh)	-	the two clones	Y	22186 files	19092 (user 10544, sys 8548)	173224	-	-
+Go: the program of the directive parser, built and run on the inputs, then on every case	directive-grammar/groundtruth	the clone	Y, only when the parser changes upstream	120 inputs; 12444 cases	build 2531, cases 2764	build 12134, cases 13151	-	-
+Go: the four table digests	groundtruth/tables/build.sh	the clone (stringutil)	Y, only when the Unicode version of Go moves	1114112 code points	build with a new cache 16677, run 93	build 37367, run 106	-	-
+Go: the bottom layer, built, run and compared (verify_go.ts)	shared-foundation-merge/bottom-up	the clone	Y, notes	16533083 checks, 0 differ	build 16993, compare 3348	build 49380, compare 4592	-	-
+# Reading. In a release build the fixtures of this unit cost about 2 s of processor time, of which 1.2 to 1.9 s is the enumeration of every instance, which the assembled test already does today against Go's list.
+# In the debug build every check over the whole corpus is out of reach (93 s and 17 s); the samples cost 6 to 17 s each, and most of that is fixed: the import of the runner, the walk of the suites (1.6 s) and the read of the list (1 s) are paid once per file.
+# A sample of one case of 200 is not cheaper than one of 40 in the debug build (6.0 s against 6.1 s): the size of the sample is not what to tune there.

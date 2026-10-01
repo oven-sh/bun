@@ -1,0 +1,129 @@
+"[a = a] = []"  =>  (none)
+"({a: b = b} = {})"  =>  (none)
+"[a = (b = b)] = []"  =>  1:11-1:12 no-self-assign "'b' is assigned to itself."
+"[a[b = b] = 1] = []"  =>  1:8-1:9 no-self-assign "'b' is assigned to itself."
+"for ([a = a] of xs);"  =>  (none)
+"for ({a: b = b} of xs);"  =>  (none)
+"for (x = x;;);"  =>  1:10-1:11 no-self-assign "'x' is assigned to itself."
+"a = (a)"  =>  1:6-1:7 no-self-assign "'a' is assigned to itself."
+"(a) = a"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."
+"(a.b) = (a.b)"  =>  1:10-1:13 no-self-assign "'a.b' is assigned to itself."
+"a.b = (a).b"  =>  1:7-1:12 no-self-assign "'(a).b' is assigned to itself."
+"(a).b = a.b"  =>  1:9-1:12 no-self-assign "'a.b' is assigned to itself."
+"a . b = a . b"  =>  1:9-1:14 no-self-assign "'a.b' is assigned to itself."
+"a./*c*/b = a./*c*/b"  =>  1:12-1:20 no-self-assign "'a./*c*/b' is assigned to itself."
+"a.b = a['b']"  =>  1:7-1:13 no-self-assign "'a['b']' is assigned to itself."
+"a['b'] = a.b"  =>  1:10-1:13 no-self-assign "'a.b' is assigned to itself."
+"a[1] = a['1']"  =>  1:8-1:14 no-self-assign "'a['1']' is assigned to itself."
+"a[0x1] = a[1]"  =>  1:10-1:14 no-self-assign "'a[1]' is assigned to itself."
+"a[1.0] = a[1]"  =>  1:10-1:14 no-self-assign "'a[1]' is assigned to itself."
+"a[1e3] = a[1000]"  =>  1:10-1:17 no-self-assign "'a[1000]' is assigned to itself."
+"a[1n] = a[1]"  =>  1:9-1:13 no-self-assign "'a[1]' is assigned to itself."
+"a[1n] = a['1']"  =>  1:9-1:15 no-self-assign "'a['1']' is assigned to itself."
+"a[0x10n] = a[16n]"  =>  1:12-1:18 no-self-assign "'a[16n]' is assigned to itself."
+"a[1_0n] = a[10n]"  =>  1:11-1:17 no-self-assign "'a[10n]' is assigned to itself."
+"a[null] = a.null"  =>  1:11-1:17 no-self-assign "'a.null' is assigned to itself."
+"a[true] = a.true"  =>  1:11-1:17 no-self-assign "'a.true' is assigned to itself."
+"a[`b`] = a.b"  =>  1:10-1:13 no-self-assign "'a.b' is assigned to itself."
+"a[`b`] = a[`b`]"  =>  1:10-1:16 no-self-assign "'a[`b`]' is assigned to itself."
+"a[`b${c}`] = a[`b${c}`]"  =>  (none)
+"a[/x/gi] = a[/x/ig]"  =>  1:12-1:20 no-self-assign "'a[/x/ig]' is assigned to itself."
+"a[/x/gi] = a['/x/gi']"  =>  1:12-1:22 no-self-assign "'a['/x/gi']' is assigned to itself."
+"a[/x/ig] = a['/x/gi']"  =>  1:12-1:22 no-self-assign "'a['/x/gi']' is assigned to itself."
+"a[b.c] = a[b.c]"  =>  1:10-1:16 no-self-assign "'a[b.c]' is assigned to itself."
+"a[b[c]] = a[b[c]]"  =>  1:11-1:18 no-self-assign "'a[b[c]]' is assigned to itself."
+"a[this] = a[this]"  =>  1:11-1:18 no-self-assign "'a[this]' is assigned to itself."
+"a[b()] = a[b()]"  =>  (none)
+"a[(b)] = a[b]"  =>  1:10-1:14 no-self-assign "'a[b]' is assigned to itself."
+"a[-1] = a[-1]"  =>  (none)
+"a['b c'] = a['b c']"  =>  1:12-1:20 no-self-assign "'a['bc']' is assigned to itself."
+"'a'.b = \"a\".b"  =>  1:9-1:14 no-self-assign "'\"a\".b' is assigned to itself."
+"1..b = 1.0.b"  =>  1:8-1:13 no-self-assign "'1.0.b' is assigned to itself."
+"/x/.b = /x/.b"  =>  1:9-1:14 no-self-assign "'/x/.b' is assigned to itself."
+"/x/g.b = /x/.b"  =>  (none)
+"`a`.b = `a`.b"  =>  (none)
+"1n.b = 1n.b"  =>  1:8-1:12 no-self-assign "'1n.b' is assigned to itself."
+"null.b = null.b"  =>  1:10-1:16 no-self-assign "'null.b' is assigned to itself."
+"true.b = true.b"  =>  1:10-1:16 no-self-assign "'true.b' is assigned to itself."
+"a?.b.c = a.b.c"  =>  FATAL 1:1 Parsing error: Optional chaining cannot appear in left-hand side
+"a.b.c = a?.b.c"  =>  1:9-1:15 no-self-assign "'a?.b.c' is assigned to itself."
+"a.b.c = a?.b?.c"  =>  1:9-1:16 no-self-assign "'a?.b?.c' is assigned to itself."
+"a.b.c = (a?.b).c"  =>  1:9-1:17 no-self-assign "'(a?.b).c' is assigned to itself."
+"a.b = a?.b()"  =>  (none)
+"a.b = a?.b"  =>  1:7-1:11 no-self-assign "'a?.b' is assigned to itself."
+"a?.[b] = 1"  =>  FATAL 1:1 Parsing error: Optional chaining cannot appear in left-hand side
+"a[b] = a?.[b]"  =>  1:8-1:14 no-self-assign "'a?.[b]' is assigned to itself."
+"super.x = super.x"  =>  FATAL 1:1 Parsing error: 'super' keyword outside a method
+"class A extends B { m() { super.x = super.x; } }"  =>  1:37-1:44 no-self-assign "'super.x' is assigned to itself."
+"class A { m() { this.#a = this.a; } #a }"  =>  (none)
+"class A { #a; m() { a.#a = a.#a; } }"  =>  1:28-1:32 no-self-assign "'a.#a' is assigned to itself."
+"class A { #a; m() { a.#a = a?.#a; } }"  =>  1:28-1:33 no-self-assign "'a?.#a' is assigned to itself."
+"({a, a} = {a})"  =>  1:12-1:13 no-self-assign "'a' is assigned to itself."  |  1:12-1:13 no-self-assign "'a' is assigned to itself."
+"({a} = {a, a})"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."  |  1:12-1:13 no-self-assign "'a' is assigned to itself."
+"({a} = {...x, a})"  =>  1:15-1:16 no-self-assign "'a' is assigned to itself."
+"({a} = {a, ...x})"  =>  (none)
+"({...a} = {...a})"  =>  (none)
+"({a: [b]} = {a: [b]})"  =>  1:18-1:19 no-self-assign "'b' is assigned to itself."
+"({a} = {get a() { return 1 }})"  =>  (none)
+"({a} = {a: a})"  =>  1:12-1:13 no-self-assign "'a' is assigned to itself."
+"({a: a} = {a})"  =>  1:12-1:13 no-self-assign "'a' is assigned to itself."
+"({'a b': c} = {'a b': c})"  =>  1:23-1:24 no-self-assign "'c' is assigned to itself."
+"({[a]: b} = {a: b})"  =>  (none)
+"({a: b} = {[a]: b})"  =>  (none)
+"({1n: b} = {1: b})"  =>  1:16-1:17 no-self-assign "'b' is assigned to itself."
+"({0x1: b} = {1: b})"  =>  1:17-1:18 no-self-assign "'b' is assigned to itself."
+"({.5: b} = {0.5: b})"  =>  1:18-1:19 no-self-assign "'b' is assigned to itself."
+"({1e3: b} = {1000: b})"  =>  1:20-1:21 no-self-assign "'b' is assigned to itself."
+"({a: b.c} = {a: b.c})"  =>  1:17-1:20 no-self-assign "'b.c' is assigned to itself."
+"({a: b = 1} = {a: b})"  =>  (none)
+"[a, [b, c]] = [a, [b, c]]"  =>  1:16-1:17 no-self-assign "'a' is assigned to itself."  |  1:20-1:21 no-self-assign "'b' is assigned to itself."  |  1:23-1:24 no-self-assign "'c' is assigned to itself."
+"[...[a]] = [...[a]]"  =>  1:17-1:18 no-self-assign "'a' is assigned to itself."
+"[a,] = [a,]"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."
+"[, a] = [, a]"  =>  1:12-1:13 no-self-assign "'a' is assigned to itself."
+"[a, b] = [a]"  =>  1:11-1:12 no-self-assign "'a' is assigned to itself."
+"[a] = [a, b]"  =>  1:8-1:9 no-self-assign "'a' is assigned to itself."
+"[a.b] = [a.b]"  =>  1:10-1:13 no-self-assign "'a.b' is assigned to itself."
+"[a, ...b] = [...b]"  =>  (none)
+"[...a] = [...a]"  =>  1:14-1:15 no-self-assign "'a' is assigned to itself."
+"[...a.b] = [...a.b]"  =>  1:16-1:19 no-self-assign "'a.b' is assigned to itself."
+"a = a, b = b"  =>  1:5-1:6 no-self-assign "'a' is assigned to itself."  |  1:12-1:13 no-self-assign "'b' is assigned to itself."
+"a = b = b"  =>  1:9-1:10 no-self-assign "'b' is assigned to itself."
+"a = a = a"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."
+"x = a = a"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."
+"a \n = \n a"  =>  3:2-3:3 no-self-assign "'a' is assigned to itself."
+"\\u0061 = a"  =>  1:10-1:11 no-self-assign "'a' is assigned to itself."
+"a = \\u0061"  =>  1:5-1:11 no-self-assign "'\\u0061' is assigned to itself."
+"a.\\u0062 = a.b"  =>  1:12-1:15 no-self-assign "'a.b' is assigned to itself."
+"a.b = a.\\u0062"  =>  1:7-1:15 no-self-assign "'a.\\u0062' is assigned to itself."
+"a[\"b\"] = a['b']"  =>  1:10-1:16 no-self-assign "'a['b']' is assigned to itself."
+"a[ 'b' ] = a[ 'b' ]"  =>  1:12-1:20 no-self-assign "'a['b']' is assigned to itself."
+"a\n.b = a\n.b"  =>  2:6-3:3 no-self-assign "'a.b' is assigned to itself."
+"a.b.c.d.e = a.b.c.d.e"  =>  1:13-1:22 no-self-assign "'a.b.c.d.e' is assigned to itself."
+"a[0][1] = a[0][1]"  =>  1:11-1:18 no-self-assign "'a[0][1]' is assigned to itself."
+"a.b[c].d = a.b[c].d"  =>  1:12-1:20 no-self-assign "'a.b[c].d' is assigned to itself."
+"é = é"  =>  1:5-1:6 no-self-assign "'é' is assigned to itself."
+"a.é = a.é"  =>  1:7-1:10 no-self-assign "'a.é' is assigned to itself."
+"x = '😀'; a = a"  =>  1:15-1:16 no-self-assign "'a' is assigned to itself."
+"  a = a"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."
+"\ta = a"  =>  1:6-1:7 no-self-assign "'a' is assigned to itself."
+"a ||= a.b"  =>  (none)
+"a.b ||= a.b"  =>  1:9-1:12 no-self-assign "'a.b' is assigned to itself."
+"a.b &&= a.b"  =>  1:9-1:12 no-self-assign "'a.b' is assigned to itself."
+"a.b ??= a.b"  =>  1:9-1:12 no-self-assign "'a.b' is assigned to itself."
+"a.b += a.b"  =>  (none)
+"a **= a"  =>  (none)
+"a >>>= a"  =>  (none)
+"(a, b) => { a = a }"  =>  1:17-1:18 no-self-assign "'a' is assigned to itself."
+"function f(a = a) {}"  =>  (none)
+"var {a = a} = {}"  =>  (none)
+"a = a;\na = a;"  =>  1:5-1:6 no-self-assign "'a' is assigned to itself."  |  2:5-2:6 no-self-assign "'a' is assigned to itself."
+"if (a = a) {}"  =>  1:9-1:10 no-self-assign "'a' is assigned to itself."
+"f(a = a)"  =>  1:7-1:8 no-self-assign "'a' is assigned to itself."
+"(a = a)"  =>  1:6-1:7 no-self-assign "'a' is assigned to itself."
+"((a)) = ((a))"  =>  1:11-1:12 no-self-assign "'a' is assigned to itself."
+"a.b = ((a.b))"  =>  1:9-1:12 no-self-assign "'a.b' is assigned to itself."
+"a[(0)] = a[0]"  =>  1:10-1:14 no-self-assign "'a[0]' is assigned to itself."
+"(a?.b).c = a?.b.c"  =>  1:12-1:18 no-self-assign "'a?.b.c' is assigned to itself."
+"((a).b).c = ((a).b).c"  =>  1:13-1:22 no-self-assign "'((a).b).c' is assigned to itself."
+"( a ).b = ( a ).b"  =>  1:11-1:18 no-self-assign "'(a).b' is assigned to itself."
+"a.b = ( /* c */ a).b"  =>  1:7-1:21 no-self-assign "'(/*c*/a).b' is assigned to itself."

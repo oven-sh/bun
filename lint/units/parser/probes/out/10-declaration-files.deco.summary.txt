@@ -1,0 +1,272 @@
+group 10-declaration-files  dialect ts  config deco  inputs 380
+counts A1=7 A1c=5 A1s=2 A2=40 AA=288 AAg=43 B=1 RR=1
+
+calls of Bun that differ from transformSync without tsconfig: 6 inputs
+  "break;"  base="Cannot use \"break\" here"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "continue;"  base="Cannot use \"continue\" here"  ts.plain.scanImports=ok ts.deco.scanImports=ok tsx.plain.scanImports=ok tsx.deco.scanImports=ok
+  "export class C { accessor x: T; }"  base="Expected \";\" but found \"x\""  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "export class C { static accessor x: T; }"  base="Expected \";\" but found \"x\""  ts.plain.scanImports="Expected \";\" but found \"x\"" ts.deco.transformSync="Expected \";\" but found \"x\"" ts.deco.scan="Expected \";\" but found \"x\"" ts.deco.scanImports="Expected \";\" but found \"x\"" tsx.plain.scanImports="Expected \";\" but found \"x\"" tsx.deco.transformSync="Expected \";\" but found \"x\"" tsx.deco.scan="Expected \";\" but found \"x\"" tsx.deco.scanImports="Expected \";\" but found \"x\""
+  "export class C { accessor #x: T; }"  base="Expected \";\" but found \"#x\""  ts.plain.scanImports="Expected \";\" but found \"#x\"" ts.deco.transformSync="Expected \";\" but found \"#x\"" ts.deco.scan="Expected \";\" but found \"#x\"" ts.deco.scanImports="Expected \";\" but found \"#x\"" tsx.plain.scanImports="Expected \";\" but found \"#x\"" tsx.deco.transformSync="Expected \";\" but found \"#x\"" tsx.deco.scan="Expected \";\" but found \"#x\"" tsx.deco.scanImports="Expected \";\" but found \"#x\""
+  "#!/usr/bin/env node\n/// <reference types=\"node\" />\nexport {};"  base=ok  ts.plain.scanImports="Unexpected #!/usr/bin/env node" ts.deco.scanImports="Unexpected #!/usr/bin/env node" tsx.plain.scanImports="Unexpected #!/usr/bin/env node" tsx.deco.scanImports="Unexpected #!/usr/bin/env node"
+
+==== family topLevel  (229 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1978-2014 parse_stmt: no ambient context exists outside "declare" (opts.is_typescript_declare is set only at src/js_parser/parse/parse_stmt.rs:1866 and src/js_parser/parse/parse_stmt.rs:1576)
+  ref: parser.go:431 parseSourceFileWorker sets NodeFlagsAmbient for a declaration file, 1063 parseStatement, 1124 parseDeclaration
+  counts A1=1 A2=18 AA=179 AAg=31
+  -- A1: 1 distinct
+    "global {}"
+        bun x1: Expected ";" but found "{" @7
+  -- A2: 18 distinct
+    "export const x: number;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: 1;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x, y: number;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1155 @16 len 1 "'const' declarations must be initialized."
+    "export const { a }: T;"
+        bun x1: This constant must be initialized @13
+        tsc x1: TS1182 @13 len 5 "A destructuring declaration must have an initializer."
+    "export const [a]: T;"
+        bun x1: This constant must be initialized @13
+        tsc x1: TS1182 @13 len 3 "A destructuring declaration must have an initializer."
+    "export const x: unique symbol;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export using x: T;"
+        bun x1: Unexpected using @7
+        tsc x1: TS1491 @0 len 6 "'export' modifier cannot appear on a 'using' declaration."
+        tsc x1: TS1155 @13 len 1 "'using' declarations must be initialized."
+    "export namespace N { const x: T; function f(): void; class C {} }"
+        bun x1: The constant "x" must be initialized @27
+        tsc x1: TS1155 @27 len 1 "'const' declarations must be initialized."
+    "export namespace N { export const x: T; }"
+        bun x1: The constant "x" must be initialized @34
+        tsc x1: TS1155 @34 len 1 "'const' declarations must be initialized."
+    "const x: number;"
+        bun x1: The constant "x" must be initialized @6
+        tsc x1: TS1155 @6 len 1 "'const' declarations must be initialized."
+    "const x;"
+        bun x1: The constant "x" must be initialized @6
+        tsc x1: TS1155 @6 len 1 "'const' declarations must be initialized."
+    "namespace N { const x: T; }"
+        bun x1: The constant "x" must be initialized @20
+        tsc x1: TS1155 @20 len 1 "'const' declarations must be initialized."
+    "module \"m\" {}"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+    "module \"m\";"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+    "using x: T;"
+        bun x1: The declaration "x" must be initialized @6
+        tsc x1: TS1155 @6 len 1 "'using' declarations must be initialized."
+    "break;"
+        bun x1: Cannot use "break" here @0
+        tsc x1: TS1105 @0 len 6 "A 'break' statement can only be used within an enclosing iteration or switch statement."
+    "continue;"
+        bun x1: Cannot use "continue" here @0
+        tsc x1: TS1104 @0 len 9 "A 'continue' statement can only be used within an enclosing iteration statement."
+    "{ const x: T; }"
+        bun x1: The constant "x" must be initialized @8
+        tsc x1: TS1155 @8 len 1 "'const' declarations must be initialized."
+  -- AAg: 31 distinct
+    "export let x: unique symbol;"
+        tsc x1: TS1332 @11 len 1 "A variable whose type is a 'unique symbol' type must be 'const'."
+    "export function* f(): any;"
+        tsc x1: TS1222 @15 len 1 "An overload signature cannot be declared as a generator."
+    "export module N {}"
+        tsc x1: TS1540 @14 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "export as namespace X;"
+        tsc x1: TS1314 @0 len 22 "Global module exports may only appear in module files."
+    "function* f(): any;"
+        tsc x1: TS1222 @8 len 1 "An overload signature cannot be declared as a generator."
+    "module N {}"
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+    "return;"
+        tsc x1: TS1108 @0 len 6 "A 'return' statement can only be used within a function body."
+    "with (a) {}"
+        tsc x1: TS1101 @0 len 4 "'with' statements are not allowed in strict mode."
+    "await x;"
+        tsc x1: TS1375 @0 len 5 "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module."
+    "yield;"
+        tsc x1: TS1212 @0 len 5 "Identifier expected. 'yield' is a reserved word in strict mode."
+    "declare const x: number = 1;"
+        tsc x1: TS1039 @26 len 1 "Initializers are not allowed in ambient contexts."
+    "declare let x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare var x = 1;"
+        tsc x1: TS1039 @16 len 1 "Initializers are not allowed in ambient contexts."
+    "declare function f() {}"
+        tsc x1: TS1183 @21 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { m() {} }"
+        tsc x1: TS1183 @22 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare class C { x = 1; }"
+        tsc x1: TS1039 @22 len 1 "Initializers are not allowed in ambient contexts."
+    "declare enum E { A = f() }"
+        tsc x1: TS1066 @21 len 3 "In ambient enum declarations member initializer must be constant expression."
+    "declare namespace N { let x = 1; }"
+        tsc x1: TS1039 @30 len 1 "Initializers are not allowed in ambient contexts."
+    "declare namespace N { function f() {} }"
+        tsc x1: TS1183 @35 len 1 "An implementation cannot be declared in ambient contexts."
+    "declare namespace N { x; }"
+        tsc x1: TS1036 @22 len 1 "Statements are not allowed in ambient contexts."
+    "declare namespace N { declare const x: T; }"
+        tsc x1: TS1038 @22 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare namespace N { export declare const x: T; }"
+        tsc x1: TS1038 @29 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare module \"m\" { declare const x: T; }"
+        tsc x1: TS1038 @21 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare global { declare const x: T; }"
+        tsc x1: TS1038 @17 len 7 "A 'declare' modifier cannot be used in an already ambient context."
+    "declare declare const x: T;"
+        tsc x1: TS1030 @8 len 7 "'declare' modifier already seen."
+    "export declare declare const x: T;"
+        tsc x1: TS1030 @15 len 7 "'declare' modifier already seen."
+    "declare export const x: T;"
+        tsc x1: TS1029 @8 len 6 "'export' modifier must precede 'declare' modifier."
+    "declare async function f(): Promise<void>;"
+        tsc x1: TS1040 @8 len 5 "'async' modifier cannot be used in an ambient context."
+    "declare function* f(): any;"
+        tsc x1: TS1221 @16 len 1 "Generators are not allowed in an ambient context."
+    "declare class C { @d m(): void; }"
+        tsc x1: TS1249 @18 len 1 "A decorator can only decorate a method implementation, not an overload."
+    "export class C { m(@d a: A): void; }"
+        tsc x1: TS1206 @19 len 1 "Decorators are not valid here."
+
+==== family bodyless  (84 inputs)
+  bun: src/js_parser/parse/parse_fn.rs:395-400 (function without body: allow_missing_body_for_type_script), src/js_parser/parse/parse_property.rs:759-802 (method without body), src/js_parser/parse/parse_stmt.rs:184-186 (const without initializer needs declare)
+  ref: parser.go:3530 parseFunctionBlockOrSemicolon, 1715 parseFunctionDeclaration, 1554 parseVariableDeclarationList
+  counts A1=3 A2=18 AA=54 AAg=8 RR=1
+  -- A1: 3 distinct
+    "export class C { accessor x: T; }"
+        bun x1: Expected ";" but found "x" @26
+    "export class C { static accessor x: T; }"
+        bun x1: Expected ";" but found "x" @33
+    "export class C { accessor #x: T; }"
+        bun x1: Expected ";" but found "#x" @26
+  -- A2: 18 distinct
+    "export function f(): void\nexport const x: T\nexport class C {}"
+        bun x1: The constant "x" must be initialized @39
+        tsc x1: TS1155 @39 len 1 "'const' declarations must be initialized."
+    "export const x: T, y: U, z: V;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1155 @19 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1155 @25 len 1 "'const' declarations must be initialized."
+    "export const x: T\nexport const y: U"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1155 @31 len 1 "'const' declarations must be initialized."
+    "export const x: { a: A; b(): B; [k: string]: C };"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: () => void;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: new () => A;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: typeof y;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: import(\"y\").Z;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: typeof import(\"y\");"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: A<B<C>>;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: A extends B ? C : D;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: keyof typeof y;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: readonly A[];"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: [a: A, b?: B, ...c: C[]];"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: `a${string}`;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: -1;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: 1n;"
+        bun x1: The constant "x" must be initialized @13
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+    "export const x: asserts y;"
+        bun x1: Expected ";" but found "y" @24
+        tsc x1: TS1155 @13 len 1 "'const' declarations must be initialized."
+        tsc x1: TS1228 @16 len 9 "A type predicate is only allowed in return type position for functions and methods."
+  -- AAg: 8 distinct
+    "export class C { *m(): any; }"
+        tsc x1: TS1222 @17 len 1 "An overload signature cannot be declared as a generator."
+    "export class C { get x(): T; }"
+        tsc x1: TS1005 @27 len 1 "'{' expected."
+    "export class C { set x(v: T); }"
+        tsc x1: TS1005 @28 len 1 "'{' expected."
+    "export class C { get x(): T; set x(v: T); }"
+        tsc x1: TS1005 @27 len 1 "'{' expected."
+        tsc x1: TS1005 @40 len 1 "'{' expected."
+    "export class C { static get x(): T; }"
+        tsc x1: TS1005 @34 len 1 "'{' expected."
+    "export class C { get x(); }"
+        tsc x1: TS1005 @24 len 1 "'{' expected."
+    "export class C { set x(v); }"
+        tsc x1: TS1005 @25 len 1 "'{' expected."
+    "export class C { abstract m(): void; }"
+        tsc x1: TS1244 @17 len 8 "Abstract methods can only appear within an abstract class."
+
+==== family directive  (27 inputs)
+  bun: src/js_parser/lexer.rs comment scanning (triple-slash directives are comments; none is recorded)
+  ref: internal/parser/references.go (processCommentPragmas, processPragmasIntoFields)
+  counts A1=2 AA=24 B=1
+  -- A1: 2 distinct
+    "// @ts-ignore\nexport const x: T;"
+        bun x1: The constant "x" must be initialized @27
+    "// @ts-expect-error\nexport const x: T;"
+        bun x1: The constant "x" must be initialized @33
+  -- B: 1 distinct
+    "/// <reference />\nexport {};"
+        tsc x1: TS1084 @0 len 17 "Invalid 'reference' directive syntax."
+
+==== family module  (40 inputs)
+  bun: src/js_parser/parse/parse_stmt.rs:1794-1807, src/js_parser/parse/parse_stmt.rs:1843-1854, src/js_parser/parse/parse_typescript.rs:205-481
+  ref: parser.go:2202 parseModuleDeclaration, 2218 parseAmbientExternalModuleDeclaration
+  counts A1=1 A2=4 AA=31 AAg=4
+  -- A1: 1 distinct
+    "global { var x: T; }"
+        bun x1: Expected ";" but found "{" @7
+  -- A2: 4 distinct
+    "module \"m\" { export const x: T; }"
+        bun x1: Expected ";" but found ""m"" @7
+        tsc x1: TS1035 @7 len 3 "Only ambient modules can use quoted names."
+        tsc x1: TS1155 @26 len 1 "'const' declarations must be initialized."
+    "namespace N { export const x: T; function f(): void; }"
+        bun x1: The constant "x" must be initialized @27
+        tsc x1: TS1155 @27 len 1 "'const' declarations must be initialized."
+    "namespace N.M { const x: T; }"
+        bun x1: The constant "x" must be initialized @22
+        tsc x1: TS1155 @22 len 1 "'const' declarations must be initialized."
+    "module N { const x: T; }"
+        bun x1: The constant "x" must be initialized @17
+        tsc x1: TS1540 @7 len 1 "A 'namespace' declaration should not be declared using the 'module' keyword. Please use the 'namespace' keyword instead."
+        tsc x1: TS1155 @17 len 1 "'const' declarations must be initialized."
+  -- AAg: 4 distinct
+    "declare namespace N { export default x; }"
+        tsc x1: TS1319 @22 len 17 "A default export can only be used in an ECMAScript-style module."
+    "declare namespace N { export = x; }"
+        tsc x1: TS1063 @22 len 11 "An export assignment cannot be used in a namespace."
+    "declare namespace N { import x from \"y\"; }"
+        tsc x1: TS1147 @36 len 3 "Import declarations in a namespace cannot reference a module."
+    "declare namespace N { export * from \"y\"; }"
+        tsc x1: TS1194 @36 len 3 "Export declarations are not permitted in a namespace."

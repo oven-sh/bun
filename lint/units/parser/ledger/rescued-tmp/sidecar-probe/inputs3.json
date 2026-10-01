@@ -1,0 +1,14 @@
+[
+ ["L1-jsx-arrow-lookahead", "a.tsx", "const f = <T /*1*/ extends /*2*/ U>(x: T) => x;"],
+ ["L1-jsx-element", "a.tsx", "const e = <T /*1*/ x={1} /*2*/ />;"],
+ ["L2-import-lookahead", "a.ts", "var r = a < b > import /*c*/ (\"x\");"],
+ ["L3-async-arrow", "a.ts", "var f = async x /*c*/ => x;"],
+ ["L3-async-ident", "a.ts", "var f = async x /*c*/ as any;"],
+ ["L3-for-async-of", "a.ts", "for (async /*c*/ of => {}; ;) {}"],
+ ["L3-import-type-from", "a.ts", "import type from /*c*/ \"x\";"],
+ ["L3-import-type-from2", "a.ts", "import type from /*c*/ from \"x\";"],
+ ["JSX-comments", "a.tsx", "const e = <div /* c1 */ id=\"a\" // c2\n />;"],
+ ["lead-comments", "a.ts", "// @ts-nocheck\n/// <reference path=\"./a.d.ts\" />\n/* leading */\nlet x = 1; // trailing\n"],
+ ["B6-fail-comment", "a.ts", "x = a ? (b) : /*1*/ c => /*2*/ (d as any);"],
+ ["B2-fail-comment", "a.ts", "var r = a < /*1*/ b /*2*/ > c;"]
+]

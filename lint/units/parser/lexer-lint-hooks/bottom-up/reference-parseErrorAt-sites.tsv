@@ -1,0 +1,99 @@
+203	parseJSONText	parseErrorAtCurrentToken	TS1012	Unexpected token.
+319	scanError	parseErrorAtRange	(variable)	p.parseErrorAtRange(core.NewTextRange(pos, pos+length), message, args...)
+322	DEF	func (p *Parser) parseErrorAt(pos int, end int, message *diagnostics.Message, ar
+323	parseErrorAt	parseErrorAtRange	(variable)	return p.parseErrorAtRange(core.NewTextRange(pos, end), message, args...)
+326	DEF	func (p *Parser) parseErrorAtCurrentToken(message *diagnostics.Message, args ...
+327	parseErrorAtCurrentToken	parseErrorAtRange	(variable)	return p.parseErrorAtRange(p.scanner.TokenRange(), message, args...)
+330	DEF	func (p *Parser) parseErrorAtRange(loc core.TextRange, message *diagnostics.Mess
+388	nextToken	parseErrorAtCurrentToken	TS1260	Keywords cannot contain escape characters.
+677	parseDelimitedList	parseErrorAtCurrentToken	TS1357	An enum member name must be followed by a ',', '=', or '}'.
+759	parsingContextErrors	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+761	parsingContextErrors	parseErrorAtCurrentToken	TS1128	Declaration or statement expected.
+764	parsingContextErrors	parseErrorAtCurrentToken	TS1128	Declaration or statement expected.
+766	parsingContextErrors	parseErrorAtCurrentToken	TS1130	'case' or 'default' expected.
+768	parsingContextErrors	parseErrorAtCurrentToken	TS1129	Statement expected.
+770	parsingContextErrors	parseErrorAtCurrentToken	TS1131	Property or signature expected.
+772	parsingContextErrors	parseErrorAtCurrentToken	TS1068	Unexpected token. A constructor, method, accessor, or property was expected.
+774	parsingContextErrors	parseErrorAtCurrentToken	TS1132	Enum member expected.
+776	parsingContextErrors	parseErrorAtCurrentToken	TS1109	Expression expected.
+779	parsingContextErrors	parseErrorAtCurrentToken	TS1389	'{0}' is not allowed as a variable declaration name.
+781	parsingContextErrors	parseErrorAtCurrentToken	TS1134	Variable declaration expected.
+784	parsingContextErrors	parseErrorAtCurrentToken	TS1180	Property destructuring pattern expected.
+786	parsingContextErrors	parseErrorAtCurrentToken	TS1181	Array element destructuring pattern expected.
+788	parsingContextErrors	parseErrorAtCurrentToken	TS1135	Argument expression expected.
+790	parsingContextErrors	parseErrorAtCurrentToken	TS1136	Property assignment expected.
+792	parsingContextErrors	parseErrorAtCurrentToken	TS1137	Expression or comma expected.
+794	parsingContextErrors	parseErrorAtCurrentToken	TS1138	Parameter declaration expected.
+797	parsingContextErrors	parseErrorAtCurrentToken	TS1390	'{0}' is not allowed as a parameter name.
+799	parsingContextErrors	parseErrorAtCurrentToken	TS1138	Parameter declaration expected.
+802	parsingContextErrors	parseErrorAtCurrentToken	TS1139	Type parameter declaration expected.
+804	parsingContextErrors	parseErrorAtCurrentToken	TS1140	Type argument expected.
+806	parsingContextErrors	parseErrorAtCurrentToken	TS1110	Type expected.
+808	parsingContextErrors	parseErrorAtCurrentToken	TS1179	Unexpected token. '{' expected.
+811	parsingContextErrors	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+813	parsingContextErrors	parseErrorAtCurrentToken	TS1003	Identifier expected.
+816	parsingContextErrors	parseErrorAtCurrentToken	TS1003	Identifier expected.
+818	parsingContextErrors	parseErrorAtCurrentToken	TS1478	Identifier or string literal expected.
+970	parseExpectedJSDoc	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+979	parseExpectedMatchingBrackets	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+1014	parseExpectedWithDiagnostic	parseErrorAtCurrentToken	(variable)	p.parseErrorAtCurrentToken(message)
+1016	parseExpectedWithDiagnostic	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+1031	parseExpectedToken	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+1050	parseExpectedTokenJSDoc	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+1187	parseDeclarationWorker	parseErrorAt	TS1146	Declaration expected.
+1221	parseBlock	parseErrorAtCurrentToken	TS2809	Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.
+1941	parseClassElement	parseErrorAt	TS1146	Declaration expected.
+2031	parseSemicolonAfterPropertyName	parseErrorAtCurrentToken	TS1436	Decorators must precede the name and all keywords of property declarations.
+2035	parseSemicolonAfterPropertyName	parseErrorAtCurrentToken	TS1441	Cannot start a function call in a type annotation.
+2041	parseSemicolonAfterPropertyName	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+2043	parseSemicolonAfterPropertyName	parseErrorAtCurrentToken	TS1442	Expected '=' for property initializer.
+2051	parseSemicolonAfterPropertyName	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+2062	parseErrorForMissingSemicolonAfter	parseErrorAtRange	TS1443	Module declaration names may only use ' or \" quoted strings.
+2071	parseErrorForMissingSemicolonAfter	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+2078	parseErrorForMissingSemicolonAfter	parseErrorAt	TS1440	Variable declaration not allowed at this location.
+2087	parseErrorForMissingSemicolonAfter	parseErrorAt	TS1228	A type predicate is only allowed in return type position for functions and methods.
+2102	parseErrorForMissingSemicolonAfter	parseErrorAt	TS1435	Unknown keyword or identifier. Did you mean '{0}'?
+2110	parseErrorForMissingSemicolonAfter	parseErrorAt	TS1434	Unexpected keyword or identifier.
+2124	parseErrorForInvalidName	parseErrorAtCurrentToken	(variable)	p.parseErrorAtCurrentToken(blankDiagnostic)
+2126	parseErrorForInvalidName	parseErrorAtCurrentToken	(variable)	p.parseErrorAtCurrentToken(nameDiagnostic, p.scanner.TokenValue())
+2145	parseTypeAliasDeclaration	parseErrorAtCurrentToken	TS1142	Line break not permitted here.
+2449	parseImportSpecifier	parseErrorAtRange	TS1003	Identifier expected.
+2523	parseImportOrExportSpecifier	parseErrorAtRange	TS1003	Identifier expected.
+2548	tryParseImportAttributes	parseErrorAtCurrentToken	TS2880	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+2615	parseExportDeclaration	parseErrorAtCurrentToken	TS2880	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+2993	parseRightSideOfDot	parseErrorAt	TS1003	Identifier expected.
+3001	parseRightSideOfDot	parseErrorAt	TS1003	Identifier expected.
+3089	parseImportType	parseErrorAtCurrentToken	TS2880	Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.
+3093	parseImportType	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+3128	parseImportAttribute	parseErrorAtCurrentToken	TS1478	Identifier or string literal expected.
+3384	parseParameterEx	parseErrorAtRange	TS1433	Neither decorators nor modifiers may be applied to 'this' parameters.
+3445	shouldParseReturnType	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+3780	parseLiteralOfTemplateSpan	parseErrorAtCurrentToken	TS1005	'{0}' expected.
+3812	parseFunctionOrConstructorTypeToError	parseErrorAtRange	(variable)	p.parseErrorAtRange(typeNode.Loc, diagnostic)
+4751	parseUnaryExpressionOrHigher	parseErrorAt	TS17007	A type assertion expression is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+4754	parseUnaryExpressionOrHigher	parseErrorAt	TS17006	An unary expression with the '{0}' operator is not allowed in the left-hand side of an exponentiation expression. Consider enclosing the expression in parentheses.
+4829	parseJsxElementOrSelfClosingElementOrFragment	parseErrorAtRange	TS17008	JSX element '{0}' has no corresponding closing tag.
+4832	parseJsxElementOrSelfClosingElementOrFragment	parseErrorAtRange	TS17002	Expected corresponding JSX closing tag for '{0}'.
+4863	parseJsxElementOrSelfClosingElementOrFragment	parseErrorAt	TS2657	JSX expressions must have one parent element.
+4898	parseJsxChild	parseErrorAtRange	TS17014	JSX fragment has no corresponding closing tag.
+4904	parseJsxChild	parseErrorAt	TS17008	JSX element '{0}' has no corresponding closing tag.
+5094	parseJsxAttributeValue	parseErrorAtCurrentToken	TS1145	'{' or JSX element expected.
+5275	parseSuperExpression	parseErrorAt	TS2754	'super' may not use type arguments.
+5286	parseSuperExpression	parseErrorAtCurrentToken	TS1034	'super' must be followed by an argument list or member access.
+5455	parsePropertyAccessExpressionRest	parseErrorAtRange	TS18030	An optional chain cannot contain private identifiers.
+5461	parsePropertyAccessExpressionRest	parseErrorAtRange	TS1477	An instantiation expression cannot be followed by a property access.
+5492	parseElementAccessExpressionRest	parseErrorAt	TS1011	An element access expression should take an argument.
+5528	parseCallExpressionRest	parseErrorAtCurrentToken	TS1003	Identifier expected.
+5783	parseDecoratedExpression	parseErrorAt	TS1109	Expression expected.
+5815	parseNewExpressionOrNewDotTarget	parseErrorAtCurrentToken	TS1209	Invalid optional chain from new expression. Did you mean to call '{0}()'?
+5858	parseIdentifierNameErrorOnUnicodeEscapeSequence	parseErrorAtCurrentToken	TS17021	Unicode escape sequence cannot appear here.
+5908	createIdentifierWithDiagnostic	parseErrorAtCurrentToken	(variable)	p.parseErrorAtCurrentToken(privateIdentifierDiagnosticMessage)
+5910	createIdentifierWithDiagnostic	parseErrorAtCurrentToken	TS18016	Private identifiers are not allowed outside class bodies.
+5919	createIdentifierWithDiagnostic	parseErrorAt	(variable)	p.parseErrorAt(pos, pos, diagnosticMessage)
+5921	createIdentifierWithDiagnostic	parseErrorAtCurrentToken	(variable)	p.parseErrorAtCurrentToken(diagnosticMessage)
+5926	createIdentifierWithDiagnostic	parseErrorAt	TS1359	Identifier expected. '{0}' is a reserved word that cannot be used here.
+5928	createIdentifierWithDiagnostic	parseErrorAtCurrentToken	TS1359	Identifier expected. '{0}' is a reserved word that cannot be used here.
+5933	createIdentifierWithDiagnostic	parseErrorAt	TS1003	Identifier expected.
+5935	createIdentifierWithDiagnostic	parseErrorAtCurrentToken	TS1003	Identifier expected.
+6676	processPragmasIntoFields	parseErrorAtRange	TS1084	Invalid 'reference' directive syntax.
+6703	parseResolutionMode	parseErrorAt	TS1453	`resolution-mode` should be either `require` or `import`.

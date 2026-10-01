@@ -1,0 +1,9 @@
+[
+ ["t.tsx", "let x = <div>(<b/>)</div>;"],
+ ["t.tsx", "let x = <div>({a})</div>;"],
+ ["t.tsx", "let x = <div a={(b)}>{(c)}{...(d)}</div>;"],
+ ["t.tsx", "let x = (<div/>);"],
+ ["t.tsx", "let x = <div>{(a as T)!}</div>;"],
+ ["t.tsx", "let x = <A<T>>(y)</A>;"],
+ ["t.tsx", "let f = <T,>(x: T) => (x);"]
+]

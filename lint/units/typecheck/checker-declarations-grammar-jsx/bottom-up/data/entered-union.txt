@@ -1,0 +1,42 @@
+== union over the runs
+  D-DRIVER: 9 of 9
+  D-TYPENODE: 29 of 31
+  D-VAR: 6 of 6
+  D-FUNC: 17 of 21
+  D-STMT: 22 of 23
+  D-CLASS: 24 of 30
+  D-ENUMNS: 5 of 7
+  D-IMPEXP: 17 of 23
+  U-ALIASMARK: 18 of 22
+  D-UNUSED: 20 of 21
+  D-ITER: 26 of 30
+  E-AWAIT: 17 of 18
+  D-DECOR: 2 of 2
+  E-DECOR: 26 of 29
+  D-HELPERS: 5 of 5
+  E-COLLIDE: 11 of 11
+  G-GRAMMAR: 73 of 76
+  X-JSX: 56 of 59
+  D-JSDOC: 7 of 7
+  T-JSDECL: 7 of 8
+  Z-SERVICES: 10 of 232
+  not entered D-DRIVER[0]: 
+  not entered D-TYPENODE[2]: getDeprecatedSuggestionNode checkThisType
+  not entered D-VAR[0]: 
+  not entered D-FUNC[4]: isInstancePropertyWithInitializerOrPrivateIdentifierProperty superCallIsRootLevelInConstructor nodeImmediatelyReferencesSuperOrThis isUnwrappedReturnTypeUndefinedVoidOrAny
+  not entered D-STMT[1]: isSymbolUsedInBinaryExpressionChain
+  not entered D-CLASS[6]: getClassOrInterfaceDeclarationsOfSymbol areTypeParametersIdentical getMemberOverrideModifierStatus checkIndexConstraintForIndexSignature isPropertyInitializedInStaticBlocks isPropertyIdenticalTo
+  not entered D-ENUMNS[2]: getFirstNonAmbientClassOrFunctionDeclaration getIsolatedModulesLikeFlagName
+  not entered D-IMPEXP[6]: hasTypeJsonImportAttribute getTypeFromImportAttributes checkExternalModuleNameInGlobalScope getVerbatimModuleSyntaxErrorMessage hasShadowedNamespace checkMissingDeclaration
+  not entered U-ALIASMARK[4]: isExportOrExportExpression isInternalModuleImportEqualsDeclaration getEntityNameFromTypeNode markTypeNodeAsReferenced
+  not entered D-UNUSED[1]: checkUnusedInferTypeParameter
+  not entered D-ITER[4]: getIterationTypeOfIterable getAsyncFromSyncIterationTypes getIterationDiagnosticDetails isES2015OrLaterIterable
+  not entered E-AWAIT[1]: tryCreateAwaitedType
+  not entered D-DECOR[0]: 
+  not entered E-DECOR[3]: getContextualTypeForDecorator newClassFieldDecoratorContextType newClassFieldDecoratorInitializerMutatorType
+  not entered D-HELPERS[0]: 
+  not entered E-COLLIDE[0]: 
+  not entered G-GRAMMAR[3]: grammarErrorOnNodeSkippedOnNoEmit getIdentifierFromEntityNameExpression findFirstModifierExcept
+  not entered X-JSX[3]: discriminateContextualTypeByJSXAttributes instantiateAliasOrInterfaceWithDefaults getStaticTypeOfReferencedJsxConstructor
+  not entered D-JSDOC[0]: 
+  not entered T-JSDECL[1]: getTypeFromPropertyDescriptor

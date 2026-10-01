@@ -1,0 +1,336 @@
+suite	name	run	kind	linux	darwin	win32	causes	longestPath
+compiler	allowJsCrossMonorepoPackage.ts	run	C				link-to-directory	34
+compiler	amdModuleConstEnumUsage.ts	skipped					rooted-setting	23
+compiler	augmentExportEquals2.ts	run	C				unit-name-twice	14
+compiler	booleanLiteralsContextuallyTypedFromUnion.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	51
+compiler	callsOnComplexSignatures.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	34
+compiler	caseInsensitiveFileSystemWithCapsImportTypeDeclarations.ts	run	C	case-insensitive-requested			case-insensitive-requested	34
+compiler	checkJsxNotSetError.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-specifier	8
+compiler	commonSourceDir1.ts	run	C	dos-root	dos-root	dos-root	dos-root,rooted-setting	13
+compiler	commonSourceDir2.ts	run	E	dos-root	dos-root	dos-root	dos-root,rooted-setting	13
+compiler	commonSourceDir3.ts	run	C	dos-root,case-insensitive-requested	dos-root,case-collision	dos-root,case-collision	dos-root,case-collision,case-insensitive-requested,rooted-setting	13
+compiler	commonSourceDir4.ts	run	E	dos-root	dos-root,case-collision	dos-root,case-collision	dos-root,case-collision,rooted-setting	13
+compiler	commonSourceDir5.ts	skipped		dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,rooted-specifier	9
+compiler	complexNarrowingWithAny.ts	run	C				climbs-above-root	32
+compiler	conditionalTypeVarianceBigArrayConstraintsPerformance.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	62
+compiler	contextuallyTypedJsxAttribute2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+compiler	contextuallyTypedJsxChildren.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	38
+compiler	contextuallyTypedJsxChildren2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	39
+compiler	declarationEmitCommonSourceDirectoryDoesNotContainAllFiles.ts	skipped					link-to-directory,current-directory	17
+compiler	declarationEmitExpressionInExtends6.ts	run	C				current-directory	36
+compiler	declarationEmitForGlobalishSpecifierSymlink.ts	run	C				link-to-directory	45
+compiler	declarationEmitForGlobalishSpecifierSymlink2.ts	run	C				link-to-directory	35
+compiler	declarationEmitHasTypesRefOnNamespaceUse.ts	run	C				current-directory,rooted-setting	22
+compiler	declarationEmitMonorepoBaseUrl.ts	skipped					link-to-directory	93
+compiler	declarationEmitPathMappingMonorepo.ts	skipped					link-to-directory	30
+compiler	declarationEmitReexportedSymlinkReference.ts	run	C				link-to-directory	50
+compiler	declarationEmitReexportedSymlinkReference2.ts	run	C				link-to-directory	50
+compiler	declarationEmitReexportedSymlinkReference3.ts	run	E				link-to-directory	50
+compiler	declarationEmitRelativeModuleError.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-specifier	43
+compiler	declarationEmitSymlinkPaths(target=es5).ts	skipped					link-to-directory,rooted-setting	55
+compiler	declarationEmitSymlinkPaths(target=es2015).ts	run	C				link-to-directory,rooted-setting	55
+compiler	declarationEmitUnnessesaryTypeReferenceNotAdded(target=es5).ts	skipped					current-directory	43
+compiler	declarationEmitUnnessesaryTypeReferenceNotAdded(target=es2015).ts	run	C				current-directory	43
+compiler	declarationFileOverwriteErrorWithOut.ts	skipped					rooted-setting	9
+compiler	declarationFilesWithTypeReferences1.ts	run	E				current-directory	36
+compiler	declarationFilesWithTypeReferences2.ts	run	E				current-directory	36
+compiler	decoratorMetadataRestParameterWithImportedType(target=es5).ts	skipped				windows-name	windows-reserved-name	13
+compiler	decoratorMetadataRestParameterWithImportedType(target=es2015).ts	run	E			windows-name	windows-reserved-name	13
+compiler	errorInfoForRelatedIndexTypesNoConstraintElaboration.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	61
+compiler	exportDefaultMarksIdentifierAsUsed.ts	run	C				rooted-setting	10
+compiler	genericInferenceDefaultTypeParameterJsxReact.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	54
+compiler	ignoredJsxAttributes.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	30
+compiler	incrementalTsBuildInfoFile.ts	run	C				rooted-setting	5
+compiler	isolatedModules_resolveJsonModule_strict_outDir_commonJs.ts	run	C				rooted-setting	7
+compiler	javascriptThisAssignmentInStaticBlock.ts	run	C				rooted-setting	9
+compiler	jsFileCompilationNonNullAssertion.ts	skipped					rooted-setting	9
+compiler	jsFileCompilationTypeAssertions.ts	skipped					rooted-setting	9
+compiler	jsFileCompilationWithOutDeclarationFileNameSameAsInputJsFile.ts	skipped					rooted-setting	7
+compiler	jsFileCompilationWithOutFileNameSameAsInputJsFile.ts	skipped					rooted-setting	5
+compiler	jsxCallElaborationCheckNoCrash1.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	41
+compiler	jsxChildWrongType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxChildrenArrayWrongType(target=es5).tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxChildrenArrayWrongType(target=es2015).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxChildrenIndividualErrorElaborations.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxChildrenSingleChildConfusableWithMultipleChildrenNoError.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	69
+compiler	jsxChildrenWrongType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxComplexSignatureHasApplicabilityError.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	50
+compiler	jsxDeclarationsWithEsModuleInteropNoCrash.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	51
+compiler	jsxElementType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	24
+compiler	jsxElementTypeLiteral.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	31
+compiler	jsxElementTypeLiteralWithGeneric.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	42
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+compiler	jsxEmptyExpressionNotCountedAsChild(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+compiler	jsxExcessPropsAndAssignability.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+compiler	jsxFragReactReferenceErrors(jsx=react-native).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	37
+compiler	jsxFragReactReferenceErrors(jsx=preserve).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	37
+compiler	jsxFragmentFactoryNoUnusedLocals.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	42
+compiler	jsxFragmentWrongType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	11
+compiler	jsxFunctionTypeChildren.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	33
+compiler	jsxGenericComponentWithSpreadingResultOfGenericFunction.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	65
+compiler	jsxHasLiteralType.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	27
+compiler	jsxImportForSideEffectsNonExtantNoError.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	49
+compiler	jsxInferenceProducesLiteralAsExpected.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	47
+compiler	jsxIntrinsicElementsCompatability.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	43
+compiler	jsxIntrinsicElementsTypeArgumentErrors.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	48
+compiler	jsxIntrinsicUnions.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	28
+compiler	jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	54
+compiler	jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx(jsx=react-jsx).tsx	run	E				rooted-setting	23
+compiler	jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx(jsx=react-jsxdev).tsx	run	E				rooted-setting	23
+compiler	jsxNamespaceNoElementChildrenAttributeReactJsx(jsx=react-jsx).tsx	run	C				rooted-setting	23
+compiler	jsxNamespaceNoElementChildrenAttributeReactJsx(jsx=react-jsxdev).tsx	run	C				rooted-setting	23
+compiler	jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	65
+compiler	jsxPartialSpread.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	26
+compiler	jsxRuntimePragma(jsx=react).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxRuntimePragma(jsx=react-jsx).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxRuntimePragma(jsx=react-jsxdev).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxRuntimePragma(jsx=preserve).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	jsxSpreadFirstUnionNoErrors.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	37
+compiler	keepImportsInDts1.ts	skipped		dos-root	dos-root	dos-root	dos-root	14
+compiler	keepImportsInDts3.ts	skipped		dos-root	dos-root	dos-root	dos-root	14
+compiler	maxNodeModuleJsDepthDefaultsToZero.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-reference	45
+compiler	missingMemberErrorHasShortPath.ts	run	E	dos-root,case-insensitive-requested	dos-root	dos-root	dos-root,case-insensitive-requested	28
+compiler	moduleResolutionAsTypeReferenceDirective.ts	run	C				current-directory,rooted-setting	33
+compiler	moduleResolutionAsTypeReferenceDirectiveAmbient.ts	run	C				current-directory,rooted-setting	33
+compiler	moduleResolutionAsTypeReferenceDirectiveScoped.ts	run	E				current-directory,rooted-setting	55
+compiler	moduleResolutionWithExtensions_withPaths.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json	31
+compiler	moduleResolutionWithRequire.ts	run	C				climbs-above-root	9
+compiler	moduleResolutionWithRequireAndImport.ts	run	C				climbs-above-root	9
+compiler	moduleResolutionWithSuffixes_one_externalModule_withPaths.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json	45
+compiler	moduleResolutionWithSymlinks.ts	run	E			link-to-file	link-to-file	46
+compiler	moduleResolutionWithSymlinks_notInNodeModules.ts	run	C			link-to-file	link-to-file	19
+compiler	moduleResolutionWithSymlinks_preserveSymlinks.ts	run	E			link-to-file	link-to-file	36
+compiler	moduleResolutionWithSymlinks_referenceTypes.ts	run	C			link-to-file	link-to-file	71
+compiler	moduleResolutionWithSymlinks_withOutDir.ts	run	E			link-to-file	link-to-file,rooted-setting	46
+compiler	nodeNextPackageSelfNameWithOutDirDeclDirRootDir.ts	run	C				rooted-setting	17
+compiler	optionsTsBuildInfoFileWithoutIncrementalAndComposite.ts	run	C				rooted-setting	61
+compiler	pathMappingBasedModuleResolution1_amd.ts	skipped		dos-root	dos-root	dos-root	dos-root	21
+compiler	pathMappingBasedModuleResolution1_node.ts	run	E	dos-root	dos-root	dos-root	dos-root	21
+compiler	pathMappingBasedModuleResolution3_classic.ts	skipped		dos-root	dos-root	dos-root	dos-root,rooted-setting	24
+compiler	pathMappingBasedModuleResolution3_node.ts	skipped		dos-root	dos-root	dos-root	dos-root,rooted-setting	32
+compiler	pathMappingBasedModuleResolution4_classic.ts	skipped		dos-root	dos-root	dos-root	dos-root	24
+compiler	pathMappingBasedModuleResolution4_node.ts	skipped		dos-root	dos-root	dos-root	dos-root	32
+compiler	pathMappingBasedModuleResolution5_classic.ts	skipped		dos-root	dos-root	dos-root	dos-root	34
+compiler	pathMappingBasedModuleResolution5_node.ts	skipped		dos-root	dos-root	dos-root	dos-root	42
+compiler	pathMappingBasedModuleResolution6_classic.ts	skipped		dos-root	dos-root	dos-root	dos-root	38
+compiler	pathMappingBasedModuleResolution6_node.ts	run	C	dos-root	dos-root	dos-root	dos-root	38
+compiler	pathMappingBasedModuleResolution7_classic.ts	skipped		dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,rooted-path-in-json	42
+compiler	pathMappingBasedModuleResolution7_node.ts	skipped		dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,rooted-path-in-json	42
+compiler	pathMappingBasedModuleResolution8_classic.ts	skipped		dos-root	dos-root	dos-root	dos-root	29
+compiler	pathMappingBasedModuleResolution8_node.ts	skipped		dos-root	dos-root	dos-root	dos-root	29
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json,rooted-specifier	19
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_differentRootTypes.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json,rooted-specifier	19
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_multipleAliases.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json,rooted-specifier	19
+compiler	pathMappingBasedModuleResolution_rootImport_aliasWithRoot_realRootFile.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-path-in-json,rooted-specifier	19
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-specifier	19
+compiler	pathMappingBasedModuleResolution_rootImport_noAliasWithRoot_realRootFile.ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-specifier	19
+compiler	reactDefaultPropsInferenceSuccess.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	43
+compiler	reactHOCSpreadprops.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	29
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsx).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	reactImportUnusedInNewJSXEmit(jsx=react-jsxdev).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	15
+compiler	reactReadonlyHOCAssignabilityReal.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	43
+compiler	reactSFCAndFunctionResolvable.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	39
+compiler	reactTagNameComponentWithPropsNoOOM.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+compiler	reactTagNameComponentWithPropsNoOOM2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	46
+compiler	returnTypePredicateIsInstantiateInContextOfTarget.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	59
+compiler	sourceMapPercentEncoded.ts	run	C				non-ascii-name	62
+compiler	sourceMapWithNonCaseSensitiveFileNames.ts	skipped		case-insensitive-requested			case-insensitive-requested	23
+compiler	sourceMapWithNonCaseSensitiveFileNamesAndOutDir.ts	run	C	case-insensitive-requested			case-insensitive-requested	23
+compiler	spellingSuggestionJSXAttribute.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+compiler	styledComponentsInstantiaionLimitNotReached.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	52
+compiler	symbolLinkDeclarationEmitModuleNames.ts	run	E				link-to-directory	45
+compiler	symbolLinkDeclarationEmitModuleNamesImportRef.ts	run	C	case-insensitive-requested			case-insensitive-requested,link-to-directory	74
+compiler	symbolLinkDeclarationEmitModuleNamesRootDir.ts	run	C				link-to-directory,current-directory	45
+compiler	symlinkedWorkspaceDependenciesNoDirectLinkGeneratesDeepNonrelativeName.ts	run	C				link-to-directory	47
+compiler	symlinkedWorkspaceDependenciesNoDirectLinkGeneratesNonrelativeName.ts	run	C				link-to-directory	47
+compiler	symlinkedWorkspaceDependenciesNoDirectLinkOptionalGeneratesNonrelativeName.ts	run	C				link-to-directory	47
+compiler	symlinkedWorkspaceDependenciesNoDirectLinkPeerGeneratesNonrelativeName.ts	run	C				link-to-directory	47
+compiler	tripleSlashReferenceAbsoluteWindowsPath.ts	run	C	dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,absolute-path-in-text	dos-root,rooted-reference	11
+compiler	tsxDeepAttributeAssignabilityError.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+compiler	tsxFragmentChildrenCheck.ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+compiler	tsxInvokeComponentType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	32
+compiler	tsxNotUsingApparentTypeOfSFC.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	38
+compiler	tsxReactPropsInferenceSucceedsOnIntersections.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	55
+compiler	tsxResolveExternalModuleExportsTypes.ts	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	33
+compiler	tsxSpreadDoesNotReportExcessProps.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	43
+compiler	tsxStatelessComponentDefaultProps.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	43
+compiler	tsxUnionMemberChecksFilterDataProps.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+compiler	typeInferenceWithExcessPropertiesJsx.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	46
+compiler	typeReferenceDirectiveScopedPackageCustomTypeRoot.ts	run	E				current-directory,rooted-setting	53
+compiler	typeReferenceDirectiveWithFailedFromTypeRoot.ts	run	E				current-directory,rooted-setting	38
+compiler	typeReferenceDirectiveWithTypeAsFile.ts	run	C				current-directory,rooted-setting	38
+compiler	typeReferenceDirectives1.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives10.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives11.ts	skipped					current-directory,rooted-setting	21
+compiler	typeReferenceDirectives12.ts	skipped					current-directory,rooted-setting	21
+compiler	typeReferenceDirectives13.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives2.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives3.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives4.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives5.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives6.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives7.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives8.ts	run	C				current-directory,rooted-setting	21
+compiler	typeReferenceDirectives9.ts	run	C				current-directory,rooted-setting	21
+compiler	typeRootsFromMultipleNodeModulesDirectories.ts	run	C				current-directory	42
+compiler	typeRootsFromNodeModulesInParentDirectory.ts	run	C				current-directory	35
+conformance	autoAccessorNoUseDefineForClassFields.ts	run	C				unit-name-twice	14
+conformance	controlFlowOptionalChain3.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	35
+conformance	multiline.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	11
+conformance	esDecorators-classDeclaration-setFunctionName(target=esnext).ts	run	C				unit-name-twice	10
+conformance	esDecorators-classDeclaration-setFunctionName(target=es2022).ts	run	C				unit-name-twice	10
+conformance	esDecorators-classDeclaration-setFunctionName(target=es2015).ts	run	C				unit-name-twice	10
+conformance	esDecorators-classDeclaration-setFunctionName(target=es5).ts	skipped					unit-name-twice	10
+conformance	typeSatisfaction_js.ts	skipped					rooted-setting	9
+conformance	moduleResolutionWithExtensions.ts	run	C				unit-name-twice	21
+conformance	emit(jsx=react).ts	run	E				climbs-above-root	18
+conformance	emit(jsx=preserve).ts	run	E				climbs-above-root	18
+conformance	jsDeclarationsNonIdentifierInferredNames.ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	50
+conformance	jsDeclarationsReactComponents(target=es5).ts	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+conformance	jsDeclarationsReactComponents(target=es2015).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+conformance	jsDeclarationsReusesExistingNodesMappingJSDocTypes.ts	run	E				rooted-setting	14
+conformance	jsDeclarationsReusesExistingTypeAnnotations.ts	run	E				rooted-setting	14
+conformance	jsDeclarationsSubclassWithExplicitNoArgumentConstructor.ts	run	C				rooted-setting	14
+conformance	jsDeclarationsThisTypes.ts	run	C				rooted-setting	14
+conformance	jsDeclarationsTypeReassignmentFromDeclaration.ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	rooted-specifier,rooted-setting	14
+conformance	checkJsxChildrenCanBeTupleType.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	40
+conformance	checkJsxChildrenProperty1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty12.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty13.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty14.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty15.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty16.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	36
+conformance	checkJsxChildrenProperty2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty3.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty5.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty6.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty7.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty8.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxChildrenProperty9.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxGenericTagHasCorrectInferences.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	checkJsxSubtleSkipContextSensitiveBug.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	47
+conformance	checkJsxUnionSFXContextualTypeInferredCorrectly.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	57
+conformance	commentEmittingInPreserveJsx1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	correctlyMarkAliasAsReferences1.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+conformance	correctlyMarkAliasAsReferences2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+conformance	correctlyMarkAliasAsReferences3.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+conformance	correctlyMarkAliasAsReferences4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	22
+conformance	jsxCheckJsxNoTypeArgumentsAllowed.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	20
+conformance	jsxSpreadOverwritesAttributeStrict.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	37
+conformance	jsxJsxsCjsTransformChildren(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	37
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsx).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	41
+conformance	jsxJsxsCjsTransformCustomImport(jsx=react-jsxdev).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	41
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsx).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	16
+conformance	jsxJsxsCjsTransformCustomImportPragma(jsx=react-jsxdev).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	16
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	36
+conformance	jsxJsxsCjsTransformKeyProp(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	36
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsx).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	48
+conformance	jsxJsxsCjsTransformKeyPropCustomImport(jsx=react-jsxdev).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	48
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsx).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	16
+conformance	jsxJsxsCjsTransformKeyPropCustomImportPragma(jsx=react-jsxdev).tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	16
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	51
+conformance	jsxJsxsCjsTransformNestedSelfClosingChild(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	51
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+conformance	jsxJsxsCjsTransformSubstitutesNames(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	45
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	53
+conformance	jsxJsxsCjsTransformSubstitutesNamesFragment(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	53
+conformance	tsxAttributeResolution15.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxAttributeResolution16.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxDefaultAttributesResolution1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxDefaultAttributesResolution2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxDefaultAttributesResolution3.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType1.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType3.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType4.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType5.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType6.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType7.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType8.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxGenericAttributesType9.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactComponentWithDefaultTypeParameter1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactComponentWithDefaultTypeParameter2.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactComponentWithDefaultTypeParameter3.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactEmit8(jsx=react-jsx).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	23
+conformance	tsxReactEmit8(jsx=react-jsxdev).tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	23
+conformance	tsxReactEmitSpreadAttribute(target=es2015).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactEmitSpreadAttribute(target=es2018).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxReactEmitSpreadAttribute(target=esnext).ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSfcReturnNull.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSfcReturnNullStrictNullChecks.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSfcReturnUndefinedStrictNullChecks.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution10.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution11.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution12.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution13.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution14.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution15.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution16.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution3.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution5.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution6.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution7.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution8.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxSpreadAttributesResolution9.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload1.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload2.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload3.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload5.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentOverload6.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter1.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponents1.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponents2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponents3.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentsWithTypeArguments1.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentsWithTypeArguments2.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentsWithTypeArguments3.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentsWithTypeArguments4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxStatelessFunctionComponentsWithTypeArguments5.tsx	skipped		absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxTypeArgumentResolution.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxTypeArgumentsJsxPreserveOutput.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	13
+conformance	tsxUnionElementType1.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionElementType2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionElementType3.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionElementType4.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionElementType5.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionElementType6.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionTypeComponent1.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	tsxUnionTypeComponent2.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	unicodeEscapesInJsxtags.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	packageJsonMain.ts	run	C				current-directory	30
+conformance	packageJsonMain_isNonRecursive.ts	run	E				current-directory	34
+conformance	typesVersions.emptyTypes.ts	skipped					rooted-setting	19
+conformance	typesVersions.justIndex.ts	skipped					rooted-setting	19
+conformance	untypedModuleImport.ts	run	C				current-directory	26
+conformance	untypedModuleImport_allowJs.ts	run	E				current-directory	26
+conformance	untypedModuleImport_vsAmbient.ts	run	C				current-directory	26
+conformance	untypedModuleImport_withAugmentation.ts	run	E				current-directory	26
+conformance	library-reference-1.ts	run	C				rooted-setting	28
+conformance	library-reference-10.ts	run	C				rooted-setting	30
+conformance	library-reference-11.ts	run	C				current-directory	35
+conformance	library-reference-12.ts	run	C				current-directory	39
+conformance	library-reference-13.ts	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	current-directory,rooted-path-in-json	26
+conformance	library-reference-14.ts	run	C				current-directory,rooted-setting	26
+conformance	library-reference-15.ts	run	E				rooted-setting	27
+conformance	library-reference-2.ts	run	C				current-directory,rooted-setting	26
+conformance	library-reference-3.ts	run	C				current-directory	35
+conformance	library-reference-4.ts	run	C				current-directory,rooted-setting	47
+conformance	library-reference-5.ts	run	E				current-directory	47
+conformance	library-reference-6.ts	run	C				current-directory	37
+conformance	library-reference-7.ts	run	C				current-directory	35
+conformance	library-reference-8.ts	run	C				current-directory,rooted-setting	28
+conformance	contextuallyTypedStringLiteralsInJsxAttributes02.tsx	run	E	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	14
+conformance	intraExpressionInferencesJsx.tsx	run	C	absolute-path-in-text	absolute-path-in-text	absolute-path-in-text	lib-directory,rooted-reference-lib	38
+conformance	typingsLookup1.ts	run	E				current-directory	38
+conformance	typingsLookup2.ts	run	C				current-directory	42
+conformance	typingsLookup3.ts	run	E				current-directory	38
+conformance	typingsLookup4.ts	run	C				current-directory	44
+conformance	typingsLookupAmd.ts	skipped					current-directory	35

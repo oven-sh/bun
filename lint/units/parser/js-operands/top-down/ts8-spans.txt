@@ -1,0 +1,150 @@
+"let f: (a: number) => void"
+   typescript-go: TS8010 "(a: number) => void"@7
+   tsc 6.0.2:     same
+"function f(a?: number, ...b: string[]): void {}"
+   typescript-go: TS8009 "?"@12  TS8010 "number"@15  TS8010 "string[]"@29  TS8010 "void"@40
+   tsc 6.0.2:     same
+"declare function f(a: number): void;"
+   typescript-go: TS8010 "number"@22  TS8017 "declare function f(a: number): void;"@0  TS8009 "declare"@0
+   tsc 6.0.2:     TS8017 "f"@17
+"function f<T, U>(a) {}"
+   typescript-go: TS8004 "T, U"@11
+   tsc 6.0.2:     same
+"x = <T,>(a) => c"
+   typescript-go: TS8004 "T,"@5
+   tsc 6.0.2:     same
+"class A<T> extends B<T> implements C, D {}"
+   typescript-go: TS8005 "implements C, D"@24  TS8004 "T"@8  TS8011 "T"@21
+   tsc 6.0.2:     TS8004 "T"@8  TS8011 "T"@21  TS8005 "implements C, D"@24
+"class A { public readonly x: number = 1 }"
+   typescript-go: TS8010 "number"@29  TS8009 "public"@10  TS8009 "readonly"@17
+   tsc 6.0.2:     TS8009 "public"@10  TS8009 "readonly"@17  TS8010 "number"@29
+"class A { constructor(private readonly x, public y) {} }"
+   typescript-go: TS8012 "private readonly"@22  TS8012 "public"@42
+   tsc 6.0.2:     TS8012 "private readonly"@22  TS8012 " public"@41
+"class A { foo?(): void {} }"
+   typescript-go: TS8009 "?"@13  TS8010 "void"@18
+   tsc 6.0.2:     same
+"class A { abstract foo(): void; }"
+   typescript-go: TS8017 "abstract foo(): void;"@10  TS8009 "abstract"@10
+   tsc 6.0.2:     TS8017 "foo"@19
+"abstract class A {}"
+   typescript-go: TS8009 "abstract"@0
+   tsc 6.0.2:     same
+"declare class A { x: number }"
+   typescript-go: TS8010 "number"@21  TS8009 "declare"@0
+   tsc 6.0.2:     TS8009 "declare"@0  TS8010 "number"@21
+"declare const x: number, y"
+   typescript-go: TS8010 "number"@17  TS8009 "declare"@0
+   tsc 6.0.2:     TS8009 "declare"@0  TS8010 "number"@17
+"interface A { f(a: number): void }"
+   typescript-go: TS8006 "A"@10
+   tsc 6.0.2:     same
+"type A<T> = T"
+   typescript-go: TS8008 "A"@5
+   tsc 6.0.2:     same
+"enum E { A }"
+   typescript-go: TS8006 "E"@5
+   tsc 6.0.2:     same
+"declare enum E { A }"
+   typescript-go: TS8006 "E"@13
+   tsc 6.0.2:     same
+"namespace N { export const x = 1 }"
+   typescript-go: TS8006 "N"@10
+   tsc 6.0.2:     same
+"module M.N {}"
+   typescript-go: TS8006 "N"@9  TS8006 "M"@7
+   tsc 6.0.2:     TS8006 "M"@7
+"declare namespace N {}"
+   typescript-go: TS8006 "N"@18
+   tsc 6.0.2:     same
+"import x = require('y');"
+   typescript-go: TS8002 "import x = require('y');"@0
+   tsc 6.0.2:     same
+"export import a = b.c;"
+   typescript-go: TS8002 "export import a = b.c;"@0
+   tsc 6.0.2:     same
+"export = x;"
+   typescript-go: TS8003 "export = x;"@0
+   tsc 6.0.2:     same
+"import type { a } from 'b';"
+   typescript-go: TS8006 "import type { a } from 'b';"@0
+   tsc 6.0.2:     same
+"import { type a, b } from 'c';"
+   typescript-go: TS8006 "type a"@9
+   tsc 6.0.2:     same
+"export type { a };"
+   typescript-go: TS8006 "export type { a };"@0
+   tsc 6.0.2:     same
+"export { type a, b };"
+   typescript-go: TS8006 "type a"@9
+   tsc 6.0.2:     same
+"x = (a)!;"
+   typescript-go: TS8013 "(a)!"@4
+   tsc 6.0.2:     same
+"x = a.b!.c;"
+   typescript-go: TS8013 "a.b!"@4
+   tsc 6.0.2:     same
+"x = y as T as U"
+   typescript-go: TS8016 "T"@9  TS8016 "U"@14
+   tsc 6.0.2:     TS8016 "U"@14
+"x = y satisfies T"
+   typescript-go: TS8037 "T"@16
+   tsc 6.0.2:     same
+"try {} catch (e: unknown) {}"
+   typescript-go: TS8010 "unknown"@17
+   tsc 6.0.2:     same
+"function f(this: Window) {}"
+   typescript-go: TS8010 "Window"@17
+   tsc 6.0.2:     same
+"class A { get x(): number { return 1 } set x(v: number) {} }"
+   typescript-go: TS8010 "number"@19  TS8010 "number"@48
+   tsc 6.0.2:     same
+"x = { m<T>(a: T): T { return a } }"
+   typescript-go: TS8010 "T"@14  TS8010 "T"@18  TS8004 "T"@8
+   tsc 6.0.2:     TS8004 "T"@8  TS8010 "T"@14  TS8010 "T"@18
+"@dec export class A {}"
+   typescript-go: -
+   tsc 6.0.2:     same
+"export @dec class A {}"
+   typescript-go: -
+   tsc 6.0.2:     same
+"@a export @b class A {}"
+   typescript-go: TS8038 "@b"@10
+   tsc 6.0.2:     same
+"@a export default @b class A {}"
+   typescript-go: TS8038 "@b"@18
+   tsc 6.0.2:     same
+"export @a default class A {}"
+   typescript-go: TS1206 "@a"@7
+   tsc 6.0.2:     same
+"class A { @dec constructor() {} }"
+   typescript-go: TS1206 "@dec"@10
+   tsc 6.0.2:     same
+"x = function (a: number): void {}"
+   typescript-go: TS8010 "number"@17  TS8010 "void"@26
+   tsc 6.0.2:     same
+"x = async (a: number): Promise<void> => {}"
+   typescript-go: TS8010 "number"@14  TS8010 "Promise<void>"@23
+   tsc 6.0.2:     same
+"for (const x: number of y) ;"
+   typescript-go: TS8010 "number"@14
+   tsc 6.0.2:     same
+"class A { declare x; accessor y; static z; async m() {} }"
+   typescript-go: TS8009 "declare"@10
+   tsc 6.0.2:     same
+"export default class<T> {}"
+   typescript-go: TS8004 "T"@21
+   tsc 6.0.2:     same
+"var x!: number"
+   typescript-go: TS8010 "number"@8
+   tsc 6.0.2:     same
+"class A { x!: number }"
+   typescript-go: TS8010 "number"@14
+   tsc 6.0.2:     same
+"function f(a, b?) {}"
+   typescript-go: TS8009 "?"@15
+   tsc 6.0.2:     same
+"x = a as const"
+   typescript-go: TS8016 "const"@9
+   tsc 6.0.2:     same

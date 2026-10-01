@@ -1,0 +1,6 @@
+(typeof En)["a-b"]
+(typeof C)[]
+(unique symbol)[]
+[a: string, b?: (typeof C)[]]
+readonly (typeof C)[]
+(abstract new () => Foo) & { s: number; }

@@ -1,0 +1,34 @@
+class B  dialect dts  config plain: 15 inputs in 9 clusters
+
+[08-declare-namespace-enum / declare]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "declare namespace \"N\" {}"  [-]   tsc @18+3 in "declare namespace \"N\" {}"
+
+[08-declare-namespace-enum / declare]  tsc TS1005 ';' expected.   (1 inputs, 1 distinct)
+    "declare module \"m\".n {}"  [-]   tsc @18+1 in "declare module \"m\".n {}"
+
+[08-declare-namespace-enum / declare]  tsc TS1005 '{' expected.   (3 inputs, 3 distinct)
+    "declare namespace N;"  [-]   tsc @19+1 in "declare namespace N;"
+    "declare namespace N"  [-]   tsc @19+0 in "declare namespace N"
+    "declare namespace N.M;"  [-]   tsc @21+1 in "declare namespace N.M;"
+
+[08-declare-namespace-enum / declName]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "in"  [exportNamespace]   tsc @0+6 in "export namespace in {}"
+
+[08-declare-namespace-enum / enum]  tsc TS1357 An enum member name must be followed by a ',', '=', or '}'.   (5 inputs, 5 distinct)
+    "enum E { a; b }"  [-]   tsc @10+1 in "enum E { a; b }"
+    "enum E { a = 1; b = 2 }"  [-]   tsc @14+1 in "enum E { a = 1; b = 2 }"
+    "enum E { a, b; c }"  [-]   tsc @13+1 in "enum E { a, b; c }"
+    "enum E { a; }"  [-]   tsc @10+1 in "enum E { a; }"
+    "enum E { a = 1; }"  [-]   tsc @14+1 in "enum E { a = 1; }"
+
+[08-declare-namespace-enum / namespace]  tsc TS1003 Identifier expected.   (1 inputs, 1 distinct)
+    "namespace N.\"M\" {}"  [-]   tsc @12+3 in "namespace N.\"M\" {}"
+
+[08-declare-namespace-enum / namespace]  tsc TS1005 '{' expected.   (1 inputs, 1 distinct)
+    "module as any"  [-]   tsc @10+3 in "module as any"
+
+[08-declare-namespace-enum / namespace]  tsc TS1128 Declaration or statement expected.   (1 inputs, 1 distinct)
+    "export namespace;"  [-]   tsc @0+6 in "export namespace;"
+
+[10-declaration-files / directive]  tsc TS1084 Invalid 'reference' directive syntax.   (1 inputs, 1 distinct)
+    "/// <reference />\nexport {};"  [-]   tsc @0+17 in "/// <reference />\nexport {};"

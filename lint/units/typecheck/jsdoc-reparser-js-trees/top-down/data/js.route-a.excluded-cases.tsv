@@ -1,0 +1,41 @@
+case	unit	corpus name	first difference
+conformance/async/es2017/asyncArrowFunction/asyncArrowFunction_allowJs.ts	file.js	c00045u0_file.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/checkJsdocTypeTag1.ts	0.js	c03089u0_0.js	CLEAN kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>
+conformance/jsdoc/checkJsdocTypeTag2.ts	0.js	c03090u0_0.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/checkJsdocTypeTagOnObjectProperty1.ts	0.js	c03097u0_0.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/checkJsdocTypeTagOnObjectProperty2.ts	0.js	c03098u0_0.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/declarations/jsDeclarationsMissingTypeParameters.ts	file.js	c03165u0_file.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/declarations/jsDeclarationsModuleReferenceHasEmit.ts	index.js	c03166u0_index.js	CLEAN kind go<KindTypeReference> ts<KindJSDocNamepathType>
+conformance/jsdoc/declarations/jsDeclarationsRestArgsWithThisTypeInJSDocFunction.ts	bug38550.js	c03181u0_bug38550.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/declarations/jsDeclarationsReusesExistingNodesMappingJSDocTypes.ts	index.js	c03182u0_index.js	CLEAN kind go<KindJSDocNullableType> ts<KindJSDocUnknownType>
+conformance/jsdoc/importDeferJsdoc.ts	/foo.js	c03216u1_foo.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/jsdocFunctionType.ts	functions.js	c03256u0_functions.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocFunction_missingReturn.ts	/a.js	c03257u0_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocImplements_interface_multiple.ts	/a.js	c03261u1_a.js	CLEAN shape go<.Tags:> ts<.Tags:>
+conformance/jsdoc/jsdocParamTagTypeLiteral.ts	0.js	c03289u0_0.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/jsdocParseBackquotedParamName.ts	a.js	c03290u0_a.js	CLEAN pos KindJSDocTypeExpression
+conformance/jsdoc/jsdocParseDotDotDotInJSDocFunction.ts	a.js	c03291u0_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocParseHigherOrderFunction.ts	paren.js	c03293u0_paren.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocParseParenthesizedJSDocParameter.ts	paren.js	c03295u0_paren.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocParseStarEquals.ts	a.js	c03296u0_a.js	CLEAN label go<.Type: KindTypeReference> ts<.QuestionToken: KindQuestionToken>
+conformance/jsdoc/jsdocPrefixPostfixParsing.ts	prefixPostfix.js	c03298u0_prefixPostfix.js	CLEAN kind go<KindJSDocNonNullableType> ts<KindArrayType>
+conformance/jsdoc/jsdocTemplateTag.ts	forgot.js	c03309u0_forgot.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocTemplateTag3.ts	a.js	c03311u0_a.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/jsdocTemplateTagDefault.ts	file.js	c03317u0_file.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/jsdocThisType.ts	/a.js	c03319u1_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocTypeTagParameterType.ts	a.js	c03335u0_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocTypeTagRequiredParameters.ts	a.js	c03336u0_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/jsdocVariadicType.ts	a.js	c03338u0_a.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>
+conformance/jsdoc/linkTagEmit1.ts	linkTagEmit1.js	c03339u1_linkTagEmit1.js	CLEAN pos KindJSDocText
+conformance/jsdoc/noAssertForUnparseableTypedefs.ts	bug26693.js	c03342u0_bug26693.js	err   pos KindJSTypeAliasDeclaration
+conformance/jsdoc/templateInsideCallback.ts	templateInsideCallback.js	c03365u0_templateInsideCallback.js	CLEAN shape go<.Statements:> ts<.Statements:>
+conformance/jsdoc/typedefDuplicateTypeDeclaration.ts	typedefDuplicateTypeDeclaration.js	c03386u0_typedefDuplicateTypeDeclaration.js	CLEAN pos KindJSTypeAliasDeclaration
+conformance/jsdoc/typedefMultipleTypeParameters.ts	a.js	c03388u0_a.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/typedefTagNested.ts	a.js	c03393u0_a.js	CLEAN shape go<.Comment:> ts<.Comment:>
+conformance/jsdoc/typedefTagWrapping.ts	mod1.js	c03395u0_mod1.js	err   pos KindJSTypeAliasDeclaration
+conformance/jsdoc/typedefTagWrapping.ts	mod3.js	c03395u2_mod3.js	err   pos KindJSTypeAliasDeclaration
+conformance/jsdoc/typedefTagWrapping.ts	mod4.js	c03395u3_mod4.js	err   pos KindJSTypeAliasDeclaration
+conformance/jsx/jsxCheckJsxNoTypeArgumentsAllowed.tsx	file.jsx	c03432u1_file.jsx	err   flags KindCommaToken xor=0x10000
+compiler/jsFileAlternativeUseOfOverloadTag.ts	jsFileAlternativeUseOfOverloadTag.js	c09618u0_jsFileAlternativeUseOfOverloadTag.js	CLEAN shape go<.Tags:> ts<.Tags:>
+compiler/jsFileCompilationTypeArgumentSyntaxOfCall.ts	a.jsx	c09672u0_a.jsx	err   flags KindCommaToken xor=0x10000
+compiler/jsdocParameterParsingInfiniteLoop.ts	example.js	c09722u0_example.js	CLEAN kind go<KindTypeReference> ts<KindJSDocFunctionType>

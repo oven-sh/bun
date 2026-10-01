@@ -1,0 +1,60 @@
+bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889 typescript 6.0.2
+"x = a ? <T>() => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@15,TS1382@26,TS1382@15,TS1382@26,TS17008@9,TS1005@30
+     tsc.js  "use strict"; x = a ? () => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <T>(b: B) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@19,TS1382@30,TS1382@19,TS1382@30,TS17008@9,TS1005@34
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <T>(...b) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7019,TS7006)  tsx:TS1382@19,TS1382@30,TS1382@19,TS1382@30,TS17008@9,TS1005@34
+     tsc.js  "use strict"; x = a ? (...b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <T>(b?) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@17,TS1382@28,TS1382@17,TS1382@28,TS17008@9,TS1005@32
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <const T>(b: T) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@25,TS1382@36,TS1382@25,TS1382@36,TS17008@9,TS1005@40
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <T extends U>(b: T) => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1005@43
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+"x = a ? <T>(b: T): T => (c) : d => e;"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@22,TS1382@33,TS1382@22,TS1382@33,TS17008@9,TS1005@37
+     tsc.js  "use strict"; x = a ? (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error
+"x = a ? <T>(b: T): T => (c) : d => e : f;"
+     tsc-OK    (also TS2304,TS2322,TS7006)  tsx:TS1382@22,TS1382@33,TS1382@22,TS1382@33,TS17008@9,TS1005@41
+     tsc.js  "use strict"; x = a ? (b) => (c) => e : f;
+     bun.ts  OK  x = a ? (b) => (c) => e : f;
+     bun.tsx ERR Syntax Error
+"x = a ? async <T>(b: T) => (c) : d => e;"
+     tsc-OK    (also TS2318,TS2304,TS7006)  tsx:TS1005@19,TS1005@24
+     tsc.js  "use strict"; x = a ? async (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Expected ")" but found ":"
+"x = a ? async <T>() => (c) : d => e;"
+     tsc-OK    (also TS2318,TS2304,TS7006)  tsx:TS1005@20
+     tsc.js  "use strict"; x = a ? async () => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Expected ":" but found "=>"
+"x = a ? async <T>(b) => (c) : d => e;"
+     tsc-OK    (also TS2318,TS2304,TS7006)  tsx:TS1005@21
+     tsc.js  "use strict"; x = a ? async (b) => (c) : d => e;
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Expected ":" but found "=>"
+"x = a ? <T>(x: T) => ({ x }) : y => ({ y });"
+     tsc-OK    (also TS2304,TS7006)  tsx:TS1382@19,TS1382@34,TS17008@9,TS1005@44
+     tsc.js  "use strict"; x = a ? (x) => ({ x }) : y => ({ y });
+     bun.ts  ERR Expected ":" but found ";"
+     bun.tsx ERR Syntax Error

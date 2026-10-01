@@ -1,0 +1,54 @@
+    Checking bun_ast v0.0.0 (/tmp/c2arb/shadow/src/ast)
+src/shell_parser/lib.rs:1:30: warning: `feature(generic_const_exprs)` is not supported with the next-generation trait solver
+warning: `bun_shell_parser` (lib) generated 1 warning
+    Checking bun_install_types v0.0.0 (/tmp/c2arb/shadow/src/install_types)
+    Checking bun_parsers v0.0.0 (/tmp/c2arb/shadow/src/parsers)
+    Checking bun_react_compiler v0.0.0 (/tmp/c2arb/shadow/src/react_compiler)
+    Checking bun_resolve_builtins v0.0.0 (/tmp/c2arb/shadow/src/resolve_builtins)
+    Checking bun_css v0.0.0 (/tmp/c2arb/shadow/src/css)
+    Checking bun_http v0.0.0 (/tmp/c2arb/shadow/src/http)
+    Checking bun_lint v0.0.0 (/tmp/c2arb/shadow/src/lint)
+    Checking bun_options_types v0.0.0 (/tmp/c2arb/shadow/src/options_types)
+    Checking bun_sourcemap v0.0.0 (/tmp/c2arb/shadow/src/sourcemap)
+    Checking bun_api v0.0.0 (/tmp/c2arb/shadow/src/api)
+    Checking bun_js_parser v0.0.0 (/tmp/c2arb/shadow/src/js_parser)
+    Checking bun_js_printer v0.0.0 (/tmp/c2arb/shadow/src/js_printer)
+    Checking bun_resolver v0.0.0 (/tmp/c2arb/shadow/src/resolver)
+    Checking bun_ini v0.0.0 (/tmp/c2arb/shadow/src/ini)
+    Checking bun_bundler v0.0.0 (/tmp/c2arb/shadow/src/bundler)
+    Checking bun_router v0.0.0 (/tmp/c2arb/shadow/src/router)
+    Checking bun_standalone_graph v0.0.0 (/tmp/c2arb/shadow/src/standalone_graph)
+    Checking bun_transpiler v0.0.0 (/tmp/c2arb/shadow/src/transpiler)
+    Checking bun_bunfig v0.0.0 (/tmp/c2arb/shadow/src/bunfig)
+    Checking bun_install v0.0.0 (/tmp/c2arb/shadow/src/install)
+    Checking bun_jsc v0.0.0 (/tmp/c2arb/shadow/src/jsc)
+    Checking bun_js_parser_jsc v0.0.0 (/tmp/c2arb/shadow/src/js_parser_jsc)
+    Checking bun_ast_jsc v0.0.0 (/tmp/c2arb/shadow/src/ast_jsc)
+    Checking bun_patch_jsc v0.0.0 (/tmp/c2arb/shadow/src/patch_jsc)
+    Checking bun_bundler_jsc v0.0.0 (/tmp/c2arb/shadow/src/bundler_jsc)
+    Checking bun_css_jsc v0.0.0 (/tmp/c2arb/shadow/src/css_jsc)
+    Checking bun_http_jsc v0.0.0 (/tmp/c2arb/shadow/src/http_jsc)
+    Checking bun_sql_jsc v0.0.0 (/tmp/c2arb/shadow/src/sql_jsc)
+    Checking bun_sys_jsc v0.0.0 (/tmp/c2arb/shadow/src/sys_jsc)
+    Checking bun_semver_jsc v0.0.0 (/tmp/c2arb/shadow/src/semver_jsc)
+    Checking bun_sourcemap_jsc v0.0.0 (/tmp/c2arb/shadow/src/sourcemap_jsc)
+    Checking bun_install_jsc v0.0.0 (/tmp/c2arb/shadow/src/install_jsc)
+    Checking bun_runtime v0.0.0 (/tmp/c2arb/shadow/src/runtime)
+warning: unused dependency `bun_lint`
+  --> src/runtime/Cargo.toml:67:1
+   |
+67 | bun_lint.workspace = true
+   | ^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `bun_lint`
+warning: unused dependency `bun_typecheck`
+  --> src/runtime/Cargo.toml:68:1
+   |
+68 | bun_typecheck.workspace = true
+   | ^^^^^^^^^^^^^
+   |
+help: consider removing the dependency on `bun_typecheck`
+warning: `bun_runtime` (manifest) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 40.09s
+exit=0

@@ -1,0 +1,69 @@
+--- a/src/ast/lib.rs
++++ b/src/ast/lib.rs
+@@ -1125,8 +1125,13 @@
+     pub metadata: Metadata,
+     pub notes: Box<[Data]>,
+     pub redact_sensitive_information: bool,
++    /// The number of the TypeScript diagnostic that this message is; 0 when it is none.
++    pub code: u32,
+ }
+ 
++// `code` fits in the bytes that `Msg` had before it.
++const _: () = assert!(core::mem::size_of::<Msg>() == 152);
++
+ impl Default for Msg {
+     fn default() -> Self {
+         Msg {
+@@ -1135,6 +1140,7 @@
+             metadata: Metadata::Build,
+             notes: Box::default(),
+             redact_sensitive_information: false,
++            code: 0,
+         }
+     }
+ }
+@@ -1169,6 +1175,7 @@
+             metadata: self.metadata,
+             notes: notes.into_boxed_slice(),
+             redact_sensitive_information: self.redact_sensitive_information,
++            code: self.code,
+         }
+     }
+ 
+@@ -1192,6 +1199,7 @@
+                 Box::default()
+             },
+             redact_sensitive_information: self.redact_sensitive_information,
++            code: self.code,
+         }
+     }
+ 
+@@ -2086,6 +2094,28 @@
+             ..Default::default()
+         })
+     }
++
++    /// An error that is the TypeScript diagnostic `code` and has that diagnostic's text.
++    #[cold]
++    pub fn add_range_error_with_code(
++        &mut self,
++        source: Option<&Source>,
++        r: Range,
++        code: u32,
++        text: Cow<'static, [u8]>,
++        notes: Box<[Data]>,
++    ) {
++        self.errors += 1;
++        let r = if r.loc.start < 0 { Range::NONE } else { r };
++        let data = self.tracked_range_data(source, r, text);
++        self.add_msg(Msg {
++            kind: Kind::Err,
++            data,
++            notes,
++            code,
++            ..Default::default()
++        })
++    }
+ 
+     pub fn add_msg(&mut self, msg: Msg) {
+         self.msgs.push(msg);

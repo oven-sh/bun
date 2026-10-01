@@ -1,0 +1,271 @@
+{
+	"valid": [
+		{
+			"code": "var foo = { __proto__: 1, two: 2};"
+		},
+		{
+			"code": "var x = { foo: 1, bar: 2 };"
+		},
+		{
+			"code": "var x = { '': 1, bar: 2 };"
+		},
+		{
+			"code": "var x = { '': 1, ' ': 2 };"
+		},
+		{
+			"code": "var x = { '': 1, [null]: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { '': 1, [a]: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { [a]: 1, [a]: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "+{ get a() { }, set a(b) { } };"
+		},
+		{
+			"code": "var x = { a: b, [a]: b };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { a: b, ...c }",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "var x = { get a() {}, set a (value) {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { a: 1, b: { a: 2 } };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = ({ null: 1, [/(?<zero>0)/]: 2 })",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "var {a, a} = obj",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { 012: 1, 12: 2 };"
+		},
+		{
+			"code": "var x = { 1_0: 1, 1: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, ['__proto__']: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, __proto__: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { '__proto__': null, ['__proto__']: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, '__proto__': null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, __proto__ };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__, __proto__: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, __proto__() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__() {}, __proto__: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, get __proto__() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { get __proto__() {}, __proto__: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, set __proto__(value) {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { set __proto__(value) {}, __proto__: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		}
+	],
+	"invalid": [
+		{
+			"code": "var x = { a: b, ['a']: b };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { y: 1, y: 2 };"
+		},
+		{
+			"code": "var x = { '': 1, '': 2 };"
+		},
+		{
+			"code": "var x = { '': 1, [``]: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var foo = { 0x1: 1, 1: 2};"
+		},
+		{
+			"code": "var x = { 012: 1, 10: 2 };"
+		},
+		{
+			"code": "var x = { 0b1: 1, 1: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { 0o1: 1, 1: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { 1n: 1, 1: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			}
+		},
+		{
+			"code": "var x = { 1_0: 1, 10: 2 };",
+			"languageOptions": {
+				"ecmaVersion": 2021
+			}
+		},
+		{
+			"code": "var x = { \"z\": 1, z: 2 };"
+		},
+		{
+			"code": "var foo = {\n  bar: 1,\n  bar: 1,\n}"
+		},
+		{
+			"code": "var x = { a: 1, get a() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { a: 1, set a(value) {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { a: 1, b: { a: 2 }, get b() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = ({ '/(?<zero>0)/': 1, [/(?<zero>0)/]: 2 })",
+			"languageOptions": {
+				"ecmaVersion": 2018
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, ['__proto__']: null };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, __proto__ };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, __proto__() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, get __proto__() {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { ['__proto__']: null, set __proto__(value) {} };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "var x = { __proto__: null, a: 5, a: 6 };",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		}
+	],
+	"skipped": 0
+}

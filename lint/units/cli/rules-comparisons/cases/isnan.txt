@@ -1,0 +1,164 @@
+x == NaN
+----
+x === NaN
+----
+x != NaN
+----
+x !== NaN
+----
+x < NaN
+----
+x <= NaN
+----
+x > NaN
+----
+x >= NaN
+----
+NaN == x
+----
+NaN === NaN
+----
+x == Number.NaN
+----
+Number.NaN === x
+----
+x == Number["NaN"]
+----
+x == Number['NaN']
+----
+x == Number[`NaN`]
+----
+x == Number?.NaN
+----
+x == Number?.["NaN"]
+----
+x == (Number).NaN
+----
+x == (Number?.NaN)
+----
+x == Number.NaN.toString
+----
+x == Number[NaN]
+----
+x == Number["Na" + "N"]
+----
+x == Number.nan
+----
+x == window.NaN
+----
+x == globalThis.NaN
+----
+x == Math.NaN
+----
+x == a.Number.NaN
+----
+x == Number.NaN()
+----
+x == NaN.x
+----
+x == "NaN"
+----
+x == (NaN)
+----
+x == (a, NaN)
+----
+x == (a, b, NaN)
+----
+x == ((a, b), NaN)
+----
+x == (a, (b, NaN))
+----
+x == (NaN, a)
+----
+(a, NaN) == x
+----
+x == (a, Number.NaN)
+----
+x + NaN
+----
+x = NaN
+----
+x && NaN
+----
+x in NaN
+----
+x instanceof NaN
+----
+x ?? NaN
+----
+isNaN(x)
+----
+Number.isNaN(x)
+----
+foo(NaN)
+----
+[NaN].indexOf(NaN)
+----
+a.indexOf(NaN)
+----
+a.lastIndexOf(NaN)
+----
+x == -NaN
+----
+x == +NaN
+----
+x == !NaN
+----
+x == typeof NaN
+----
+x == NaN + 1
+----
+x == NaN == y
+----
+a == NaN || b != NaN
+----
+switch (NaN) {}
+----
+switch (NaN) { case 1: break; }
+----
+switch (Number.NaN) {}
+----
+switch ((a, NaN)) {}
+----
+switch (a, NaN) {}
+----
+switch (x) { case NaN: break; }
+----
+switch (x) { case Number.NaN: break; default: }
+----
+switch (x) {
+  case 1:
+    break;
+  case NaN:
+  case Number.NaN:
+    break;
+  default:
+    break;
+}
+----
+switch (x) { case (NaN): }
+----
+switch (x) { case (a, NaN): }
+----
+switch (x) { case a, NaN: }
+----
+switch (x) { case /* c */ NaN: }
+----
+switch (x) { case
+ NaN: }
+----
+switch (x) { case NaN + 1: }
+----
+switch (x) { case y == NaN: }
+----
+switch (NaN) { case NaN: }
+----
+switch (x) { default: }
+----
+switch (foo(NaN)) {}
+----
+switch (x) { case foo(NaN): }
+----
+  switch (NaN) {
+    case NaN:
+  }

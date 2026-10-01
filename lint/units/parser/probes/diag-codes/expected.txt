@@ -1,0 +1,204 @@
+"x = a ? b" [ts]
+   go  @9+0 TS1005 ':' expected.
+   tsc @9+0 TS1005 ':' expected.
+   bun @9+0 Expected ":" but found end of file
+"f(1;" [ts]
+   go  @3+1 TS1005 ')' expected.
+   tsc @3+1 TS1005 ')' expected.
+   bun @3+1 Expected ")" but found ";"
+"function (" [ts]
+   go  @9+1 TS1003 Identifier expected.
+   go  @10+0 TS1005 ')' expected.
+   tsc @9+1 TS1003 Identifier expected.
+   tsc @10+0 TS1005 ')' expected.
+   bun @9+1 Expected identifier but found "("
+   bun @10+0 Expected "(" but found end of file
+"function class() {}" [ts]
+   go  @9+5 TS1359 Identifier expected. 'class' is a reserved word that cannot be used here.
+   go  @14+1 TS1005 '{' expected.
+   go  @17+1 TS1005 '=>' expected.
+   tsc @9+5 TS1359 Identifier expected. 'class' is a reserved word that cannot be used here.
+   tsc @14+1 TS1005 '{' expected.
+   tsc @17+1 TS1005 '=>' expected.
+   bun @9+5 Expected identifier but found "class"
+"x = \"abc" [ts]
+   go  @8+0 TS1002 Unterminated string literal.
+   tsc @8+0 TS1002 Unterminated string literal.
+   bun @4+0 Unterminated string literal
+"x = `abc" [ts]
+   go  @8+0 TS1160 Unterminated template literal.
+   tsc @8+0 TS1160 Unterminated template literal.
+   bun @4+0 Unterminated string literal
+"let x = ;" [ts]
+   go  @8+1 TS1109 Expression expected.
+   tsc @8+1 TS1109 Expression expected.
+   bun @8+1 Unexpected ;
+"let x = ;" [js]
+   go  @8+1 TS1109 Expression expected.
+   tsc @8+1 TS1109 Expression expected.
+   bun @8+1 Unexpected ;
+"x = 1 +" [ts]
+   go  @7+0 TS1109 Expression expected.
+   tsc @7+0 TS1109 Expression expected.
+   bun @7+0 Unexpected end of file
+"if (x) )" [ts]
+   go  @7+1 TS1109 Expression expected.
+   tsc @7+1 TS1109 Expression expected.
+   bun @7+1 Unexpected )
+"in x" [ts]
+   go  @0+2 TS1109 Expression expected.
+   tsc @0+2 TS1109 Expression expected.
+   bun @0+2 Unexpected in
+")" [ts]
+   go  @0+1 TS1128 Declaration or statement expected.
+   tsc @0+1 TS1128 Declaration or statement expected.
+   bun @0+1 Unexpected )
+"{ ) }" [js]
+   go  @2+1 TS1128 Declaration or statement expected.
+   tsc @2+1 TS1128 Declaration or statement expected.
+   bun @2+1 Unexpected )
+"function f() { default }" [ts]
+   go  @15+7 TS1128 Declaration or statement expected.
+   tsc @15+7 TS1128 Declaration or statement expected.
+   bun @15+7 Unexpected default
+"default" [ts]
+   go  @0+7 TS1005 'export' expected.
+   tsc @0+7 TS1005 'export' expected.
+   bun @0+7 Unexpected default
+"catch (e) {}" [ts]
+   go  @0+5 TS1005 'try' expected.
+   tsc @0+5 TS1005 'try' expected.
+   bun @0+5 Unexpected catch
+"let x: ;" [ts]
+   go  @7+1 TS1110 Type expected.
+   tsc @7+1 TS1110 Type expected.
+   bun @7+1 Unexpected ;
+"function f(a: ) {}" [ts]
+   go  @14+1 TS1110 Type expected.
+   tsc @14+1 TS1110 Type expected.
+   bun @14+1 Unexpected )
+"let x: A<;" [ts]
+   go  @9+1 TS1005 '>' expected.
+   tsc @9+1 TS1005 '>' expected.
+   bun @9+1 Unexpected ;
+"let x: (a: ) => void" [ts]
+   go  @11+1 TS1110 Type expected.
+   tsc @11+1 TS1110 Type expected.
+   bun accepts
+"f<A | >(x)" [ts]
+   go  @6+1 TS1110 Type expected.
+   tsc @6+1 TS1110 Type expected.
+   bun accepts
+"f<,>;" [ts]
+   go  @2+1 TS1110 Type expected.
+   tsc @2+1 TS1110 Type expected.
+   bun accepts
+"new A<B | >()" [ts]
+   go  @10+1 TS1110 Type expected.
+   tsc @10+1 TS1110 Type expected.
+   bun accepts
+"let f = (a): => a" [ts]
+   go  @11+1 TS1005 ',' expected.
+   go  @13+2 TS1005 ';' expected.
+   tsc @11+1 TS1005 ',' expected.
+   tsc @13+2 TS1005 ';' expected.
+   bun accepts
+"f<>()" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"new A<>()" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"f<A,>(x)" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"let y = a < b > (c)" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"let f = (a): (b) => c => a" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"class C { #y = 1; m(x: C) { let a: typeof x.#y; } }" [ts]
+   go  parses
+   tsc @46+0 TS1003 Identifier expected.
+   bun accepts
+"x as A | () => void;" [ts]
+   go  @8+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   tsc @8+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   bun accepts
+"x as | () => void;" [ts]
+   go  @6+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   tsc @6+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   bun accepts
+"x as A & new () => B;" [ts]
+   go  @8+12 TS1388 Constructor type notation must be parenthesized when used in an intersection type.
+   tsc @8+12 TS1388 Constructor type notation must be parenthesized when used in an intersection type.
+   bun accepts
+"x as A & | B;" [ts]
+   go  @9+1 TS1110 Type expected.
+   tsc @9+1 TS1110 Type expected.
+   bun accepts
+"x as { a: };" [ts]
+   go  @10+1 TS1110 Type expected.
+   tsc @10+1 TS1110 Type expected.
+   bun @10+1 Unexpected }
+"x as { a A };" [ts]
+   go  @7+1 TS1131 Property or signature expected.
+   go  @11+1 TS1128 Declaration or statement expected.
+   tsc @7+1 TS1131 Property or signature expected.
+   tsc @11+1 TS1128 Declaration or statement expected.
+   bun accepts
+"x as { a: string b: number };" [ts]
+   go  @17+1 TS1005 ';' expected.
+   tsc @17+1 TS1005 ';' expected.
+   bun @17+1 Unexpected b
+"x as A<>;" [ts]
+   go  parses
+   tsc parses
+   bun @7+1 Unexpected >
+"x as A<B,>;" [ts]
+   go  parses
+   tsc parses
+   bun @9+1 Unexpected >
+"x as A | (() => void);" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"x as { readonly a: string; b?(): void; [k: string]: unknown; new (): A; get c(): number };" [ts]
+   go  parses
+   tsc parses
+   bun accepts
+"switch (x) { case 1: ) }" [ts]
+   go  @21+1 TS1129 Statement expected.
+   tsc @21+1 TS1129 Statement expected.
+   bun @21+1 Unexpected )
+"foo bar" [ts]
+   go  @0+3 TS1434 Unexpected keyword or identifier.
+   tsc @0+3 TS1434 Unexpected keyword or identifier.
+   bun @4+3 Expected ";" but found "bar"
+"class C { x: number y }" [ts]
+   go  @20+1 TS1442 Expected '=' for property initializer.
+   tsc @20+1 TS1442 Expected '=' for property initializer.
+   bun @20+1 Expected ";" but found "y"
+"f(" [ts]
+   go  @2+0 TS1005 ')' expected.
+   tsc @2+0 TS1005 ')' expected.
+   bun @2+0 Unexpected end of file
+"let y = a < b | > c" [ts]
+   go  @16+1 TS1109 Expression expected.
+   tsc @16+1 TS1109 Expression expected.
+   bun @16+1 Unexpected >
+"f<() => => x>(y)" [ts]
+   go  @3+1 TS1109 Expression expected.
+   go  @5+2 TS1005 ';' expected.
+   go  @8+2 TS1128 Declaration or statement expected.
+   tsc @3+1 TS1109 Expression expected.
+   tsc @5+2 TS1005 ';' expected.
+   tsc @8+2 TS1128 Declaration or statement expected.
+   bun @3+1 Unexpected )
+bun on PATH: 1.4.3-canary.1+367d939d9

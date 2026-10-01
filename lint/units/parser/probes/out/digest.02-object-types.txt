@@ -1,0 +1,156 @@
+A1c	member	"get #a(): A"	[typeLit,iface,varLit]	bun: Unexpected #a @4	tsc: parses
+A1c	ifaceName	"as"	[iface,exportIface,declareIface,exportDefaultIface,ifaceGeneric]	bun: Expected identifier but found end of file @5	tsc: parses
+A1c	ifaceName	"satisfies"	[iface,exportIface,declareIface,exportDefaultIface,ifaceGeneric]	bun: Expected identifier but found end of file @12	tsc: parses
+A1c	aliasName	"as"	[alias,declareAlias,aliasGeneric]	bun: Unexpected = @3	tsc: parses
+A1c	aliasName	"satisfies"	[alias,declareAlias,aliasGeneric]	bun: Unexpected = @10	tsc: parses
+A1s	member	"a(b = 1): A"	[typeLit,iface,varLit]	bun: Expected ")" but found "=" @4	tsc: parses also TS2371
+A1s	member	"a(public b: B): A"	[typeLit,iface,varLit]	bun: Expected ")" but found "b" @9	tsc: parses also TS2369
+A1s	member	"(a = 1): A"	[typeLit,iface,varLit]	bun: Expected ")" but found "=" @3	tsc: parses also TS2371
+A1s	mapped	"[K as B in A]: C"	[typeLit,iface,param]	bun: Expected "]" but found "as" @3	tsc: parses also TS7061
+A1s	mapped	"[#K in A]: B"	[typeLit,iface,param]	bun: Unexpected #K @1	tsc: parses also TS7061
+A1s	mapped	"[K in A in B]: C"	[iface]	bun: Expected "]" but found "in" @8	tsc: parses also TS7061
+A1s	mapped	"[K in A]: B = 1"	[iface]	bun: Unexpected = @12	tsc: parses also TS7061
+A1s	mapped	"[K in A] = 1"	[iface]	bun: Unexpected = @9	tsc: parses also TS7061
+A1s	ifaceHead	"interface I extends a() {}"	[-]	bun: Expected "{" but found "(" @21	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends a.b() {}"	[-]	bun: Expected "{" but found "(" @23	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends a?.b {}"	[-]	bun: Expected "{" but found "?." @21	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends new A {}"	[-]	bun: Expected "(" but found "A" @24	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends class {} {}"	[-]	bun: Unexpected class @20	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends function() {} {}"	[-]	bun: Unexpected function @20	tsc: parses also TS2499
+A1s	ifaceHead	"interface I extends A.#b {}"	[-]	bun: Expected identifier but found "#b" @22	tsc: parses also TS2499
+A2	member	"1n: A"	[typeLit,iface,varLit]	bun: Unexpected 1n @0	tsc: TS1539 @0+2 A 'bigint' literal cannot be used as a property name.
+A2	member	"[a + b]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "+" @3	tsc: TS1170 @0+7 A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type.
+A2	member	"#a: A"	[typeLit,iface,varLit]	bun: Unexpected #a @0	tsc: TS18016 @0+2 Private identifiers are not allowed outside class bodies.
+A2	member	"#a?: A"	[typeLit,iface,varLit]	bun: Unexpected #a @0	tsc: TS18016 @0+2 Private identifiers are not allowed outside class bodies.
+A2	member	"readonly #a: A"	[typeLit,iface,varLit]	bun: Unexpected #a @9	tsc: TS18016 @9+2 Private identifiers are not allowed outside class bodies.
+A2	member	"a: A = 1"	[typeLit,iface,varLit]	bun: Unexpected = @5	tsc: TS1247 @7+1 A type literal property cannot have an initializer.
+A2	member	"a?: A = 1"	[typeLit,iface,varLit]	bun: Unexpected = @6	tsc: TS1247 @8+1 A type literal property cannot have an initializer.
+A2	member	"readonly a: A = 1"	[typeLit,iface,varLit]	bun: Unexpected = @14	tsc: TS1247 @16+1 A type literal property cannot have an initializer.
+A2	member	"#a(): A"	[typeLit,iface,varLit]	bun: Unexpected #a @0	tsc: TS18016 @0+7 Private identifiers are not allowed outside class bodies.
+A2	member	"get a(): A {}"	[typeLit,iface,varLit]	bun: Unexpected { @11	tsc: TS1183 @11+2 An implementation cannot be declared in ambient contexts.
+A2	member	"set a(v: A) {}"	[typeLit,iface,varLit]	bun: Unexpected { @12	tsc: TS1183 @12+2 An implementation cannot be declared in ambient contexts.
+A2	member	"set a(v = 1)"	[typeLit,iface,varLit]	bun: Expected ")" but found "=" @8	tsc: TS1052 @4+1 A 'set' accessor parameter cannot have an initializer. also TS2371
+A2	member	"<>(): A"	[typeLit,iface,varLit]	bun: Expected identifier but found ">" @1	tsc: TS1098 @0+2 Type parameter list cannot be empty.
+A2	member	"<in T>(): A"	[typeLit,iface,varLit]	bun: The modifier "in" is not valid here @1	tsc: TS1274 @1+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	member	"<out T>(): A"	[typeLit,iface,varLit]	bun: The modifier "out" is not valid here @1	tsc: TS1274 @1+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+A2	member	"<in out T>(): A"	[typeLit,iface,varLit]	bun: The modifier "in" is not valid here @1	tsc: TS1274 @1+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	member	"[k?: string]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "?" @2	tsc: TS1019 @2+1 An index signature parameter cannot have a question mark.
+A2	member	"[k: string, l: number]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "," @10	tsc: TS1096 @1+1 An index signature must have exactly one parameter.
+A2	member	"[...k: string[]]: A"	[typeLit,iface,varLit]	bun: Unexpected ... @1	tsc: TS1017 @1+3 An index signature cannot have a rest parameter.
+A2	member	"[k,]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "," @2	tsc: TS1022 @1+1 An index signature parameter must have a type annotation.
+A2	member	"[k: string,]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "," @10	tsc: TS1025 @10+1 An index signature cannot have a trailing comma.
+A2	member	"[]: A"	[typeLit,iface,varLit]	bun: Unexpected ] @1	tsc: TS1096 @0+5 An index signature must have exactly one parameter.
+A2	member	"[k = 1]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "=" @3	tsc: TS1170 @0+7 A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type.
+A2	member	"[k: string = 1]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "=" @11	tsc: TS1020 @1+1 An index signature parameter cannot have an initializer. also TS2371
+A2	member	"[public k: string]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "k" @8	tsc: TS1018 @8+1 An index signature parameter cannot have an accessibility modifier. also TS2369
+A2	member	"[private k]: A"	[typeLit,iface,varLit]	bun: Expected "]" but found "k" @9	tsc: TS1018 @9+1 An index signature parameter cannot have an accessibility modifier. also TS2369
+A2	mapped	"[in A]: B"	[typeLit,iface,param]	bun: Unexpected in @1	tsc: TS1274 @1+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+A2	mapped	"[K in A as B as C]: D"	[iface]	bun: Expected "]" but found "as" @13	tsc: TS1169 @0+18 A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+A2	mapped	"[K in A, L in B]: C"	[iface]	bun: Expected "]" but found "," @7	tsc: TS1169 @0+16 A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
+A2	ifaceHead	"interface I<const T> {}"	[-]	bun: The modifier "const" is not valid here @12	tsc: TS1277 @12+5 'const' modifier can only appear on a type parameter of a function, method or class
+A2	ifaceHead	"interface I extends A, {}"	[-]	bun: Expected "{" but found end of file @25	tsc: TS1009 @21+1 Trailing comma not allowed.
+A2	ifaceHead	"interface I extends {}"	[-]	bun: Expected "{" but found end of file @22	tsc: TS1097 @19+0 'extends' list cannot be empty.
+A2	ifaceHead	"interface I extends A extends B {}"	[-]	bun: Expected "?" but found "{" @32	tsc: TS1172 @22+7 'extends' clause already seen.
+A2	ifaceHead	"interface I implements A extends B {}"	[-]	bun: Expected "?" but found "{" @35	tsc: TS1176 @12+10 Interface declaration cannot have 'implements' clause.
+A2	ifaceHead	"abstract interface I {}"	[-]	bun: Expected ";" but found "interface" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	ifaceHead	"async interface I {}"	[-]	bun: Expected ";" but found "interface" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	ifaceHead	"public interface I {}"	[-]	bun: Expected ";" but found "interface" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	ifaceName	"in"	[declareIface]	bun: Unexpected "interface" @0	tsc: TS1212 @0+9 Identifier expected. 'interface' is a reserved word in strict mode.
+A2	aliasHead	"type X<const T> = T"	[-]	bun: The modifier "const" is not valid here @7	tsc: TS1277 @7+5 'const' modifier can only appear on a type parameter of a function, method or class
+A2	aliasHead	"type X<in in T> = T"	[-]	bun: The modifier "in" is not valid here @10	tsc: TS1030 @10+2 'in' modifier already seen.
+A2	aliasHead	"type X<out out T> = T"	[-]	bun: The modifier "out" is not valid here @11	tsc: TS1030 @11+3 'out' modifier already seen.
+A2	aliasHead	"type X<out in T> = T"	[-]	bun: The modifier "in" is not valid here @11	tsc: TS1029 @11+2 'in' modifier must precede 'out' modifier.
+A2	aliasHead	"type X<in const T> = T"	[-]	bun: The modifier "const" is not valid here @10	tsc: TS1277 @10+5 'const' modifier can only appear on a type parameter of a function, method or class
+A2	aliasHead	"type X<const in T> = T"	[-]	bun: The modifier "const" is not valid here @7	tsc: TS1277 @7+5 'const' modifier can only appear on a type parameter of a function, method or class
+A2	aliasHead	"type X<public T> = T"	[-]	bun: Expected ">" but found "T" @14	tsc: TS1273 @7+6 'public' modifier cannot appear on a type parameter
+A2	aliasHead	"type X<readonly T> = T"	[-]	bun: Expected ">" but found "T" @16	tsc: TS1273 @7+8 'readonly' modifier cannot appear on a type parameter
+A2	aliasHead	"type X<static T> = T"	[-]	bun: Expected ">" but found "T" @14	tsc: TS1273 @7+6 'static' modifier cannot appear on a type parameter
+A2	aliasHead	"abstract type X = A"	[-]	bun: Expected ";" but found "type" @9	tsc: TS1242 @0+8 'abstract' modifier can only appear on a class, method, or property declaration.
+A2	aliasHead	"async type X = A"	[-]	bun: Expected ";" but found "type" @6	tsc: TS1042 @0+5 'async' modifier cannot be used here.
+A2	aliasHead	"public type X = A"	[-]	bun: Expected ";" but found "type" @7	tsc: TS1044 @0+6 'public' modifier cannot appear on a module or namespace element.
+A2	member	"{ a: A = 1 }"	[var,param,ret,arrowParam,arrowRet,as,field,typeArg,fnTypeParam,tupleEl,member]	bun: Unexpected = @7	tsc: TS1247 @9+1 A type literal property cannot have an initializer.
+B	member	"-1: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	member	"a!: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	member	"a!"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	member	"a A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	member	"a<T>: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @4+1 '(' expected.
+B	member	"default a: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	member	"const a: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @6+1 ';' expected.
+B	member	"readonly get a(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+8 Property or signature expected.
+B	member	"static get a(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+6 Property or signature expected.
+B	member	"public set a(v: A)"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+6 Property or signature expected.
+B	member	"a!(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	member	"new new (): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+3 Property or signature expected.
+B	member	"new a(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+3 Property or signature expected.
+B	member	"get a?(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"set a?(v: A)"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"get a: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"get a"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @6+1 '(' expected.
+B	member	"get a?"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"get a?: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"set a: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 '(' expected.
+B	member	"async get a(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1131 @0+5 Property or signature expected.
+B	member	"get async a(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @10+1 '(' expected.
+B	member	"[k: string]?: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	member	"[k: string](): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	member	"[k: string]<T>(): A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	member	"[k: string]!: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	member	"[{ k }: string]: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @6+1 ']' expected.
+B	member	"[[k]: string]: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @4+1 ']' expected.
+B	member	"[this: string]: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @5+1 ']' expected.
+B	member	"-readonly [k: string]: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @12+1 'in' expected.
+B	member	"+readonly [k: string]: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @12+1 'in' expected.
+B	member	"[k: string]-?: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	member	"[k: string]+?: A"	[typeLit,iface,varLit]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	memberSep	"get\nset"	[typeLit,iface]	bun: accepts	tsc: TS1005 @8+1 '(' expected.
+B	mapped	"[K in A]: B,"	[typeLit,param]	bun: accepts	tsc: TS1005 @11+1 ';' expected.
+B	mapped	"[K in A]+: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1005 @9+1 '?' expected.
+B	mapped	"[K in A]-: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1005 @9+1 '?' expected.
+B	mapped	"[K in A]!: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"+[K in A]: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"-[K in A]: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"+readonly readonly [K in A]: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1005 @10+8 '[' expected.
+B	mapped	"[void in A]: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1109 @6+2 Expression expected.
+B	mapped	"[const in A]: B"	[typeLit,iface,param]	bun: accepts	tsc: TS1109 @1+5 Expression expected.
+B	mapped	"[K in A](): B"	[typeLit,param]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"[K in A]<T>(): B"	[typeLit,param]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"[K in A]?(): B"	[typeLit,param]	bun: accepts	tsc: TS1005 @9+1 ';' expected.
+B	mapped	"[K in A]+?: B"	[iface]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"[K in A]-?: B"	[iface]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"[K in A]+?"	[iface]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"[K in A]-?"	[iface]	bun: accepts	tsc: TS1005 @8+1 ';' expected.
+B	mapped	"+readonly [K in A]: B"	[iface]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"-readonly [K in A]: B"	[iface]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"-readonly [K in A]-?: B"	[iface]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"+readonly [K in A]+?: B"	[iface]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"[K in keyof A]: A[K]"	[iface]	bun: accepts	tsc: TS1005 @12+1 ']' expected.
+B	mapped	"[K in keyof A as K extends B ? C : never]: A[K]"	[iface]	bun: accepts	tsc: TS1005 @12+1 ']' expected.
+B	mapped	"+\nreadonly [K in A]: B"	[iface]	bun: accepts	tsc: TS1131 @0+1 Property or signature expected.
+B	mapped	"[K in A extends B ? C : D]: E"	[iface]	bun: accepts	tsc: TS1005 @8+7 ']' expected.
+B	mapped	"[K in () => void]: B"	[iface]	bun: accepts	tsc: TS1109 @7+1 Expression expected.
+B	mapped	"[K in A[]]: B"	[iface]	bun: accepts	tsc: TS1011 @8+0 An element access expression should take an argument.
+B	mapped	"[K in infer U]: B"	[iface]	bun: accepts	tsc: TS1005 @12+1 ']' expected.
+B	mapped	"[yield in A]: B"	[iface]	bun: accepts	tsc: TS1109 @7+2 Expression expected.
+B	mapped	"[await in A]: B"	[iface]	bun: accepts	tsc: TS1109 @7+2 Expression expected.
+B	ifaceHead	"interface I extends A[] {}"	[-]	bun: accepts	tsc: TS1011 @22+0 An element access expression should take an argument.
+B	ifaceHead	"interface I extends () => void {}"	[-]	bun: accepts	tsc: TS1109 @21+1 Expression expected.
+B	ifaceHead	"interface I extends A | B {}"	[-]	bun: accepts	tsc: TS1005 @22+1 ',' expected.
+B	ifaceHead	"interface I extends A & B {}"	[-]	bun: accepts	tsc: TS1005 @22+1 ',' expected.
+B	ifaceHead	"interface I extends typeof a {}"	[-]	bun: accepts	tsc: TS1109 @20+6 Expression expected.
+B	ifaceHead	"interface I extends keyof A {}"	[-]	bun: accepts	tsc: TS1005 @26+1 ',' expected.
+B	ifaceHead	"interface I extends void {}"	[-]	bun: accepts	tsc: TS1109 @20+4 Expression expected.
+B	ifaceHead	"interface I extends A extends B ? C : D {}"	[-]	bun: accepts	tsc: TS1005 @32+1 ',' expected.
+B	ifaceHead	"interface I extends A<B>[] {}"	[-]	bun: accepts	tsc: TS1005 @24+1 ',' expected.
+B	ifaceHead	"interface I extends A<B>.C {}"	[-]	bun: accepts	tsc: TS1477 @21+3 An instantiation expression cannot be followed by a property access.
+B	ifaceHead	"interface I extends unique symbol {}"	[-]	bun: accepts	tsc: TS1005 @27+6 ',' expected.
+B	ifaceHead	"interface I extends readonly A[] {}"	[-]	bun: accepts	tsc: TS1005 @29+1 ',' expected.
+B	ifaceHead	"interface I extends infer U {}"	[-]	bun: accepts	tsc: TS1005 @26+1 ',' expected.
+B	ifaceHead	"interface I extends a is B {}"	[-]	bun: accepts	tsc: TS1005 @22+2 ',' expected.
+B	ifaceHead	"interface I extends abstract new () => A {}"	[-]	bun: accepts	tsc: TS1005 @29+3 ',' expected.
+B	ifaceHead	"interface I extends -1 {}"	[-]	bun: accepts	tsc: TS1109 @20+1 Expression expected.
+B	aliasHead	"type X = intrinsic<T>"	[-]	bun: accepts	tsc: TS1005 @18+1 ';' expected.
+B	aliasHead	"type X = intrinsic | A"	[-]	bun: accepts	tsc: TS1005 @19+1 ';' expected.
+B	aliasHead	"type as any"	[-]	bun: accepts	tsc: TS1005 @8+3 '=' expected.
+B	aliasName	"as"	[exportAlias,nsAlias]	bun: accepts	tsc: TS1005 @0+2 '{' expected.
+B	aliasName	"\\u{61}s"	[exportAlias,nsAlias]	bun: accepts	tsc: TS1005 @0+7 '{' expected.
+B	member	"{ a: }"	[arrowRet,callArg,fnTypeParam]	bun: accepts	tsc: TS1110 @5+1 Type expected.

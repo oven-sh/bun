@@ -1,0 +1,97 @@
+global {}
+global { var x: number; }
+global { interface A {} }
+declare global {}
+declare global { var x: number }
+declare\nglobal {}
+declare global;
+namespace N { global {} }
+declare namespace N { global {} }
+declare module "m" { global { var x: number } }
+module "m" { global { var x: number } }
+export {}; declare global { var x: number }
+export {}; global { var x: number }
+global
+global;
+global.x = 1;
+global\n{}
+{ namespace N {} }
+{ namespace N { export const a = 1 } }
+if (a) { namespace N { export const a = 1 } }
+function f() { namespace N { export const a = 1 } }
+function f() { module N { export const a = 1 } }
+{ declare namespace N {} }
+{ module N {} }
+{ declare module "m" {} }
+{ enum E { A } }
+{ type T = 1 }
+{ interface I {} }
+{ declare const x: number }
+{ declare function f(): void }
+{ abstract class C {} }
+{ declare class C {} }
+{ import x = require("y") }
+{ export const a = 1 }
+namespace N {}\nnamespace N { export const a = 1 }
+namespace\nN {}
+module\nN {}
+namespace N.M {}
+namespace N.M.O { export const a = 1 }
+declare module N.M {}
+declare module "m";
+declare module "m" { export const a: number }
+module "m" {}
+namespace "m" {}
+declare namespace "m" {}
+abstract class C {}
+abstract\nclass C {}
+declare abstract class C {}
+abstract declare class C {}
+declare class C {}
+declare\nclass C {}
+declare function f(): void;
+declare async function f(): Promise<void>;
+declare function* f(): void;
+declare enum E { A }
+declare const enum E { A }
+declare const x: number;
+declare let x: number;
+declare var x: number;
+declare using x: number;
+declare interface I {}
+declare type T = 1;
+declare type\nT = 1;
+declare import x = require("y");
+declare import x from "y";
+declare export const x: number;
+export declare const x: number;
+export declare function f(): void;
+export declare namespace N {}
+export declare global {}
+export abstract class C {}
+export default abstract class C {}
+export default abstract class {}
+export declare abstract class C {}
+export abstract declare class C {}
+declare declare const x: number;
+declare
+declare;
+declare x
+declare\nx
+abstract
+abstract;
+abstract\nclass C {}
+type
+type;
+type\nT = 1;
+interface
+interface;
+interface\nI {}
+namespace
+namespace;
+module
+module;
+module.exports = 1;
+type T = 1
+type\nT
+interface I {} interface J {}

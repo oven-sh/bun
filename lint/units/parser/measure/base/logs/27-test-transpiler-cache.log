@@ -1,0 +1,30 @@
+# HEAD e3566be889 dirty: []
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/cli/run/transpiler-cache.test.ts --timeout "180000"
+bun test v1.4.3 (e3566be88)
+
+test/cli/run/transpiler-cache.test.ts:
+(pass) transpiler cache > works [1037.57ms]
+(pass) transpiler cache > works with empty files [1246.27ms]
+(pass) transpiler cache > ignores files under the minimum cache size [522.57ms]
+(pass) transpiler cache > does not cache a file whose parse logged an error [929.56ms]
+(pass) transpiler cache > it is indeed content addressable [1563.58ms]
+(pass) transpiler cache > doing 50 buns at once does not crash [4223.97ms]
+(pass) transpiler cache > disables the cache instead of falling back to the shared temp directory [1223.23ms]
+(pass) transpiler cache > works if the cache is not user-readable [1989.94ms]
+(pass) transpiler cache > works if the cache is not user-writable [406.10ms]
+(pass) transpiler cache > a fifo in place of an entry is removed instead of opened [1164.44ms]
+(pass) transpiler cache > does not inline process.env [1071.70ms]
+(pass) transpiler cache > --feature flag invalidates cache [2345.53ms]
+(pass) transpiler cache > defines are part of the cache key > bunfig [define] invalidates cache [2655.10ms]
+(pass) transpiler cache > defines are part of the cache key > --define invalidates cache [4321.46ms]
+(pass) transpiler cache > defines are part of the cache key > --define passed to bun test invalidates cache [4237.93ms]
+(pass) transpiler cache > defines are part of the cache key > --drop invalidates cache [6159.24ms]
+(pass) transpiler cache > a cached entry point does not change how later modules load > require.extensions is still consulted [1285.02ms]
+(pass) transpiler cache > a cached entry point does not change how later modules load > unknown extensions still use the file loader [744.53ms]
+(pass) rejects cached module records containing out-of-range string indices [1714.31ms]
+(pass) rejects a cached entry whose sourcemap section header is corrupt [1246.38ms]
+
+ 20 pass
+ 0 fail
+ 233 expect() calls
+Ran 20 tests across 1 file. [43.61s]

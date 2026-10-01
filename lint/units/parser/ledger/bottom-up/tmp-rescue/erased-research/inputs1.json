@@ -1,0 +1,17 @@
+[
+ {"name":"only-erased","text":"interface A { x: number }\ntype B = A | string;\ndeclare const c: B;\ndeclare function f(a: A): B;\nexport type { A };\nimport type { Q } from \"./q\";\n"},
+ {"name":"prefixes","text":"@dec export declare abstract class X<T> extends Y<T> implements Z { abstract m(): void; [k: string]: any; declare p: number; }"},
+ {"name":"export-default-interface","text":"export default interface Foo { a: 1 }"},
+ {"name":"overloads","text":"export function f(a: string): void;\nexport function f(a: number): void;\nexport function f(a: any) {}\n"},
+ {"name":"ns","text":"declare namespace A.B.C { interface I {} var v: number; function g(): void }"},
+ {"name":"ambient-module","text":"declare module \"*.css\" { const css: string; export default css; }\ndeclare module 'fs';\n"},
+ {"name":"global","text":"export {};\ndeclare global { interface Window { x: number } var y: string }\n"},
+ {"name":"export-as-ns","text":"export as namespace MyLib;\n"},
+ {"name":"import-forms","text":"import type D from 'd';\nimport type * as N from 'n';\nimport type { a, b as c } from 'abc' with { 'resolution-mode': 'import' };\nimport { type e, type f as g } from 'efg';\nimport type R = require('r');\nimport type S = A.B;\n"},
+ {"name":"export-forms","text":"export type { a, b as c };\nexport type { d } from 'd';\nexport type * from 'e';\nexport type * as F from 'f';\nexport { type g, type h as i };\nexport { type j } from 'j';\n"},
+ {"name":"declare-enum","text":"declare enum E { A = 1, B }\ndeclare const enum F { C }\n"},
+ {"name":"asi","text":"type A = string\ninterface B {}\ndeclare var x: number // c\n/* d */ declare let y: string\n"},
+ {"name":"class-members","text":"class C {\n  m(a: string): void;\n  m(a: number): void;\n  m(a: any) {}\n  constructor(a: string);\n  constructor(a: any) {}\n  static [key: string]: number;\n  declare d: number;\n  abstract ab(): void;\n  abstract af: string;\n  @dec declare dd: number;\n  get g(): number;\n}\n"},
+ {"name":"nested-lists","text":"function f() { a(); interface I {} }\ninterface J {}\nb();\nif (x) type T = 1;\nswitch (y) { case 1: interface K {} z(); }\n{ type U = 2 }\n"},
+ {"name":"ns-export-declare","text":"namespace N {\n  export declare const x: number;\n  export interface I {}\n  export function y() { return x }\n}\n"}
+]

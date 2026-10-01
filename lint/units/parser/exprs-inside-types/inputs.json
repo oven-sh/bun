@@ -1,0 +1,1912 @@
+[
+ {
+  "id": "A1",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator]: number };"
+ },
+ {
+  "id": "A2",
+  "site": "A",
+  "text": "const k = \"a\"; type T = { [k]: number };"
+ },
+ {
+  "id": "A3",
+  "site": "A",
+  "text": "type T = { [\"a\"]: number; [1]: string; [-1]: string };"
+ },
+ {
+  "id": "A4",
+  "site": "A",
+  "text": "type T = { [`a`]: number };"
+ },
+ {
+  "id": "A5",
+  "site": "A",
+  "text": "declare const a: { b: { readonly c: unique symbol } }; type T = { [a.b.c]: number };"
+ },
+ {
+  "id": "A6",
+  "site": "A",
+  "text": "declare const a: string, b: string; type T = { [a + b]: number };"
+ },
+ {
+  "id": "A7",
+  "site": "A",
+  "text": "declare function f(): string; type T = { [f()]: number };"
+ },
+ {
+  "id": "A8",
+  "site": "A",
+  "text": "declare const a: any, b: any, c: any; type T = { [a ? b : c]: number };"
+ },
+ {
+  "id": "A9",
+  "site": "A",
+  "text": "declare const a: any, b: any; type T = { [a, b]: number };"
+ },
+ {
+  "id": "A10",
+  "site": "A",
+  "text": "type T = { [+1]: number };"
+ },
+ {
+  "id": "A11",
+  "site": "A",
+  "text": "declare const a: unique symbol; type T = { [(a)]: number };"
+ },
+ {
+  "id": "A12",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a as any]: number };"
+ },
+ {
+  "id": "A13",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a!]: number };"
+ },
+ {
+  "id": "A14",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a[\"b\"]]: number };"
+ },
+ {
+  "id": "A15",
+  "site": "A",
+  "text": "declare const a: any; type T = { [typeof a]: number };"
+ },
+ {
+  "id": "A16",
+  "site": "A",
+  "text": "declare const A: any, B: any; type T = { [A | B]: number };"
+ },
+ {
+  "id": "A17",
+  "site": "A",
+  "text": "declare const A: any; type B = 1; type T = { [A<B>]: number };"
+ },
+ {
+  "id": "A18",
+  "site": "A",
+  "text": "type T = { [A extends B ? C : D]: number };"
+ },
+ {
+  "id": "A19",
+  "site": "A",
+  "text": "type T = { [keyof A]: number };"
+ },
+ {
+  "id": "A20",
+  "site": "A",
+  "text": "type T = { [a[]]: number };"
+ },
+ {
+  "id": "A21",
+  "site": "A",
+  "text": "type T = { [(x) => x]: number };"
+ },
+ {
+  "id": "A22",
+  "site": "A",
+  "text": "type T = { [class {}]: number };"
+ },
+ {
+  "id": "A23",
+  "site": "A",
+  "text": "type T = { [function () { return 1 }]: number };"
+ },
+ {
+  "id": "A24",
+  "site": "A",
+  "text": "type T = { [import(\"./x\")]: number };"
+ },
+ {
+  "id": "A25",
+  "site": "A",
+  "text": "declare const x: any; type T = { [await x]: number }; export {};"
+ },
+ {
+  "id": "A26",
+  "site": "A",
+  "text": "function* g() { type T = { [yield]: number }; }"
+ },
+ {
+  "id": "A28",
+  "site": "A",
+  "text": "interface I { [Symbol.iterator](): Iterator<number> }"
+ },
+ {
+  "id": "A29",
+  "site": "A",
+  "text": "interface I { readonly [Symbol.toStringTag]: string }"
+ },
+ {
+  "id": "A30",
+  "site": "A",
+  "text": "declare const k: unique symbol; interface I { [k]?: number }"
+ },
+ {
+  "id": "A31",
+  "site": "A",
+  "text": "declare const k: unique symbol; interface I { get [k](): number; set [k](v: number) }"
+ },
+ {
+  "id": "A32",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a.b!.c]: number; [a?.b]: number };"
+ },
+ {
+  "id": "A33",
+  "site": "A",
+  "text": "declare const x: any; type T = { [<any>x]: number };"
+ },
+ {
+  "id": "A34",
+  "site": "A",
+  "text": "declare const b: string; type T = { [`a${b}`]: number };"
+ },
+ {
+  "id": "A35",
+  "site": "A",
+  "text": "type T = { [1n]: number };"
+ },
+ {
+  "id": "A36",
+  "site": "A",
+  "text": "type T = { [new Foo]: number; [this.x]: number; [import.meta.x]: number };"
+ },
+ {
+  "id": "A37",
+  "site": "A",
+  "text": "declare let a: any, b: any; type T = { [a = b]: number };"
+ },
+ {
+  "id": "A38",
+  "site": "A",
+  "text": "type T = { [/re/]: number };"
+ },
+ {
+  "id": "A39",
+  "site": "A",
+  "text": "type T = { [<div/>]: number };",
+  "tsx": true
+ },
+ {
+  "id": "A41",
+  "site": "A",
+  "text": "declare const a: any; type T = { [a satisfies string]: number };"
+ },
+ {
+  "id": "A43",
+  "site": "A",
+  "text": "type T = { [async () => { await 1 }]: number };"
+ },
+ {
+  "id": "A44",
+  "site": "A",
+  "text": "declare const k: unique symbol; type T = { [k]<U>(): void };"
+ },
+ {
+  "id": "A45",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator] };"
+ },
+ {
+  "id": "A46",
+  "site": "A",
+  "text": "type T = { [a.b.c.d](x: number): void, [e]: string };"
+ },
+ {
+  "id": "A47",
+  "site": "A",
+  "text": "type T = { [a\n.b]: number };"
+ },
+ {
+  "id": "A48",
+  "site": "A",
+  "text": "type T = { [/*! legal */ a.b]: number };\nlet z = 1;"
+ },
+ {
+  "id": "A49",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; type T = { [foo]: string }; export let t: T;"
+ },
+ {
+  "id": "A50",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; type T = { [foo.bar]: string }; export let t: T;"
+ },
+ {
+  "id": "A51",
+  "site": "A",
+  "text": "import { foo } from \"./x\"; interface I { [foo](): void } export let t: I;"
+ },
+ {
+  "id": "A52",
+  "site": "A",
+  "text": "type T = { [string]: number };"
+ },
+ {
+  "id": "A53",
+  "site": "A",
+  "text": "type T = { [a.b<c>]: number };"
+ },
+ {
+  "id": "A54",
+  "site": "A",
+  "text": "type T = { [[a, b]]: number };"
+ },
+ {
+  "id": "A55",
+  "site": "A",
+  "text": "type T = { [{ a: 1 }]: number };"
+ },
+ {
+  "id": "A56",
+  "site": "A",
+  "text": "type T = { [null]: number; [true]: number; [this]: number; [void 0]: number };"
+ },
+ {
+  "id": "A57",
+  "site": "A",
+  "text": "type T = { [a & b]: number };"
+ },
+ {
+  "id": "A58",
+  "site": "A",
+  "text": "type T = { [unique symbol]: number };"
+ },
+ {
+  "id": "A59",
+  "site": "A",
+  "text": "type T = { [() => void]: number };"
+ },
+ {
+  "id": "A60",
+  "site": "A",
+  "text": "type T = { [x is string]: number };"
+ },
+ {
+  "id": "A61",
+  "site": "A",
+  "text": "type T = { [a.b.c[d]]: number };"
+ },
+ {
+  "id": "A62",
+  "site": "A",
+  "text": "type T = { [-1n]: number; [- 1]: number };"
+ },
+ {
+  "id": "A63",
+  "site": "A",
+  "text": "type T = { [a!.b]: number };"
+ },
+ {
+  "id": "A64",
+  "site": "A",
+  "text": "type T = { [readonly string[]]: number };"
+ },
+ {
+  "id": "A65",
+  "site": "A",
+  "text": "type T = { [typeof a.b]: number; [typeof import('x')]: number };"
+ },
+ {
+  "id": "A66",
+  "site": "A",
+  "text": "type T = { [a.b]: number\n [c.d]: number };"
+ },
+ {
+  "id": "A67",
+  "site": "A",
+  "text": "type T = { readonly [a.b]?: number; -readonly [c]: number };"
+ },
+ {
+  "id": "A68",
+  "site": "A",
+  "text": "type T = { [Symbol.iterator]!: number };"
+ },
+ {
+  "id": "B1",
+  "site": "B",
+  "text": "let g: (a = 1) => void;"
+ },
+ {
+  "id": "B2",
+  "site": "B",
+  "text": "let g: (a: number = 1) => void;"
+ },
+ {
+  "id": "B3",
+  "site": "B",
+  "text": "let g: (a?: number = 1) => void;"
+ },
+ {
+  "id": "B4",
+  "site": "B",
+  "text": "let g: new (a = 1) => Foo;"
+ },
+ {
+  "id": "B5",
+  "site": "B",
+  "text": "type T = { (a = 1): void };"
+ },
+ {
+  "id": "B6",
+  "site": "B",
+  "text": "type T = { new (a = 1): Foo };"
+ },
+ {
+  "id": "B7",
+  "site": "B",
+  "text": "type T = { m(a = 1): void };"
+ },
+ {
+  "id": "B8",
+  "site": "B",
+  "text": "interface I { m(a = 1): void }"
+ },
+ {
+  "id": "B9",
+  "site": "B",
+  "text": "type T = { [a: string = \"x\"]: number };"
+ },
+ {
+  "id": "B10",
+  "site": "B",
+  "text": "let g: (a = (b: number) => b) => void;"
+ },
+ {
+  "id": "B11",
+  "site": "B",
+  "text": "let g: (a = function f() { var x; }) => void;"
+ },
+ {
+  "id": "B12",
+  "site": "B",
+  "text": "let g: (a = class C { m() {} }) => void;"
+ },
+ {
+  "id": "B13",
+  "site": "B",
+  "text": "let g: (a = import(\"./x\")) => void;"
+ },
+ {
+  "id": "B14",
+  "site": "B",
+  "text": "let g: (a = require(\"./x\")) => void;"
+ },
+ {
+  "id": "B15",
+  "site": "B",
+  "text": "declare const p: Promise<number>; let g: (a = await p) => void; export {};"
+ },
+ {
+  "id": "B16",
+  "site": "B",
+  "text": "let g: (a = <div/>) => void;",
+  "tsx": true
+ },
+ {
+  "id": "B17",
+  "site": "B",
+  "text": "let g: (a = import.meta.url) => void;"
+ },
+ {
+  "id": "B18",
+  "site": "B",
+  "text": "let g: (a = b, c = a) => void;"
+ },
+ {
+  "id": "B19",
+  "site": "B",
+  "text": "let g: (...a = []) => void;"
+ },
+ {
+  "id": "B20",
+  "site": "B",
+  "text": "let g: (this = 1) => void;"
+ },
+ {
+  "id": "B21",
+  "site": "B",
+  "text": "let g: (a = 1 in x) => void;"
+ },
+ {
+  "id": "B22",
+  "site": "B",
+  "text": "for (let g: (a = 1 in x) => void = null!; ;) {}"
+ },
+ {
+  "id": "B23",
+  "site": "B",
+  "text": "function* f() { let g: (a = yield 1) => void; }"
+ },
+ {
+  "id": "B24",
+  "site": "B",
+  "text": "async function f() { let g: (a = await 1) => void; }"
+ },
+ {
+  "id": "B25",
+  "site": "B",
+  "text": "let g: (a = b as T) => void;"
+ },
+ {
+  "id": "B26",
+  "site": "B",
+  "text": "let g: (a = <T>(x: T) => x) => void;"
+ },
+ {
+  "id": "B27",
+  "site": "B",
+  "text": "let g: (a = () => { return 1 }) => void;"
+ },
+ {
+  "id": "B28",
+  "site": "B",
+  "text": "let g: (a = { b: 1, c() {} }) => void;"
+ },
+ {
+  "id": "B29",
+  "site": "B",
+  "text": "let g: (a = `x${1}`) => void;"
+ },
+ {
+  "id": "B30",
+  "site": "B",
+  "text": "let g: (a = 1, ) => void;"
+ },
+ {
+  "id": "B31",
+  "site": "B",
+  "text": "function f(): (a = 1) => void { return null! }"
+ },
+ {
+  "id": "B32",
+  "site": "B",
+  "text": "declare const dec: any; class C { @dec p: (a = 1) => void }",
+  "deco": true
+ },
+ {
+  "id": "B33",
+  "site": "B",
+  "text": "let x = <(a = 1) => void>y;"
+ },
+ {
+  "id": "B34",
+  "site": "B",
+  "text": "let x = y as (a = 1) => void;"
+ },
+ {
+  "id": "B35",
+  "site": "B",
+  "text": "f<(a = 1) => void>(x);"
+ },
+ {
+  "id": "B36",
+  "site": "B",
+  "text": "let x = (a): (b = 1) => void => a;"
+ },
+ {
+  "id": "B37",
+  "site": "B",
+  "text": "let x = c ? (a): (b = 1) => void => a : d;"
+ },
+ {
+  "id": "B38",
+  "site": "B",
+  "text": "type T<U = (a = 1) => void> = U;"
+ },
+ {
+  "id": "B39",
+  "site": "B",
+  "text": "function f<T extends (a = 1) => void>() {}"
+ },
+ {
+  "id": "B40",
+  "site": "B",
+  "text": "let g: (a = 1);"
+ },
+ {
+  "id": "B41",
+  "site": "B",
+  "text": "let g: (a = 1) => (b = 2) => void;"
+ },
+ {
+  "id": "B42",
+  "site": "B",
+  "text": "let g: (a = x > y) => void;"
+ },
+ {
+  "id": "B43",
+  "site": "B",
+  "text": "let g: (a = x, y) => void;"
+ },
+ {
+  "id": "B44",
+  "site": "B",
+  "text": "let g: (a = x => y) => void;"
+ },
+ {
+  "id": "B45",
+  "site": "B",
+  "text": "let g: (a = async () => { await 1 }) => void;"
+ },
+ {
+  "id": "B46",
+  "site": "B",
+  "text": "let g: (a = function* () { yield 1 }) => void;"
+ },
+ {
+  "id": "B47",
+  "site": "B",
+  "text": "let g: (a = new.target) => void;"
+ },
+ {
+  "id": "B48",
+  "site": "B",
+  "text": "class K extends B { p: (a = super.x) => void; }"
+ },
+ {
+  "id": "B49",
+  "site": "B",
+  "text": "class K { p: (a = this.#x) => void; #x = 1; }"
+ },
+ {
+  "id": "B50",
+  "site": "B",
+  "text": "let g: (a = arguments) => void;"
+ },
+ {
+  "id": "B51",
+  "site": "B",
+  "text": "enum E { A = 1 } let g: (a = E.A) => void;"
+ },
+ {
+  "id": "B52",
+  "site": "B",
+  "text": "import { foo } from \"./x\"; let g: (a = foo) => void; export { g };"
+ },
+ {
+  "id": "B53",
+  "site": "B",
+  "text": "let g: (a = /*! legal */ 1) => void;\nlet z = 1;"
+ },
+ {
+  "id": "B54",
+  "site": "B",
+  "text": "let g: (a = () => { /*! legal */ return 1 }) => void;\nlet z = 1;"
+ },
+ {
+  "id": "B55",
+  "site": "B",
+  "text": "let g: (a = 1) => void = null!, h = 2;"
+ },
+ {
+  "id": "B56",
+  "site": "B",
+  "text": "let g: (a: number = 1, b?: string, ...c: any[]) => void;"
+ },
+ {
+  "id": "B57",
+  "site": "B",
+  "text": "abstract class K { abstract m(a = 1): void; }"
+ },
+ {
+  "id": "B58",
+  "site": "B",
+  "text": "function f(a = 1): void; function f() {}"
+ },
+ {
+  "id": "B59",
+  "site": "B",
+  "text": "declare function f(a = 1): void;"
+ },
+ {
+  "id": "B60",
+  "site": "B",
+  "text": "let g: (a = (0, function () { 'use strict'; with (x) {} })) => void;"
+ },
+ {
+  "id": "C1",
+  "site": "C",
+  "text": "let g: ({ a, b }: T) => void;"
+ },
+ {
+  "id": "C2",
+  "site": "C",
+  "text": "let g: ([a, b]: T) => void;"
+ },
+ {
+  "id": "C3",
+  "site": "C",
+  "text": "let g: ({ a = 1 }: T) => void;"
+ },
+ {
+  "id": "C4",
+  "site": "C",
+  "text": "let g: ([a = 1]: T) => void;"
+ },
+ {
+  "id": "C5",
+  "site": "C",
+  "text": "let g: ({ a: { b = 1 } }: T) => void;"
+ },
+ {
+  "id": "C6",
+  "site": "C",
+  "text": "let g: ({ [k]: a }: T) => void;"
+ },
+ {
+  "id": "C7",
+  "site": "C",
+  "text": "let g: ({ a, ...rest }: T) => void;"
+ },
+ {
+  "id": "C8",
+  "site": "C",
+  "text": "let g: ([, a, ...b]: T) => void;"
+ },
+ {
+  "id": "C9",
+  "site": "C",
+  "text": "let g: ({ a = (x) => x }: T) => void;"
+ },
+ {
+  "id": "C10",
+  "site": "C",
+  "text": "let g: ({ \"a\": b, 1: c }: T) => void;"
+ },
+ {
+  "id": "C11",
+  "site": "C",
+  "text": "let g: ({ a } = {}) => void;"
+ },
+ {
+  "id": "C12",
+  "site": "C",
+  "text": "let g: ({ a }) => void;"
+ },
+ {
+  "id": "C13",
+  "site": "C",
+  "text": "let g: ({ a });"
+ },
+ {
+  "id": "C14",
+  "site": "C",
+  "text": "let g: ({ a = 1 });"
+ },
+ {
+  "id": "C15",
+  "site": "C",
+  "text": "let g: ([a]);"
+ },
+ {
+  "id": "C16",
+  "site": "C",
+  "text": "let g: ({ a: 1 }: T) => void;"
+ },
+ {
+  "id": "C17",
+  "site": "C",
+  "text": "let g: ({ if: x }: T) => void;"
+ },
+ {
+  "id": "C18",
+  "site": "C",
+  "text": "let g: ({ a: string });"
+ },
+ {
+  "id": "C19",
+  "site": "C",
+  "text": "let g: ([a, b]) => void;"
+ },
+ {
+  "id": "C20",
+  "site": "C",
+  "text": "let g: ([a, b?]);"
+ },
+ {
+  "id": "C21",
+  "site": "C",
+  "text": "let g: ({ a }?: T) => void;"
+ },
+ {
+  "id": "C22",
+  "site": "C",
+  "text": "let g: ([a]: T, { b }: U) => void;"
+ },
+ {
+  "id": "C23",
+  "site": "C",
+  "text": "let g: (...[a, b]: T) => void;"
+ },
+ {
+  "id": "C24",
+  "site": "C",
+  "text": "let g: ({ a = 1 }) => void;"
+ },
+ {
+  "id": "C25",
+  "site": "C",
+  "text": "let g: ({ a = 1 }, b);"
+ },
+ {
+  "id": "C26",
+  "site": "C",
+  "text": "let g: ({ [a + b]: c = d }: T) => void;"
+ },
+ {
+  "id": "C27",
+  "site": "C",
+  "text": "let g: ([[[[a]]]]: any) => void;"
+ },
+ {
+  "id": "C28",
+  "site": "C",
+  "text": "let g: ({ a: [b, { c = () => { var v } }] }: any) => void;"
+ },
+ {
+  "id": "C29",
+  "site": "C",
+  "text": "type T = { m({ a = 1 }: any): void; new ([b = 2]: any): T; ({ c = 3 }): void };"
+ },
+ {
+  "id": "C30",
+  "site": "C",
+  "text": "let g: ({ a, }: T, ) => void;"
+ },
+ {
+  "id": "C31",
+  "site": "C",
+  "text": "let g: ({ a = 1, b: { c } = {} }: T) => void;"
+ },
+ {
+  "id": "C32",
+  "site": "C",
+  "text": "let g: ({ ...{ a } }: T) => void;"
+ },
+ {
+  "id": "C33",
+  "site": "C",
+  "text": "let g: ({ #a: b }: T) => void;"
+ },
+ {
+  "id": "C34",
+  "site": "C",
+  "text": "let g: ([a = 1, [b] = []] = []) => void;"
+ },
+ {
+  "id": "D1",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec a) => void;"
+ },
+ {
+  "id": "D2",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec() a: number) => void;"
+ },
+ {
+  "id": "D3",
+  "site": "D",
+  "text": "declare const dec: any; type T = { m(@dec a): void };"
+ },
+ {
+  "id": "D4",
+  "site": "D",
+  "text": "declare const foo: any; let g: (@(foo.bar()) a) => void;"
+ },
+ {
+  "id": "D5",
+  "site": "D",
+  "text": "let g: (public a) => void;"
+ },
+ {
+  "id": "D6",
+  "site": "D",
+  "text": "let g: (readonly a: string[]) => void;"
+ },
+ {
+  "id": "D7",
+  "site": "D",
+  "text": "declare const dec: any; type T = { [@dec a: string]: number };"
+ },
+ {
+  "id": "D8",
+  "site": "D",
+  "text": "type T = { [public a: string]: number };"
+ },
+ {
+  "id": "D9",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec) => void;"
+ },
+ {
+  "id": "D10",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec @dec2() public readonly a?: number = 1) => void;"
+ },
+ {
+  "id": "D11",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec this: any) => void;"
+ },
+ {
+  "id": "D12",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec ...a: any[]) => void;"
+ },
+ {
+  "id": "D13",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec { a }: any) => void;"
+ },
+ {
+  "id": "D14",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec.a.b<T>() a) => void;"
+ },
+ {
+  "id": "D15",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@((x) => x) a) => void;"
+ },
+ {
+  "id": "D16",
+  "site": "D",
+  "text": "declare const dec: any; let g: (@dec(class { m() { var v } }) a) => void;"
+ },
+ {
+  "id": "D17",
+  "site": "D",
+  "text": "declare const dec: any; async function f() { let g: (@(await dec) a) => void; }"
+ },
+ {
+  "id": "D18",
+  "site": "D",
+  "text": "declare const dec: any; let g: new (@dec a) => Foo;"
+ },
+ {
+  "id": "D19",
+  "site": "D",
+  "text": "declare const dec: any; class K { m(@dec a): void; m(a) {} }",
+  "deco": true
+ },
+ {
+  "id": "D20",
+  "site": "D",
+  "text": "declare const dec: any; declare class K { m(@dec a): void; }",
+  "deco": true
+ },
+ {
+  "id": "D21",
+  "site": "D",
+  "text": "let g: (public) => void;"
+ },
+ {
+  "id": "D22",
+  "site": "D",
+  "text": "let g: (public, a) => void;"
+ },
+ {
+  "id": "D23",
+  "site": "D",
+  "text": "let g: (override readonly a) => void;"
+ },
+ {
+  "id": "D24",
+  "site": "D",
+  "text": "let g: (export a) => void;"
+ },
+ {
+  "id": "D25",
+  "site": "D",
+  "text": "let g: (async a) => void;"
+ },
+ {
+  "id": "D26",
+  "site": "D",
+  "text": "let g: (static a) => void;"
+ },
+ {
+  "id": "D27",
+  "site": "D",
+  "text": "let g: (abstract a) => void;"
+ },
+ {
+  "id": "D28",
+  "site": "D",
+  "text": "let g: (declare a) => void;"
+ },
+ {
+  "id": "D29",
+  "site": "D",
+  "text": "let g: (accessor a) => void;"
+ },
+ {
+  "id": "D30",
+  "site": "D",
+  "text": "let g: (in a) => void;"
+ },
+ {
+  "id": "D31",
+  "site": "D",
+  "text": "let g: (out a) => void;"
+ },
+ {
+  "id": "D32",
+  "site": "D",
+  "text": "let g: (const a) => void;"
+ },
+ {
+  "id": "E1",
+  "site": "E",
+  "text": "type T = { a: number = 1 };"
+ },
+ {
+  "id": "E2",
+  "site": "E",
+  "text": "interface I { a: number = 1 }"
+ },
+ {
+  "id": "E3",
+  "site": "E",
+  "text": "type T = { a = 1 };"
+ },
+ {
+  "id": "E4",
+  "site": "E",
+  "text": "type T = { a? = 1 };"
+ },
+ {
+  "id": "E5",
+  "site": "E",
+  "text": "type T = { a = () => { var x } };"
+ },
+ {
+  "id": "E6",
+  "site": "E",
+  "text": "type T = { readonly a: string = \"x\"; b: number };"
+ },
+ {
+  "id": "E7",
+  "site": "E",
+  "text": "type T = { a = 1, b = 2 };"
+ },
+ {
+  "id": "E8",
+  "site": "E",
+  "text": "type T = { a = 1 b = 2 };"
+ },
+ {
+  "id": "E9",
+  "site": "E",
+  "text": "type T = { a = 1\n b = 2 };"
+ },
+ {
+  "id": "E10",
+  "site": "E",
+  "text": "type T = { \"a\" = 1; 2 = 3; [k] = 4 };"
+ },
+ {
+  "id": "E11",
+  "site": "E",
+  "text": "type T = { a: number = b in c };"
+ },
+ {
+  "id": "E12",
+  "site": "E",
+  "text": "type T = { a = class { static { var q; } } };"
+ },
+ {
+  "id": "E13",
+  "site": "E",
+  "text": "type T = { a = import(\"./x\") };"
+ },
+ {
+  "id": "E14",
+  "site": "E",
+  "text": "type T = { a = x, y };"
+ },
+ {
+  "id": "E15",
+  "site": "E",
+  "text": "interface I { m(): void = 1 }"
+ },
+ {
+  "id": "E16",
+  "site": "E",
+  "text": "type T = { a: number = 1 }[];"
+ },
+ {
+  "id": "E17",
+  "site": "E",
+  "text": "declare const dec: any; class C { @dec p: { a: number = 1 } }",
+  "deco": true
+ },
+ {
+  "id": "E18",
+  "site": "E",
+  "text": "type T = { a = yield };"
+ },
+ {
+  "id": "E19",
+  "site": "E",
+  "text": "type T = { a = await 1 }; export {};"
+ },
+ {
+  "id": "F1",
+  "site": "F",
+  "text": "type T = { get x(): number; set x(v: number) };"
+ },
+ {
+  "id": "F2",
+  "site": "F",
+  "text": "interface I { get x(): number }"
+ },
+ {
+  "id": "F3",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } };"
+ },
+ {
+  "id": "F4",
+  "site": "F",
+  "text": "type T = { set x(v) { this.y = v } };"
+ },
+ {
+  "id": "F5",
+  "site": "F",
+  "text": "type T = { get x(): number { return 1 }; y: string };"
+ },
+ {
+  "id": "F6",
+  "site": "F",
+  "text": "type T = { get: number; set: string };"
+ },
+ {
+  "id": "F7",
+  "site": "F",
+  "text": "type T = { get(): number; set(v: number): void };"
+ },
+ {
+  "id": "F8",
+  "site": "F",
+  "text": "type T = { get x<U>(): U };"
+ },
+ {
+  "id": "F9",
+  "site": "F",
+  "text": "declare const k: unique symbol; type T = { get [k](): number };"
+ },
+ {
+  "id": "F10",
+  "site": "F",
+  "text": "type T = { get x() { return await 1 } }; export {};"
+ },
+ {
+  "id": "F11",
+  "site": "F",
+  "text": "type T = { get x() { var a; function g() {} class K {} return 1 } };"
+ },
+ {
+  "id": "F12",
+  "site": "F",
+  "text": "type T = { get x() { return import(\"./y\") } };"
+ },
+ {
+  "id": "F13",
+  "site": "F",
+  "text": "type T = { m() { return 1 } };"
+ },
+ {
+  "id": "F14",
+  "site": "F",
+  "text": "type T = { get x() };"
+ },
+ {
+  "id": "F15",
+  "site": "F",
+  "text": "type T = { get x(): number, set x(v: number), };"
+ },
+ {
+  "id": "F16",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } y: string };"
+ },
+ {
+  "id": "F17",
+  "site": "F",
+  "text": "type T = { get x() { return 1 }\n y: string };"
+ },
+ {
+  "id": "F18",
+  "site": "F",
+  "text": "type T = { get x() { yield 1 } };"
+ },
+ {
+  "id": "F19",
+  "site": "F",
+  "text": "type T = { get x() { return super.x } };"
+ },
+ {
+  "id": "F20",
+  "site": "F",
+  "text": "type T = { get x() { return new.target } };"
+ },
+ {
+  "id": "F21",
+  "site": "F",
+  "text": "type T = { get x() { return arguments } };"
+ },
+ {
+  "id": "F22",
+  "site": "F",
+  "text": "type T = { get x() { 'use strict'; with (a) {} } };"
+ },
+ {
+  "id": "F23",
+  "site": "F",
+  "text": "type T = { get x() { import a from 'b'; } };"
+ },
+ {
+  "id": "F24",
+  "site": "F",
+  "text": "type T = { get x() { export const a = 1; } };"
+ },
+ {
+  "id": "F25",
+  "site": "F",
+  "text": "type T = { get x() { return 1 } }; const after = 1;"
+ },
+ {
+  "id": "F26",
+  "site": "F",
+  "text": "type T = { get\n x(): number };"
+ },
+ {
+  "id": "F27",
+  "site": "F",
+  "text": "type T = { get ?: number; set?(): void };"
+ },
+ {
+  "id": "F28",
+  "site": "F",
+  "text": "type T = { get x(a = 1) { return a } };"
+ },
+ {
+  "id": "F29",
+  "site": "F",
+  "text": "interface I { get x() { return 1 } set x(v) {} }"
+ },
+ {
+  "id": "F30",
+  "site": "F",
+  "text": "type T = { get x() { type U = 1; interface V {} enum W { A } namespace N { export const q = 1 } return 1 } };"
+ },
+ {
+  "id": "F31",
+  "site": "F",
+  "text": "type T = { get x() { /*! legal */ return 1 } };\nlet z = 1;"
+ },
+ {
+  "id": "F32",
+  "site": "F",
+  "text": "declare const dec: any; class C { @dec p: { get x() { return 1 } } }",
+  "deco": true
+ },
+ {
+  "id": "F33",
+  "site": "F",
+  "text": "type T = { get x() { label: for (;;) { break label } } };"
+ },
+ {
+  "id": "F34",
+  "site": "F",
+  "text": "type T = { get x() { return <div/> } };",
+  "tsx": true
+ },
+ {
+  "id": "F35",
+  "site": "F",
+  "text": "type T = { get x() { using a = b; } };"
+ },
+ {
+  "id": "F36",
+  "site": "F",
+  "text": "type T = { get 'x'(): number; set 1(v) ; get #p(): number };"
+ },
+ {
+  "id": "F37",
+  "site": "F",
+  "text": "type T = { get x() => 1 };"
+ },
+ {
+  "id": "F38",
+  "site": "F",
+  "text": "type T = { async get x() { await 1 } };"
+ },
+ {
+  "id": "F39",
+  "site": "F",
+  "text": "type T = { static get x() { return 1 } };"
+ },
+ {
+  "id": "F40",
+  "site": "F",
+  "text": "type T = { get x() { return 1 };; };"
+ },
+ {
+  "id": "G1",
+  "site": "G",
+  "text": "function f<T extends +1>() {}"
+ },
+ {
+  "id": "G2",
+  "site": "G",
+  "text": "type T<U extends -1> = U;"
+ },
+ {
+  "id": "G3",
+  "site": "G",
+  "text": "function f<T extends (a + b)>() {}"
+ },
+ {
+  "id": "G4",
+  "site": "G",
+  "text": "function f<T extends !x>() {}"
+ },
+ {
+  "id": "G5",
+  "site": "G",
+  "text": "function f<T extends ++x>() {}"
+ },
+ {
+  "id": "G6",
+  "site": "G",
+  "text": "function f<T extends /re/>() {}"
+ },
+ {
+  "id": "G7",
+  "site": "G",
+  "text": "function f<T extends class {}>() {}"
+ },
+ {
+  "id": "G8",
+  "site": "G",
+  "text": "function f<T extends function () { var x }>() {}"
+ },
+ {
+  "id": "G9",
+  "site": "G",
+  "text": "async function f<T extends await x>() {}"
+ },
+ {
+  "id": "G10",
+  "site": "G",
+  "text": "function f<T extends delete x>() {}"
+ },
+ {
+  "id": "G11",
+  "site": "G",
+  "text": "function f<T extends ~x>() {}"
+ },
+ {
+  "id": "G12",
+  "site": "G",
+  "text": "class K<T extends +1> {}"
+ },
+ {
+  "id": "G13",
+  "site": "G",
+  "text": "interface I<T extends +1> {}"
+ },
+ {
+  "id": "G14",
+  "site": "G",
+  "text": "type A<T extends +1> = T;"
+ },
+ {
+  "id": "G15",
+  "site": "G",
+  "text": "let g: <T extends +1>() => void;"
+ },
+ {
+  "id": "G16",
+  "site": "G",
+  "text": "type M = { m<T extends +1>(): void };"
+ },
+ {
+  "id": "G17",
+  "site": "G",
+  "text": "const h = <T extends +1>(x: T) => x;"
+ },
+ {
+  "id": "G18",
+  "site": "G",
+  "text": "const h = <T extends +1,>(x: T) => x;",
+  "tsx": true
+ },
+ {
+  "id": "G19",
+  "site": "G",
+  "text": "function f<T extends x++>() {}"
+ },
+ {
+  "id": "G20",
+  "site": "G",
+  "text": "function f<T extends \"a\" + \"b\">() {}"
+ },
+ {
+  "id": "G21",
+  "site": "G",
+  "text": "function f<T extends void 0>() {}"
+ },
+ {
+  "id": "G22",
+  "site": "G",
+  "text": "function f<T extends new Foo()>() {}"
+ },
+ {
+  "id": "G23",
+  "site": "G",
+  "text": "declare const dec: any; function f<T extends @dec class {}>() {}"
+ },
+ {
+  "id": "G24",
+  "site": "G",
+  "text": "function f<T extends --x, U>() {}"
+ },
+ {
+  "id": "G25",
+  "site": "G",
+  "text": "function f<T extends +1 = 2>() {}"
+ },
+ {
+  "id": "G26",
+  "site": "G",
+  "text": "function f<T extends ~x > y>() {}"
+ },
+ {
+  "id": "G27",
+  "site": "G",
+  "text": "function f<T extends +x>>() {}"
+ },
+ {
+  "id": "G28",
+  "site": "G",
+  "text": "function f<T extends + +1>() {}"
+ },
+ {
+  "id": "G29",
+  "site": "G",
+  "text": "function f<T extends #p in x>() {}"
+ },
+ {
+  "id": "G30",
+  "site": "G",
+  "text": "function f<T extends <U>x>() {}"
+ },
+ {
+  "id": "G31",
+  "site": "G",
+  "text": "function f<T extends async function () { await 1 }>() {}"
+ },
+ {
+  "id": "G32",
+  "site": "G",
+  "text": "function f<T extends super.x>() {}"
+ },
+ {
+  "id": "G33",
+  "site": "G",
+  "text": "type A = B extends infer U extends +1 ? U : never;"
+ },
+ {
+  "id": "G34",
+  "site": "G",
+  "text": "type M = { [K in +1]: K };"
+ },
+ {
+  "id": "G35",
+  "site": "G",
+  "text": "class K { m<T extends +1>() {} }"
+ },
+ {
+  "id": "G36",
+  "site": "G",
+  "text": "function f<T extends ...x>() {}"
+ },
+ {
+  "id": "G37",
+  "site": "G",
+  "text": "function f<T extends yield>() {}"
+ },
+ {
+  "id": "G38",
+  "site": "G",
+  "text": "function f<T extends +(a, () => { var q })>() {}"
+ },
+ {
+  "id": "G39",
+  "site": "G",
+  "text": "f<T extends +1>(x);"
+ },
+ {
+  "id": "G40",
+  "site": "G",
+  "text": "function f<T extends `a${b}`>() {}"
+ },
+ {
+  "id": "G41",
+  "site": "G",
+  "text": "function f<T extends { a = 1 }>() {}"
+ },
+ {
+  "id": "G42",
+  "site": "G",
+  "text": "function f<T extends function>() {}"
+ },
+ {
+  "id": "G43",
+  "site": "G",
+  "text": "function f<T extends import.meta>() {}"
+ },
+ {
+  "id": "G44",
+  "site": "G",
+  "text": "function f<T extends - x>() {}"
+ },
+ {
+  "id": "G45",
+  "site": "G",
+  "text": "function f<T extends typeof +1>() {}"
+ },
+ {
+  "id": "G46",
+  "site": "G",
+  "text": "function f<in T extends +1>() {}"
+ },
+ {
+  "id": "H1",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } });"
+ },
+ {
+  "id": "H2",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { \"resolution-mode\": \"import\" } }).Foo;"
+ },
+ {
+  "id": "H3",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: foo() } });"
+ },
+ {
+  "id": "H4",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: a + b } });"
+ },
+ {
+  "id": "H5",
+  "site": "H",
+  "text": "type T = import(\"./x\", { assert: { type: \"json\" } });"
+ },
+ {
+  "id": "H6",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\", } });"
+ },
+ {
+  "id": "H7",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" }, });"
+ },
+ {
+  "id": "H8",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: (x) => x } });"
+ },
+ {
+  "id": "H9",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: {} });"
+ },
+ {
+  "id": "H10",
+  "site": "H",
+  "text": "type T = typeof import(\"./x\", { with: { type: \"json\" } });"
+ },
+ {
+  "id": "H11",
+  "site": "H",
+  "text": "type T = import(\"./x\", { foo: { type: \"json\" } });"
+ },
+ {
+  "id": "H12",
+  "site": "H",
+  "text": "type T = import(foo);"
+ },
+ {
+  "id": "H13",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { 1: \"a\" } });"
+ },
+ {
+  "id": "H14",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } }, );"
+ },
+ {
+  "id": "H15",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: `json` } });"
+ },
+ {
+  "id": "H16",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\"; } });"
+ },
+ {
+  "id": "H17",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"a\", mode: \"b\" } });"
+ },
+ {
+  "id": "H18",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { if: \"a\" } });"
+ },
+ {
+  "id": "H19",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: import(\"./y\") } });"
+ },
+ {
+  "id": "H20",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type } });"
+ },
+ {
+  "id": "H21",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: function () { var v } } });"
+ },
+ {
+  "id": "H22",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } }).A.B<C>;"
+ },
+ {
+  "id": "H23",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with });"
+ },
+ {
+  "id": "H24",
+  "site": "H",
+  "text": "type T = import(\"./x\", );"
+ },
+ {
+  "id": "H25",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: y as string } });"
+ },
+ {
+  "id": "H26",
+  "site": "H",
+  "text": "type T = import(\"./x\", { with: { type: \"json\" } } as any);"
+ },
+ {
+  "id": "H27",
+  "site": "H",
+  "text": "type T = import(`./x`);"
+ },
+ {
+  "id": "H28",
+  "site": "H",
+  "text": "type T = import(\"./x\" | \"./y\");"
+ },
+ {
+  "id": "I1",
+  "site": "I",
+  "text": "interface I extends A.B<C>, D {}"
+ },
+ {
+  "id": "I2",
+  "site": "I",
+  "text": "interface I extends foo() {}"
+ },
+ {
+  "id": "I3",
+  "site": "I",
+  "text": "interface I extends A[0] {}"
+ },
+ {
+  "id": "I4",
+  "site": "I",
+  "text": "interface I extends (A) {}"
+ },
+ {
+  "id": "I5",
+  "site": "I",
+  "text": "interface I extends A?.B {}"
+ },
+ {
+  "id": "I6",
+  "site": "I",
+  "text": "interface I extends typeof x {}"
+ },
+ {
+  "id": "I7",
+  "site": "I",
+  "text": "interface I extends { a: 1 } {}"
+ },
+ {
+  "id": "I8",
+  "site": "I",
+  "text": "interface I extends class {} {}"
+ },
+ {
+  "id": "I9",
+  "site": "I",
+  "text": "interface I extends new Foo {}"
+ },
+ {
+  "id": "I10",
+  "site": "I",
+  "text": "interface I extends import(\"x\") {}"
+ },
+ {
+  "id": "I11",
+  "site": "I",
+  "text": "interface I extends A<B>.C {}"
+ },
+ {
+  "id": "I12",
+  "site": "I",
+  "text": "interface I extends string {}"
+ },
+ {
+  "id": "I13",
+  "site": "I",
+  "text": "interface I extends A | B {}"
+ },
+ {
+  "id": "I14",
+  "site": "I",
+  "text": "interface I extends Array<number>[] {}"
+ },
+ {
+  "id": "I15",
+  "site": "I",
+  "text": "class C implements A.B<C>, D {}"
+ },
+ {
+  "id": "I16",
+  "site": "I",
+  "text": "class C implements foo() {}"
+ },
+ {
+  "id": "I17",
+  "site": "I",
+  "text": "class C implements A | B {}"
+ },
+ {
+  "id": "I18",
+  "site": "I",
+  "text": "interface I extends A<B>() {}"
+ },
+ {
+  "id": "I19",
+  "site": "I",
+  "text": "interface I extends a.b!.c {}"
+ },
+ {
+  "id": "I20",
+  "site": "I",
+  "text": "interface I extends tag`x` {}"
+ },
+ {
+  "id": "I21",
+  "site": "I",
+  "text": "interface I extends (() => void) {}"
+ },
+ {
+  "id": "I22",
+  "site": "I",
+  "text": "interface I extends A.B.C, D<E<F>>, G {}"
+ },
+ {
+  "id": "I23",
+  "site": "I",
+  "text": "interface I extends this {}"
+ },
+ {
+  "id": "I24",
+  "site": "I",
+  "text": "interface I extends A<B>, C<D>> {}"
+ },
+ {
+  "id": "I25",
+  "site": "I",
+  "text": "interface I extends function () { var q } {}"
+ },
+ {
+  "id": "I26",
+  "site": "I",
+  "text": "interface I extends a.#b {}"
+ },
+ {
+  "id": "I27",
+  "site": "I",
+  "text": "interface I extends super.x {}"
+ },
+ {
+  "id": "I28",
+  "site": "I",
+  "text": "interface I extends import.meta {}"
+ },
+ {
+  "id": "I29",
+  "site": "I",
+  "text": "interface I extends void {}"
+ },
+ {
+  "id": "I30",
+  "site": "I",
+  "text": "interface I extends null {}"
+ },
+ {
+  "id": "I31",
+  "site": "I",
+  "text": "interface I extends \"a\" {}"
+ },
+ {
+  "id": "I32",
+  "site": "I",
+  "text": "interface I extends A<B> {} class C extends K implements A<B>, M.N {}"
+ },
+ {
+  "id": "I33",
+  "site": "I",
+  "text": "interface I extends A.B<C>\n{ }"
+ },
+ {
+  "id": "I34",
+  "site": "I",
+  "text": "interface I extends keyof A {}"
+ },
+ {
+  "id": "I35",
+  "site": "I",
+  "text": "interface I extends [A] {}"
+ },
+ {
+  "id": "I36",
+  "site": "I",
+  "text": "interface I extends A & B {}"
+ },
+ {
+  "id": "I37",
+  "site": "I",
+  "text": "class C implements {} {}"
+ },
+ {
+  "id": "I38",
+  "site": "I",
+  "text": "class C implements (A) {}"
+ },
+ {
+  "id": "I39",
+  "site": "I",
+  "text": "class C implements typeof x {}"
+ },
+ {
+  "id": "I40",
+  "site": "I",
+  "text": "interface I extends A.default.if<B> {}"
+ },
+ {
+  "id": "K1",
+  "site": "K",
+  "text": "declare function f() { import(\"./nope1\"); }"
+ },
+ {
+  "id": "K2",
+  "site": "K",
+  "text": "declare class C { m() { require(\"./nope2\") } }"
+ },
+ {
+  "id": "K3",
+  "site": "K",
+  "text": "abstract class C { abstract m() { import(\"./nope3\") } }"
+ },
+ {
+  "id": "K4",
+  "site": "K",
+  "text": "function f(a = import(\"./nope4\")): void; function f() {}"
+ },
+ {
+  "id": "K5",
+  "site": "K",
+  "text": "declare const c = import(\"./nope5\");"
+ },
+ {
+  "id": "K6",
+  "site": "K",
+  "text": "declare namespace N { const c = require(\"./nope6\"); }"
+ },
+ {
+  "id": "K7",
+  "site": "K",
+  "text": "declare class C { p = import(\"./nope7\"); }"
+ },
+ {
+  "id": "K8",
+  "site": "K",
+  "text": "class C { declare p = import(\"./nope8\"); }"
+ },
+ {
+  "id": "K9",
+  "site": "K",
+  "text": "declare function f(a = await 1): void; export {};"
+ },
+ {
+  "id": "K10",
+  "site": "K",
+  "text": "declare function f(a = <div/>): void;",
+  "tsx": true
+ },
+ {
+  "id": "K11",
+  "site": "K",
+  "text": "declare function f(a = import.meta.url): void;"
+ },
+ {
+  "id": "K12",
+  "site": "K",
+  "text": "import { foo } from \"./x\"; declare function f(a = foo): void;"
+ },
+ {
+  "id": "K13",
+  "site": "K",
+  "text": "import { foo } from \"./x\"; function f(a = foo): void; function f() {}"
+ },
+ {
+  "id": "K14",
+  "site": "K",
+  "text": "import { foo } from \"./x\"; abstract class C { abstract m(a = foo): void }"
+ },
+ {
+  "id": "K15",
+  "site": "K",
+  "text": "import { foo } from \"./x\"; class C { declare p = foo; }"
+ },
+ {
+  "id": "K16",
+  "site": "K",
+  "text": "import { foo } from \"./x\"; declare const c = foo;"
+ }
+]

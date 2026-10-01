@@ -1,0 +1,38 @@
+== deco run 1
+{"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 21908759731, "Bc": 8613715359, "Bi": 66117527}, "match": "bun_js_parser", "matched_symbols": 257, "matched": {"Ir": 2004205137, "Bc": 206752184, "Bi": 15026892}}
+total    Ir  21,908,759,731  Bc  8,613,715,359  Bi   66,117,527
+matched  Ir      66,203,040  Bc      6,133,160  Bi      711,200   (15 symbols match /skip_type_?script|skip_typescript|type_sink/)
+      21,736,860     1,981,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+      14,409,080     1,431,660  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+       9,644,720       468,400  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+       5,249,160       986,980  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+       4,529,260       373,460  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+       3,816,980       118,860  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+       2,109,520       388,940  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+       1,565,680       165,180  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+       1,143,440       124,920  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+         938,540        41,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+         874,800        38,520  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+         126,240         7,760  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+          50,440         4,920  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+           6,120           840  <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+           2,200           200  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+== deco run 2
+{"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 21905150498, "Bc": 8613293719, "Bi": 66098031}, "match": "bun_js_parser", "matched_symbols": 257, "matched": {"Ir": 2004205137, "Bc": 206752184, "Bi": 15026892}}
+total    Ir  21,905,150,498  Bc  8,613,293,719  Bi   66,098,031
+matched  Ir      66,203,040  Bc      6,133,160  Bi      711,200   (15 symbols match /skip_type_?script|skip_typescript|type_sink/)
+      21,736,860     1,981,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+      14,409,080     1,431,660  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+       9,644,720       468,400  <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+       5,249,160       986,980  <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+       4,529,260       373,460  <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+       3,816,980       118,860  <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+       2,109,520       388,940  <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+       1,565,680       165,180  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::DecoratorMetadata>
+       1,143,440       124,920  <bun_js_parser::p::P<true, false>>::skip_type_script_binding
+         938,540        41,260  <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_metadata
+         874,800        38,520  <bun_js_parser::p::P<true, false>>::skip_typescript_return_type_with_metadata
+         126,240         7,760  <bun_js_parser::p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+          50,440         4,920  <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+           6,120           840  <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+           2,200           200  <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking

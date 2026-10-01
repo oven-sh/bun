@@ -1,0 +1,303 @@
+== stub (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 0, scan 0, other 2; lint-only functions 0, 0 bytes; text +94 bytes
+   other insns  1856 ->  1857 (  +1)  jcc  179 ->  179 ( +0)  bytes   9190 ->   9206  <parse::parse_entry::Parser>::parse_only::<function_identities::FunctionIdentities, <function_identities::Func
+   other insns    37 ->    52 ( +15)  jcc    7 ->   11 ( +4)  bytes    130 ->    208  core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<p::StartsForParseOnly>>>
+== v1 (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 4, TS 2, scan 2, other 0; lint-only functions 18, 3072 bytes; text +3821 bytes
+   JS    insns   649 ->   656 (  +7)  jcc   64 ->   65 ( +1)  bytes   3064 ->   3106  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  355 ( +2)  bytes  14869 ->  15007  <p::P<false, false>>::parse_prefix
+   TS    insns  1307 ->  1332 ( +25)  jcc  121 ->  125 ( +4)  bytes   6542 ->   6637  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+   cachegrind bun-types       Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +164300 (+0.00370%)  Bc    +18120  Bi     +0
+   cachegrind tsx             Ir    +196000 (+0.01665%)  Bc    +42000  Bi     +0
+   cachegrind js-control      Ir    +805560 (+0.02774%)  Bc   +155640  Bi     +0
+== v1t (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 2, scan 2, other 0; lint-only functions 16, 2800 bytes; text +3173 bytes
+   TS    insns  1307 ->  1332 ( +25)  jcc  121 ->  125 ( +4)  bytes   6542 ->   6637  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+   cachegrind bun-types       Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +164300 (+0.00370%)  Bc    +18120  Bi     +0
+   cachegrind tsx             Ir    +196000 (+0.01665%)  Bc    +42000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== v1types (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 13, 2429 bytes; text +2609 bytes
+   TS    insns  1307 ->  1325 ( +18)  jcc  121 ->  124 ( +3)  bytes   6542 ->   6601  <p::P<true, false>>::parse_paren_expr
+== v1paren (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 4, TS 2, scan 2, other 0; lint-only functions 5, 643 bytes; text +1248 bytes
+   JS    insns   649 ->   656 (  +7)  jcc   64 ->   65 ( +1)  bytes   3064 ->   3106  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  355 ( +2)  bytes  14869 ->  15007  <p::P<false, false>>::parse_prefix
+   TS    insns  1307 ->  1314 (  +7)  jcc  121 ->  122 ( +1)  bytes   6542 ->   6580  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+== v1parent (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 2, scan 2, other 0; lint-only functions 3, 371 bytes; text +600 bytes
+   TS    insns  1307 ->  1314 (  +7)  jcc  121 ->  122 ( +1)  bytes   6542 ->   6580  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+== fastparen (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 2, TS 1, scan 1, other 0; lint-only functions 5, 643 bytes; text +1087 bytes
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  355 ( +2)  bytes  14869 ->  15007  <p::P<false, false>>::parse_prefix
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+== fastparent (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 3, 371 bytes; text +523 bytes
+   TS    insns  3114 ->  3131 ( +17)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15681  <p::P<true, false>>::parse_prefix
+== v2 (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 6, TS 3, scan 3, other 0; lint-only functions 34, 21852 bytes; text +18308 bytes
+   JS    insns   396 ->   404 (  +8)  jcc   33 ->   34 ( +1)  bytes   1830 ->   1867  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns   649 ->   600 ( -49)  jcc   64 ->   56 ( -8)  bytes   3064 ->   2873  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2953 (  -6)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14834  <p::P<false, false>>::parse_prefix
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->   967 (-340)  jcc  121 ->   98 (-23)  bytes   6542 ->   4771  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   320  jcc   20  bytes   1545  <p::P<true, false>>::is_type_script_arrow_return_type_after_question_and_before_colon
+   new   insns    52  jcc    4  bytes    135  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns   785  jcc   86  bytes   3766  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   new   insns    68  jcc    7  bytes    243  <p::P<true, false>>::pop_and_flatten_scope
+== v2g (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 6, TS 3, scan 3, other 1; lint-only functions 44, 19769 bytes; text +17560 bytes
+   other insns    79 ->    83 (  +4)  jcc    8 ->    9 ( +1)  bytes    294 ->    306  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_
+   JS    insns   396 ->   404 (  +8)  jcc   33 ->   34 ( +1)  bytes   1830 ->   1867  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns   649 ->   600 ( -49)  jcc   64 ->   56 ( -8)  bytes   3064 ->   2873  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2953 (  -6)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14834  <p::P<false, false>>::parse_prefix
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1118 (-189)  jcc  121 ->  115 ( -6)  bytes   6542 ->   5425  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   197  jcc   20  bytes    732  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns    34  jcc    2  bytes    116  <p::P<true, false>>::lint_log_arrow_arg_errors
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_parser_snapshot
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_pop_and_flatten_scope
+   new   insns   633  jcc   59  bytes   3138  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns   144  jcc    1  bytes    855  <p::P<true, false>>::parser_snapshot
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   new   insns    68  jcc    7  bytes    243  <p::P<true, false>>::pop_and_flatten_scope
+== v2gt (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 2, TS 3, scan 3, other 1; lint-only functions 32, 13594 bytes; text +11800 bytes
+   other insns    79 ->    83 (  +4)  jcc    8 ->    9 ( +1)  bytes    294 ->    306  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_
+   JS    insns   649 ->   650 (  +1)  jcc   64 ->   64 ( +0)  bytes   3064 ->   3073  <p::P<false, false>>::parse_paren_expr
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1118 (-189)  jcc  121 ->  115 ( -6)  bytes   6542 ->   5425  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   197  jcc   20  bytes    732  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns    34  jcc    2  bytes    116  <p::P<true, false>>::lint_log_arrow_arg_errors
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_parser_snapshot
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_pop_and_flatten_scope
+   new   insns   633  jcc   59  bytes   3138  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns   144  jcc    1  bytes    855  <p::P<true, false>>::parser_snapshot
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   new   insns    68  jcc    7  bytes    243  <p::P<true, false>>::pop_and_flatten_scope
+== v2gts (against stub): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 2, TS 3, scan 1, other 1; lint-only functions 17, 6893 bytes; text +5994 bytes
+   other insns    79 ->    83 (  +4)  jcc    8 ->    9 ( +1)  bytes    294 ->    306  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_
+   JS    insns   649 ->   650 (  +1)  jcc   64 ->   64 ( +0)  bytes   3064 ->   3073  <p::P<false, false>>::parse_paren_expr
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1118 (-189)  jcc  121 ->  115 ( -6)  bytes   6542 ->   5425  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   197  jcc   20  bytes    732  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns    34  jcc    2  bytes    116  <p::P<true, false>>::lint_log_arrow_arg_errors
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_parser_snapshot
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::lint_pop_and_flatten_scope
+   new   insns   633  jcc   59  bytes   3138  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns   144  jcc    1  bytes    855  <p::P<true, false>>::parser_snapshot
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   new   insns    68  jcc    7  bytes    243  <p::P<true, false>>::pop_and_flatten_scope
+== v2mi (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 3, scan 1, other 0; lint-only functions 16, 7742 bytes; text +7798 bytes
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1254 ( -53)  jcc  121 ->  114 ( -7)  bytes   6542 ->   6325  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   gone  <p::P<true, true>>::restore_parser_snapshot
+   new   insns    34  jcc    4  bytes     90  <[u32]>::binary_search_by::<<[u32]>::binary_search_by_key<u32, <p::P<true, false>>::is_type_script_arrow_retur
+   new   insns    63  jcc    7  bytes    197  <p::P<true, false>>::is_type_script_arrow_return_type_after_question_and_before_colon::{closure#1}
+   new   insns   294  jcc   17  bytes   1423  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns   848  jcc   93  bytes   4029  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+== v2m (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 2, scan 0, other 1; lint-only functions 16, 7007 bytes; text +7201 bytes
+   other insns    79 ->    83 (  +4)  jcc    8 ->    9 ( +1)  bytes    294 ->    306  <alloc::vec::Vec<bun_ast::expr::Expr, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns    62  jcc    4  bytes    177  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns   173  jcc   19  bytes    638  <p::P<true, false>>::lint_is_arrow_return_type_after_question
+   new   insns    34  jcc    2  bytes    116  <p::P<true, false>>::lint_log_arrow_arg_errors
+   new   insns   144  jcc    1  bytes    855  <p::P<true, false>>::lint_parser_snapshot
+   new   insns    68  jcc    7  bytes    243  <p::P<true, false>>::lint_pop_and_flatten_scope
+   new   insns   644  jcc   59  bytes   3189  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns    85  jcc    6  bytes    290  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   cachegrind bun-types       Ir       +680 (+0.00022%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +154040 (+0.00347%)  Bc    +42460  Bi     +0
+   cachegrind tsx             Ir    +106000 (+0.00900%)  Bc    +46000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== v2m2 (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 2, scan 0, other 0; lint-only functions 13, 7511 bytes; text +7693 bytes
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   355  jcc   23  bytes   1693  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns   848  jcc   93  bytes   4029  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::parse_paren_expr_for_lint_cold
+   new   insns    83  jcc    6  bytes    280  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   cachegrind bun-types       Ir       +680 (+0.00022%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +154040 (+0.00347%)  Bc    +42460  Bi     +0
+   cachegrind tsx             Ir    +106000 (+0.00900%)  Bc    +46000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== v2mm (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 2, scan 0, other 0; lint-only functions 13, 7511 bytes; text +7693 bytes
+   TS    insns   608 ->   623 ( +15)  jcc   42 ->   44 ( +2)  bytes   3122 ->   3194  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3143 ( +29)  jcc  376 ->  379 ( +3)  bytes  15583 ->  15693  <p::P<true, false>>::parse_prefix
+   new   insns   355  jcc   23  bytes   1693  <p::P<true, false>>::lint_decide_arrow_return_type
+   new   insns   848  jcc   93  bytes   4029  <p::P<true, false>>::parse_paren_expr_for_lint
+   new   insns     4  jcc    0  bytes     10  <p::P<true, false>>::parse_paren_expr_for_lint_cold
+   new   insns    83  jcc    6  bytes    280  <p::P<true, false>>::pfx_t_open_paren_for_lint
+== v3 (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 4, TS 2, scan 2, other 0; lint-only functions 9, 1207 bytes; text +4955 bytes
+   JS    insns   396 ->   435 ( +39)  jcc   33 ->   35 ( +2)  bytes   1830 ->   2024  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns  2959 ->  3011 ( +52)  jcc  353 ->  357 ( +4)  bytes  14869 ->  15265  <p::P<false, false>>::parse_prefix
+   TS    insns   608 ->   685 ( +77)  jcc   42 ->   46 ( +4)  bytes   3122 ->   3594  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3233 (+119)  jcc  376 ->  384 ( +8)  bytes  15583 ->  16428  <p::P<true, false>>::parse_prefix
+== v3t (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 4, TS 2, scan 2, other 0; lint-only functions 5, 653 bytes; text +3489 bytes
+   JS    insns   396 ->   410 ( +14)  jcc   33 ->   34 ( +1)  bytes   1830 ->   1884  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14949  <p::P<false, false>>::parse_prefix
+   TS    insns   608 ->   685 ( +77)  jcc   42 ->   46 ( +4)  bytes   3122 ->   3594  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3233 (+119)  jcc  376 ->  384 ( +8)  bytes  15583 ->  16428  <p::P<true, false>>::parse_prefix
+== v3open (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 2, TS 1, scan 1, other 0; lint-only functions 5, 663 bytes; text +1554 bytes
+   JS    insns  2959 ->  2985 ( +26)  jcc  353 ->  355 ( +2)  bytes  14869 ->  15130  <p::P<false, false>>::parse_prefix
+   TS    insns  3114 ->  3140 ( +26)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15800  <p::P<true, false>>::parse_prefix
+== v3opent (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 2, TS 1, scan 1, other 0; lint-only functions 3, 381 bytes; text +910 bytes
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14949  <p::P<false, false>>::parse_prefix
+   TS    insns  3114 ->  3140 ( +26)  jcc  376 ->  378 ( +2)  bytes  15583 ->  15800  <p::P<true, false>>::parse_prefix
+== v5 (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 19, 4251 bytes; text +2683 bytes
+   TS    insns  1307 ->  1177 (-130)  jcc  121 ->  116 ( -5)  bytes   6542 ->   5793  <p::P<true, false>>::parse_paren_expr
+   new   insns    10  jcc    1  bytes     30  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+   new   insns    10  jcc    1  bytes     33  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+   new   insns   167  jcc    8  bytes    848  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+== v5n (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 21, 4443 bytes; text +2787 bytes
+   TS    insns  1307 ->  1178 (-129)  jcc  121 ->  115 ( -6)  bytes   6542 ->   5711  <p::P<true, false>>::parse_paren_expr
+   new   insns    47  jcc    4  bytes    165  <p::P<true, false>>::lint_arrow_param_type_by_scope
+   new   insns    21  jcc    4  bytes     74  <p::P<true, false>>::lint_loc_of_current_scope
+   new   insns    10  jcc    1  bytes     30  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+   new   insns    17  jcc    1  bytes     52  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+   new   insns   170  jcc    8  bytes    858  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+== v5inl (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 15, 2495 bytes; text +2759 bytes
+   TS    insns  1307 ->  1320 ( +13)  jcc  121 ->  123 ( +2)  bytes   6542 ->   6729  <p::P<true, false>>::parse_paren_expr
+   new   insns    10  jcc    1  bytes     33  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+== v5p (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 2, TS 2, scan 2, other 0; lint-only functions 24, 4904 bytes; text +4086 bytes
+   JS    insns  2959 ->  2976 ( +17)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14949  <p::P<false, false>>::parse_prefix
+   TS    insns  1307 ->  1177 (-130)  jcc  121 ->  116 ( -5)  bytes   6542 ->   5793  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3166 ( +52)  jcc  376 ->  380 ( +4)  bytes  15583 ->  15935  <p::P<true, false>>::parse_prefix
+   new   insns    10  jcc    1  bytes     30  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+   new   insns    10  jcc    1  bytes     33  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+   new   insns   167  jcc    8  bytes    848  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+== v5t (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 2, scan 1, other 0; lint-only functions 23, 5035 bytes; text +3490 bytes
+   TS    insns  1307 ->  1177 (-130)  jcc  121 ->  116 ( -5)  bytes   6542 ->   5793  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3124 ( +10)  jcc  376 ->  377 ( +1)  bytes  15583 ->  15606  <p::P<true, false>>::parse_prefix
+   new   insns   115  jcc    7  bytes    408  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   new   insns    10  jcc    1  bytes     30  <p::P<true, false>>::skip_type_script_type_of_arrow_parameter
+   new   insns    10  jcc    1  bytes     33  <p::P<true, false>>::skip_typescript_return_type_of_arrow
+   new   insns   167  jcc    8  bytes    848  <p::P<true, false>>::try_skip_type_script_arrow_return_type_with_backtracking
+   cachegrind bun-types       Ir       +680 (+0.00022%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +113680 (+0.00256%)  Bc    +44200  Bi     +0
+   cachegrind tsx             Ir    +242000 (+0.02055%)  Bc    +66000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== topw (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 1, scan 0, other 0; lint-only functions 4, 784 bytes; text +807 bytes
+   TS    insns  3114 ->  3124 ( +10)  jcc  376 ->  377 ( +1)  bytes  15583 ->  15606  <p::P<true, false>>::parse_prefix
+   new   insns   115  jcc    7  bytes    408  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   cachegrind bun-types       Ir       +680 (+0.00022%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +152880 (+0.00344%)  Bc    +41880  Bi     +0
+   cachegrind tsx             Ir     +98000 (+0.00832%)  Bc    +42000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== topwjs (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 1, TS 1, scan 0, other 0; lint-only functions 7, 1469 bytes; text +1457 bytes
+   JS    insns  2959 ->  2953 (  -6)  jcc  353 ->  354 ( +1)  bytes  14869 ->  14834  <p::P<false, false>>::parse_prefix
+   TS    insns  3114 ->  3124 ( +10)  jcc  376 ->  377 ( +1)  bytes  15583 ->  15606  <p::P<true, false>>::parse_prefix
+   new   insns   115  jcc    7  bytes    408  <p::P<true, false>>::pfx_t_open_paren_for_lint
+   cachegrind bun-types       Ir       +680 (+0.00022%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +152880 (+0.00344%)  Bc    +41880  Bi     +0
+   cachegrind tsx             Ir     +98000 (+0.00832%)  Bc    +42000  Bi     +0
+   cachegrind js-control      Ir    +386360 (+0.01330%)  Bc   +192360  Bi     +0
+== w1 (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 6, scan 6, other 0; lint-only functions 4, 314 bytes; text +2544 bytes
+   TS    insns   146 ->   165 ( +19)  jcc    6 ->   10 ( +4)  bytes    781 ->    879  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+   TS    insns  1307 ->  1388 ( +81)  jcc  121 ->  126 ( +5)  bytes   6542 ->   7108  <p::P<true, false>>::parse_paren_expr
+   TS    insns   289 ->   296 (  +7)  jcc   35 ->   36 ( +1)  bytes   1311 ->   1347  <p::P<true, false>>::restore_parser_snapshot
+   TS    insns   216 ->   233 ( +17)  jcc   18 ->   20 ( +2)  bytes   1052 ->   1150  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+   TS    insns   190 ->   236 ( +46)  jcc   17 ->   19 ( +2)  bytes    958 ->   1202  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+   TS    insns   136 ->   155 ( +19)  jcc    4 ->    8 ( +4)  bytes    726 ->    818  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+== w1b (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 5, scan 5, other 0; lint-only functions 4, 314 bytes; text +1634 bytes
+   TS    insns   146 ->   165 ( +19)  jcc    6 ->   10 ( +4)  bytes    781 ->    879  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+   TS    insns  1307 ->  1326 ( +19)  jcc  121 ->  125 ( +4)  bytes   6542 ->   6661  <p::P<true, false>>::parse_paren_expr
+   TS    insns   216 ->   233 ( +17)  jcc   18 ->   20 ( +2)  bytes   1052 ->   1150  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+   TS    insns   190 ->   236 ( +46)  jcc   17 ->   19 ( +2)  bytes    958 ->   1202  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+   TS    insns   136 ->   155 ( +19)  jcc    4 ->    8 ( +4)  bytes    726 ->    818  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+== w1f (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 5, scan 5, other 0; lint-only functions 2, 434 bytes; text +993 bytes
+   TS    insns   146 ->   158 ( +12)  jcc    6 ->    9 ( +3)  bytes    781 ->    835  <p::P<true, false>>::lexer_backtracker_bool::<<p::P<true, false>>::skip_type_script_arrow_args_with_backtracki
+   TS    insns  1307 ->  1322 ( +15)  jcc  121 ->  124 ( +3)  bytes   6542 ->   6642  <p::P<true, false>>::parse_paren_expr
+   TS    insns   216 ->   224 (  +8)  jcc   18 ->   19 ( +1)  bytes   1052 ->   1097  <p::P<true, false>>::try_skip_type_script_constraint_of_infer_type_with_backtracking
+   TS    insns   190 ->   198 (  +8)  jcc   17 ->   18 ( +1)  bytes    958 ->    991  <p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+   TS    insns   136 ->   148 ( +12)  jcc    4 ->    7 ( +3)  bytes    726 ->    783  <p::P<true, false>>::try_skip_type_script_type_parameters_then_open_paren_with_backtracking
+== w1s (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 2, scan 2, other 0; lint-only functions 4, 314 bytes; text +1239 bytes
+   TS    insns  1307 ->  1365 ( +58)  jcc  121 ->  122 ( +1)  bytes   6542 ->   6946  <p::P<true, false>>::parse_paren_expr
+   TS    insns   289 ->   296 (  +7)  jcc   35 ->   36 ( +1)  bytes   1311 ->   1347  <p::P<true, false>>::restore_parser_snapshot
+== w2 (against stub): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 2, 434 bytes; text +506 bytes
+   TS    insns   289 ->   296 (  +7)  jcc   35 ->   36 ( +1)  bytes   1311 ->   1347  <p::P<true, false>>::restore_parser_snapshot
+== p1a (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 1, scan 1, other 0; lint-only functions 0, 0 bytes; text +123 bytes
+   TS    insns  1307 ->  1309 (  +2)  jcc  121 ->  117 ( -4)  bytes   6542 ->   6683  <p::P<true, false>>::parse_paren_expr
+   cachegrind bun-types       Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir    +134600 (+0.00303%)  Bc      -360  Bi     +0
+   cachegrind tsx             Ir    +224000 (+0.01902%)  Bc     -2000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== p1b (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=SAME P<true,true>=SAME; functions changed: JS 0, TS 2, scan 2, other 0; lint-only functions 0, 0 bytes; text +85 bytes
+   TS    insns   608 ->   612 (  +4)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3139  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  3114 ->  3119 (  +5)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15599  <p::P<true, false>>::parse_prefix
+   cachegrind bun-types       Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind tsx             Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== p1c (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 2, TS 4, scan 4, other 0; lint-only functions 0, 0 bytes; text -332 bytes
+   JS    insns   319 ->   301 ( -18)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1324  <p::P<false, false>>::parse_arrow_body
+   TS    insns   319 ->   302 ( -17)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1326  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   609 (  +1)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3106  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1326 ( +19)  jcc  121 ->  121 ( +0)  bytes   6542 ->   6593  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3112 (  -2)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15582  <p::P<true, false>>::parse_prefix
+== p1cu (against base0): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 8, TS 4, scan 4, other 0; lint-only functions 0, 0 bytes; text -272 bytes
+   JS    insns   319 ->   302 ( -17)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1326  <p::P<false, false>>::parse_arrow_body
+   JS    insns   396 ->   402 (  +6)  jcc   33 ->   33 ( +0)  bytes   1830 ->   1846  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns   649 ->   650 (  +1)  jcc   64 ->   64 ( +0)  bytes   3064 ->   3067  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2956 (  -3)  jcc  353 ->  353 ( +0)  bytes  14869 ->  14878  <p::P<false, false>>::parse_prefix
+   TS    insns   319 ->   302 ( -17)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1326  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   609 (  +1)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3106  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1326 ( +19)  jcc  121 ->  121 ( +0)  bytes   6542 ->   6593  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3112 (  -2)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15582  <p::P<true, false>>::parse_prefix
+== p1d (against base0): parse_paren_expr P<false,false>=DIFF P<false,true>=DIFF P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 16, TS 10, scan 10, other 0; lint-only functions 0, 0 bytes; text -427 bytes
+   JS    insns   563 ->   563 (  +0)  jcc   19 ->   19 ( +0)  bytes   3831 ->   3833  <p::P<false, false>>::init
+   JS    insns   319 ->   301 ( -18)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1324  <p::P<false, false>>::parse_arrow_body
+   JS    insns   396 ->   394 (  -2)  jcc   33 ->   33 ( +0)  bytes   1830 ->   1823  <p::P<false, false>>::parse_async_prefix_expr
+   JS    insns   302 ->   301 (  -1)  jcc   23 ->   23 ( +0)  bytes   1421 ->   1418  <p::P<false, false>>::parse_fn_expr
+   JS    insns   305 ->   303 (  -2)  jcc   26 ->   26 ( +0)  bytes   1416 ->   1401  <p::P<false, false>>::parse_fn_stmt
+   JS    insns   649 ->   649 (  +0)  jcc   64 ->   64 ( +0)  bytes   3064 ->   3066  <p::P<false, false>>::parse_paren_expr
+   JS    insns  2959 ->  2957 (  -2)  jcc  353 ->  353 ( +0)  bytes  14869 ->  14854  <p::P<false, false>>::parse_prefix
+   JS    insns  1762 ->  1764 (  +2)  jcc  181 ->  181 ( +0)  bytes   8370 ->   8385  <p::P<false, false>>::parse_property
+   TS    insns   563 ->   563 (  +0)  jcc   19 ->   19 ( +0)  bytes   3825 ->   3827  <p::P<true, false>>::init
+   TS    insns   319 ->   303 ( -16)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1331  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   606 (  -2)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3109  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns   325 ->   324 (  -1)  jcc   25 ->   25 ( +0)  bytes   1535 ->   1532  <p::P<true, false>>::parse_fn_expr
+   TS    insns   350 ->   349 (  -1)  jcc   41 ->   41 ( +0)  bytes   1636 ->   1648  <p::P<true, false>>::parse_fn_stmt
+   TS    insns  1307 ->  1312 (  +5)  jcc  121 ->  121 ( +0)  bytes   6542 ->   6558  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3113 (  -1)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15588  <p::P<true, false>>::parse_prefix
+   TS    insns  2101 ->  2103 (  +2)  jcc  243 ->  243 ( +0)  bytes  10091 ->  10105  <p::P<true, false>>::parse_property
+   TS    insns   946 ->   946 (  +0)  jcc   66 ->   66 ( +0)  bytes   4526 ->   4528  <p::P<true, false>>::parse_type_script_namespace_stmt
+   TS    insns   661 ->   661 (  +0)  jcc   57 ->   57 ( +0)  bytes   3163 ->   3165  <p::P<true, false>>::parse_typescript_enum_stmt
+== p1c2 (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 4, scan 4, other 0; lint-only functions 0, 0 bytes; text +80 bytes
+   TS    insns   319 ->   317 (  -2)  jcc   31 ->   31 ( +0)  bytes   1433 ->   1423  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   609 (  +1)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3106  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1326 ( +19)  jcc  121 ->  121 ( +0)  bytes   6542 ->   6593  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3112 (  -2)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15582  <p::P<true, false>>::parse_prefix
+   cachegrind bun-types       Ir     +17240 (+0.00548%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir     +93980 (+0.00849%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir   +1547180 (+0.03484%)  Bc        +0  Bi     +0
+   cachegrind tsx             Ir    +450000 (+0.03822%)  Bc        +0  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0
+== p1abc (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 2, TS 4, scan 4, other 0; lint-only functions 0, 0 bytes; text -258 bytes
+   JS    insns   319 ->   301 ( -18)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1324  <p::P<false, false>>::parse_arrow_body
+   TS    insns   319 ->   302 ( -17)  jcc   31 ->   30 ( -1)  bytes   1433 ->   1326  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   613 (  +5)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3123  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1325 ( +18)  jcc  121 ->  116 ( -5)  bytes   6542 ->   6635  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3117 (  +3)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15598  <p::P<true, false>>::parse_prefix
+== p1abc2 (against base0): parse_paren_expr P<false,false>=SAME P<false,true>=SAME P<true,false>=DIFF P<true,true>=DIFF; functions changed: JS 0, TS 4, scan 4, other 0; lint-only functions 0, 0 bytes; text +154 bytes
+   TS    insns   319 ->   317 (  -2)  jcc   31 ->   31 ( +0)  bytes   1433 ->   1423  <p::P<true, false>>::parse_arrow_body
+   TS    insns   608 ->   613 (  +5)  jcc   42 ->   42 ( +0)  bytes   3122 ->   3123  <p::P<true, false>>::parse_async_prefix_expr
+   TS    insns  1307 ->  1325 ( +18)  jcc  121 ->  116 ( -5)  bytes   6542 ->   6635  <p::P<true, false>>::parse_paren_expr
+   TS    insns  3114 ->  3117 (  +3)  jcc  376 ->  376 ( +0)  bytes  15583 ->  15598  <p::P<true, false>>::parse_prefix
+   cachegrind bun-types       Ir     +17240 (+0.00548%)  Bc        +0  Bi     +0
+   cachegrind typescript-lib  Ir     +93980 (+0.00849%)  Bc        +0  Bi     +0
+   cachegrind src-js          Ir   +1706100 (+0.03841%)  Bc      -360  Bi     +0
+   cachegrind tsx             Ir    +682000 (+0.05792%)  Bc     -2000  Bi     +0
+   cachegrind js-control      Ir         +0 (+0.00000%)  Bc        +0  Bi     +0

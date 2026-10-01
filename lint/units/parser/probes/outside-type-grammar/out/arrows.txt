@@ -1,0 +1,496 @@
+A2  "var f = (this: any) => 1;"
+     bun: Invalid binding pattern @9
+     tsc check: TS2730@9+9 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar f = () => 1;\n"
+A2  "var f = (this) => 1;"
+     bun: Invalid binding pattern @9
+     tsc check: TS2730@9+4 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar f = () => 1;\n"
+A2  "var f = (this: any, a: number) => 1;"
+     bun: Invalid binding pattern @9
+     tsc check: TS2730@9+9 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = async (this: any) => 1;"
+     bun: Invalid binding pattern @15
+     tsc check: TS2730@15+9 An arrow function cannot have a 'this' parameter. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async () => 1;\n"
+A2  "var f = (a, this: any) => 1;"
+     bun: Invalid binding pattern @12
+     tsc check: TS2680@12+9 A 'this' parameter must be the first parameter. ; TS2730@12+9 An arrow function cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = function (this: any) {};"
+     bun: ok "var f = function() {};\n"
+     tsc emit: "\"use strict\";\nvar f = function () { };\n"
+AAg "var f = function (a, this: any) {};"
+     bun: ok "var f = function(a) {};\n"
+     tsc check: TS2680@21+9 A 'this' parameter must be the first parameter.
+     tsc emit: "\"use strict\";\nvar f = function (a) { };\n"
+AA  "function f(this) {}"
+     bun: ok "function f() {}\n"
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+AA  "function f(this: any, a) {}"
+     bun: ok "function f(a) {}\n"
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+AAg "function f(a, this: any) {}"
+     bun: ok "function f(a) {}\n"
+     tsc check: TS2680@14+9 A 'this' parameter must be the first parameter.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+RR  "function f(this = 1) {}"
+     bun: Expected ")" but found "=" @16 | Expected ";" but found "1" @18 | Unexpected ) @19
+     tsc parse: TS1005@16+1 ',' expected. ; TS1003@18+1 Identifier expected.
+RR  "function f(this?: any) {}"
+     bun: Expected ")" but found "?" @15 | Expected ";" but found ")" @21
+     tsc parse: TS1005@15+1 ',' expected.
+RR  "function f(...this) {}"
+     bun: Expected identifier but found "this" @14
+     tsc parse: TS1359@14+4 Identifier expected. 'this' is a reserved word that cannot be used here.
+AA  "class C { m(this: C) {} }"
+     bun: ok "class C {\n  m() {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+AAg "class C { constructor(this: C) {} }"
+     bun: ok "class C {\n  constructor() {}\n}\n"
+     tsc check: TS2681@22+7 A constructor cannot have a 'this' parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor() { }\n}\n"
+AAg "class C { set x(this: C, v) {} }"
+     bun: ok "class C {\n  set x(v) {}\n}\n"
+     tsc check: TS2784@16+7 'get' and 'set' accessors cannot declare 'this' parameters.
+     tsc emit: "\"use strict\";\nclass C {\n    set x(v) { }\n}\n"
+AAg "class C { get x(this: C) { return 1 } }"
+     bun: ok "class C {\n  get x() {\n    return 1;\n  }\n}\n"
+     tsc check: TS2784@16+7 'get' and 'set' accessors cannot declare 'this' parameters.
+     tsc emit: "\"use strict\";\nclass C {\n    get x() { return 1; }\n}\n"
+AA  "var o = { m(this: any) {} };"
+     bun: ok "var o = { m() {} };\n"
+     tsc emit: "\"use strict\";\nvar o = { m() { } };\n"
+A2  "var f = (public a) => 1;"
+     bun: Expected ")" but found "a" @16 | Expected ";" but found ")" @17 | Unexpected => @19
+     tsc check: TS2369@9+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (public a: number) => 1;"
+     bun: Expected ")" but found "a" @16 | Expected ";" but found ":" @17 | Expected ";" but found ")" @25 | Unexpected => @27
+     tsc check: TS2369@9+16 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (private a) => 1;"
+     bun: Expected ")" but found "a" @17 | Expected ";" but found ")" @18 | Unexpected => @20
+     tsc check: TS2369@9+9 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (protected a) => 1;"
+     bun: Expected ")" but found "a" @19 | Expected ";" but found ")" @20 | Unexpected => @22
+     tsc check: TS2369@9+11 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (readonly a) => 1;"
+     bun: Expected ")" but found "a" @18 | Expected ";" but found ")" @19 | Unexpected => @21
+     tsc check: TS2369@9+10 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (override a) => 1;"
+     bun: Expected ")" but found "a" @18 | Expected ";" but found ")" @19 | Unexpected => @21
+     tsc check: TS2369@9+10 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (public readonly a) => 1;"
+     bun: Expected ")" but found "readonly" @16 | Expected ";" but found "a" @25 | Unexpected ) @26
+     tsc check: TS2369@9+17 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AAg "var f = (public) => 1;"
+     bun: ok "var f = (public) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (public) => 1;\n"
+AA  "var f = (readonly) => 1;"
+     bun: ok "var f = (readonly) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (readonly) => 1;\n"
+AAg "var f = (public, b) => 1;"
+     bun: ok "var f = (public, b) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (public, b) => 1;\n"
+AAg "var f = (public = 1) => 1;"
+     bun: ok "var f = (public = 1) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (public = 1) => 1;\n"
+AAg "var f = (public: number) => 1;"
+     bun: ok "var f = (public) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (public) => 1;\n"
+AAg "var f = (public?) => 1;"
+     bun: ok "var f = (public) => 1;\n"
+     tsc check: TS1212@9+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nvar f = (public) => 1;\n"
+A2  "var f = async (public a) => 1;"
+     bun: Expected ")" but found "a" @22 | Expected ";" but found ")" @23 | Unexpected => @25
+     tsc check: TS2369@15+8 A parameter property is only allowed in a constructor implementation. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a) => 1;\n"
+A2  "function f(public a) {}"
+     bun: Expected ")" but found "a" @18 | Expected ";" but found ")" @19
+     tsc check: TS2369@11+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(public a: number) {}"
+     bun: Expected ")" but found "a" @18 | Expected ";" but found ")" @27
+     tsc check: TS2369@11+16 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(readonly a) {}"
+     bun: Expected ")" but found "a" @20 | Expected ";" but found ")" @21
+     tsc check: TS2369@11+10 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(override a) {}"
+     bun: Expected ")" but found "a" @20 | Expected ";" but found ")" @21
+     tsc check: TS2369@11+10 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+AAg "function f(public) {}"
+     bun: ok "function f(public) {}\n"
+     tsc check: TS1212@11+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nfunction f(public) { }\n"
+AAg "function f(public, b) {}"
+     bun: ok "function f(public, b) {}\n"
+     tsc check: TS1212@11+6 Identifier expected. 'public' is a reserved word in strict mode.
+     tsc emit: "\"use strict\";\nfunction f(public, b) { }\n"
+A2  "function f(public readonly) {}"
+     bun: Expected ")" but found "readonly" @18 | Expected ";" but found ")" @26
+     tsc check: TS2369@11+15 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nfunction f(readonly) { }\n"
+A2  "function f(declare a) {}"
+     bun: Expected ")" but found "a" @19 | Expected ";" but found ")" @20
+     tsc check: TS1090@11+7 'declare' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(static a) {}"
+     bun: Expected ")" but found "a" @18 | Expected ";" but found ")" @19
+     tsc check: TS1090@11+6 'static' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nfunction f(static a) { }\n"
+A2  "function f(abstract a) {}"
+     bun: Expected ")" but found "a" @20 | Expected ";" but found ")" @21
+     tsc check: TS1242@11+8 'abstract' modifier can only appear on a class, method, or property declaration.
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(async a) {}"
+     bun: Expected ")" but found "a" @17 | Expected ";" but found ")" @18
+     tsc check: TS1090@11+5 'async' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nfunction f(async a) { }\n"
+A2  "function f(accessor a) {}"
+     bun: Expected ")" but found "a" @20 | Expected ";" but found ")" @21
+     tsc check: TS1275@11+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "\"use strict\";\nfunction f(accessor a) { }\n"
+A2  "function f(export a) {}"
+     bun: Expected identifier but found "export" @11 | Expected ")" but found "a" @18 | Expected ";" but found ")" @19
+     tsc check: TS1090@11+6 'export' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nfunction f(export a) { }\n"
+A2  "function f(in a) {}"
+     bun: Expected identifier but found "in" @11 | Expected ")" but found "a" @14 | Expected ";" but found ")" @15
+     tsc check: TS1274@11+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+A2  "function f(out a) {}"
+     bun: Expected ")" but found "a" @15 | Expected ";" but found ")" @16
+     tsc check: TS1274@11+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+RR  "function f(const a) {}"
+     bun: Expected identifier but found "const" @11 | Expected ")" but found "a" @17 | Expected ";" but found ")" @18
+     tsc parse: TS1359@11+5 Identifier expected. 'const' is a reserved word that cannot be used here. ; TS1005@17+1 ',' expected.
+A2  "var o = { m(public a) {} };"
+     bun: Expected ")" but found "a" @19 | Expected "{" but found ")" @20 | Expected "}" but found ";" @26
+     tsc check: TS2369@12+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nvar o = { m(a) { } };\n"
+A2  "class C { m(public a) {} }"
+     bun: Expected ")" but found "a" @19 | Expected ";" but found ")" @20 | Expected identifier but found "{" @22
+     tsc check: TS2369@12+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nclass C {\n    m(a) { }\n}\n"
+A2  "class C { static m(public a) {} }"
+     bun: Expected ")" but found "a" @26 | Expected ";" but found ")" @27 | Expected identifier but found "{" @29
+     tsc check: TS2369@19+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nclass C {\n    static m(a) { }\n}\n"
+A2  "class C { set x(public a) {} }"
+     bun: Expected ")" but found "a" @23 | Expected ";" but found ")" @24 | Expected identifier but found "{" @26
+     tsc check: TS2369@16+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nclass C {\n    set x(a) { }\n}\n"
+AA  "class C { constructor(public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AA  "class C { constructor(public a?) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AA  "class C { constructor(public a = 1) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a = 1) {\n    this.a = a;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a = 1) {\n        this.a = a;\n    }\n}\n"
+AA  "class C { constructor(public a?: number) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(public a? = 1) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a = 1) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1015@29+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a = 1) {\n        this.a = a;\n    }\n}\n"
+AA  "class C { constructor(public readonly a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(readonly public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1029@31+6 'public' modifier must precede 'readonly' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(public private a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1028@29+7 Accessibility modifier already seen.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(public public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1028@29+6 Accessibility modifier already seen.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(override a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+10 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(public override a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+17 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(override public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+17 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class. ; TS1029@31+6 'public' modifier must precede 'override' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(override readonly a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+19 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(readonly override a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+19 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class. ; TS1029@31+8 'override' modifier must precede 'readonly' modifier.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+AAg "class C { constructor(public override readonly a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS4112@22+26 This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(a) {\n        this.a = a;\n    }\n}\n"
+A2  "class C { constructor(public {a}) {} }"
+     bun: Expected identifier but found "{" @29 | Expected ")" but found "}" @31 | Expected ";" but found ")" @32 | Expected identifier but found "{" @34
+     tsc check: TS1187@22+10 A parameter property may not be declared using a binding pattern.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor({ a }) {\n    }\n}\n"
+A2  "class C { constructor(public [a]) {} }"
+     bun: Expected identifier but found "[" @29 | Expected ")" but found "]" @31 | Expected ";" but found ")" @32 | Expected identifier but found "{" @34
+     tsc check: TS1187@22+10 A parameter property may not be declared using a binding pattern.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor([a]) {\n    }\n}\n"
+A2  "class C { constructor(public {a}: any) {} }"
+     bun: Expected identifier but found "{" @29 | Expected ")" but found "}" @31 | Expected ";" but found ")" @37 | Expected identifier but found "{" @39
+     tsc check: TS1187@22+15 A parameter property may not be declared using a binding pattern.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor({ a }) {\n    }\n}\n"
+A2  "class C { constructor(public ...a) {} }"
+     bun: Expected ")" but found "..." @29 | Expected ";" but found "a" @32 | Expected identifier but found ")" @33 | Unexpected } @38
+     tsc check: TS1317@22+11 A parameter property cannot be declared using a rest parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(...a) {\n        this.a = a;\n    }\n}\n"
+A2  "class C { constructor(public ...a: any[]) {} }"
+     bun: Expected ")" but found "..." @29 | Expected ";" but found "a" @32 | Expected identifier but found ":" @33 | Expected ";" but found "[" @38 | Expected identifier but found "]" @39 | Expected ";" but found "{" @42 | Unexpected } @45
+     tsc check: TS1317@22+18 A parameter property cannot be declared using a rest parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(...a) {\n        this.a = a;\n    }\n}\n"
+A2  "class C { constructor(readonly ...a) {} }"
+     bun: Expected ")" but found "..." @31 | Expected ";" but found "a" @34 | Expected identifier but found ")" @35 | Unexpected } @40
+     tsc check: TS1317@22+13 A parameter property cannot be declared using a rest parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(...a) {\n        this.a = a;\n    }\n}\n"
+B  "class C { constructor(...public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(...a) {\n    this.a = a;\n  }\n}\n"
+     tsc parse: TS1005@32+1 ',' expected.
+RR  "class C { constructor(public this) {} }"
+     bun: Expected ")" but found "this" @29 | Expected ";" but found ")" @33 | Expected identifier but found "{" @35
+     tsc parse: TS1433@22+6 Neither decorators nor modifiers may be applied to 'this' parameters.
+AAg "class C { constructor(public) {} }"
+     bun: ok "class C {\n  constructor(public) {}\n}\n"
+     tsc check: TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(public) { }\n}\n"
+AAg "class C { constructor(public, b) {} }"
+     bun: ok "class C {\n  constructor(public, b) {}\n}\n"
+     tsc check: TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(public, b) { }\n}\n"
+AA  "class C { constructor(readonly) {} }"
+     bun: ok "class C {\n  constructor(readonly) {}\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(readonly) { }\n}\n"
+AA  "class C { constructor(public readonly) {} }"
+     bun: ok "class C {\n  readonly;\n  constructor(readonly) {\n    this.readonly = readonly;\n  }\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n    readonly;\n    constructor(readonly) {\n        this.readonly = readonly;\n    }\n}\n"
+AAg "class C { constructor(public: number) {} }"
+     bun: ok "class C {\n  constructor(public) {}\n}\n"
+     tsc check: TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(public) { }\n}\n"
+AAg "class C { constructor(public = 1) {} }"
+     bun: ok "class C {\n  constructor(public = 1) {}\n}\n"
+     tsc check: TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(public = 1) { }\n}\n"
+AAg "class C { constructor(public?) {} }"
+     bun: ok "class C {\n  constructor(public) {}\n}\n"
+     tsc check: TS1213@22+6 Identifier expected. 'public' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(public) { }\n}\n"
+A2  "class C { constructor(declare a) {} }"
+     bun: Expected ")" but found "a" @30 | Expected ";" but found ")" @31 | Expected identifier but found "{" @33
+     tsc check: TS1090@22+7 'declare' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(a) { }\n}\n"
+A2  "class C { constructor(static a) {} }"
+     bun: Expected ")" but found "a" @29 | Expected ";" but found ")" @30 | Expected identifier but found "{" @32
+     tsc check: TS1090@22+6 'static' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(static a) { }\n}\n"
+A2  "class C { constructor(abstract a) {} }"
+     bun: Expected ")" but found "a" @31 | Expected ";" but found ")" @32 | Expected identifier but found "{" @34
+     tsc check: TS1242@22+8 'abstract' modifier can only appear on a class, method, or property declaration.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(a) { }\n}\n"
+A2  "class C { constructor(async a) {} }"
+     bun: Expected ")" but found "a" @28 | Expected ";" but found ")" @29 | Expected identifier but found "{" @31
+     tsc check: TS1090@22+5 'async' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(async a) { }\n}\n"
+A2  "class C { constructor(accessor a) {} }"
+     bun: Expected ")" but found "a" @31 | Expected ";" but found ")" @32 | Expected identifier but found "{" @34
+     tsc check: TS1275@22+8 'accessor' modifier can only appear on a property declaration.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(accessor a) { }\n}\n"
+A2  "class C { constructor(export a) {} }"
+     bun: Expected identifier but found "export" @22 | Expected ")" but found "a" @29 | Expected ";" but found ")" @30 | Expected identifier but found "{" @32
+     tsc check: TS1090@22+6 'export' modifier cannot appear on a parameter.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(export a) { }\n}\n"
+A2  "class C { constructor(in a) {} }"
+     bun: Expected identifier but found "in" @22 | Expected ")" but found "a" @25 | Expected ";" but found ")" @26 | Expected identifier but found "{" @28
+     tsc check: TS1274@22+2 'in' modifier can only appear on a type parameter of a class, interface or type alias
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(a) { }\n}\n"
+A2  "class C { constructor(out a) {} }"
+     bun: Expected ")" but found "a" @26 | Expected ";" but found ")" @27 | Expected identifier but found "{" @29
+     tsc check: TS1274@22+3 'out' modifier can only appear on a type parameter of a class, interface or type alias
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(a) { }\n}\n"
+RR  "class C { constructor(const a) {} }"
+     bun: Expected identifier but found "const" @22 | Expected ")" but found "a" @28 | Expected ";" but found ")" @29 | Expected identifier but found "{" @31
+     tsc parse: TS1359@22+5 Identifier expected. 'const' is a reserved word that cannot be used here. ; TS1005@28+1 ',' expected.
+AAg "class C { constructor(public a); constructor(a) {} }"
+     bun: ok "class C {\n  constructor(a) {}\n}\n"
+     tsc check: TS2369@22+8 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\nclass C {\n    constructor(a) { }\n}\n"
+AAg "class C { constructor(@dec public a) {} }"
+     bun: ok "class C {\n  a;\n  constructor(a) {\n    this.a = a;\n  }\n}\n"
+     tsc check: TS1206@22+1 Decorators are not valid here.
+     tsc emit: "\"use strict\";\nclass C {\n    a;\n    constructor(\n    @dec\n    a) {\n        this.a = a;\n    }\n}\n"
+RR  "class C { constructor(public @dec a) {} }"
+     bun: Expected ")" but found "@" @29 | Expected ";" but found "dec" @30 | Expected ";" but found ")" @35 | Expected identifier but found "{" @37
+     tsc parse: TS1005@29+1 ',' expected.
+AAg "declare class C { constructor(public a: number); }"
+     bun: ok ""
+     tsc check: TS2369@30+16 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\n"
+A2  "declare function f(public a: number): void;"
+     bun: Expected ")" but found "a" @26 | Expected ";" but found ")" @35 | Unexpected : @36
+     tsc check: TS2369@19+16 A parameter property is only allowed in a constructor implementation.
+     tsc emit: "\"use strict\";\n"
+AA  "var f = (a?) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+AA  "var f = (a?: number) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (a? = 1) => 1;"
+     bun: Unexpected = @12
+     tsc check: TS1015@9+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AAg "var f = (a?: number = 1) => 1;"
+     bun: ok "var f = (a = 1) => 1;\n"
+     tsc check: TS1015@9+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nvar f = (a = 1) => 1;\n"
+AA  "var f = (a?, b?) => 1;"
+     bun: ok "var f = (a, b) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a, b) => 1;\n"
+AAg "var f = ({a}?) => 1;"
+     bun: ok "var f = ({ a }) => 1;\n"
+     tsc check: TS2463@9+4 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nvar f = ({ a }) => 1;\n"
+AAg "var f = ([a]?) => 1;"
+     bun: ok "var f = ([a]) => 1;\n"
+     tsc check: TS2463@9+4 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nvar f = ([a]) => 1;\n"
+AAg "var f = ({a}?: any) => 1;"
+     bun: ok "var f = ({ a }) => 1;\n"
+     tsc check: TS2463@9+9 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nvar f = ({ a }) => 1;\n"
+AAg "var f = (...a?) => 1;"
+     bun: ok "var f = (...a) => 1;\n"
+     tsc check: TS1047@13+1 A rest parameter cannot be optional.
+     tsc emit: "\"use strict\";\nvar f = (...a) => 1;\n"
+AAg "var f = (...a?: any[]) => 1;"
+     bun: ok "var f = (...a) => 1;\n"
+     tsc check: TS1047@13+1 A rest parameter cannot be optional.
+     tsc emit: "\"use strict\";\nvar f = (...a) => 1;\n"
+A2  "var f = (...a: any[] = []) => 1;"
+     bun: Invalid binding pattern @8
+     tsc check: TS1048@12+1 A rest parameter cannot have an initializer.
+     tsc emit: "\"use strict\";\nvar f = (...a = []) => 1;\n"
+A2  "var f = (...a = []) => 1;"
+     bun: A rest argument cannot have a default initializer @14
+     tsc check: TS1048@12+1 A rest parameter cannot have an initializer.
+     tsc emit: "\"use strict\";\nvar f = (...a = []) => 1;\n"
+AA  "var f = async (a?) => 1;"
+     bun: ok "var f = async (a) => 1;\n"
+     tsc check: (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a) => 1;\n"
+A2  "var f = async (a? = 1) => 1;"
+     bun: Unexpected = @18
+     tsc check: TS1015@15+1 Parameter cannot have question mark and initializer. ; (noise 2318)
+     tsc emit: "\"use strict\";\nvar f = async (a = 1) => 1;\n"
+AAg "function f(a? = 1) {}"
+     bun: ok "function f(a = 1) {}\n"
+     tsc check: TS1015@11+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nfunction f(a = 1) { }\n"
+AAg "function f(a?: number = 1) {}"
+     bun: ok "function f(a = 1) {}\n"
+     tsc check: TS1015@11+1 Parameter cannot have question mark and initializer.
+     tsc emit: "\"use strict\";\nfunction f(a = 1) { }\n"
+AAg "function f({a}?) {}"
+     bun: ok "function f({ a }) {}\n"
+     tsc check: TS2463@11+4 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nfunction f({ a }) { }\n"
+AAg "function f({a}?: any) {}"
+     bun: ok "function f({ a }) {}\n"
+     tsc check: TS2463@11+9 A binding pattern parameter cannot be optional in an implementation signature.
+     tsc emit: "\"use strict\";\nfunction f({ a }) { }\n"
+AAg "function f(...a?) {}"
+     bun: ok "function f(...a) {}\n"
+     tsc check: TS1047@15+1 A rest parameter cannot be optional.
+     tsc emit: "\"use strict\";\nfunction f(...a) { }\n"
+AAg "function f(...a?: any[]) {}"
+     bun: ok "function f(...a) {}\n"
+     tsc check: TS1047@15+1 A rest parameter cannot be optional.
+     tsc emit: "\"use strict\";\nfunction f(...a) { }\n"
+A2  "function f(...a = []) {}"
+     bun: Expected ")" but found "=" @16 | Expected ";" but found "[" @18 | Unexpected ] @19
+     tsc check: TS1048@14+1 A rest parameter cannot have an initializer.
+     tsc emit: "\"use strict\";\nfunction f(...a = []) { }\n"
+AA  "function f(a?) {}"
+     bun: ok "function f(a) {}\n"
+     tsc emit: "\"use strict\";\nfunction f(a) { }\n"
+B  "var f = (a!) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@13+2 ';' expected.
+B  "var f = (a!: number) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc parse: TS1005@11+1 ')' expected. ; TS1005@19+1 ',' expected. ; TS1005@21+2 ';' expected.
+RR  "function f(a!: number) {}"
+     bun: Expected ")" but found "!" @12 | Expected ";" but found ")" @21
+     tsc parse: TS1005@12+1 ',' expected. ; TS1138@13+1 Parameter declaration expected.
+AA  "var f = (a, ) => 1;"
+     bun: ok "var f = (a) => 1;\n"
+     tsc emit: "\"use strict\";\nvar f = (a) => 1;\n"
+A2  "var f = (...a, ) => 1;"
+     bun: Unexpected "," after rest pattern @13
+     tsc check: TS1013@13+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\nvar f = (...a) => 1;\n"
+A2  "function f(...a, ) {}"
+     bun: Expected ")" but found "," @15
+     tsc check: TS1013@15+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\nfunction f(...a) { }\n"
+AA  "declare function f(...a: any[], ): void;"
+     bun: ok ""
+     tsc emit: "\"use strict\";\n"
+A1  "declare class C { m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @31
+     tsc emit: "\"use strict\";\n"
+A1  "declare class C { constructor(...a: any[], ); }"
+     bun: Expected ")" but found "," @41
+     tsc emit: "\"use strict\";\n"
+A2  "class C { m(...a: any[], ): void; m() {} }"
+     bun: Expected ")" but found "," @23
+     tsc check: TS1013@23+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\nclass C {\n    m() { }\n}\n"
+AAg "interface I { m(...a: any[], ): void }"
+     bun: ok ""
+     tsc check: TS1013@27+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\n"
+AAg "type F = (...a: any[], ) => void;"
+     bun: ok ""
+     tsc check: TS1013@21+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\n"
+A2  "function f(...a: any[], ): void; function f() {}"
+     bun: Expected ")" but found "," @22
+     tsc check: TS1013@22+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\nfunction f() { }\n"
+A2  "abstract class C { abstract m(...a: any[], ): void }"
+     bun: Expected ")" but found "," @41
+     tsc check: TS1013@41+1 A rest parameter or binding pattern may not have a trailing comma.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"

@@ -1,0 +1,30 @@
+// Scratch wrapper: the real internal/core files plus the Go slice and map values that the tree expects under crate::core.
+#[path = "/workspace/wt/typecheck/src/typecheck/core/arena.rs"] pub mod arena;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/binarysearch.rs"] pub mod binarysearch;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/compileroptions.rs"] pub mod compileroptions;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/core.rs"] pub mod core;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/languagevariant.rs"] pub mod languagevariant;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/languagevariant_stringer_generated.rs"] pub mod languagevariant_stringer_generated;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/linkstore.rs"] pub mod linkstore;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/modulekind_stringer_generated.rs"] pub mod modulekind_stringer_generated;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/pattern.rs"] pub mod pattern;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/scriptkind.rs"] pub mod scriptkind;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/scriptkind_stringer_generated.rs"] pub mod scriptkind_stringer_generated;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/scripttarget_stringer_generated.rs"] pub mod scripttarget_stringer_generated;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/stack.rs"] pub mod stack;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/text.rs"] pub mod text;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/tristate.rs"] pub mod tristate;
+#[path = "/workspace/wt/typecheck/src/typecheck/core/tristate_stringer_generated.rs"] pub mod tristate_stringer_generated;
+
+pub use self::core::*;
+pub use arena::*;
+pub use binarysearch::*;
+pub use compileroptions::*;
+pub use languagevariant::*;
+pub use linkstore::*;
+pub use pattern::*;
+pub use scriptkind::*;
+pub use stack::*;
+pub use text::*;
+pub use tristate::*;
+pub use crate::tscore::golang::{List, Map, SliceBuf, Text};

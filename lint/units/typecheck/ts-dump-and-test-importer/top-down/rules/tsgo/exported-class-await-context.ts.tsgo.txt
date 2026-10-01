@@ -1,0 +1,130 @@
+file /exported-class-await-context.ts scriptKind=3 variant=0 dts=false textLen=357
+externalModuleIndicator KindClassDeclaration[0,64)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=91 identifiers=26 text=29 reparsedClones=0
+root KindSourceFile [0,357) f=0x0
+  .Statements: list [0,356) n=4
+    - KindClassDeclaration [0,64) f=0x0
+      .Members: list [18,62) n=3
+        - KindMethodDeclaration [18,44) f=0x2000
+          .Body: KindBlock [41,44) f=0x0
+            .Statements: list [43,43) n=0
+          .Parameters: list [26,40) n=1
+            - KindParameter [26,40) f=0x0
+              .Type: KindNumberKeyword [33,40) f=0x0
+              .modifiers.flags=0x8000
+              .modifiers: list [26,30) n=1
+                - KindDecorator [26,30) f=0x2000
+                  .Expression: KindIdentifier [27,30) f=0x3000 Text="dec"
+              .name: KindIdentifier [30,32) f=0x0 Text="p"
+          .modifiers.flags=0x8000
+          .modifiers: list [18,23) n=1
+            - KindDecorator [18,23) f=0x2000
+              .Expression: KindIdentifier [20,23) f=0x3000 Text="dec"
+          .name: KindIdentifier [23,25) f=0x2000 Text="m"
+        - KindPropertyDeclaration [44,51) f=0x2000
+          .Initializer: KindNumericLiteral [48,50) f=0x0 Text="1" TokenFlags=0x0
+          .name: KindIdentifier [44,46) f=0x2000 Text="f"
+        - KindClassStaticBlockDeclaration [51,62) f=0x2000
+          .Body: KindBlock [58,62) f=0x2000
+            .Statements: list [60,60) n=0
+      .modifiers.flags=0x20
+      .modifiers: list [0,6) n=1
+        - KindExportKeyword [0,6) f=0x0
+      .name: KindIdentifier [12,16) f=0x0 Text="Top"
+    - KindModuleDeclaration [64,307) f=0x0 Keyword=KindNamespaceKeyword
+      .Body: KindModuleBlock [76,307) f=0x0
+        .Statements: list [78,305) n=1
+          - KindClassDeclaration [78,305) f=0x0
+            .HeritageClauses: list [102,118) n=1
+              - KindHeritageClause [102,118) f=0x0 Token=KindExtendsKeyword
+                .Types: list [110,118) n=1
+                  - KindExpressionWithTypeArguments [110,118) f=0x0
+                    .Expression: KindIdentifier [110,115) f=0x0 Text="Base"
+                    .TypeArguments: list [116,117) n=1
+                      - KindTypeReference [116,117) f=0x0
+                        .TypeName: KindIdentifier [116,117) f=0x0 Text="T"
+            .Members: list [120,301) n=5
+              - KindMethodDeclaration [120,190) f=0x0
+                .Body: KindBlock [161,190) f=0x0
+                  .Statements: list [163,188) n=1
+                    - KindReturnStatement [163,188) f=0x0
+                      .Expression: KindArrowFunction [170,187) f=0x0
+                        .Body: KindIdentifier [185,187) f=0x0 Text="x"
+                        .EqualsGreaterThanToken: KindEqualsGreaterThanToken [182,185) f=0x0
+                        .Parameters: list [172,181) n=1
+                          - KindParameter [172,181) f=0x0
+                            .Type: KindNumberKeyword [174,181) f=0x0
+                            .name: KindIdentifier [172,173) f=0x0 Text="x"
+                .Parameters: list [132,160) n=2
+                  - KindParameter [132,153) f=0x0
+                    .Type: KindNumberKeyword [146,153) f=0x0
+                    .modifiers.flags=0x8001
+                    .modifiers: list [132,143) n=2
+                      - KindDecorator [132,136) f=0x0
+                        .Expression: KindIdentifier [133,136) f=0x1000 Text="dec"
+                      - KindPublicKeyword [136,143) f=0x0
+                    .name: KindIdentifier [143,145) f=0x0 Text="p"
+                  - KindParameter [154,160) f=0x0
+                    .Initializer: KindNumericLiteral [158,160) f=0x0 Text="2" TokenFlags=0x0
+                    .name: KindIdentifier [154,156) f=0x0 Text="q"
+                .modifiers.flags=0x8000
+                .modifiers: list [120,129) n=1
+                  - KindDecorator [120,129) f=0x0
+                    .Expression: KindIdentifier [126,129) f=0x1000 Text="dec"
+                .name: KindIdentifier [129,131) f=0x0 Text="m"
+              - KindPropertyDeclaration [190,201) f=0x0
+                .Initializer: KindNumericLiteral [198,200) f=0x0 Text="1" TokenFlags=0x0
+                .name: KindIdentifier [190,196) f=0x0 Text="f"
+              - KindIndexSignature [201,229) f=0x0
+                .Parameters: list [207,218) n=1
+                  - KindParameter [207,218) f=0x0
+                    .Type: KindStringKeyword [211,218) f=0x0
+                    .name: KindIdentifier [207,210) f=0x0 Text="key"
+                .Type: KindUnknownKeyword [220,228) f=0x0
+              - KindClassStaticBlockDeclaration [229,244) f=0x0
+                .Body: KindBlock [240,244) f=0x2000
+                  .Statements: list [242,242) n=0
+              - KindConstructor [244,301) f=0x0
+                .Body: KindBlock [288,301) f=0x0
+                  .Statements: list [290,299) n=1
+                    - KindExpressionStatement [290,299) f=0x0
+                      .Expression: KindCallExpression [290,298) f=0x0
+                        .Arguments: list [297,297) n=0
+                        .Expression: KindSuperKeyword [290,296) f=0x0
+                .Parameters: list [261,287) n=1
+                  - KindParameter [261,287) f=0x0
+                    .Type: KindStringKeyword [280,287) f=0x0
+                    .modifiers.flags=0xa
+                    .modifiers: list [261,277) n=2
+                      - KindPrivateKeyword [261,268) f=0x0
+                      - KindReadonlyKeyword [268,277) f=0x0
+                    .name: KindIdentifier [277,279) f=0x0 Text="a"
+            .TypeParameters: list [100,101) n=1
+              - KindTypeParameter [100,101) f=0x0
+                .name: KindIdentifier [100,101) f=0x0 Text="T"
+            .modifiers.flags=0x20
+            .modifiers: list [78,87) n=1
+              - KindExportKeyword [78,87) f=0x0
+            .name: KindIdentifier [93,99) f=0x0 Text="Inner"
+      .name: KindIdentifier [74,76) f=0x0 Text="N"
+    - KindVariableStatement [307,331) f=0x800000
+      .DeclarationList: KindVariableDeclarationList [315,330) f=0x800002
+        .Declarations: list [321,330) n=1
+          - KindVariableDeclaration [321,330) f=0x800000
+            .Type: KindAnyKeyword [326,330) f=0x800000
+            .name: KindIdentifier [321,325) f=0x800000 Text="dec"
+      .modifiers.flags=0x80
+      .modifiers: list [307,315) n=1
+        - KindDeclareKeyword [307,315) f=0x800000
+    - KindClassDeclaration [331,356) f=0x800000
+      .Members: list [355,355) n=0
+      .TypeParameters: list [351,352) n=1
+        - KindTypeParameter [351,352) f=0x800000
+          .name: KindIdentifier [351,352) f=0x800000 Text="T"
+      .modifiers.flags=0x80
+      .modifiers: list [331,339) n=1
+        - KindDeclareKeyword [331,339) f=0x800000
+      .name: KindIdentifier [345,350) f=0x800000 Text="Base"
+  .EndOfFileToken: KindEndOfFile [356,357) f=0x0

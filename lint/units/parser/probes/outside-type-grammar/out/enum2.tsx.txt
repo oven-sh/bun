@@ -1,0 +1,80 @@
+AA  "enum E { \"x\" = 1, B = x }"
+     bun: ok "var E;\n((E) => {\n  E[E[\"x\"] = 1] = \"x\";\n  E[E[\"B\"] = 1] = \"B\";\n})(E ||= {});\n"
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = 1, B = x }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = 1, B = E.x }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = 1, B = E[\"x\"] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [`x`] = 1, B = x }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[`x`] = 1] = `x`;\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"a-b\"] = 1, B = E[\"a-b\"] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"a-b\"] = 1] = \"a-b\";\n    E[E[\"B\"] = 1] = \"B\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"], [\"y\"] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 0] = \"x\";\n    E[E[\"y\"] = 1] = \"y\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = \"s\" }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[\"x\"] = \"s\";\n})(E || (E = {}));\n"
+A1  "enum E { ['x'] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E['x'] = 0] = 'x';\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"], }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 0] = \"x\";\n})(E || (E = {}));\n"
+A1  "enum E { [ \"x\" ] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\" ] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n"
+A2  "enum E { [(\"x\")] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+7 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[(\"x\")] = 1] = (\"x\");\n})(E || (E = {}));\n"
+A2  "enum E { [\"x\" as any] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc check: TS1164@9+12 Computed property names are not allowed in enums.
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\" as any] = 1] = \"x\" as any;\n})(E || (E = {}));\n"
+A1  "enum E { [\"\\u0078\"] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"\\u0078\"] = 1] = \"\\u0078\";\n})(E || (E = {}));\n"
+RR  "enum E { [\"x\"]: 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc parse: TS1357@14+1 An enum member name must be followed by a ',', '=', or '}'.
+RR  "enum E { [\"x\"]() {} }"
+     bun: Expected identifier but found "[" @9
+     tsc parse: TS1357@14+1 An enum member name must be followed by a ',', '=', or '}'. ; TS1005@17+1 '=>' expected. ; TS1128@20+1 Declaration or statement expected.
+A1  "const enum E { [\"x\"] = 1 } var v = E.x;"
+     bun: Expected identifier but found "[" @15
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\nvar v = E.x;\n"
+A1  "const enum E { [\"x\"] = 1 } var v = E[\"x\"];"
+     bun: Expected identifier but found "[" @15
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\nvar v = E[\"x\"];\n"
+A1  "declare enum E { [\"x\"] = 1 }"
+     bun: Expected identifier but found "[" @17
+     tsc emit: "\"use strict\";\n"
+A1  "export enum E { [\"x\"] = 1 }"
+     bun: Expected identifier but found "[" @16
+     tsc emit: "export var E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n"
+A1  "namespace N { export enum E { [\"x\"] = 1 } }"
+     bun: Expected identifier but found "[" @30
+     tsc emit: "\"use strict\";\nvar N;\n(function (N) {\n    let E;\n    (function (E) {\n        E[E[\"x\"] = 1] = \"x\";\n    })(E = N.E || (N.E = {}));\n})(N || (N = {}));\n"
+A1  "enum E { [`x`] = 1, [`y`] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[`x`] = 1] = `x`;\n    E[E[`y`] = 2] = `y`;\n})(E || (E = {}));\n"
+A1  "enum E { [\"x\"] = 1 } enum E { [\"y\"] = 2 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"x\"] = 1] = \"x\";\n})(E || (E = {}));\n(function (E) {\n    E[E[\"y\"] = 2] = \"y\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"__proto__\"] = 1 }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"__proto__\"] = 1] = \"__proto__\";\n})(E || (E = {}));\n"
+A1  "enum E { [\"constructor\"] }"
+     bun: Expected identifier but found "[" @9
+     tsc emit: "\"use strict\";\nvar E;\n(function (E) {\n    E[E[\"constructor\"] = 0] = \"constructor\";\n})(E || (E = {}));\n"

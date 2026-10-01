@@ -1,0 +1,53 @@
+class A1c  dialect dts  config plain: 35 inputs in 9 clusters
+
+[08-declare-namespace-enum / declare]  bun Expected "…" but found "…"   (1 inputs, 1 distinct)
+    "abstract declare class C {}"  [-]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" as an identifier here   (1 inputs, 1 distinct)
+    "await"  [declareClass]
+
+[08-declare-namespace-enum / declName]  bun Cannot use "…" or "…" here.   (3 inputs, 1 distinct)
+    tsc also: TS2304 x3
+    "await"  [declareVar,declareConst,declareLet]
+
+[08-declare-namespace-enum / declName]  bun Unexpected …   (2 inputs, 2 distinct)
+    "as"  [declareNamespace]
+    "satisfies"  [declareNamespace]
+
+[08-declare-namespace-enum / namespace]  bun Expected "…" but found "…"m"…"   (1 inputs, 1 distinct)
+    tsc also: TS2668 x1
+    "export module \"m\" {}"  [-]
+
+[10-declaration-files / bodyless]  bun The constant "…" must be initialized   (17 inputs, 17 distinct)
+    tsc also: TS2304 x11, TS2307 x2
+    "export function f(): void\nexport const x: T\nexport class C {}"  [-]
+    "export const x: T, y: U, z: V;"  [-]
+    "export const x: T\nexport const y: U"  [-]
+    "export const x: { a: A; b(): B; [k: string]: C };"  [-]
+    "export const x: () => void;"  [-]
+    "export const x: new () => A;"  [-]
+    "export const x: typeof y;"  [-]
+    "export const x: import(\"y\").Z;"  [-]
+    "export const x: typeof import(\"y\");"  [-]
+    "export const x: A<B<C>>;"  [-]
+    "export const x: A extends B ? C : D;"  [-]
+    "export const x: keyof typeof y;"  [-]
+    … 5 more
+
+[10-declaration-files / directive]  bun The constant "…" must be initialized   (2 inputs, 2 distinct)
+    "// @ts-ignore\nexport const x: T;"  [-]
+    "// @ts-expect-error\nexport const x: T;"  [-]
+
+[10-declaration-files / topLevel]  bun The constant "…" must be initialized   (6 inputs, 6 distinct)
+    tsc also: TS2304 x2, TS7005 x1
+    "export const x: number;"  [-]
+    "export const x: 1;"  [-]
+    "export const x, y: number;"  [-]
+    "export const x: unique symbol;"  [-]
+    "export namespace N { const x: T; function f(): void; class C {} }"  [-]
+    "export namespace N { export const x: T; }"  [-]
+
+[10-declaration-files / topLevel]  bun This constant must be initialized   (2 inputs, 2 distinct)
+    tsc also: TS2304 x2
+    "export const { a }: T;"  [-]
+    "export const [a]: T;"  [-]

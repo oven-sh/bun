@@ -1,0 +1,432 @@
+A2  "class C extends A, B {}"
+     bun: Expected "{" but found "," @17 | Expected ";" but found "{" @21
+     tsc check: TS1174@19+1 Classes can only extend a single class. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A, B {\n}\n"
+A2  "class C extends A extends B {}"
+     bun: Expected "{" but found "extends" @18 | Expected ";" but found "{" @28
+     tsc check: TS1172@18+7 'extends' clause already seen. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A extends B {\n}\n"
+A2  "class C implements I extends A {}"
+     bun: Expected "?" but found "{" @31 | Unexpected } @32 | Unexpected end of file @33
+     tsc check: TS1173@21+7 'extends' clause must precede 'implements' clause. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+A2  "class C implements I implements J {}"
+     bun: Expected "{" but found "implements" @21 | Expected ";" but found "{" @34
+     tsc check: TS1175@21+10 'implements' clause already seen. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C extends A implements I, J {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+A2  "class C extends {}"
+     bun: Expected "{" but found end of file @18
+     tsc check: TS1097@15+0 'extends' list cannot be empty.
+     tsc emit: "\"use strict\";\nclass C extends  {\n}\n"
+AAg "class C extends { } { }"
+     bun: ok "class C extends {} {\n}\n"
+     tsc check: TS2507@16+3 Type '{}' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends {} {\n}\n"
+AAg "class C extends {} implements I {}"
+     bun: ok "class C extends {} {\n}\n"
+     tsc check: TS2507@16+2 Type '{}' is not a constructor function type. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends {} {\n}\n"
+A2  "class C implements {}"
+     bun: Expected "{" but found end of file @21
+     tsc check: TS1097@18+0 'implements' list cannot be empty.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C extends A<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+A2  "class C extends A<T>, B<U> {}"
+     bun: Expected "{" but found "," @20 | Expected "(" but found "{" @27 | Expected identifier but found "}" @28 | Expected ")" but found end of file @29
+     tsc check: TS1174@22+1 Classes can only extend a single class. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A, B {\n}\n"
+AA  "class C extends A.B.C<T> {}"
+     bun: ok "class C extends A.B.C {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A.B.C {\n}\n"
+A2  "class C extends A<> {}"
+     bun: Unexpected > @18
+     tsc check: TS1099@17+2 Type argument list cannot be empty. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends f()<T> {}"
+     bun: ok "class C extends f() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends f() {\n}\n"
+AA  "class C extends f() {}"
+     bun: ok "class C extends f() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends f() {\n}\n"
+AA  "class C extends f<T>() {}"
+     bun: ok "class C extends f() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends f() {\n}\n"
+AA  "class C extends (A) {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends (A) {\n}\n"
+AA  "class C extends (A)<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends (A) {\n}\n"
+AA  "class C extends A! {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends A!<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+RR  "class C extends A as any {}"
+     bun: Expected "{" but found "as" @18 | Expected ";" but found "{" @25
+     tsc parse: TS1005@18+2 ',' expected. ; TS1005@21+3 ',' expected.
+AA  "class C extends (A as any) {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends A<T>() {}"
+     bun: ok "class C extends A() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A() {\n}\n"
+B  "class C extends A<T>.B {}"
+     bun: ok "class C extends A.B {\n}\n"
+     tsc parse: TS1477@17+3 An instantiation expression cannot be followed by a property access.
+AA  "class C extends A?.B {}"
+     bun: ok "class C extends A?.B {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A?.B {\n}\n"
+AA  "class C extends A[0] {}"
+     bun: ok "class C extends A[0] {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A[0] {\n}\n"
+AA  "class C extends A`x` {}"
+     bun: ok "class C extends A`x` {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A `x` {\n}\n"
+AA  "class C extends A<T>`x` {}"
+     bun: ok "class C extends A`x` {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A `x` {\n}\n"
+AA  "class C extends new A {}"
+     bun: ok "class C extends new A() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends new A {\n}\n"
+AA  "class C extends new A() {}"
+     bun: ok "class C extends new A() {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends new A() {\n}\n"
+AA  "class C extends class {} {}"
+     bun: ok "class C extends class {\n} {\n}\n"
+     tsc emit: "\"use strict\";\nclass C extends class {\n} {\n}\n"
+AAg "class C extends function () {} {}"
+     bun: ok "class C extends function() {} {\n}\n"
+     tsc check: TS2507@16+8 Type '() => void' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends function () { } {\n}\n"
+AA  "class C extends null {}"
+     bun: ok "class C extends null {\n}\n"
+     tsc emit: "\"use strict\";\nclass C extends null {\n}\n"
+AAg "class C extends undefined {}"
+     bun: ok "class C extends undefined {\n}\n"
+     tsc check: TS2507@16+9 Type 'undefined' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends undefined {\n}\n"
+B  "class C extends void 0 {}"
+     bun: ok "class C extends undefined {\n}\n"
+     tsc parse: TS1109@16+4 Expression expected. ; TS1005@23+1 ';' expected.
+B  "class C extends typeof x {}"
+     bun: ok "class C extends (typeof x) {\n}\n"
+     tsc parse: TS1109@16+6 Expression expected. ; TS1005@25+1 ';' expected.
+B  "class C extends await x {}"
+     bun: ok "class C extends (await x) {\n}\n"
+     tsc parse: TS1005@22+1 ',' expected.
+RR  "class C extends async () => {} {}"
+     bun: Unexpected => @25
+     tsc parse: TS1005@25+2 ',' expected.
+RR  "class C extends a ? b : c {}"
+     bun: Expected "{" but found "?" @18 | Expected ";" but found "{" @26
+     tsc parse: TS1005@18+1 ',' expected. ; TS1005@22+1 ',' expected.
+RR  "class C extends a = b {}"
+     bun: Expected "{" but found "=" @18 | Expected ";" but found "{" @22
+     tsc parse: TS1005@18+1 ',' expected.
+RR  "class C extends a, b = c {}"
+     bun: Expected "{" but found "," @17 | Expected ";" but found "{" @25
+     tsc parse: TS1005@21+1 ',' expected.
+AAg "class C extends 1 {}"
+     bun: ok "class C extends 1 {\n}\n"
+     tsc check: TS2507@16+1 Type '1' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends 1 {\n}\n"
+AAg "class C extends \"s\" {}"
+     bun: ok "class C extends \"s\" {\n}\n"
+     tsc check: TS2507@16+3 Type '"s"' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends \"s\" {\n}\n"
+AAg "class C extends [] {}"
+     bun: ok "class C extends [] {\n}\n"
+     tsc check: TS2507@16+2 Type '{}' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends [] {\n}\n"
+AA  "class C extends [A][0] {}"
+     bun: ok "class C extends [A][0] {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends [A][0] {\n}\n"
+AAg "class C extends this {}"
+     bun: ok "class C extends exports {\n}\n"
+     tsc check: TS2507@16+4 Type 'typeof globalThis' is not a constructor function type.
+     tsc emit: "\"use strict\";\nclass C extends this {\n}\n"
+A2  "class C extends super.x {}"
+     bun: Unexpected "super" @16
+     tsc check: TS2660@16+5 'super' can only be referenced in members of derived classes or object literal expressions.
+     tsc emit: "\"use strict\";\nclass C extends super.x {\n}\n"
+AAg "class C extends import(\"x\") {}"
+     bun: ok "class C extends import(\"x\") {\n}\n"
+     tsc check: TS2711@16+11 A dynamic import call returns a 'Promise'. Make sure you have a declaration for 'Promise' or include 'ES2015' in your '--lib' option. ; (noise 2318,2307)
+     tsc emit: "\"use strict\";\nclass C extends import(\"x\") {\n}\n"
+AAg "class C extends import.meta {}"
+     bun: ok "class C extends import.meta {\n}\n"
+     tsc check: TS2507@16+11 Type '{}' is not a constructor function type. ; (noise 2318)
+     tsc emit: "class C extends import.meta {\n}\nexport {};\n"
+AA  "class C extends A\n<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends A\nimplements I {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C extends\nA {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+AA  "class C implements I.J<T> {}"
+     bun: ok "class C {\n}\n"
+     tsc check: (noise 2503,2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+B  "class C implements I<T>.J {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1477@20+3 An instantiation expression cannot be followed by a property access.
+B  "class C implements typeof x {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1109@19+6 Expression expected. ; TS1005@28+1 ';' expected.
+AAg "class C implements (I) {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+3 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+B  "class C implements I[] {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1011@21+0 An element access expression should take an argument.
+B  "class C implements I | J {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1005@21+1 ',' expected. ; TS1005@25+1 ';' expected.
+B  "class C implements I & J {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1005@21+1 ',' expected. ; TS1005@25+1 ';' expected.
+AAg "class C implements { a: 1 } {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+8 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements string {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2864@19+6 A class cannot implement a primitive type like 'string'. It can only implement other named object types.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements \"s\" {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+3 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements 1 {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+1 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C implements f() {}"
+     bun: Expected "{" but found "(" @20 | Expected identifier but found ")" @21
+     tsc check: TS2500@19+3 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+B  "class C implements new () => I {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1109@24+1 Expression expected. ; TS1005@26+2 ',' expected.
+B  "class C implements () => I {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1109@20+1 Expression expected. ; TS1005@22+2 ',' expected.
+B  "class C implements I extends J ? K : L {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1005@31+1 ',' expected. ; TS1005@35+1 ',' expected.
+B  "class C implements keyof I {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1005@25+1 ',' expected.
+AAg "class C implements import(\"x\") {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+11 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements import(\"x\").I {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+13 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements this {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+4 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+B  "class C implements void {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1109@19+4 Expression expected.
+AAg "class C implements null {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+4 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C implements I, {}"
+     bun: Expected "{" but found end of file @24
+     tsc check: TS1009@20+1 Trailing comma not allowed. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+RR  "class C implements , I {}"
+     bun: Unexpected , @19
+     tsc parse: TS1109@19+1 Expression expected.
+A2  "class C implements I, {}"
+     bun: Expected "{" but found end of file @24
+     tsc check: TS1009@20+1 Trailing comma not allowed. ; (noise 2304)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements I! {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+2 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+RR  "class C implements I? {}"
+     bun: Expected "{" but found "?" @20 | Expected identifier but found "{" @22 | Expected "}" but found end of file @24
+     tsc parse: TS1005@20+1 ',' expected.
+A2  "class C implements A.B?.C {}"
+     bun: Expected "{" but found "?." @22 | Expected ";" but found "{" @26
+     tsc check: TS2500@19+6 A class can only implement an identifier/qualified-name with optional type arguments. ; (noise 2503)
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AAg "class C implements A[0] {}"
+     bun: ok "class C {\n}\n"
+     tsc check: TS2500@19+4 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+A2  "class C implements A`x` {}"
+     bun: Expected "{" but found "`x`" @20 | Expected identifier but found "{" @24 | Expected "}" but found end of file @26
+     tsc check: TS2500@19+4 A class can only implement an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+B  "class C implements a.b<T>.c {}"
+     bun: ok "class C {\n}\n"
+     tsc parse: TS1477@22+3 An instantiation expression cannot be followed by a property access.
+AA  "interface I extends A, B {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends A extends B {}"
+     bun: Expected "?" but found "{" @32 | Unexpected } @33 | Unexpected end of file @34
+     tsc check: TS1172@22+7 'extends' clause already seen. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AAg "interface I implements A {}"
+     bun: ok ""
+     tsc check: TS1176@12+10 Interface declaration cannot have 'implements' clause.
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends {}"
+     bun: Expected "{" but found end of file @22
+     tsc check: TS1097@19+0 'extends' list cannot be empty.
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A<T> {}"
+     bun: ok ""
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "interface I extends A.B.C<T> {}"
+     bun: ok ""
+     tsc check: (noise 2503,2304)
+     tsc emit: "\"use strict\";\n"
+B  "interface I extends typeof x {}"
+     bun: ok ""
+     tsc parse: TS1109@20+6 Expression expected. ; TS1005@29+1 ';' expected.
+AAg "interface I extends (A) {}"
+     bun: ok ""
+     tsc check: TS2499@20+3 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+B  "interface I extends A[] {}"
+     bun: ok ""
+     tsc parse: TS1011@22+0 An element access expression should take an argument.
+B  "interface I extends A | B {}"
+     bun: ok ""
+     tsc parse: TS1005@22+1 ',' expected. ; TS1005@26+1 ';' expected.
+AAg "interface I extends { a: 1 } {}"
+     bun: ok ""
+     tsc check: TS2499@20+8 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+AAg "interface I extends string {}"
+     bun: ok ""
+     tsc check: TS2840@20+6 An interface cannot extend a primitive type like 'string'. It can only extend other named object types.
+     tsc emit: "\"use strict\";\n"
+AAg "interface I extends \"s\" {}"
+     bun: ok ""
+     tsc check: TS2499@20+3 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends f() {}"
+     bun: Expected "{" but found "(" @21 | Unexpected ) @22
+     tsc check: TS2499@20+3 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+B  "interface I extends () => void {}"
+     bun: ok ""
+     tsc parse: TS1109@21+1 Expression expected. ; TS1005@23+2 ',' expected. ; TS1109@26+4 Expression expected.
+B  "interface I extends keyof A {}"
+     bun: ok ""
+     tsc parse: TS1005@26+1 ',' expected.
+AAg "interface I extends import(\"x\").A {}"
+     bun: ok ""
+     tsc check: TS2499@20+13 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+AAg "interface I extends this {}"
+     bun: ok ""
+     tsc check: TS2499@20+4 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+RR  "interface I extends A? {}"
+     bun: Expected "{" but found "?" @21 | Unexpected { @23
+     tsc parse: TS1005@21+1 ',' expected.
+AAg "interface I extends A! {}"
+     bun: ok ""
+     tsc check: TS2499@20+2 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+AAg "interface I extends A[0] {}"
+     bun: ok ""
+     tsc check: TS2499@20+4 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends A?.B {}"
+     bun: Expected "{" but found "?." @21 | Unexpected { @25
+     tsc check: TS2499@20+4 An interface can only extend an identifier/qualified-name with optional type arguments. ; (noise 2503)
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends new A {}"
+     bun: Expected "(" but found "A" @24 | Expected ")" but found end of file @28
+     tsc check: TS2499@20+5 An interface can only extend an identifier/qualified-name with optional type arguments.
+     tsc emit: "\"use strict\";\n"
+B  "interface I extends A.B<T>.C {}"
+     bun: ok ""
+     tsc parse: TS1477@23+3 An instantiation expression cannot be followed by a property access.
+A1  "interface I extends A\n<T> {}"
+     bun: Expected "{" but found "<" @22 | Unexpected > @24
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\n"
+A2  "interface I extends A, {}"
+     bun: Expected "{" but found end of file @25
+     tsc check: TS1009@21+1 Trailing comma not allowed. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AAg "interface I extends {}, A {}"
+     bun: ok ""
+     tsc check: TS2499@20+2 An interface can only extend an identifier/qualified-name with optional type arguments. ; (noise 2304)
+     tsc emit: "\"use strict\";\n"
+AA  "var x = class extends A implements I {};"
+     bun: ok "var x = class extends A {\n};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = class extends A {\n};\n"
+AA  "var x = class implements I {};"
+     bun: ok "var x = class {\n};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = class {\n};\n"
+AA  "var x = class C<T> extends A<T> implements I<T> {};"
+     bun: ok "var x = class C extends A {\n};\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nvar x = class C extends A {\n};\n"
+AA  "class C<T> extends A<T> implements I<T> {}"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"
+A2  "class C<> {}"
+     bun: Expected identifier but found ">" @8 | Expected ">" but found "{" @10
+     tsc check: TS1098@7+2 Type parameter list cannot be empty.
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C<T,> {}"
+     bun: ok "class C {\n}\n"
+     tsc emit: "\"use strict\";\nclass C {\n}\n"
+AA  "class C < T > extends A < T > { }"
+     bun: ok "class C extends A {\n}\n"
+     tsc check: (noise 2304)
+     tsc emit: "\"use strict\";\nclass C extends A {\n}\n"

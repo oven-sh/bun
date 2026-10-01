@@ -1,0 +1,2277 @@
+[
+ {
+  "code": "var {a = {}} = foo;",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {a, b = {}} = foo;",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {a = []} = foo;",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "function foo({a = {}}) {}",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "function foo({a = []}) {}",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var [a] = foo",
+  "origin": "eslint-tests",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {} = foo",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var [] = foo",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a: {}} = foo",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a, b: {}} = foo",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a: []} = foo",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo({}) {}",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo([]) {}",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo({a: {}}) {}",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo({a: []}) {}",
+  "origin": "eslint-tests",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 18,
+    "endLine": 1,
+    "endColumn": 20,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 18,
+    "start": 17,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a} = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a} = b)",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[a] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({})",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[]",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = {}",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = []",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "f({}, [])",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({} + [])",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a: {}})",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a = {}} = b)",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[a = []] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[a = {}] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var [a = []] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "function f(a = {}) {}",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "(a = []) => a",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for (x of []);",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for (x in {});",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({[{}]: a} = b)",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[[a]] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = {}.a",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({}).a = 1",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[].a = 1",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[][0] = 1",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({}.a = 1)",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[{}.a] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({a: {}.b} = c)",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[...{}.a] = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ({}.a of b);",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "for ([].a in b);",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = {} ? 1 : 2",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = [{}]",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "x = {a: []}",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "({}), []",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var [,] = a",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "[,] = a",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {a: [,]} = b",
+  "origin": "own",
+  "eslint": [],
+  "expect": []
+ },
+ {
+  "code": "var {} = foo;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var [] = foo;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a: {}} = foo;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a, b: {}} = foo;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a: []} = foo;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo({} = {}) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo({} = bar) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "function foo([] = []) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({} = a)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "[] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 1,
+    "endLine": 1,
+    "endColumn": 3,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 1,
+    "start": 0,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: {}} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: []} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[{}] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "[[]] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[...[]] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[...{}] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: {} = c} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "[[] = c] = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[{} = c] = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: [] = c} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ({} of a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ([] of a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ({} in a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ([] in a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "for (var {} of a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for (let [] in a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ({a: {}} of b);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ([[]] of b);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 9,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 7,
+    "start": 6,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "for ([{} = 1] of b);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 9,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 7,
+    "start": 6,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "try {} catch ({}) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "try {} catch ([]) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({}) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "([]) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({} = {}) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "async ({}) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 8,
+    "endLine": 1,
+    "endColumn": 10,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 8,
+    "start": 7,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "async ([]) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 8,
+    "endLine": 1,
+    "endColumn": 10,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 8,
+    "start": 7,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = function({}) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "class A { m({}) {} }",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = { m([]) {} }",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "let {} = a, [] = b;",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {a: {b: {}}} = c",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 13,
+    "endLine": 1,
+    "endColumn": 15,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 13,
+    "start": 12,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var [[], {}] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = {} = y",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = [] = y",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a = {}, b: {}} = c)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "[a, {}] = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {} = {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for (const [] of [[]]);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: {b: []}} = c)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[[[]]] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 3,
+    "endLine": 1,
+    "endColumn": 5,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 3,
+    "start": 2,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[a = [], []] = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({} = {} = a)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 9,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 7,
+    "start": 6,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = ({} = a)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "f(({} = a))",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 4,
+    "endLine": 1,
+    "endColumn": 6,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 4,
+    "start": 3,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "`${[] = a}`",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 4,
+    "endLine": 1,
+    "endColumn": 6,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 4,
+    "start": 3,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({a: [...[]]} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "function f(...[]) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "function f(...{}) {}",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 15,
+    "endLine": 1,
+    "endColumn": 17,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 15,
+    "start": 14,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "(...[]) => 1",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 4,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var [...[]] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "var [...{}] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 9,
+    "endLine": 1,
+    "endColumn": 11,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 9,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "({\"a\": {}} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 8,
+    "endLine": 1,
+    "endColumn": 10,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 8,
+    "start": 7,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "({0: []} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({[k]: {}} = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 8,
+    "endLine": 1,
+    "endColumn": 10,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 8,
+    "start": 7,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var {[k]: []} = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[{}, [], {a: {}}] = b",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for (var [{}] of a);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 11,
+    "endLine": 1,
+    "endColumn": 13,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 11,
+    "start": 10,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "for (var {a: []} in b);",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "[] = [] = []",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 1,
+    "endLine": 1,
+    "endColumn": 3,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 6,
+    "endLine": 1,
+    "endColumn": 8,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 1,
+    "start": 0,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   },
+   {
+    "line": 1,
+    "column": 6,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "({} = a), ([] = b)",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 2,
+    "endLine": 1,
+    "endColumn": 4,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 2,
+    "start": 1,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   },
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "é = {} = y",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 5,
+    "endLine": 1,
+    "endColumn": 7,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 5,
+    "start": 5,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "var é, {} = x",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 8,
+    "endLine": 1,
+    "endColumn": 10,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 8,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "\"😀\"; [] = a",
+  "origin": "own",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 7,
+    "endLine": 1,
+    "endColumn": 9,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 7,
+    "start": 8,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = <a b={({}) => 1} />",
+  "origin": "own",
+  "jsx": true,
+  "eslint": [
+   {
+    "line": 1,
+    "column": 12,
+    "endLine": 1,
+    "endColumn": 14,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 12,
+    "start": 11,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "x = <a>{([] = y)}</a>",
+  "origin": "own",
+  "jsx": true,
+  "eslint": [
+   {
+    "line": 1,
+    "column": 10,
+    "endLine": 1,
+    "endColumn": 12,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 10,
+    "start": 9,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ },
+ {
+  "code": "export const {} = a;",
+  "origin": "own",
+  "sourceType": "module",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 14,
+    "endLine": 1,
+    "endColumn": 16,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 14,
+    "start": 13,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "export function f({}) {}",
+  "origin": "own",
+  "sourceType": "module",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 19,
+    "endLine": 1,
+    "endColumn": 21,
+    "message": "Unexpected empty object pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 19,
+    "start": 18,
+    "length": 1,
+    "message": "Unexpected empty object pattern."
+   }
+  ]
+ },
+ {
+  "code": "import a from \"a\"; var [] = a;",
+  "origin": "own",
+  "sourceType": "module",
+  "eslint": [
+   {
+    "line": 1,
+    "column": 24,
+    "endLine": 1,
+    "endColumn": 26,
+    "message": "Unexpected empty array pattern."
+   }
+  ],
+  "expect": [
+   {
+    "line": 1,
+    "column": 24,
+    "start": 23,
+    "length": 1,
+    "message": "Unexpected empty array pattern."
+   }
+  ]
+ }
+]

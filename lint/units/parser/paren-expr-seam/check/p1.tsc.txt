@@ -1,0 +1,33 @@
+"x = a ? (b) : c => d;"                            OK  "use strict"; x = a ? (b) : c => d;
+"x = a ? (b) : c => d : e;"                        OK  "use strict"; x = a ? (b) => d : e;
+"x = a ? y => (b) : c => d;"                       OK  "use strict"; x = a ? y => (b) : c => d;
+"x = a ? (y) => (b) : c => d;"                     OK  "use strict"; x = a ? (y) => (b) : c => d;
+"x = a ? async y => (b) : c => d;"                 OK  "use strict"; x = a ? async (y) => (b) : c => d;
+"x = a ? async (y) => (b) : c => d;"               OK  "use strict"; x = a ? async (y) => (b) : c => d;
+"x = a ? (b, c) : d => e;"                         OK  "use strict"; x = a ? (b, c) : d => e;
+"x = a ? (b): c => d : e ? (f) : g => h : i;"      OK  "use strict"; x = a ? (b) => d : e ? (f) => h : i;
+"x = a ? <T>(b) : c => d;"                         OK  "use strict"; x = a ? (b) : c => d;
+"x = a ? async <T>(b) : c => d;"                   OK  "use strict"; x = a ? async(b) : c => d;
+"x = a ? -<T>(b) : c;"                             OK  "use strict"; x = a ? -(b) : c;
+"x = a ? !<T>(b) : c;"                             OK  "use strict"; x = a ? !(b) : c;
+"x = a ? typeof <T>(b) : c;"                       OK  "use strict"; x = a ? typeof (b) : c;
+"x = a ? 1 + async(b) : c;"                        OK  "use strict"; x = a ? 1 + async(b) : c;
+"x = a ? -async(b) : c;"                           OK  "use strict"; x = a ? -async(b) : c;
+"x = a ? 1 + async<T>(b) : c;"                     OK  "use strict"; x = a ? 1 + async(b) : c;
+"switch (x) { case -<T>(b): c; }"                  OK  "use strict"; switch (x) { case -(b): c; }
+"switch (x) { case 1 + async(b): c; }"             OK  "use strict"; switch (x) { case 1 + async(b): c; }
+"x = a ? y => z => (b) : c => d;"                  OK  "use strict"; x = a ? y => z => (b) : c => d;
+"x = a ? (b) => (c) : d => e;"                     OK  "use strict"; x = a ? (b) => (c) : d => e;
+"x = a ? (b): c => (d) : e => f;"                  OK  "use strict"; x = a ? (b) => (d) : e => f;
+"x = a ? ((b) : c => d) : e;"                      OK  "use strict"; x = a ? ((b) => d) : e;
+"x = a ? (b) : (c) : d => e;"                      OK  "use strict"; x = a ? (b) : (c) => e;
+"x = a ? <T,>(b) : c => d : e;"                    OK  "use strict"; x = a ? (b) => d : e;
+"x = a ? (b = (c) : d => e) : f;"                  OK  "use strict"; x = a ? (b = (c) => e) : f;
+"x = a ? - (b) : c => d : e;"                      ERR TS1005@23
+"x = -<T>(b) => c;"                                ERR TS1005@12
+"x = 1 + (a): b => c;"                             ERR TS1005@11
+"let v = (a): => a;"                               ERR TS1005@11,TS1005@13
+"x = (a) : b;"                                     ERR TS1005@8
+"x = a ? (b) ? (c) : d => e : f;"                  ERR TS1005@30
+"y = (a: number, b?: string): void => {};"         OK  "use strict"; y = (a, b) => { };
+"z = async (a: T) : Promise<T> => a;"              OK  "use strict"; z = async (a) => a;

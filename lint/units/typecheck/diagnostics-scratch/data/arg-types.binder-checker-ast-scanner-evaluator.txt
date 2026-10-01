@@ -1,0 +1,40 @@
+=== arg static types ===
+   644  string                                   e.g. binder/binder.go:251  b.getDisplayName(node)
+   110  string (const)                           e.g. checker/checker.go:1311  "globalThis"
+    44  int                                      e.g. checker/checker.go:1201  arity
+    34  <spread []any>                           e.g. 
+     4  any                                      e.g. checker/checker.go:27259  indexType.AsLiteralType().value
+     3  int (const)                              e.g. checker/checker.go:28724  4
+     1  jsnum.Number                             e.g. checker/checker.go:12500  numValue.Remainder(32)
+=== callees ===
+   440  checker:c.error
+   223  checker:c.grammarErrorOnNode
+    65  checker:NewDiagnosticForNode
+    65  scanner:p.error
+    47  checker:r.reportError
+    43  checker:createDiagnosticForNode
+    34  checker:c.grammarErrorOnFirstToken
+    34  scanner:s.errorAt
+    20  checker:ast.NewDiagnostic
+    17  checker:NewDiagnosticChainForNode
+    17  checker:ast.NewDiagnosticChain
+    13  checker:errorReporter
+    13  checker:c.grammarErrorAtPos
+    12  binder:b.errorOnNode
+     9  checker:c.errorOrSuggestion
+     8  binder:b.createDiagnosticForNode
+     7  checker:c.getAwaitedTypeEx
+     6  checker:c.errorAndMaybeSuggestAwait
+     5  checker:c.getAwaitedTypeNoAliasEx
+     5  checker:c.errorSkippedOnNoEmit
+     4  binder:r.error
+     4  binder:b.errorOnFirstToken
+     3  ast:NewDiagnostic
+     2  binder:ast.NewDiagnostic
+     1  scanner:s.onError
+     1  scanner:reportError
+     1  checker:c.grammarErrorOnNodeSkippedOnNoEmit
+     1  checker:c.getAwaitedTypeOfPromiseEx
+     1  checker:c.lookupOrIssueError
+     1  binder:r.Error
+     1  scanner:p.scanner.errorAt

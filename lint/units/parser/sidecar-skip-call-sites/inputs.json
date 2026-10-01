@@ -1,0 +1,380 @@
+[
+ {
+  "name": "var-annotation",
+  "text": "let a: string = \"\", [b]: T[] = [], {c}: { c: U } = o;"
+ },
+ {
+  "name": "var-definite",
+  "text": "let d!: number;"
+ },
+ {
+  "name": "var-nested-gt",
+  "text": "let x: A<B<C>>= y"
+ },
+ {
+  "name": "for-of-annotation",
+  "text": "for (const k: K of ks) {}"
+ },
+ {
+  "name": "catch-annotation",
+  "text": "try {} catch (e: unknown) {}"
+ },
+ {
+  "name": "fn-params",
+  "text": "function f(a: A, b?: B, ...c: C[]) {}"
+ },
+ {
+  "name": "fn-this",
+  "text": "function f(this: Window, a: A) {}"
+ },
+ {
+  "name": "fn-this-no-type",
+  "text": "function f(this) {}"
+ },
+ {
+  "name": "fn-return",
+  "text": "function f(): void {}"
+ },
+ {
+  "name": "fn-predicate",
+  "text": "function f(x: any): x is string { return true }"
+ },
+ {
+  "name": "fn-asserts",
+  "text": "function f(x: any): asserts x is string {}"
+ },
+ {
+  "name": "fn-asserts-bare",
+  "text": "function f(x: any): asserts x {}"
+ },
+ {
+  "name": "method-this-predicate",
+  "text": "class C { m(): this is D { return true } }"
+ },
+ {
+  "name": "fn-type-params",
+  "text": "function f<const T extends U = V, W>(a: T) {}"
+ },
+ {
+  "name": "fn-expr-type-params",
+  "text": "const g = function <T>(a: T): T { return a }"
+ },
+ {
+  "name": "fn-overload",
+  "text": "function f(a: string): void;\nfunction f(a: any) {}"
+ },
+ {
+  "name": "declare-fn",
+  "text": "declare function f<T>(a: T): T;"
+ },
+ {
+  "name": "arrow-params",
+  "text": "const f = (a: A, b?: B, ...c: C[]): R => a"
+ },
+ {
+  "name": "arrow-pattern-params",
+  "text": "const f = ({ a, b = 1 }: P, [c]: Q = []) => a"
+ },
+ {
+  "name": "arrow-type-params",
+  "text": "const f = <T,>(a: T): T => a"
+ },
+ {
+  "name": "arrow-type-params-extends",
+  "text": "const f = <T extends U>(a: T) => a"
+ },
+ {
+  "name": "arrow-async",
+  "text": "const f = async (a: A): Promise<A> => a"
+ },
+ {
+  "name": "arrow-async-type-params",
+  "text": "const f = async <T>(a: T) => a"
+ },
+ {
+  "name": "async-call-type-args",
+  "text": "const r = async<T>(a)"
+ },
+ {
+  "name": "arrow-in-conditional-true",
+  "text": "const r = c ? (a: A): B => a : d"
+ },
+ {
+  "name": "paren-in-conditional",
+  "text": "const r = c ? (a) : b => d"
+ },
+ {
+  "name": "arrow-in-conditional-nested",
+  "text": "const r = c ? (a): B => e ? (f) : g => h : d"
+ },
+ {
+  "name": "arrow-predicate",
+  "text": "const f = (a: any): a is A<B>=> true"
+ },
+ {
+  "name": "class-type-params",
+  "text": "class C<in out T, const U> {}"
+ },
+ {
+  "name": "class-expr-type-params",
+  "text": "const c = class<T> {}"
+ },
+ {
+  "name": "class-extends-targs",
+  "text": "class C extends B<T, U> {}"
+ },
+ {
+  "name": "class-extends-targs-newline",
+  "text": "class C extends B<T>\n{}"
+ },
+ {
+  "name": "class-extends-call",
+  "text": "class C extends mixin<T>(B) {}"
+ },
+ {
+  "name": "class-extends-dotted",
+  "text": "class C extends a.b.D<T> implements I<T>, J.K {}"
+ },
+ {
+  "name": "class-implements",
+  "text": "class C implements I, J<K> {}"
+ },
+ {
+  "name": "class-field",
+  "text": "class C { a: A = 1; static b?: B; c!: C; readonly [k]: D; declare e: E; accessor f: F }"
+ },
+ {
+  "name": "class-method",
+  "text": "class C { m<T>(this: C, a: T): T { return a } get x(): X { return 1 } set x(v: X) {} constructor(private p: P, q?: Q) {} }"
+ },
+ {
+  "name": "class-index-signature",
+  "text": "class C { [key: string]: number; static readonly [k: symbol]: any }"
+ },
+ {
+  "name": "object-method",
+  "text": "const o = { m<T>(a: T): T { return a } }"
+ },
+ {
+  "name": "call-type-args",
+  "text": "f<A<B>>(x)"
+ },
+ {
+  "name": "call-type-args-dotted",
+  "text": "a.b.c<T>(x)"
+ },
+ {
+  "name": "call-type-args-shift",
+  "text": "f<<T>(a: T) => void>(g)"
+ },
+ {
+  "name": "optional-call-type-args",
+  "text": "a?.<T>(x)"
+ },
+ {
+  "name": "optional-chain-call-type-args",
+  "text": "a?.b<T>(x)"
+ },
+ {
+  "name": "instantiation-then-optional-call",
+  "text": "a<U>?.<T>(x)"
+ },
+ {
+  "name": "new-type-args",
+  "text": "new F<A<B>>()"
+ },
+ {
+  "name": "new-type-args-no-parens",
+  "text": "new F<T>;"
+ },
+ {
+  "name": "new-optional-chain",
+  "text": "new a?.<T>()"
+ },
+ {
+  "name": "tagged-type-args",
+  "text": "f<T>`x${1}`"
+ },
+ {
+  "name": "instantiation",
+  "text": "const g = f<A<B>>;"
+ },
+ {
+  "name": "instantiation-nonnull-call",
+  "text": "f<T>!(x)"
+ },
+ {
+  "name": "instantiation-paren-call",
+  "text": "(f<T>)(x)"
+ },
+ {
+  "name": "decorator-type-args",
+  "text": "@d<T> class C {}"
+ },
+ {
+  "name": "decorator-call-type-args",
+  "text": "@a.b<T>(1) class C {}"
+ },
+ {
+  "name": "decorator-member",
+  "text": "class C { @d<T>() m() {} }"
+ },
+ {
+  "name": "cast-simple",
+  "text": "const v = <T>x;"
+ },
+ {
+  "name": "cast-paren",
+  "text": "const v = <T>(x);"
+ },
+ {
+  "name": "cast-keyword",
+  "text": "const v = <any>(x);"
+ },
+ {
+  "name": "cast-two-names",
+  "text": "const v = <A, B>(x);"
+ },
+ {
+  "name": "cast-array",
+  "text": "const v = <A[]>(x).y;"
+ },
+ {
+  "name": "cast-nested",
+  "text": "const v = <T><U>x!;"
+ },
+ {
+  "name": "cast-then-member",
+  "text": "const v = <T>x.y + 1;"
+ },
+ {
+  "name": "as",
+  "text": "const v = x as A as B;"
+ },
+ {
+  "name": "as-const",
+  "text": "const v = [1] as const;"
+ },
+ {
+  "name": "satisfies",
+  "text": "const v = { a: 1 } satisfies S;"
+ },
+ {
+  "name": "type-alias",
+  "text": "type A<T = X> = T[];"
+ },
+ {
+  "name": "export-type-alias",
+  "text": "export type A = B"
+ },
+ {
+  "name": "interface",
+  "text": "interface I<T> extends J<T>, K { a: T }"
+ },
+ {
+  "name": "jsx-type-args",
+  "file": "a.tsx",
+  "text": "const e = <Foo<string> a=\"1\" />;"
+ },
+ {
+  "name": "jsx-type-args-nested",
+  "file": "a.tsx",
+  "text": "const e = <Foo<A<B>>>x</Foo>;"
+ },
+ {
+  "name": "jsx-dotted",
+  "file": "a.tsx",
+  "text": "const e = <a.B<T> />;"
+ },
+ {
+  "name": "tsx-arrow-type-params",
+  "file": "a.tsx",
+  "text": "const f = <T,>(a: T) => a"
+ },
+ {
+  "name": "tsx-arrow-extends",
+  "file": "a.tsx",
+  "text": "const f = <T extends U>(a: T) => a"
+ },
+ {
+  "name": "spec-type-args-fail",
+  "text": "const r = a < b > c;"
+ },
+ {
+  "name": "spec-type-args-ok-nested",
+  "text": "f<A>(g<B>(x), h < i > j)"
+ },
+ {
+  "name": "spec-cast-after-failed-type-params",
+  "text": "const v = <A[]>(x), w = <T>(y: T) => y, u = <U>z;"
+ },
+ {
+  "name": "spec-async-qualified",
+  "text": "const v = async<A.B>(x)"
+ },
+ {
+  "name": "spec-arrow-return-fail",
+  "text": "switch (x) { case (a): b; }"
+ },
+ {
+  "name": "spec-conditional-paren",
+  "text": "const r = c ? (a) : b;"
+ },
+ {
+  "name": "spec-conditional-arrow-body",
+  "text": "const r = c ? (a): B => { let v: V = 1; return v } : d"
+ },
+ {
+  "name": "spec-conditional-arrow-nested",
+  "text": "const r = a ? (b): T => c ? (d): U => { let e: E = d; return e } : f : g"
+ },
+ {
+  "name": "spec-extends-then-members",
+  "text": "class C extends B<T> { m(a: A): R { return f<X>(a) } }"
+ },
+ {
+  "name": "split-gt-type-params",
+  "text": "function f<T extends A<B>>(a: T) {}"
+ },
+ {
+  "name": "split-gt-return",
+  "text": "const f = (a: A<B<C>>): D<E<F>>=> a"
+ },
+ {
+  "name": "empty-lists",
+  "text": "f<>(); new G<>(); function h<>() {}"
+ },
+ {
+  "name": "this-not-first",
+  "text": "function f(a, this: T) {}"
+ },
+ {
+  "name": "definite-no-type",
+  "text": "let x!;"
+ },
+ {
+  "name": "parameter-property",
+  "text": "class C { constructor(private readonly a: A, protected b?: B) {} }"
+ },
+ {
+  "name": "getter-setter-object",
+  "text": "const o = { get a(): A { return 1 }, set a(v: A) {} }"
+ },
+ {
+  "name": "default-export-fn",
+  "text": "export default function <T>(a: T): T { return a }"
+ },
+ {
+  "name": "generator-async-fn",
+  "text": "async function* g<T>(a: T): AsyncGenerator<T> {}"
+ },
+ {
+  "name": "abstract-members",
+  "text": "abstract class C<T> { abstract m<U>(a: U): T; abstract p: T }"
+ },
+ {
+  "name": "jsx-children-type-args",
+  "file": "a.tsx",
+  "text": "const e = <A<X>><B<Y> /></A>;"
+ }
+]

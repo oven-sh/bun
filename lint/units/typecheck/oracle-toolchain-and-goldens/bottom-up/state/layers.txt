@@ -1,0 +1,1262 @@
+# check.min
+01 data model                    fn=  18 lines=   50 cum_fn=  18 cum_lines=   50
+02 utilities                     fn=  14 lines=  283 cum_fn=  32 cum_lines=  333
+03 type keys, object types       fn=  29 lines=  263 cum_fn=  61 cum_lines=  596
+04 resolution stack              fn=   3 lines=   31 cum_fn=  64 cum_lines=  627
+05 init and globals              fn=  22 lines=  565 cum_fn=  86 cum_lines= 1192
+06 symbol merging                fn=   6 lines=   59 cum_fn=  92 cum_lines= 1251
+07 name resolution               fn=   6 lines=  389 cum_fn=  98 cum_lines= 1640
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 101 cum_lines= 1749
+09 literal, union, intersection  fn=  25 lines=  388 cum_fn= 126 cum_lines= 2137
+10 tuples                        fn=   5 lines=   21 cum_fn= 131 cum_lines= 2158
+11 declared types                fn=  10 lines=  151 cum_fn= 141 cum_lines= 2309
+12 type nodes to types           fn=   3 lines=   98 cum_fn= 144 cum_lines= 2407
+14 base types                    fn=   2 lines=   59 cum_fn= 146 cum_lines= 2466
+15 members                       fn=  14 lines=  248 cum_fn= 160 cum_lines= 2714
+16 lookup                        fn=   2 lines=   13 cum_fn= 162 cum_lines= 2727
+17 apparent types                fn=   3 lines=   65 cum_fn= 165 cum_lines= 2792
+18 signatures                    fn=   6 lines=   65 cum_fn= 171 cum_lines= 2857
+20 types of symbols              fn=   9 lines=  315 cum_fn= 180 cum_lines= 3172
+21 widening                      fn=   3 lines=   53 cum_fn= 183 cum_lines= 3225
+22 type printer                  fn=  20 lines=  508 cum_fn= 203 cum_lines= 3733
+23 relations                     fn=  21 lines=  690 cum_fn= 224 cum_lines= 4423
+24 elaboration                   fn=   5 lines=   67 cum_fn= 229 cum_lines= 4490
+25 expressions to contextual     fn=  14 lines=  334 cum_fn= 243 cum_lines= 4824
+26 flow, reachability            fn=   4 lines=   89 cum_fn= 247 cum_lines= 4913
+27 keyof to template             fn=   2 lines=  103 cum_fn= 249 cum_lines= 5016
+30 decorators                    fn=   1 lines=   38 cum_fn= 250 cum_lines= 5054
+31 declaration checks            fn=  11 lines=  492 cum_fn= 261 cum_lines= 5546
+32 unused, unreachable           fn=   3 lines=   93 cum_fn= 264 cum_lines= 5639
+33 grammar                       fn=   8 lines=  505 cum_fn= 272 cum_lines= 6144
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=22 lines=0
+  other: checker:zz_relprobe.go fn=7 lines=0
+  other: pkg:binder fn=52 lines=1160
+last layer entered: 33 grammar
+# check.rich
+01 data model                    fn=  66 lines=  278 cum_fn=  66 cum_lines=  278
+02 utilities                     fn=  50 lines=  564 cum_fn= 116 cum_lines=  842
+03 type keys, object types       fn=  48 lines=  446 cum_fn= 164 cum_lines= 1288
+04 resolution stack              fn=   4 lines=   56 cum_fn= 168 cum_lines= 1344
+05 init and globals              fn=  30 lines=  746 cum_fn= 198 cum_lines= 2090
+06 symbol merging                fn=   9 lines=   74 cum_fn= 207 cum_lines= 2164
+07 name resolution               fn=  11 lines=  475 cum_fn= 218 cum_lines= 2639
+08 aliases and modules           fn=   6 lines=  211 cum_fn= 224 cum_lines= 2850
+09 literal, union, intersection  fn=  58 lines=  990 cum_fn= 282 cum_lines= 3840
+10 tuples                        fn=  27 lines=  250 cum_fn= 309 cum_lines= 4090
+11 declared types                fn=  26 lines=  447 cum_fn= 335 cum_lines= 4537
+12 type nodes to types           fn=  32 lines=  612 cum_fn= 367 cum_lines= 5149
+13 constraints                   fn=  20 lines=  435 cum_fn= 387 cum_lines= 5584
+14 base types                    fn=  15 lines=  281 cum_fn= 402 cum_lines= 5865
+15 members                       fn=  32 lines=  845 cum_fn= 434 cum_lines= 6710
+16 lookup                        fn=  15 lines=  177 cum_fn= 449 cum_lines= 6887
+17 apparent types                fn=  10 lines=  126 cum_fn= 459 cum_lines= 7013
+18 signatures                    fn=  45 lines=  538 cum_fn= 504 cum_lines= 7551
+19 instantiation                 fn=  22 lines=  472 cum_fn= 526 cum_lines= 8023
+20 types of symbols              fn=  35 lines=  830 cum_fn= 561 cum_lines= 8853
+21 widening                      fn=   6 lines=  117 cum_fn= 567 cum_lines= 8970
+22 type printer                  fn=  66 lines= 2080 cum_fn= 633 cum_lines=11050
+23 relations                     fn=  86 lines= 2976 cum_fn= 719 cum_lines=14026
+24 elaboration                   fn=  10 lines=  205 cum_fn= 729 cum_lines=14231
+25 expressions to contextual     fn= 151 lines= 4335 cum_fn= 880 cum_lines=18566
+26 flow, reachability            fn=  23 lines=  475 cum_fn= 903 cum_lines=19041
+27 keyof to template             fn=  60 lines= 1378 cum_fn= 963 cum_lines=20419
+28 iteration, async              fn=   1 lines=  106 cum_fn= 964 cum_lines=20525
+30 decorators                    fn=   1 lines=   38 cum_fn= 965 cum_lines=20563
+31 declaration checks            fn=  82 lines= 2663 cum_fn=1047 cum_lines=23226
+32 unused, unreachable           fn=   4 lines=   98 cum_fn=1051 cum_lines=23324
+33 grammar                       fn=  42 lines= 1293 cum_fn=1093 cum_lines=24617
+  other: Z-SERVICES fn=4 lines=36
+  other: checker:nodebuilder_hover.go fn=1 lines=3
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=8 lines=0
+  other: pkg:binder fn=75 lines=1443
+last layer entered: 33 grammar
+# classes.01-declared
+01 data model                    fn=  16 lines=   32 cum_fn=  16 cum_lines=   32
+02 utilities                     fn=   5 lines=  201 cum_fn=  21 cum_lines=  233
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  49 cum_lines=  487
+05 init and globals              fn=  18 lines=  540 cum_fn=  67 cum_lines= 1027
+06 symbol merging                fn=   5 lines=   47 cum_fn=  72 cum_lines= 1074
+07 name resolution               fn=   6 lines=  389 cum_fn=  78 cum_lines= 1463
+08 aliases and modules           fn=   1 lines=   55 cum_fn=  79 cum_lines= 1518
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn=  97 cum_lines= 1836
+10 tuples                        fn=   5 lines=   21 cum_fn= 102 cum_lines= 1857
+11 declared types                fn=  10 lines=  151 cum_fn= 112 cum_lines= 2008
+15 members                       fn=   1 lines=   26 cum_fn= 113 cum_lines= 2034
+23 relations                     fn=   1 lines=    3 cum_fn= 114 cum_lines= 2037
+27 keyof to template             fn=   1 lines=   67 cum_fn= 115 cum_lines= 2104
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=27 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=56 lines=1214
+last layer entered: 27 keyof to template
+# classes.02-symtypes
+01 data model                    fn=  19 lines=   47 cum_fn=  19 cum_lines=   47
+02 utilities                     fn=  11 lines=  241 cum_fn=  30 cum_lines=  288
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  58 cum_lines=  542
+04 resolution stack              fn=   3 lines=   31 cum_fn=  61 cum_lines=  573
+05 init and globals              fn=  22 lines=  590 cum_fn=  83 cum_lines= 1163
+06 symbol merging                fn=   8 lines=   71 cum_fn=  91 cum_lines= 1234
+07 name resolution               fn=   9 lines=  447 cum_fn= 100 cum_lines= 1681
+08 aliases and modules           fn=   4 lines=  143 cum_fn= 104 cum_lines= 1824
+09 literal, union, intersection  fn=  21 lines=  337 cum_fn= 125 cum_lines= 2161
+10 tuples                        fn=   5 lines=   21 cum_fn= 130 cum_lines= 2182
+11 declared types                fn=  11 lines=  165 cum_fn= 141 cum_lines= 2347
+12 type nodes to types           fn=   9 lines=  225 cum_fn= 150 cum_lines= 2572
+14 base types                    fn=   4 lines=   80 cum_fn= 154 cum_lines= 2652
+15 members                       fn=   7 lines=  152 cum_fn= 161 cum_lines= 2804
+16 lookup                        fn=   2 lines=   13 cum_fn= 163 cum_lines= 2817
+17 apparent types                fn=   3 lines=   65 cum_fn= 166 cum_lines= 2882
+18 signatures                    fn=  12 lines=  171 cum_fn= 178 cum_lines= 3053
+20 types of symbols              fn=  12 lines=  399 cum_fn= 190 cum_lines= 3452
+21 widening                      fn=   3 lines=   53 cum_fn= 193 cum_lines= 3505
+23 relations                     fn=   1 lines=    3 cum_fn= 194 cum_lines= 3508
+25 expressions to contextual     fn=   7 lines=  461 cum_fn= 201 cum_lines= 3969
+27 keyof to template             fn=   2 lines=  103 cum_fn= 203 cum_lines= 4072
+31 declaration checks            fn=   2 lines=  186 cum_fn= 205 cum_lines= 4258
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=33 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=56 lines=1214
+last layer entered: 31 declaration checks
+# classes.03-bases
+01 data model                    fn=  21 lines=   68 cum_fn=  21 cum_lines=   68
+02 utilities                     fn=  11 lines=  241 cum_fn=  32 cum_lines=  309
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  60 cum_lines=  563
+04 resolution stack              fn=   3 lines=   31 cum_fn=  63 cum_lines=  594
+05 init and globals              fn=  22 lines=  590 cum_fn=  85 cum_lines= 1184
+06 symbol merging                fn=   8 lines=   71 cum_fn=  93 cum_lines= 1255
+07 name resolution               fn=   9 lines=  447 cum_fn= 102 cum_lines= 1702
+08 aliases and modules           fn=   4 lines=  143 cum_fn= 106 cum_lines= 1845
+09 literal, union, intersection  fn=  21 lines=  337 cum_fn= 127 cum_lines= 2182
+10 tuples                        fn=   5 lines=   21 cum_fn= 132 cum_lines= 2203
+11 declared types                fn=  11 lines=  165 cum_fn= 143 cum_lines= 2368
+12 type nodes to types           fn=  10 lines=  271 cum_fn= 153 cum_lines= 2639
+14 base types                    fn=  11 lines=  228 cum_fn= 164 cum_lines= 2867
+15 members                       fn=   7 lines=  152 cum_fn= 171 cum_lines= 3019
+16 lookup                        fn=   2 lines=   13 cum_fn= 173 cum_lines= 3032
+17 apparent types                fn=   3 lines=   65 cum_fn= 176 cum_lines= 3097
+18 signatures                    fn=  12 lines=  171 cum_fn= 188 cum_lines= 3268
+20 types of symbols              fn=  12 lines=  399 cum_fn= 200 cum_lines= 3667
+21 widening                      fn=   3 lines=   53 cum_fn= 203 cum_lines= 3720
+23 relations                     fn=   1 lines=    3 cum_fn= 204 cum_lines= 3723
+25 expressions to contextual     fn=   7 lines=  461 cum_fn= 211 cum_lines= 4184
+27 keyof to template             fn=   2 lines=  103 cum_fn= 213 cum_lines= 4287
+31 declaration checks            fn=   2 lines=  186 cum_fn= 215 cum_lines= 4473
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=33 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=56 lines=1214
+last layer entered: 31 declaration checks
+# classes.04-members
+01 data model                    fn=  27 lines=   95 cum_fn=  27 cum_lines=   95
+02 utilities                     fn=  15 lines=  294 cum_fn=  42 cum_lines=  389
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  70 cum_lines=  643
+04 resolution stack              fn=   3 lines=   31 cum_fn=  73 cum_lines=  674
+05 init and globals              fn=  22 lines=  590 cum_fn=  95 cum_lines= 1264
+06 symbol merging                fn=   8 lines=   71 cum_fn= 103 cum_lines= 1335
+07 name resolution               fn=   9 lines=  447 cum_fn= 112 cum_lines= 1782
+08 aliases and modules           fn=   5 lines=  149 cum_fn= 117 cum_lines= 1931
+09 literal, union, intersection  fn=  21 lines=  337 cum_fn= 138 cum_lines= 2268
+10 tuples                        fn=   5 lines=   21 cum_fn= 143 cum_lines= 2289
+11 declared types                fn=  11 lines=  165 cum_fn= 154 cum_lines= 2454
+12 type nodes to types           fn=  11 lines=  274 cum_fn= 165 cum_lines= 2728
+13 constraints                   fn=   1 lines=    9 cum_fn= 166 cum_lines= 2737
+14 base types                    fn=  12 lines=  252 cum_fn= 178 cum_lines= 2989
+15 members                       fn=  20 lines=  376 cum_fn= 198 cum_lines= 3365
+16 lookup                        fn=   6 lines=   35 cum_fn= 204 cum_lines= 3400
+17 apparent types                fn=   3 lines=   65 cum_fn= 207 cum_lines= 3465
+18 signatures                    fn=  14 lines=  188 cum_fn= 221 cum_lines= 3653
+19 instantiation                 fn=   8 lines=  138 cum_fn= 229 cum_lines= 3791
+20 types of symbols              fn=  12 lines=  399 cum_fn= 241 cum_lines= 4190
+21 widening                      fn=   3 lines=   53 cum_fn= 244 cum_lines= 4243
+23 relations                     fn=   1 lines=    3 cum_fn= 245 cum_lines= 4246
+25 expressions to contextual     fn=   7 lines=  461 cum_fn= 252 cum_lines= 4707
+27 keyof to template             fn=   2 lines=  103 cum_fn= 254 cum_lines= 4810
+31 declaration checks            fn=   2 lines=  186 cum_fn= 256 cum_lines= 4996
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=36 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=56 lines=1214
+last layer entered: 31 declaration checks
+# classes.05-proptypes
+01 data model                    fn=  32 lines=  131 cum_fn=  32 cum_lines=  131
+02 utilities                     fn=  15 lines=  294 cum_fn=  47 cum_lines=  425
+03 type keys, object types       fn=  29 lines=  263 cum_fn=  76 cum_lines=  688
+04 resolution stack              fn=   3 lines=   31 cum_fn=  79 cum_lines=  719
+05 init and globals              fn=  22 lines=  590 cum_fn= 101 cum_lines= 1309
+06 symbol merging                fn=   8 lines=   71 cum_fn= 109 cum_lines= 1380
+07 name resolution               fn=   9 lines=  447 cum_fn= 118 cum_lines= 1827
+08 aliases and modules           fn=   5 lines=  149 cum_fn= 123 cum_lines= 1976
+09 literal, union, intersection  fn=  21 lines=  337 cum_fn= 144 cum_lines= 2313
+10 tuples                        fn=   5 lines=   21 cum_fn= 149 cum_lines= 2334
+11 declared types                fn=  11 lines=  165 cum_fn= 160 cum_lines= 2499
+12 type nodes to types           fn=  11 lines=  274 cum_fn= 171 cum_lines= 2773
+13 constraints                   fn=   1 lines=    9 cum_fn= 172 cum_lines= 2782
+14 base types                    fn=  12 lines=  252 cum_fn= 184 cum_lines= 3034
+15 members                       fn=  20 lines=  376 cum_fn= 204 cum_lines= 3410
+16 lookup                        fn=   6 lines=   35 cum_fn= 210 cum_lines= 3445
+17 apparent types                fn=   3 lines=   65 cum_fn= 213 cum_lines= 3510
+18 signatures                    fn=  14 lines=  188 cum_fn= 227 cum_lines= 3698
+19 instantiation                 fn=  16 lines=  426 cum_fn= 243 cum_lines= 4124
+20 types of symbols              fn=  14 lines=  418 cum_fn= 257 cum_lines= 4542
+21 widening                      fn=   3 lines=   53 cum_fn= 260 cum_lines= 4595
+23 relations                     fn=   1 lines=    3 cum_fn= 261 cum_lines= 4598
+25 expressions to contextual     fn=   7 lines=  461 cum_fn= 268 cum_lines= 5059
+27 keyof to template             fn=   2 lines=  103 cum_fn= 270 cum_lines= 5162
+31 declaration checks            fn=   2 lines=  186 cum_fn= 272 cum_lines= 5348
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=36 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=56 lines=1214
+last layer entered: 31 declaration checks
+# generic.01-declared
+01 data model                    fn=  37 lines=  146 cum_fn=  37 cum_lines=  146
+02 utilities                     fn=  16 lines=  325 cum_fn=  53 cum_lines=  471
+03 type keys, object types       fn=  32 lines=  283 cum_fn=  85 cum_lines=  754
+04 resolution stack              fn=   4 lines=   56 cum_fn=  89 cum_lines=  810
+05 init and globals              fn=  21 lines=  557 cum_fn= 110 cum_lines= 1367
+06 symbol merging                fn=   7 lines=   65 cum_fn= 117 cum_lines= 1432
+07 name resolution               fn=   8 lines=  435 cum_fn= 125 cum_lines= 1867
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 128 cum_lines= 1976
+09 literal, union, intersection  fn=  29 lines=  429 cum_fn= 157 cum_lines= 2405
+10 tuples                        fn=   6 lines=   27 cum_fn= 163 cum_lines= 2432
+11 declared types                fn=  18 lines=  241 cum_fn= 181 cum_lines= 2673
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 209 cum_lines= 3242
+13 constraints                   fn=  11 lines=  329 cum_fn= 220 cum_lines= 3571
+14 base types                    fn=   2 lines=   59 cum_fn= 222 cum_lines= 3630
+15 members                       fn=  13 lines=  208 cum_fn= 235 cum_lines= 3838
+16 lookup                        fn=   6 lines=   75 cum_fn= 241 cum_lines= 3913
+17 apparent types                fn=   3 lines=   65 cum_fn= 244 cum_lines= 3978
+18 signatures                    fn=   6 lines=   65 cum_fn= 250 cum_lines= 4043
+19 instantiation                 fn=  15 lines=  256 cum_fn= 265 cum_lines= 4299
+20 types of symbols              fn=  10 lines=  322 cum_fn= 275 cum_lines= 4621
+21 widening                      fn=   3 lines=   53 cum_fn= 278 cum_lines= 4674
+23 relations                     fn=   5 lines=   53 cum_fn= 283 cum_lines= 4727
+25 expressions to contextual     fn=  12 lines=  335 cum_fn= 295 cum_lines= 5062
+27 keyof to template             fn=  27 lines=  787 cum_fn= 322 cum_lines= 5849
+33 grammar                       fn=   1 lines=   27 cum_fn= 323 cum_lines= 5876
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=37 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.02-typenodes
+01 data model                    fn=  46 lines=  208 cum_fn=  46 cum_lines=  208
+02 utilities                     fn=  16 lines=  325 cum_fn=  62 cum_lines=  533
+03 type keys, object types       fn=  37 lines=  313 cum_fn=  99 cum_lines=  846
+04 resolution stack              fn=   4 lines=   56 cum_fn= 103 cum_lines=  902
+05 init and globals              fn=  21 lines=  557 cum_fn= 124 cum_lines= 1459
+06 symbol merging                fn=   7 lines=   65 cum_fn= 131 cum_lines= 1524
+07 name resolution               fn=   8 lines=  435 cum_fn= 139 cum_lines= 1959
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 142 cum_lines= 2068
+09 literal, union, intersection  fn=  29 lines=  429 cum_fn= 171 cum_lines= 2497
+10 tuples                        fn=   6 lines=   27 cum_fn= 177 cum_lines= 2524
+11 declared types                fn=  18 lines=  241 cum_fn= 195 cum_lines= 2765
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 223 cum_lines= 3334
+13 constraints                   fn=  11 lines=  329 cum_fn= 234 cum_lines= 3663
+14 base types                    fn=   2 lines=   59 cum_fn= 236 cum_lines= 3722
+15 members                       fn=  13 lines=  208 cum_fn= 249 cum_lines= 3930
+16 lookup                        fn=   6 lines=   75 cum_fn= 255 cum_lines= 4005
+17 apparent types                fn=   3 lines=   65 cum_fn= 258 cum_lines= 4070
+18 signatures                    fn=   6 lines=   65 cum_fn= 264 cum_lines= 4135
+19 instantiation                 fn=  20 lines=  415 cum_fn= 284 cum_lines= 4550
+20 types of symbols              fn=  10 lines=  322 cum_fn= 294 cum_lines= 4872
+21 widening                      fn=   3 lines=   53 cum_fn= 297 cum_lines= 4925
+23 relations                     fn=   8 lines=   98 cum_fn= 305 cum_lines= 5023
+25 expressions to contextual     fn=  20 lines=  612 cum_fn= 325 cum_lines= 5635
+27 keyof to template             fn=  33 lines=  903 cum_fn= 358 cum_lines= 6538
+33 grammar                       fn=   1 lines=   27 cum_fn= 359 cum_lines= 6565
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=37 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.03-symtypes
+01 data model                    fn=  46 lines=  208 cum_fn=  46 cum_lines=  208
+02 utilities                     fn=  16 lines=  325 cum_fn=  62 cum_lines=  533
+03 type keys, object types       fn=  37 lines=  313 cum_fn=  99 cum_lines=  846
+04 resolution stack              fn=   4 lines=   56 cum_fn= 103 cum_lines=  902
+05 init and globals              fn=  21 lines=  557 cum_fn= 124 cum_lines= 1459
+06 symbol merging                fn=   7 lines=   65 cum_fn= 131 cum_lines= 1524
+07 name resolution               fn=   8 lines=  435 cum_fn= 139 cum_lines= 1959
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 142 cum_lines= 2068
+09 literal, union, intersection  fn=  29 lines=  429 cum_fn= 171 cum_lines= 2497
+10 tuples                        fn=   6 lines=   27 cum_fn= 177 cum_lines= 2524
+11 declared types                fn=  18 lines=  241 cum_fn= 195 cum_lines= 2765
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 223 cum_lines= 3334
+13 constraints                   fn=  11 lines=  329 cum_fn= 234 cum_lines= 3663
+14 base types                    fn=   2 lines=   59 cum_fn= 236 cum_lines= 3722
+15 members                       fn=  13 lines=  208 cum_fn= 249 cum_lines= 3930
+16 lookup                        fn=   6 lines=   75 cum_fn= 255 cum_lines= 4005
+17 apparent types                fn=   3 lines=   65 cum_fn= 258 cum_lines= 4070
+18 signatures                    fn=   6 lines=   65 cum_fn= 264 cum_lines= 4135
+19 instantiation                 fn=  20 lines=  415 cum_fn= 284 cum_lines= 4550
+20 types of symbols              fn=  12 lines=  352 cum_fn= 296 cum_lines= 4902
+21 widening                      fn=   3 lines=   53 cum_fn= 299 cum_lines= 4955
+23 relations                     fn=   8 lines=   98 cum_fn= 307 cum_lines= 5053
+25 expressions to contextual     fn=  21 lines=  615 cum_fn= 328 cum_lines= 5668
+27 keyof to template             fn=  33 lines=  903 cum_fn= 361 cum_lines= 6571
+33 grammar                       fn=   1 lines=   27 cum_fn= 362 cum_lines= 6598
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=37 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.04-members
+01 data model                    fn=  47 lines=  211 cum_fn=  47 cum_lines=  211
+02 utilities                     fn=  17 lines=  328 cum_fn=  64 cum_lines=  539
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 102 cum_lines=  861
+04 resolution stack              fn=   4 lines=   56 cum_fn= 106 cum_lines=  917
+05 init and globals              fn=  21 lines=  557 cum_fn= 127 cum_lines= 1474
+06 symbol merging                fn=   7 lines=   65 cum_fn= 134 cum_lines= 1539
+07 name resolution               fn=   8 lines=  435 cum_fn= 142 cum_lines= 1974
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 146 cum_lines= 2092
+09 literal, union, intersection  fn=  30 lines=  438 cum_fn= 176 cum_lines= 2530
+10 tuples                        fn=   6 lines=   27 cum_fn= 182 cum_lines= 2557
+11 declared types                fn=  18 lines=  241 cum_fn= 200 cum_lines= 2798
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 228 cum_lines= 3367
+13 constraints                   fn=  12 lines=  339 cum_fn= 240 cum_lines= 3706
+14 base types                    fn=   2 lines=   59 cum_fn= 242 cum_lines= 3765
+15 members                       fn=  23 lines=  522 cum_fn= 265 cum_lines= 4287
+16 lookup                        fn=  10 lines=   98 cum_fn= 275 cum_lines= 4385
+17 apparent types                fn=   3 lines=   65 cum_fn= 278 cum_lines= 4450
+18 signatures                    fn=  12 lines=  170 cum_fn= 290 cum_lines= 4620
+19 instantiation                 fn=  20 lines=  415 cum_fn= 310 cum_lines= 5035
+20 types of symbols              fn=  13 lines=  360 cum_fn= 323 cum_lines= 5395
+21 widening                      fn=   3 lines=   53 cum_fn= 326 cum_lines= 5448
+23 relations                     fn=   8 lines=   98 cum_fn= 334 cum_lines= 5546
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 357 cum_lines= 6195
+27 keyof to template             fn=  42 lines= 1098 cum_fn= 399 cum_lines= 7293
+33 grammar                       fn=   1 lines=   27 cum_fn= 400 cum_lines= 7320
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.05-lookup
+01 data model                    fn=  50 lines=  218 cum_fn=  50 cum_lines=  218
+02 utilities                     fn=  21 lines=  361 cum_fn=  71 cum_lines=  579
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 109 cum_lines=  901
+04 resolution stack              fn=   4 lines=   56 cum_fn= 113 cum_lines=  957
+05 init and globals              fn=  21 lines=  557 cum_fn= 134 cum_lines= 1514
+06 symbol merging                fn=   7 lines=   65 cum_fn= 141 cum_lines= 1579
+07 name resolution               fn=   8 lines=  435 cum_fn= 149 cum_lines= 2014
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 153 cum_lines= 2132
+09 literal, union, intersection  fn=  33 lines=  466 cum_fn= 186 cum_lines= 2598
+10 tuples                        fn=   6 lines=   27 cum_fn= 192 cum_lines= 2625
+11 declared types                fn=  18 lines=  241 cum_fn= 210 cum_lines= 2866
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 238 cum_lines= 3435
+13 constraints                   fn=  16 lines=  411 cum_fn= 254 cum_lines= 3846
+14 base types                    fn=   3 lines=   83 cum_fn= 257 cum_lines= 3929
+15 members                       fn=  28 lines=  773 cum_fn= 285 cum_lines= 4702
+16 lookup                        fn=  16 lines=  183 cum_fn= 301 cum_lines= 4885
+17 apparent types                fn=   6 lines=  103 cum_fn= 307 cum_lines= 4988
+18 signatures                    fn=  12 lines=  170 cum_fn= 319 cum_lines= 5158
+19 instantiation                 fn=  20 lines=  415 cum_fn= 339 cum_lines= 5573
+20 types of symbols              fn=  15 lines=  385 cum_fn= 354 cum_lines= 5958
+21 widening                      fn=   3 lines=   53 cum_fn= 357 cum_lines= 6011
+23 relations                     fn=   9 lines=  173 cum_fn= 366 cum_lines= 6184
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 389 cum_lines= 6833
+27 keyof to template             fn=  49 lines= 1216 cum_fn= 438 cum_lines= 8049
+33 grammar                       fn=   1 lines=   27 cum_fn= 439 cum_lines= 8076
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.06-proptypes
+01 data model                    fn=  53 lines=  234 cum_fn=  53 cum_lines=  234
+02 utilities                     fn=  21 lines=  361 cum_fn=  74 cum_lines=  595
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 112 cum_lines=  917
+04 resolution stack              fn=   4 lines=   56 cum_fn= 116 cum_lines=  973
+05 init and globals              fn=  21 lines=  557 cum_fn= 137 cum_lines= 1530
+06 symbol merging                fn=   7 lines=   65 cum_fn= 144 cum_lines= 1595
+07 name resolution               fn=   8 lines=  435 cum_fn= 152 cum_lines= 2030
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 156 cum_lines= 2148
+09 literal, union, intersection  fn=  34 lines=  479 cum_fn= 190 cum_lines= 2627
+10 tuples                        fn=   6 lines=   27 cum_fn= 196 cum_lines= 2654
+11 declared types                fn=  18 lines=  241 cum_fn= 214 cum_lines= 2895
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 242 cum_lines= 3464
+13 constraints                   fn=  16 lines=  411 cum_fn= 258 cum_lines= 3875
+14 base types                    fn=   3 lines=   83 cum_fn= 261 cum_lines= 3958
+15 members                       fn=  28 lines=  773 cum_fn= 289 cum_lines= 4731
+16 lookup                        fn=  16 lines=  183 cum_fn= 305 cum_lines= 4914
+17 apparent types                fn=   6 lines=  103 cum_fn= 311 cum_lines= 5017
+18 signatures                    fn=  12 lines=  170 cum_fn= 323 cum_lines= 5187
+19 instantiation                 fn=  21 lines=  469 cum_fn= 344 cum_lines= 5656
+20 types of symbols              fn=  15 lines=  385 cum_fn= 359 cum_lines= 6041
+21 widening                      fn=   3 lines=   53 cum_fn= 362 cum_lines= 6094
+23 relations                     fn=   9 lines=  173 cum_fn= 371 cum_lines= 6267
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 394 cum_lines= 6916
+27 keyof to template             fn=  50 lines= 1249 cum_fn= 444 cum_lines= 8165
+33 grammar                       fn=   1 lines=   27 cum_fn= 445 cum_lines= 8192
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.07-apparent
+01 data model                    fn=  53 lines=  234 cum_fn=  53 cum_lines=  234
+02 utilities                     fn=  21 lines=  361 cum_fn=  74 cum_lines=  595
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 112 cum_lines=  917
+04 resolution stack              fn=   4 lines=   56 cum_fn= 116 cum_lines=  973
+05 init and globals              fn=  21 lines=  557 cum_fn= 137 cum_lines= 1530
+06 symbol merging                fn=   7 lines=   65 cum_fn= 144 cum_lines= 1595
+07 name resolution               fn=   8 lines=  435 cum_fn= 152 cum_lines= 2030
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 156 cum_lines= 2148
+09 literal, union, intersection  fn=  34 lines=  479 cum_fn= 190 cum_lines= 2627
+10 tuples                        fn=   6 lines=   27 cum_fn= 196 cum_lines= 2654
+11 declared types                fn=  18 lines=  241 cum_fn= 214 cum_lines= 2895
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 242 cum_lines= 3464
+13 constraints                   fn=  16 lines=  411 cum_fn= 258 cum_lines= 3875
+14 base types                    fn=   3 lines=   83 cum_fn= 261 cum_lines= 3958
+15 members                       fn=  28 lines=  773 cum_fn= 289 cum_lines= 4731
+16 lookup                        fn=  16 lines=  183 cum_fn= 305 cum_lines= 4914
+17 apparent types                fn=   6 lines=  103 cum_fn= 311 cum_lines= 5017
+18 signatures                    fn=  12 lines=  170 cum_fn= 323 cum_lines= 5187
+19 instantiation                 fn=  21 lines=  469 cum_fn= 344 cum_lines= 5656
+20 types of symbols              fn=  15 lines=  385 cum_fn= 359 cum_lines= 6041
+21 widening                      fn=   3 lines=   53 cum_fn= 362 cum_lines= 6094
+23 relations                     fn=   9 lines=  173 cum_fn= 371 cum_lines= 6267
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 394 cum_lines= 6916
+27 keyof to template             fn=  50 lines= 1249 cum_fn= 444 cum_lines= 8165
+33 grammar                       fn=   1 lines=   27 cum_fn= 445 cum_lines= 8192
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.08-constraints
+01 data model                    fn=  53 lines=  234 cum_fn=  53 cum_lines=  234
+02 utilities                     fn=  22 lines=  364 cum_fn=  75 cum_lines=  598
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 113 cum_lines=  920
+04 resolution stack              fn=   4 lines=   56 cum_fn= 117 cum_lines=  976
+05 init and globals              fn=  21 lines=  557 cum_fn= 138 cum_lines= 1533
+06 symbol merging                fn=   7 lines=   65 cum_fn= 145 cum_lines= 1598
+07 name resolution               fn=   8 lines=  435 cum_fn= 153 cum_lines= 2033
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 157 cum_lines= 2151
+09 literal, union, intersection  fn=  34 lines=  479 cum_fn= 191 cum_lines= 2630
+10 tuples                        fn=   6 lines=   27 cum_fn= 197 cum_lines= 2657
+11 declared types                fn=  18 lines=  241 cum_fn= 215 cum_lines= 2898
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 243 cum_lines= 3467
+13 constraints                   fn=  18 lines=  457 cum_fn= 261 cum_lines= 3924
+14 base types                    fn=   3 lines=   83 cum_fn= 264 cum_lines= 4007
+15 members                       fn=  28 lines=  773 cum_fn= 292 cum_lines= 4780
+16 lookup                        fn=  16 lines=  183 cum_fn= 308 cum_lines= 4963
+17 apparent types                fn=   6 lines=  103 cum_fn= 314 cum_lines= 5066
+18 signatures                    fn=  12 lines=  170 cum_fn= 326 cum_lines= 5236
+19 instantiation                 fn=  21 lines=  469 cum_fn= 347 cum_lines= 5705
+20 types of symbols              fn=  15 lines=  385 cum_fn= 362 cum_lines= 6090
+21 widening                      fn=   3 lines=   53 cum_fn= 365 cum_lines= 6143
+23 relations                     fn=   9 lines=  173 cum_fn= 374 cum_lines= 6316
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 397 cum_lines= 6965
+27 keyof to template             fn=  50 lines= 1249 cum_fn= 447 cum_lines= 8214
+33 grammar                       fn=   1 lines=   27 cum_fn= 448 cum_lines= 8241
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# generic.09-keyof
+01 data model                    fn=  54 lines=  235 cum_fn=  54 cum_lines=  235
+02 utilities                     fn=  25 lines=  389 cum_fn=  79 cum_lines=  624
+03 type keys, object types       fn=  38 lines=  322 cum_fn= 117 cum_lines=  946
+04 resolution stack              fn=   4 lines=   56 cum_fn= 121 cum_lines= 1002
+05 init and globals              fn=  21 lines=  557 cum_fn= 142 cum_lines= 1559
+06 symbol merging                fn=   7 lines=   65 cum_fn= 149 cum_lines= 1624
+07 name resolution               fn=   8 lines=  435 cum_fn= 157 cum_lines= 2059
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 161 cum_lines= 2177
+09 literal, union, intersection  fn=  39 lines=  696 cum_fn= 200 cum_lines= 2873
+10 tuples                        fn=   6 lines=   27 cum_fn= 206 cum_lines= 2900
+11 declared types                fn=  18 lines=  241 cum_fn= 224 cum_lines= 3141
+12 type nodes to types           fn=  28 lines=  569 cum_fn= 252 cum_lines= 3710
+13 constraints                   fn=  18 lines=  457 cum_fn= 270 cum_lines= 4167
+14 base types                    fn=   3 lines=   83 cum_fn= 273 cum_lines= 4250
+15 members                       fn=  31 lines=  808 cum_fn= 304 cum_lines= 5058
+16 lookup                        fn=  16 lines=  183 cum_fn= 320 cum_lines= 5241
+17 apparent types                fn=   6 lines=  103 cum_fn= 326 cum_lines= 5344
+18 signatures                    fn=  14 lines=  195 cum_fn= 340 cum_lines= 5539
+19 instantiation                 fn=  22 lines=  472 cum_fn= 362 cum_lines= 6011
+20 types of symbols              fn=  15 lines=  385 cum_fn= 377 cum_lines= 6396
+21 widening                      fn=   3 lines=   53 cum_fn= 380 cum_lines= 6449
+23 relations                     fn=   9 lines=  173 cum_fn= 389 cum_lines= 6622
+25 expressions to contextual     fn=  23 lines=  649 cum_fn= 412 cum_lines= 7271
+27 keyof to template             fn=  52 lines= 1306 cum_fn= 464 cum_lines= 8577
+33 grammar                       fn=   1 lines=   27 cum_fn= 465 cum_lines= 8604
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=5 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# init.es5.nostrict
+01 data model                    fn=  19 lines=   40 cum_fn=  19 cum_lines=   40
+02 utilities                     fn=   5 lines=  201 cum_fn=  24 cum_lines=  241
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  52 cum_lines=  495
+05 init and globals              fn=  18 lines=  540 cum_fn=  70 cum_lines= 1035
+06 symbol merging                fn=   5 lines=   47 cum_fn=  75 cum_lines= 1082
+07 name resolution               fn=   3 lines=  354 cum_fn=  78 cum_lines= 1436
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn=  96 cum_lines= 1754
+10 tuples                        fn=   5 lines=   21 cum_fn= 101 cum_lines= 1775
+11 declared types                fn=  10 lines=  151 cum_fn= 111 cum_lines= 1926
+15 members                       fn=   1 lines=   26 cum_fn= 112 cum_lines= 1952
+23 relations                     fn=   1 lines=    3 cum_fn= 113 cum_lines= 1955
+27 keyof to template             fn=   1 lines=   67 cum_fn= 114 cum_lines= 2022
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=33 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 27 keyof to template
+# init.es5
+01 data model                    fn=  18 lines=   39 cum_fn=  18 cum_lines=   39
+02 utilities                     fn=   5 lines=  201 cum_fn=  23 cum_lines=  240
+03 type keys, object types       fn=  28 lines=  254 cum_fn=  51 cum_lines=  494
+05 init and globals              fn=  18 lines=  540 cum_fn=  69 cum_lines= 1034
+06 symbol merging                fn=   5 lines=   47 cum_fn=  74 cum_lines= 1081
+07 name resolution               fn=   6 lines=  389 cum_fn=  80 cum_lines= 1470
+08 aliases and modules           fn=   1 lines=   55 cum_fn=  81 cum_lines= 1525
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn=  99 cum_lines= 1843
+10 tuples                        fn=   5 lines=   21 cum_fn= 104 cum_lines= 1864
+11 declared types                fn=  10 lines=  151 cum_fn= 114 cum_lines= 2015
+15 members                       fn=   1 lines=   26 cum_fn= 115 cum_lines= 2041
+23 relations                     fn=   1 lines=    3 cum_fn= 116 cum_lines= 2044
+27 keyof to template             fn=   1 lines=   67 cum_fn= 117 cum_lines= 2111
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=33 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 27 keyof to template
+# init.nolib
+01 data model                    fn=  13 lines=   29 cum_fn=  13 cum_lines=   29
+02 utilities                     fn=   6 lines=  212 cum_fn=  19 cum_lines=  241
+03 type keys, object types       fn=  25 lines=  233 cum_fn=  44 cum_lines=  474
+05 init and globals              fn=  24 lines=  567 cum_fn=  68 cum_lines= 1041
+06 symbol merging                fn=   3 lines=   21 cum_fn=  71 cum_lines= 1062
+07 name resolution               fn=   3 lines=  354 cum_fn=  74 cum_lines= 1416
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn=  92 cum_lines= 1734
+10 tuples                        fn=   5 lines=   21 cum_fn=  97 cum_lines= 1755
+15 members                       fn=   1 lines=   26 cum_fn=  98 cum_lines= 1781
+23 relations                     fn=   1 lines=    3 cum_fn=  99 cum_lines= 1784
+27 keyof to template             fn=   1 lines=   67 cum_fn= 100 cum_lines= 1851
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=30 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=14 lines=539
+last layer entered: 27 keyof to template
+# interfaces.01-declared
+01 data model                    fn=  18 lines=   39 cum_fn=  18 cum_lines=   39
+02 utilities                     fn=   9 lines=  286 cum_fn=  27 cum_lines=  325
+03 type keys, object types       fn=  29 lines=  257 cum_fn=  56 cum_lines=  582
+05 init and globals              fn=  20 lines=  631 cum_fn=  76 cum_lines= 1213
+06 symbol merging                fn=   5 lines=   47 cum_fn=  81 cum_lines= 1260
+07 name resolution               fn=   6 lines=  389 cum_fn=  87 cum_lines= 1649
+08 aliases and modules           fn=   1 lines=   55 cum_fn=  88 cum_lines= 1704
+09 literal, union, intersection  fn=  20 lines=  361 cum_fn= 108 cum_lines= 2065
+10 tuples                        fn=   5 lines=   21 cum_fn= 113 cum_lines= 2086
+11 declared types                fn=  18 lines=  352 cum_fn= 131 cum_lines= 2438
+15 members                       fn=   1 lines=   26 cum_fn= 132 cum_lines= 2464
+23 relations                     fn=   1 lines=    3 cum_fn= 133 cum_lines= 2467
+25 expressions to contextual     fn=   1 lines=    5 cum_fn= 134 cum_lines= 2472
+27 keyof to template             fn=   1 lines=   67 cum_fn= 135 cum_lines= 2539
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=29 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.02-typenodes
+01 data model                    fn=  21 lines=   54 cum_fn=  21 cum_lines=   54
+02 utilities                     fn=  11 lines=  298 cum_fn=  32 cum_lines=  352
+03 type keys, object types       fn=  29 lines=  257 cum_fn=  61 cum_lines=  609
+05 init and globals              fn=  20 lines=  631 cum_fn=  81 cum_lines= 1240
+06 symbol merging                fn=   6 lines=   59 cum_fn=  87 cum_lines= 1299
+07 name resolution               fn=   8 lines=  435 cum_fn=  95 cum_lines= 1734
+08 aliases and modules           fn=   3 lines=  109 cum_fn=  98 cum_lines= 1843
+09 literal, union, intersection  fn=  23 lines=  413 cum_fn= 121 cum_lines= 2256
+10 tuples                        fn=   5 lines=   21 cum_fn= 126 cum_lines= 2277
+11 declared types                fn=  21 lines=  383 cum_fn= 147 cum_lines= 2660
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 164 cum_lines= 3031
+13 constraints                   fn=   3 lines=   45 cum_fn= 167 cum_lines= 3076
+15 members                       fn=   1 lines=   26 cum_fn= 168 cum_lines= 3102
+18 signatures                    fn=   5 lines=   36 cum_fn= 173 cum_lines= 3138
+23 relations                     fn=   1 lines=    3 cum_fn= 174 cum_lines= 3141
+25 expressions to contextual     fn=   1 lines=    5 cum_fn= 175 cum_lines= 3146
+27 keyof to template             fn=   2 lines=  103 cum_fn= 177 cum_lines= 3249
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=30 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.03-constraints
+01 data model                    fn=  25 lines=   68 cum_fn=  25 cum_lines=   68
+02 utilities                     fn=  11 lines=  298 cum_fn=  36 cum_lines=  366
+03 type keys, object types       fn=  29 lines=  257 cum_fn=  65 cum_lines=  623
+04 resolution stack              fn=   3 lines=   31 cum_fn=  68 cum_lines=  654
+05 init and globals              fn=  20 lines=  631 cum_fn=  88 cum_lines= 1285
+06 symbol merging                fn=   6 lines=   59 cum_fn=  94 cum_lines= 1344
+07 name resolution               fn=   8 lines=  435 cum_fn= 102 cum_lines= 1779
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 105 cum_lines= 1888
+09 literal, union, intersection  fn=  23 lines=  413 cum_fn= 128 cum_lines= 2301
+10 tuples                        fn=   5 lines=   21 cum_fn= 133 cum_lines= 2322
+11 declared types                fn=  21 lines=  383 cum_fn= 154 cum_lines= 2705
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 171 cum_lines= 3076
+13 constraints                   fn=  14 lines=  385 cum_fn= 185 cum_lines= 3461
+15 members                       fn=   1 lines=   26 cum_fn= 186 cum_lines= 3487
+18 signatures                    fn=   5 lines=   36 cum_fn= 191 cum_lines= 3523
+23 relations                     fn=   5 lines=   53 cum_fn= 196 cum_lines= 3576
+25 expressions to contextual     fn=   1 lines=    5 cum_fn= 197 cum_lines= 3581
+27 keyof to template             fn=   3 lines=  112 cum_fn= 200 cum_lines= 3693
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=30 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.04-bases
+01 data model                    fn=  26 lines=   83 cum_fn=  26 cum_lines=   83
+02 utilities                     fn=  11 lines=  298 cum_fn=  37 cum_lines=  381
+03 type keys, object types       fn=  29 lines=  257 cum_fn=  66 cum_lines=  638
+04 resolution stack              fn=   3 lines=   31 cum_fn=  69 cum_lines=  669
+05 init and globals              fn=  20 lines=  631 cum_fn=  89 cum_lines= 1300
+06 symbol merging                fn=   6 lines=   59 cum_fn=  95 cum_lines= 1359
+07 name resolution               fn=   8 lines=  435 cum_fn= 103 cum_lines= 1794
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 106 cum_lines= 1903
+09 literal, union, intersection  fn=  23 lines=  413 cum_fn= 129 cum_lines= 2316
+10 tuples                        fn=   5 lines=   21 cum_fn= 134 cum_lines= 2337
+11 declared types                fn=  21 lines=  383 cum_fn= 155 cum_lines= 2720
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 172 cum_lines= 3091
+13 constraints                   fn=  14 lines=  385 cum_fn= 186 cum_lines= 3476
+14 base types                    fn=   5 lines=   91 cum_fn= 191 cum_lines= 3567
+15 members                       fn=   1 lines=   26 cum_fn= 192 cum_lines= 3593
+17 apparent types                fn=   1 lines=   24 cum_fn= 193 cum_lines= 3617
+18 signatures                    fn=   5 lines=   36 cum_fn= 198 cum_lines= 3653
+23 relations                     fn=   5 lines=   53 cum_fn= 203 cum_lines= 3706
+25 expressions to contextual     fn=   1 lines=    5 cum_fn= 204 cum_lines= 3711
+27 keyof to template             fn=   3 lines=  112 cum_fn= 207 cum_lines= 3823
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=30 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.05-members
+01 data model                    fn=  34 lines=  119 cum_fn=  34 cum_lines=  119
+02 utilities                     fn=  16 lines=  313 cum_fn=  50 cum_lines=  432
+03 type keys, object types       fn=  30 lines=  266 cum_fn=  80 cum_lines=  698
+04 resolution stack              fn=   3 lines=   31 cum_fn=  83 cum_lines=  729
+05 init and globals              fn=  20 lines=  631 cum_fn= 103 cum_lines= 1360
+06 symbol merging                fn=   6 lines=   59 cum_fn= 109 cum_lines= 1419
+07 name resolution               fn=   8 lines=  435 cum_fn= 117 cum_lines= 1854
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 120 cum_lines= 1963
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 144 cum_lines= 2385
+10 tuples                        fn=   5 lines=   21 cum_fn= 149 cum_lines= 2406
+11 declared types                fn=  21 lines=  383 cum_fn= 170 cum_lines= 2789
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 187 cum_lines= 3160
+13 constraints                   fn=  14 lines=  385 cum_fn= 201 cum_lines= 3545
+14 base types                    fn=   6 lines=  115 cum_fn= 207 cum_lines= 3660
+15 members                       fn=  28 lines=  570 cum_fn= 235 cum_lines= 4230
+16 lookup                        fn=   8 lines=   45 cum_fn= 243 cum_lines= 4275
+17 apparent types                fn=   3 lines=   65 cum_fn= 246 cum_lines= 4340
+18 signatures                    fn=  14 lines=  195 cum_fn= 260 cum_lines= 4535
+19 instantiation                 fn=  13 lines=  245 cum_fn= 273 cum_lines= 4780
+23 relations                     fn=   5 lines=   53 cum_fn= 278 cum_lines= 4833
+25 expressions to contextual     fn=   1 lines=    5 cum_fn= 279 cum_lines= 4838
+27 keyof to template             fn=   3 lines=  112 cum_fn= 282 cum_lines= 4950
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=39 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.06-lookup
+01 data model                    fn=  34 lines=  119 cum_fn=  34 cum_lines=  119
+02 utilities                     fn=  18 lines=  355 cum_fn=  52 cum_lines=  474
+03 type keys, object types       fn=  30 lines=  266 cum_fn=  82 cum_lines=  740
+04 resolution stack              fn=   3 lines=   31 cum_fn=  85 cum_lines=  771
+05 init and globals              fn=  20 lines=  631 cum_fn= 105 cum_lines= 1402
+06 symbol merging                fn=   6 lines=   59 cum_fn= 111 cum_lines= 1461
+07 name resolution               fn=   8 lines=  435 cum_fn= 119 cum_lines= 1896
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 122 cum_lines= 2005
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 146 cum_lines= 2427
+10 tuples                        fn=   5 lines=   21 cum_fn= 151 cum_lines= 2448
+11 declared types                fn=  21 lines=  383 cum_fn= 172 cum_lines= 2831
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 189 cum_lines= 3202
+13 constraints                   fn=  14 lines=  385 cum_fn= 203 cum_lines= 3587
+14 base types                    fn=   6 lines=  115 cum_fn= 209 cum_lines= 3702
+15 members                       fn=  32 lines=  812 cum_fn= 241 cum_lines= 4514
+16 lookup                        fn=  10 lines=  120 cum_fn= 251 cum_lines= 4634
+17 apparent types                fn=   3 lines=   65 cum_fn= 254 cum_lines= 4699
+18 signatures                    fn=  14 lines=  195 cum_fn= 268 cum_lines= 4894
+19 instantiation                 fn=  13 lines=  245 cum_fn= 281 cum_lines= 5139
+23 relations                     fn=   5 lines=   53 cum_fn= 286 cum_lines= 5192
+25 expressions to contextual     fn=   3 lines=   39 cum_fn= 289 cum_lines= 5231
+27 keyof to template             fn=   3 lines=  112 cum_fn= 292 cum_lines= 5343
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=39 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.07-apparent
+01 data model                    fn=  34 lines=  119 cum_fn=  34 cum_lines=  119
+02 utilities                     fn=  18 lines=  355 cum_fn=  52 cum_lines=  474
+03 type keys, object types       fn=  30 lines=  266 cum_fn=  82 cum_lines=  740
+04 resolution stack              fn=   3 lines=   31 cum_fn=  85 cum_lines=  771
+05 init and globals              fn=  20 lines=  631 cum_fn= 105 cum_lines= 1402
+06 symbol merging                fn=   6 lines=   59 cum_fn= 111 cum_lines= 1461
+07 name resolution               fn=   8 lines=  435 cum_fn= 119 cum_lines= 1896
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 122 cum_lines= 2005
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 146 cum_lines= 2427
+10 tuples                        fn=   5 lines=   21 cum_fn= 151 cum_lines= 2448
+11 declared types                fn=  21 lines=  383 cum_fn= 172 cum_lines= 2831
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 189 cum_lines= 3202
+13 constraints                   fn=  14 lines=  385 cum_fn= 203 cum_lines= 3587
+14 base types                    fn=   6 lines=  115 cum_fn= 209 cum_lines= 3702
+15 members                       fn=  32 lines=  812 cum_fn= 241 cum_lines= 4514
+16 lookup                        fn=  10 lines=  120 cum_fn= 251 cum_lines= 4634
+17 apparent types                fn=   3 lines=   65 cum_fn= 254 cum_lines= 4699
+18 signatures                    fn=  14 lines=  195 cum_fn= 268 cum_lines= 4894
+19 instantiation                 fn=  13 lines=  245 cum_fn= 281 cum_lines= 5139
+23 relations                     fn=   5 lines=   53 cum_fn= 286 cum_lines= 5192
+25 expressions to contextual     fn=   3 lines=   39 cum_fn= 289 cum_lines= 5231
+27 keyof to template             fn=   3 lines=  112 cum_fn= 292 cum_lines= 5343
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=39 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.08-signatures
+01 data model                    fn=  34 lines=  119 cum_fn=  34 cum_lines=  119
+02 utilities                     fn=  18 lines=  355 cum_fn=  52 cum_lines=  474
+03 type keys, object types       fn=  30 lines=  266 cum_fn=  82 cum_lines=  740
+04 resolution stack              fn=   3 lines=   31 cum_fn=  85 cum_lines=  771
+05 init and globals              fn=  20 lines=  631 cum_fn= 105 cum_lines= 1402
+06 symbol merging                fn=   6 lines=   59 cum_fn= 111 cum_lines= 1461
+07 name resolution               fn=   8 lines=  435 cum_fn= 119 cum_lines= 1896
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 122 cum_lines= 2005
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 146 cum_lines= 2427
+10 tuples                        fn=   5 lines=   21 cum_fn= 151 cum_lines= 2448
+11 declared types                fn=  21 lines=  383 cum_fn= 172 cum_lines= 2831
+12 type nodes to types           fn=  17 lines=  371 cum_fn= 189 cum_lines= 3202
+13 constraints                   fn=  14 lines=  385 cum_fn= 203 cum_lines= 3587
+14 base types                    fn=   6 lines=  115 cum_fn= 209 cum_lines= 3702
+15 members                       fn=  32 lines=  812 cum_fn= 241 cum_lines= 4514
+16 lookup                        fn=  10 lines=  120 cum_fn= 251 cum_lines= 4634
+17 apparent types                fn=   3 lines=   65 cum_fn= 254 cum_lines= 4699
+18 signatures                    fn=  17 lines=  290 cum_fn= 271 cum_lines= 4989
+19 instantiation                 fn=  13 lines=  245 cum_fn= 284 cum_lines= 5234
+23 relations                     fn=   5 lines=   53 cum_fn= 289 cum_lines= 5287
+25 expressions to contextual     fn=   3 lines=   39 cum_fn= 292 cum_lines= 5326
+27 keyof to template             fn=   3 lines=  112 cum_fn= 295 cum_lines= 5438
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.09-proptypes
+01 data model                    fn=  38 lines=  152 cum_fn=  38 cum_lines=  152
+02 utilities                     fn=  18 lines=  355 cum_fn=  56 cum_lines=  507
+03 type keys, object types       fn=  31 lines=  275 cum_fn=  87 cum_lines=  782
+04 resolution stack              fn=   3 lines=   31 cum_fn=  90 cum_lines=  813
+05 init and globals              fn=  20 lines=  631 cum_fn= 110 cum_lines= 1444
+06 symbol merging                fn=   6 lines=   59 cum_fn= 116 cum_lines= 1503
+07 name resolution               fn=   8 lines=  435 cum_fn= 124 cum_lines= 1938
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 127 cum_lines= 2047
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 151 cum_lines= 2469
+10 tuples                        fn=   6 lines=   27 cum_fn= 157 cum_lines= 2496
+11 declared types                fn=  21 lines=  383 cum_fn= 178 cum_lines= 2879
+12 type nodes to types           fn=  18 lines=  378 cum_fn= 196 cum_lines= 3257
+13 constraints                   fn=  14 lines=  385 cum_fn= 210 cum_lines= 3642
+14 base types                    fn=   6 lines=  115 cum_fn= 216 cum_lines= 3757
+15 members                       fn=  32 lines=  812 cum_fn= 248 cum_lines= 4569
+16 lookup                        fn=  10 lines=  120 cum_fn= 258 cum_lines= 4689
+17 apparent types                fn=   3 lines=   65 cum_fn= 261 cum_lines= 4754
+18 signatures                    fn=  17 lines=  290 cum_fn= 278 cum_lines= 5044
+19 instantiation                 fn=  18 lines=  432 cum_fn= 296 cum_lines= 5476
+20 types of symbols              fn=  12 lines=  351 cum_fn= 308 cum_lines= 5827
+21 widening                      fn=   3 lines=   53 cum_fn= 311 cum_lines= 5880
+23 relations                     fn=   5 lines=   53 cum_fn= 316 cum_lines= 5933
+25 expressions to contextual     fn=   3 lines=   39 cum_fn= 319 cum_lines= 5972
+27 keyof to template             fn=   3 lines=  112 cum_fn= 322 cum_lines= 6084
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.10-symtypes
+01 data model                    fn=  38 lines=  152 cum_fn=  38 cum_lines=  152
+02 utilities                     fn=  18 lines=  355 cum_fn=  56 cum_lines=  507
+03 type keys, object types       fn=  31 lines=  275 cum_fn=  87 cum_lines=  782
+04 resolution stack              fn=   3 lines=   31 cum_fn=  90 cum_lines=  813
+05 init and globals              fn=  20 lines=  631 cum_fn= 110 cum_lines= 1444
+06 symbol merging                fn=   6 lines=   59 cum_fn= 116 cum_lines= 1503
+07 name resolution               fn=   8 lines=  435 cum_fn= 124 cum_lines= 1938
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 127 cum_lines= 2047
+09 literal, union, intersection  fn=  24 lines=  422 cum_fn= 151 cum_lines= 2469
+10 tuples                        fn=   6 lines=   27 cum_fn= 157 cum_lines= 2496
+11 declared types                fn=  21 lines=  383 cum_fn= 178 cum_lines= 2879
+12 type nodes to types           fn=  18 lines=  378 cum_fn= 196 cum_lines= 3257
+13 constraints                   fn=  14 lines=  385 cum_fn= 210 cum_lines= 3642
+14 base types                    fn=   6 lines=  115 cum_fn= 216 cum_lines= 3757
+15 members                       fn=  32 lines=  812 cum_fn= 248 cum_lines= 4569
+16 lookup                        fn=  10 lines=  120 cum_fn= 258 cum_lines= 4689
+17 apparent types                fn=   3 lines=   65 cum_fn= 261 cum_lines= 4754
+18 signatures                    fn=  17 lines=  290 cum_fn= 278 cum_lines= 5044
+19 instantiation                 fn=  18 lines=  432 cum_fn= 296 cum_lines= 5476
+20 types of symbols              fn=  13 lines=  358 cum_fn= 309 cum_lines= 5834
+21 widening                      fn=   3 lines=   53 cum_fn= 312 cum_lines= 5887
+23 relations                     fn=   5 lines=   53 cum_fn= 317 cum_lines= 5940
+25 expressions to contextual     fn=   4 lines=   42 cum_fn= 321 cum_lines= 5982
+27 keyof to template             fn=   3 lines=  112 cum_fn= 324 cum_lines= 6094
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# interfaces.11-widen
+01 data model                    fn=  38 lines=  152 cum_fn=  38 cum_lines=  152
+02 utilities                     fn=  18 lines=  355 cum_fn=  56 cum_lines=  507
+03 type keys, object types       fn=  31 lines=  275 cum_fn=  87 cum_lines=  782
+04 resolution stack              fn=   3 lines=   31 cum_fn=  90 cum_lines=  813
+05 init and globals              fn=  20 lines=  631 cum_fn= 110 cum_lines= 1444
+06 symbol merging                fn=   7 lines=   65 cum_fn= 117 cum_lines= 1509
+07 name resolution               fn=   8 lines=  435 cum_fn= 125 cum_lines= 1944
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 128 cum_lines= 2053
+09 literal, union, intersection  fn=  28 lines=  471 cum_fn= 156 cum_lines= 2524
+10 tuples                        fn=   6 lines=   27 cum_fn= 162 cum_lines= 2551
+11 declared types                fn=  21 lines=  383 cum_fn= 183 cum_lines= 2934
+12 type nodes to types           fn=  18 lines=  378 cum_fn= 201 cum_lines= 3312
+13 constraints                   fn=  14 lines=  385 cum_fn= 215 cum_lines= 3697
+14 base types                    fn=   6 lines=  115 cum_fn= 221 cum_lines= 3812
+15 members                       fn=  32 lines=  812 cum_fn= 253 cum_lines= 4624
+16 lookup                        fn=  10 lines=  120 cum_fn= 263 cum_lines= 4744
+17 apparent types                fn=   3 lines=   65 cum_fn= 266 cum_lines= 4809
+18 signatures                    fn=  17 lines=  290 cum_fn= 283 cum_lines= 5099
+19 instantiation                 fn=  18 lines=  432 cum_fn= 301 cum_lines= 5531
+20 types of symbols              fn=  13 lines=  358 cum_fn= 314 cum_lines= 5889
+21 widening                      fn=   3 lines=   53 cum_fn= 317 cum_lines= 5942
+23 relations                     fn=   5 lines=   53 cum_fn= 322 cum_lines= 5995
+25 expressions to contextual     fn=   4 lines=   42 cum_fn= 326 cum_lines= 6037
+27 keyof to template             fn=   3 lines=  112 cum_fn= 329 cum_lines= 6149
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=51 lines=1177
+last layer entered: 27 keyof to template
+# lit.nolib
+01 data model                    fn=  15 lines=   36 cum_fn=  15 cum_lines=   36
+02 utilities                     fn=   8 lines=  234 cum_fn=  23 cum_lines=  270
+03 type keys, object types       fn=  26 lines=  243 cum_fn=  49 cum_lines=  513
+05 init and globals              fn=  24 lines=  567 cum_fn=  73 cum_lines= 1080
+06 symbol merging                fn=   3 lines=   21 cum_fn=  76 cum_lines= 1101
+07 name resolution               fn=   3 lines=  354 cum_fn=  79 cum_lines= 1455
+09 literal, union, intersection  fn=  41 lines=  774 cum_fn= 120 cum_lines= 2229
+10 tuples                        fn=   5 lines=   21 cum_fn= 125 cum_lines= 2250
+15 members                       fn=   1 lines=   26 cum_fn= 126 cum_lines= 2276
+23 relations                     fn=   1 lines=    3 cum_fn= 127 cum_lines= 2279
+27 keyof to template             fn=   2 lines=   76 cum_fn= 129 cum_lines= 2355
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=19 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=14 lines=539
+last layer entered: 27 keyof to template
+# lit
+01 data model                    fn=  20 lines=   46 cum_fn=  20 cum_lines=   46
+02 utilities                     fn=   7 lines=  223 cum_fn=  27 cum_lines=  269
+03 type keys, object types       fn=  29 lines=  264 cum_fn=  56 cum_lines=  533
+05 init and globals              fn=  18 lines=  540 cum_fn=  74 cum_lines= 1073
+06 symbol merging                fn=   5 lines=   47 cum_fn=  79 cum_lines= 1120
+07 name resolution               fn=   6 lines=  389 cum_fn=  85 cum_lines= 1509
+08 aliases and modules           fn=   1 lines=   55 cum_fn=  86 cum_lines= 1564
+09 literal, union, intersection  fn=  41 lines=  774 cum_fn= 127 cum_lines= 2338
+10 tuples                        fn=   5 lines=   21 cum_fn= 132 cum_lines= 2359
+11 declared types                fn=  10 lines=  151 cum_fn= 142 cum_lines= 2510
+15 members                       fn=   1 lines=   26 cum_fn= 143 cum_lines= 2536
+23 relations                     fn=   1 lines=    3 cum_fn= 144 cum_lines= 2539
+27 keyof to template             fn=   2 lines=   76 cum_fn= 146 cum_lines= 2615
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=18 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 27 keyof to template
+# rel
+01 data model                    fn=  36 lines=  127 cum_fn=  36 cum_lines=  127
+02 utilities                     fn=  17 lines=  341 cum_fn=  53 cum_lines=  468
+03 type keys, object types       fn=  34 lines=  313 cum_fn=  87 cum_lines=  781
+04 resolution stack              fn=   4 lines=   56 cum_fn=  91 cum_lines=  837
+05 init and globals              fn=  19 lines=  543 cum_fn= 110 cum_lines= 1380
+06 symbol merging                fn=   7 lines=   65 cum_fn= 117 cum_lines= 1445
+07 name resolution               fn=   8 lines=  435 cum_fn= 125 cum_lines= 1880
+08 aliases and modules           fn=   5 lines=  180 cum_fn= 130 cum_lines= 2060
+09 literal, union, intersection  fn=  36 lines=  518 cum_fn= 166 cum_lines= 2578
+10 tuples                        fn=  21 lines=  205 cum_fn= 187 cum_lines= 2783
+11 declared types                fn=  18 lines=  287 cum_fn= 205 cum_lines= 3070
+12 type nodes to types           fn=  21 lines=  417 cum_fn= 226 cum_lines= 3487
+14 base types                    fn=   7 lines=  128 cum_fn= 233 cum_lines= 3615
+15 members                       fn=  20 lines=  426 cum_fn= 253 cum_lines= 4041
+16 lookup                        fn=  12 lines=  114 cum_fn= 265 cum_lines= 4155
+17 apparent types                fn=   3 lines=   65 cum_fn= 268 cum_lines= 4220
+18 signatures                    fn=  33 lines=  445 cum_fn= 301 cum_lines= 4665
+19 instantiation                 fn=  14 lines=  251 cum_fn= 315 cum_lines= 4916
+20 types of symbols              fn=  15 lines=  366 cum_fn= 330 cum_lines= 5282
+21 widening                      fn=   4 lines=   69 cum_fn= 334 cum_lines= 5351
+23 relations                     fn=  48 lines= 2292 cum_fn= 382 cum_lines= 7643
+25 expressions to contextual     fn=  15 lines=  408 cum_fn= 397 cum_lines= 8051
+27 keyof to template             fn=   3 lines=  106 cum_fn= 400 cum_lines= 8157
+33 grammar                       fn=   1 lines=   27 cum_fn= 401 cum_lines= 8184
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=40 lines=0
+  other: checker:zz_relprobe.go fn=7 lines=0
+  other: pkg:binder fn=49 lines=1128
+last layer entered: 33 grammar
+# tuple.nolib
+01 data model                    fn=  18 lines=   34 cum_fn=  18 cum_lines=   34
+02 utilities                     fn=   6 lines=  212 cum_fn=  24 cum_lines=  246
+03 type keys, object types       fn=  28 lines=  273 cum_fn=  52 cum_lines=  519
+05 init and globals              fn=  24 lines=  567 cum_fn=  76 cum_lines= 1086
+06 symbol merging                fn=   3 lines=   21 cum_fn=  79 cum_lines= 1107
+07 name resolution               fn=   3 lines=  354 cum_fn=  82 cum_lines= 1461
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn= 100 cum_lines= 1779
+10 tuples                        fn=  14 lines=  239 cum_fn= 114 cum_lines= 2018
+15 members                       fn=   1 lines=   26 cum_fn= 115 cum_lines= 2044
+20 types of symbols              fn=   2 lines=   14 cum_fn= 117 cum_lines= 2058
+23 relations                     fn=   1 lines=    3 cum_fn= 118 cum_lines= 2061
+27 keyof to template             fn=   1 lines=   67 cum_fn= 119 cum_lines= 2128
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=30 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=14 lines=539
+last layer entered: 27 keyof to template
+# tuple
+01 data model                    fn=  18 lines=   34 cum_fn=  18 cum_lines=   34
+02 utilities                     fn=   5 lines=  201 cum_fn=  23 cum_lines=  235
+03 type keys, object types       fn=  29 lines=  276 cum_fn=  52 cum_lines=  511
+05 init and globals              fn=  18 lines=  540 cum_fn=  70 cum_lines= 1051
+06 symbol merging                fn=   5 lines=   47 cum_fn=  75 cum_lines= 1098
+07 name resolution               fn=   6 lines=  389 cum_fn=  81 cum_lines= 1487
+08 aliases and modules           fn=   1 lines=   55 cum_fn=  82 cum_lines= 1542
+09 literal, union, intersection  fn=  18 lines=  318 cum_fn= 100 cum_lines= 1860
+10 tuples                        fn=  14 lines=  239 cum_fn= 114 cum_lines= 2099
+11 declared types                fn=  10 lines=  151 cum_fn= 124 cum_lines= 2250
+15 members                       fn=   1 lines=   26 cum_fn= 125 cum_lines= 2276
+20 types of symbols              fn=   2 lines=   14 cum_fn= 127 cum_lines= 2290
+23 relations                     fn=   1 lines=    3 cum_fn= 128 cum_lines= 2293
+27 keyof to template             fn=   1 lines=   67 cum_fn= 129 cum_lines= 2360
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=31 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 27 keyof to template
+# typenodes.01-typenodes
+01 data model                    fn=  23 lines=   56 cum_fn=  23 cum_lines=   56
+02 utilities                     fn=  11 lines=  247 cum_fn=  34 cum_lines=  303
+03 type keys, object types       fn=  34 lines=  306 cum_fn=  68 cum_lines=  609
+05 init and globals              fn=  19 lines=  543 cum_fn=  87 cum_lines= 1152
+06 symbol merging                fn=   7 lines=   66 cum_fn=  94 cum_lines= 1218
+07 name resolution               fn=   7 lines=  424 cum_fn= 101 cum_lines= 1642
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 104 cum_lines= 1751
+09 literal, union, intersection  fn=  25 lines=  561 cum_fn= 129 cum_lines= 2312
+10 tuples                        fn=  12 lines=  240 cum_fn= 141 cum_lines= 2552
+11 declared types                fn=  13 lines=  182 cum_fn= 154 cum_lines= 2734
+12 type nodes to types           fn=  24 lines=  426 cum_fn= 178 cum_lines= 3160
+15 members                       fn=   1 lines=   26 cum_fn= 179 cum_lines= 3186
+18 signatures                    fn=   5 lines=   36 cum_fn= 184 cum_lines= 3222
+20 types of symbols              fn=   2 lines=   14 cum_fn= 186 cum_lines= 3236
+23 relations                     fn=   1 lines=    3 cum_fn= 187 cum_lines= 3239
+25 expressions to contextual     fn=   5 lines=  197 cum_fn= 192 cum_lines= 3436
+27 keyof to template             fn=   2 lines=  103 cum_fn= 194 cum_lines= 3539
+33 grammar                       fn=   2 lines=   39 cum_fn= 196 cum_lines= 3578
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=35 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.02-signatures
+01 data model                    fn=  23 lines=   56 cum_fn=  23 cum_lines=   56
+02 utilities                     fn=  12 lines=  250 cum_fn=  35 cum_lines=  306
+03 type keys, object types       fn=  34 lines=  306 cum_fn=  69 cum_lines=  612
+04 resolution stack              fn=   3 lines=   31 cum_fn=  72 cum_lines=  643
+05 init and globals              fn=  19 lines=  543 cum_fn=  91 cum_lines= 1186
+06 symbol merging                fn=   7 lines=   66 cum_fn=  98 cum_lines= 1252
+07 name resolution               fn=   7 lines=  424 cum_fn= 105 cum_lines= 1676
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 108 cum_lines= 1785
+09 literal, union, intersection  fn=  25 lines=  561 cum_fn= 133 cum_lines= 2346
+10 tuples                        fn=  12 lines=  240 cum_fn= 145 cum_lines= 2586
+11 declared types                fn=  13 lines=  182 cum_fn= 158 cum_lines= 2768
+12 type nodes to types           fn=  24 lines=  426 cum_fn= 182 cum_lines= 3194
+15 members                       fn=   1 lines=   26 cum_fn= 183 cum_lines= 3220
+18 signatures                    fn=  15 lines=  247 cum_fn= 198 cum_lines= 3467
+20 types of symbols              fn=   2 lines=   14 cum_fn= 200 cum_lines= 3481
+23 relations                     fn=   1 lines=    3 cum_fn= 201 cum_lines= 3484
+25 expressions to contextual     fn=   5 lines=  197 cum_fn= 206 cum_lines= 3681
+27 keyof to template             fn=   2 lines=  103 cum_fn= 208 cum_lines= 3784
+33 grammar                       fn=   2 lines=   39 cum_fn= 210 cum_lines= 3823
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=39 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.03-symtypes
+01 data model                    fn=  23 lines=   56 cum_fn=  23 cum_lines=   56
+02 utilities                     fn=  12 lines=  250 cum_fn=  35 cum_lines=  306
+03 type keys, object types       fn=  34 lines=  306 cum_fn=  69 cum_lines=  612
+04 resolution stack              fn=   3 lines=   31 cum_fn=  72 cum_lines=  643
+05 init and globals              fn=  19 lines=  543 cum_fn=  91 cum_lines= 1186
+06 symbol merging                fn=   7 lines=   66 cum_fn=  98 cum_lines= 1252
+07 name resolution               fn=   7 lines=  424 cum_fn= 105 cum_lines= 1676
+08 aliases and modules           fn=   3 lines=  109 cum_fn= 108 cum_lines= 1785
+09 literal, union, intersection  fn=  25 lines=  561 cum_fn= 133 cum_lines= 2346
+10 tuples                        fn=  12 lines=  240 cum_fn= 145 cum_lines= 2586
+11 declared types                fn=  13 lines=  182 cum_fn= 158 cum_lines= 2768
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 183 cum_lines= 3201
+15 members                       fn=   1 lines=   26 cum_fn= 184 cum_lines= 3227
+18 signatures                    fn=  15 lines=  247 cum_fn= 199 cum_lines= 3474
+20 types of symbols              fn=  11 lines=  344 cum_fn= 210 cum_lines= 3818
+21 widening                      fn=   3 lines=   53 cum_fn= 213 cum_lines= 3871
+23 relations                     fn=   1 lines=    3 cum_fn= 214 cum_lines= 3874
+25 expressions to contextual     fn=   6 lines=  200 cum_fn= 220 cum_lines= 4074
+27 keyof to template             fn=   2 lines=  103 cum_fn= 222 cum_lines= 4177
+33 grammar                       fn=   2 lines=   39 cum_fn= 224 cum_lines= 4216
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=39 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.04-members
+01 data model                    fn=  32 lines=  104 cum_fn=  32 cum_lines=  104
+02 utilities                     fn=  17 lines=  306 cum_fn=  49 cum_lines=  410
+03 type keys, object types       fn=  35 lines=  315 cum_fn=  84 cum_lines=  725
+04 resolution stack              fn=   3 lines=   31 cum_fn=  87 cum_lines=  756
+05 init and globals              fn=  19 lines=  543 cum_fn= 106 cum_lines= 1299
+06 symbol merging                fn=   7 lines=   66 cum_fn= 113 cum_lines= 1365
+07 name resolution               fn=   8 lines=  435 cum_fn= 121 cum_lines= 1800
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 125 cum_lines= 1918
+09 literal, union, intersection  fn=  26 lines=  570 cum_fn= 151 cum_lines= 2488
+10 tuples                        fn=  13 lines=  246 cum_fn= 164 cum_lines= 2734
+11 declared types                fn=  13 lines=  182 cum_fn= 177 cum_lines= 2916
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 202 cum_lines= 3349
+13 constraints                   fn=   7 lines=  285 cum_fn= 209 cum_lines= 3634
+14 base types                    fn=   5 lines=  107 cum_fn= 214 cum_lines= 3741
+15 members                       fn=  26 lines=  588 cum_fn= 240 cum_lines= 4329
+16 lookup                        fn=   6 lines=   35 cum_fn= 246 cum_lines= 4364
+17 apparent types                fn=   3 lines=   65 cum_fn= 249 cum_lines= 4429
+18 signatures                    fn=  17 lines=  283 cum_fn= 266 cum_lines= 4712
+19 instantiation                 fn=  14 lines=  251 cum_fn= 280 cum_lines= 4963
+20 types of symbols              fn=  11 lines=  344 cum_fn= 291 cum_lines= 5307
+21 widening                      fn=   3 lines=   53 cum_fn= 294 cum_lines= 5360
+23 relations                     fn=   5 lines=   53 cum_fn= 299 cum_lines= 5413
+25 expressions to contextual     fn=   6 lines=  200 cum_fn= 305 cum_lines= 5613
+27 keyof to template             fn=   3 lines=  112 cum_fn= 308 cum_lines= 5725
+33 grammar                       fn=   2 lines=   39 cum_fn= 310 cum_lines= 5764
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.05-lookup
+01 data model                    fn=  33 lines=  105 cum_fn=  33 cum_lines=  105
+02 utilities                     fn=  22 lines=  357 cum_fn=  55 cum_lines=  462
+03 type keys, object types       fn=  35 lines=  315 cum_fn=  90 cum_lines=  777
+04 resolution stack              fn=   4 lines=   56 cum_fn=  94 cum_lines=  833
+05 init and globals              fn=  19 lines=  543 cum_fn= 113 cum_lines= 1376
+06 symbol merging                fn=   7 lines=   66 cum_fn= 120 cum_lines= 1442
+07 name resolution               fn=   8 lines=  435 cum_fn= 128 cum_lines= 1877
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 132 cum_lines= 1995
+09 literal, union, intersection  fn=  28 lines=  585 cum_fn= 160 cum_lines= 2580
+10 tuples                        fn=  13 lines=  246 cum_fn= 173 cum_lines= 2826
+11 declared types                fn=  13 lines=  182 cum_fn= 186 cum_lines= 3008
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 211 cum_lines= 3441
+13 constraints                   fn=   7 lines=  285 cum_fn= 218 cum_lines= 3726
+14 base types                    fn=   5 lines=  107 cum_fn= 223 cum_lines= 3833
+15 members                       fn=  30 lines=  830 cum_fn= 253 cum_lines= 4663
+16 lookup                        fn=  11 lines=  153 cum_fn= 264 cum_lines= 4816
+17 apparent types                fn=   7 lines=   93 cum_fn= 271 cum_lines= 4909
+18 signatures                    fn=  17 lines=  283 cum_fn= 288 cum_lines= 5192
+19 instantiation                 fn=  14 lines=  251 cum_fn= 302 cum_lines= 5443
+20 types of symbols              fn=  13 lines=  369 cum_fn= 315 cum_lines= 5812
+21 widening                      fn=   3 lines=   53 cum_fn= 318 cum_lines= 5865
+23 relations                     fn=   5 lines=   53 cum_fn= 323 cum_lines= 5918
+25 expressions to contextual     fn=   8 lines=  234 cum_fn= 331 cum_lines= 6152
+27 keyof to template             fn=   3 lines=  112 cum_fn= 334 cum_lines= 6264
+33 grammar                       fn=   2 lines=   39 cum_fn= 336 cum_lines= 6303
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.06-proptypes
+01 data model                    fn=  37 lines=  139 cum_fn=  37 cum_lines=  139
+02 utilities                     fn=  22 lines=  357 cum_fn=  59 cum_lines=  496
+03 type keys, object types       fn=  36 lines=  324 cum_fn=  95 cum_lines=  820
+04 resolution stack              fn=   4 lines=   56 cum_fn=  99 cum_lines=  876
+05 init and globals              fn=  19 lines=  543 cum_fn= 118 cum_lines= 1419
+06 symbol merging                fn=   7 lines=   66 cum_fn= 125 cum_lines= 1485
+07 name resolution               fn=   8 lines=  435 cum_fn= 133 cum_lines= 1920
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 137 cum_lines= 2038
+09 literal, union, intersection  fn=  28 lines=  585 cum_fn= 165 cum_lines= 2623
+10 tuples                        fn=  13 lines=  246 cum_fn= 178 cum_lines= 2869
+11 declared types                fn=  13 lines=  182 cum_fn= 191 cum_lines= 3051
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 216 cum_lines= 3484
+13 constraints                   fn=   7 lines=  285 cum_fn= 223 cum_lines= 3769
+14 base types                    fn=   5 lines=  107 cum_fn= 228 cum_lines= 3876
+15 members                       fn=  30 lines=  830 cum_fn= 258 cum_lines= 4706
+16 lookup                        fn=  11 lines=  153 cum_fn= 269 cum_lines= 4859
+17 apparent types                fn=   7 lines=   93 cum_fn= 276 cum_lines= 4952
+18 signatures                    fn=  17 lines=  283 cum_fn= 293 cum_lines= 5235
+19 instantiation                 fn=  17 lines=  429 cum_fn= 310 cum_lines= 5664
+20 types of symbols              fn=  14 lines=  376 cum_fn= 324 cum_lines= 6040
+21 widening                      fn=   3 lines=   53 cum_fn= 327 cum_lines= 6093
+23 relations                     fn=   5 lines=   53 cum_fn= 332 cum_lines= 6146
+25 expressions to contextual     fn=   8 lines=  234 cum_fn= 340 cum_lines= 6380
+27 keyof to template             fn=   3 lines=  112 cum_fn= 343 cum_lines= 6492
+33 grammar                       fn=   2 lines=   39 cum_fn= 345 cum_lines= 6531
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.07-widen
+01 data model                    fn=  37 lines=  139 cum_fn=  37 cum_lines=  139
+02 utilities                     fn=  22 lines=  357 cum_fn=  59 cum_lines=  496
+03 type keys, object types       fn=  36 lines=  324 cum_fn=  95 cum_lines=  820
+04 resolution stack              fn=   4 lines=   56 cum_fn=  99 cum_lines=  876
+05 init and globals              fn=  19 lines=  543 cum_fn= 118 cum_lines= 1419
+06 symbol merging                fn=   7 lines=   66 cum_fn= 125 cum_lines= 1485
+07 name resolution               fn=   8 lines=  435 cum_fn= 133 cum_lines= 1920
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 137 cum_lines= 2038
+09 literal, union, intersection  fn=  33 lines=  667 cum_fn= 170 cum_lines= 2705
+10 tuples                        fn=  13 lines=  246 cum_fn= 183 cum_lines= 2951
+11 declared types                fn=  13 lines=  182 cum_fn= 196 cum_lines= 3133
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 221 cum_lines= 3566
+13 constraints                   fn=   7 lines=  285 cum_fn= 228 cum_lines= 3851
+14 base types                    fn=   5 lines=  107 cum_fn= 233 cum_lines= 3958
+15 members                       fn=  30 lines=  830 cum_fn= 263 cum_lines= 4788
+16 lookup                        fn=  11 lines=  153 cum_fn= 274 cum_lines= 4941
+17 apparent types                fn=   7 lines=   93 cum_fn= 281 cum_lines= 5034
+18 signatures                    fn=  17 lines=  283 cum_fn= 298 cum_lines= 5317
+19 instantiation                 fn=  17 lines=  429 cum_fn= 315 cum_lines= 5746
+20 types of symbols              fn=  14 lines=  376 cum_fn= 329 cum_lines= 6122
+21 widening                      fn=   3 lines=   53 cum_fn= 332 cum_lines= 6175
+23 relations                     fn=   5 lines=   53 cum_fn= 337 cum_lines= 6228
+25 expressions to contextual     fn=   8 lines=  234 cum_fn= 345 cum_lines= 6462
+27 keyof to template             fn=   3 lines=  112 cum_fn= 348 cum_lines= 6574
+33 grammar                       fn=   2 lines=   39 cum_fn= 350 cum_lines= 6613
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar
+# typenodes.08-keyof
+01 data model                    fn=  42 lines=  160 cum_fn=  42 cum_lines=  160
+02 utilities                     fn=  24 lines=  363 cum_fn=  66 cum_lines=  523
+03 type keys, object types       fn=  37 lines=  330 cum_fn= 103 cum_lines=  853
+04 resolution stack              fn=   4 lines=   56 cum_fn= 107 cum_lines=  909
+05 init and globals              fn=  19 lines=  543 cum_fn= 126 cum_lines= 1452
+06 symbol merging                fn=   7 lines=   66 cum_fn= 133 cum_lines= 1518
+07 name resolution               fn=   8 lines=  435 cum_fn= 141 cum_lines= 1953
+08 aliases and modules           fn=   4 lines=  118 cum_fn= 145 cum_lines= 2071
+09 literal, union, intersection  fn=  36 lines=  687 cum_fn= 181 cum_lines= 2758
+10 tuples                        fn=  13 lines=  246 cum_fn= 194 cum_lines= 3004
+11 declared types                fn=  13 lines=  182 cum_fn= 207 cum_lines= 3186
+12 type nodes to types           fn=  25 lines=  433 cum_fn= 232 cum_lines= 3619
+13 constraints                   fn=   7 lines=  285 cum_fn= 239 cum_lines= 3904
+14 base types                    fn=   5 lines=  107 cum_fn= 244 cum_lines= 4011
+15 members                       fn=  34 lines=  875 cum_fn= 278 cum_lines= 4886
+16 lookup                        fn=  11 lines=  153 cum_fn= 289 cum_lines= 5039
+17 apparent types                fn=   7 lines=   93 cum_fn= 296 cum_lines= 5132
+18 signatures                    fn=  19 lines=  308 cum_fn= 315 cum_lines= 5440
+19 instantiation                 fn=  19 lines=  437 cum_fn= 334 cum_lines= 5877
+20 types of symbols              fn=  14 lines=  376 cum_fn= 348 cum_lines= 6253
+21 widening                      fn=   3 lines=   53 cum_fn= 351 cum_lines= 6306
+23 relations                     fn=   5 lines=   53 cum_fn= 356 cum_lines= 6359
+25 expressions to contextual     fn=   8 lines=  234 cum_fn= 364 cum_lines= 6593
+27 keyof to template             fn=  12 lines=  237 cum_fn= 376 cum_lines= 6830
+33 grammar                       fn=   2 lines=   39 cum_fn= 378 cum_lines= 6869
+  other: checker:zz_probe_core.go fn=5 lines=0
+  other: checker:zz_probe_resolution.go fn=2 lines=0
+  other: checker:zz_probe_state.go fn=1 lines=0
+  other: checker:zz_probe_types.go fn=41 lines=0
+  other: checker:zz_relprobe.go fn=3 lines=0
+  other: pkg:binder fn=48 lines=1121
+last layer entered: 33 grammar

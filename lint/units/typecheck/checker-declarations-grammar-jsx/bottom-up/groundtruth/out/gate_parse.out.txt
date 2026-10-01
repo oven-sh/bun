@@ -1,0 +1,8 @@
+PARSE gate_parse.ts parse=[TS1109] js=[] bind=[TS1101]
+gate_parse.ts(1,29)+4: error TS1064: The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<void>'?
+gate_parse.ts(3,30)+11: error TS1228: A type predicate is only allowed in return type position for functions and methods.
+gate_parse.ts(4,15)+1: error TS2378: A 'get' accessor must return a value.
+gate_parse.ts(10,20)+7: error TS18037: 'await' expression cannot be used inside a class static block.
+RESOLUTIONDEPTH 0 []
+PROGRAM BindSourceFiles=2 GetEmitModuleFormatOfFile=11 Options=1 SourceFiles=1
+COUNTS TypeCount=102 SymbolCount=7 SignatureCount=6 TotalInstantiationCount=0

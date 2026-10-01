@@ -1,0 +1,7 @@
+[
+  "switch (a) { case a\n--> x: y\n: break; case a: break; }",
+  "switch (a) { case a: do x(); while (y) case a: break; }",
+  "switch (a) { case a: break; case /* x; case */ a: break; }",
+  "switch (a) { case a: break; case /* x;\n case */ a: break; }",
+  "switch (a) { case a: break; case // x; case\n a: break; }"
+]

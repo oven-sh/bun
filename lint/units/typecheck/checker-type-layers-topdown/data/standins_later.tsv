@@ -1,0 +1,78 @@
+upstream	Go signature	called from
+checker.go:6185	c.checkIteratedTypeOrElementType(use IterationUse, inputType *Type, sentType *Type, errorNode *ast.Node) *Type	T-SYMTYPE
+checker.go:6306	c.getIterationTypeOfGeneratorFunctionReturnType(typeKind IterationTypeKind, returnType *Type, isAsyncGenerator bool) *Type	T-WIDEN
+checker.go:6490	c.getBuiltinIteratorReturnType() *Type	T-DECLARED
+checker.go:7427	c.getTypeOfExpression(node *ast.Node) *Type	T-SYMTYPE
+checker.go:7451	c.getQuickTypeOfExpression(node *ast.Node) *Type	T-SYMTYPE
+checker.go:7495	c.checkNonNullExpression(node *ast.Node) *Type	T-SYMTYPE
+checker.go:7574	c.checkExpressionWithContextualType(node *ast.Node, contextualType *Type, inferenceContext *InferenceContext, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:7603	c.checkExpressionCached(node *ast.Node) *Type	T-TYPENODE,T-MEMBERS,T-SIGDECL,T-SYMTYPE
+checker.go:7607	c.checkExpressionCachedEx(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:7643	c.checkExpression(node *ast.Node) *Type	T-ENUMVAL,T-TYPENODE,T-BASE,T-SYMTYPE,K-KEYOF
+checker.go:7647	c.checkExpressionEx(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:10385	c.createUnionSignature(sig *Signature, unionSignatures []*Signature) *Signature	T-UIMEMBERS
+checker.go:10727	c.checkExpressionWithTypeArguments(node *ast.Node) *Type	T-TYPENODE
+checker.go:10750	c.getInstantiationExpressionType(exprType *Type, node *ast.Node) *Type	K-IMPORTTYPE
+checker.go:11334	c.checkPropertyAccessExpression(node *ast.Node, checkMode CheckMode, writeOnly bool) *Type	T-SYMTYPE
+checker.go:11528	c.getControlFlowContainer(node *ast.Node) *ast.Node	K-INDEXED
+checker.go:11545	c.getTypeOfPropertyInBaseClass(property *ast.Symbol) *Type	T-SYMTYPE
+checker.go:11784	c.isUncalledFunctionReference(node *ast.Node, symbol *ast.Symbol) bool	K-INDEXED
+checker.go:12112	c.getContextualThisParameterType(fn *ast.Node) *Type	T-SYMTYPE
+checker.go:13605	c.isValidSpreadType(t *Type) bool	T-SYMTYPE
+checker.go:13681	c.isSpreadableProperty(prop *ast.Symbol) bool	T-SYMTYPE
+checker.go:13686	c.getSpreadSymbol(prop *ast.Symbol, readonly bool) *ast.Symbol	T-SYMTYPE
+checker.go:13709	c.hasDefaultValue(node *ast.Node) bool	T-SYMTYPE
+checker.go:13774	c.checkPropertyAssignment(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:13790	c.checkShorthandPropertyAssignment(node *ast.Node, inDestructuringPattern bool, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:13950	c.isReadonlySymbol(symbol *ast.Symbol) bool	T-UIMEMBERS,K-INDEXED,T-MAPPED
+checker.go:13966	c.checkObjectLiteralMethod(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:13979	c.checkExpressionForMutableLocation(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+checker.go:20240	c.getReturnTypeFromBody(fn *ast.Node, checkMode CheckMode) *Type	T-SIGDECL,T-SYMTYPE
+checker.go:20462	c.createPromiseType(promisedType *Type) *Type	T-TYPENODE
+checker.go:20649	c.getTypePredicateFromBody(fn *ast.Node) *TypePredicate	T-SIGSHAPE
+checker.go:27829	c.markPropertyAsReferenced(prop *ast.Symbol, nodeForCheckWriteOnly *ast.Node, isSelfTypeAccess bool)	K-INDEXED
+checker.go:29466	c.getContextualType(node *ast.Node, contextFlags ContextFlags) *Type	T-SIGDECL
+checker.go:29581	c.getContextuallyTypedParameterType(parameter *ast.Node) *Type	T-SYMTYPE
+checker.go:29619	c.isContextSensitiveFunctionOrObjectLiteralMethod(fn *ast.Node) bool	T-SYMTYPE
+checker.go:29834	c.getContextualSignatureForFunctionLikeDeclaration(node *ast.Node) *Signature	T-WIDEN
+checker.go:30674	c.getTypeOfPropertyOfContextualType(t *Type, name string) *Type	K-INDEXED
+checker.go:31020	c.isContextSensitive(node *ast.Node) bool	T-DECLARED
+checker.go:31101	c.hasTypeFacts(t *Type, mask TypeFacts) bool	T-SYMTYPE
+checker.go:31273	c.getTypeWithFacts(t *Type, include TypeFacts) *Type	T-SYMTYPE
+checker.go:31282	c.getAdjustedTypeWithFacts(t *Type, facts TypeFacts) *Type	T-SYMTYPE
+checker.go:31389	c.getAwaitedTypeNoAlias(t *Type) *Type	T-WIDEN
+checker.go:31671	c.getNonUndefinedType(t *Type) *Type	T-SYMTYPE
+flow.go:69	getFlowNodeOfNode(node *ast.Node) *ast.FlowNode	T-SYMTYPE
+flow.go:77	c.getFlowTypeOfReference(reference *ast.Node, declaredType *Type) *Type	T-SYMTYPE,K-INDEXED
+flow.go:1597	c.isMatchingReference(source *ast.Node, target *ast.Node) bool	T-SYMTYPE
+flow.go:1792	c.getDestructuringPropertyName(node *ast.Node) (string, bool)	T-SYMTYPE
+flow.go:2260	c.getTypeOfInitializer(node *ast.Node) *Type	T-SYMTYPE
+flow.go:2466	c.getFlowTypeInConstructor(symbol *ast.Symbol, constructor *ast.Node) *Type	T-SYMTYPE
+flow.go:2488	c.getFlowTypeInStaticBlocks(symbol *ast.Symbol, staticBlocks []*ast.Node) *Type	T-SYMTYPE
+inference.go:53	c.inferTypes(inferences []*InferenceInfo, originalSource *Type, originalTarget *Type, priority InferencePriority, contravariant bool)	T-SIGINST,K-COND
+inference.go:868	c.applyToParameterTypes(source *Signature, target *Signature, callback func(s *Type, t *Type))	T-SIGINST
+inference.go:896	c.applyToReturnTypes(source *Signature, target *Signature, callback func(s *Type, t *Type))	T-SIGINST
+inference.go:1004	c.inferTypeForHomomorphicMappedType(source *Type, target *Type, constraint *Type) *Type	T-INSTANTIATE
+inference.go:1099	c.resolveReverseMappedTypeMembers(t *Type)	T-MEMBERS
+inference.go:1145	c.getTypeOfReverseMappedSymbol(symbol *ast.Symbol) *Type	T-SYMTYPE
+inference.go:1251	c.newInferenceContext(typeParameters []*Type, signature *Signature, flags InferenceFlags, compareTypes TypeComparer) *InferenceContext	T-SIGINST,K-COND
+inference.go:1406	c.getInferredTypes(n *InferenceContext) []*Type	T-SIGINST
+jsx.go:869	c.checkJsxAttribute(node *ast.Node, checkMode CheckMode) *Type	T-SYMTYPE
+printer.go:43	c.TypeToString(t *Type) string	T-CONSTRAINT,T-BASE,T-SYMTYPE,T-WIDEN,K-INDEXED,T-MAPPED
+printer.go:55	c.TypeToStringEx(t *Type, enclosingDeclaration *ast.Node, flags TypeFormatFlags, vc *VerbosityContext) string	T-TYPENODE
+printer.go:59	c.typeToStringEx(t *Type, enclosingDeclaration *ast.Node, flags TypeFormatFlags, vc *VerbosityContext) string	T-BASE,T-APPARENT
+printer.go:124	c.symbolToString(symbol *ast.Symbol) string	T-DECLARED,T-ENUMVAL,T-TYPENODE,T-BASE,T-APPARENT,T-INSTANTIATE,T-SYMTYPE,T-WIDEN,K-INDEXED,T-MAPPED
+relater.go:117	c.isTypeIdenticalTo(source *Type, target *Type) bool	T-CONSTRAINT
+relater.go:121	c.compareTypesIdentical(source *Type, target *Type) Ternary	T-UIMEMBERS
+relater.go:149	c.isTypeAssignableTo(source *Type, target *Type) bool	K-PRED,T-TUPLE,T-MEMBERS,T-LOOKUP,T-SIGDECL,T-INSTANTIATE,T-SYMTYPE,K-KEYOF,K-INDEXED,K-COND,K-TEMPLATE
+relater.go:153	c.isTypeSubtypeOf(source *Type, target *Type) bool	K-INTERSECT
+relater.go:157	c.isTypeStrictSubtypeOf(source *Type, target *Type) bool	K-INTERSECT
+relater.go:169	c.isTypeRelatedTo(source *Type, target *Type, relation *Relation) bool	K-UNION
+relater.go:339	c.checkTypeAssignableTo(source *Type, target *Type, errorNode *ast.Node, headMessage *diagnostics.Message) bool	T-ENUMVAL
+relater.go:810	getRecursionIdentity(t *Type) RecursionId	T-CONSTRAINT
+relater.go:2152	c.findMatchingSignatures(signatureLists [][]*Signature, signature *Signature, listIndex int) []*Signature	T-UIMEMBERS
+relater.go:2187	c.findMatchingSignature(signatureList []*Signature, signature *Signature, partialMatch bool, ignoreThisTypes bool, ignoreReturnTypes bool) *Signature	T-UIMEMBERS
+relater.go:2200	c.compareSignaturesIdentical(source *Signature, target *Signature, partialMatch bool, ignoreThisTypes bool, ignoreReturnTypes bool, compareTypes func(s *Type, t *Type) Ternary) Ternary	T-UIMEMBERS
+relater.go:2280	c.compareTypeParametersIdentical(sourceParams []*Type, targetParams []*Type) bool	T-UIMEMBERS
+relater.go:4993	c.isTypeDerivedFrom(source *Type, target *Type) bool	K-UNION
+tracer.go:45	(t *Tracer) Instant(phase tracing.Phase, name string, args map[string]any)	K-UNION,T-INSTANTIATE

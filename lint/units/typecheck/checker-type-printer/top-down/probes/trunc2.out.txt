@@ -1,0 +1,5 @@
+trunc2.ts(32,7): error TS2322: Type 'Interface01WithLongName | Interface02WithLongName | Interface03WithLongName | Interface04WithLongName | ... 25 more ... | Interface30WithLongName' is not assignable to type 'number'.
+  chain TS2322: Type 'Interface01WithLongName' is not assignable to type 'number'.
+trunc2.ts(35,7): error TS2322: Type 'Gen<Interface01WithLongName, Interface02WithLongName, Interface03WithLongName, Interface04WithLongName, ... 7 more ..., Interface12WithLongName>' is not assignable to type 'number'.
+trunc2.ts(37,7): error TS2322: Type '[Interface01WithLongName, Interface02WithLongName, Interface03WithLongName, Interface04WithLongName, ... 9 more ..., Interface14WithLongName]' is not assignable to type 'number'.
+trunc2.ts(39,7): error TS2322: Type 'Interface01WithLongName & Interface02WithLongName & Interface03WithLongName & Interface04WithLongName & ... 9 more ... & Interface14WithLongName' is not assignable to type 'number'.

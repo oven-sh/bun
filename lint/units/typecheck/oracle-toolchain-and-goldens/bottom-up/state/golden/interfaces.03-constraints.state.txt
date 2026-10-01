@@ -1,0 +1,142 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /lib.es5.d.ts
+FILE /interfaces.ts
+SINCE type=85 signature=4
+DRIVE declared
+DECLARED InterfaceDeclaration@/interfaces.ts:0:52 T86
+DECLARED TypeParameter@/interfaces.ts:15:16 T87
+DECLARED InterfaceDeclaration@/interfaces.ts:52:99 T89
+DECLARED InterfaceDeclaration@/interfaces.ts:99:269 T90
+DECLARED TypeParameter@/interfaces.ts:249:250 T92
+DECLARED InterfaceDeclaration@/interfaces.ts:269:309 T90
+DECLARED EnumDeclaration@/interfaces.ts:309:345 T99
+DECLARED EnumMember@/interfaces.ts:322:326 T94
+DECLARED EnumMember@/interfaces.ts:327:337 T96
+DECLARED EnumMember@/interfaces.ts:338:343 T98
+DECLARED EnumDeclaration@/interfaces.ts:345:406 T106
+DECLARED EnumMember@/interfaces.ts:372:381 T101
+DECLARED EnumMember@/interfaces.ts:382:393 T103
+DECLARED EnumMember@/interfaces.ts:394:404 T105
+DECLARED EnumDeclaration@/interfaces.ts:406:464 T111
+DECLARED EnumMember@/interfaces.ts:427:443 T108
+DECLARED EnumMember@/interfaces.ts:444:462 T110
+DECLARED InterfaceDeclaration@/interfaces.ts:464:523 T112
+DECLARED TypeParameter@/interfaces.ts:481:482 T113
+DRIVE typenodes
+TYPENODE TypeReference@/interfaces.ts:27:29 T87
+TYPENODE TypeReference@/interfaces.ts:41:49 T86
+TYPENODE TypeReference@/interfaces.ts:47:48 T87
+TYPENODE StringKeyword@/interfaces.ts:89:96 T14
+TYPENODE TypeReference@/interfaces.ts:125:138 T115
+TYPENODE StringKeyword@/interfaces.ts:131:137 T14
+TYPENODE TypeReference@/interfaces.ts:139:145 T89
+TYPENODE NumberKeyword@/interfaces.ts:155:162 T15
+TYPENODE StringKeyword@/interfaces.ts:164:171 T14
+TYPENODE StringKeyword@/interfaces.ts:184:191 T14
+TYPENODE TypeReference@/interfaces.ts:193:201 T90
+TYPENODE StringKeyword@/interfaces.ts:219:226 T14
+TYPENODE UnknownKeyword@/interfaces.ts:228:236 T9
+TYPENODE TypeReference@/interfaces.ts:254:256 T92
+TYPENODE TypeReference@/interfaces.ts:258:266 T116
+TYPENODE TypeReference@/interfaces.ts:264:265 T92
+TYPENODE TypeReference@/interfaces.ts:300:306 T99
+TYPENODE TypeLiteral@/interfaces.ts:496:520 T117
+TYPENODE TypeReference@/interfaces.ts:505:507 T113
+TYPENODE ArrayType@/interfaces.ts:514:518 T118
+TYPENODE TypeReference@/interfaces.ts:514:516 T113
+DRIVE constraints
+CONSTRAINT T87 constraint=nil default=nil
+BASECONSTRAINT T87 nil
+CONSTRAINT T88 constraint=T86 default=nil
+BASECONSTRAINT T88 T86
+CONSTRAINT T91 constraint=T90 default=nil
+BASECONSTRAINT T91 T90
+CONSTRAINT T92 constraint=nil default=nil
+BASECONSTRAINT T92 nil
+BASECONSTRAINT T99 T99
+BASECONSTRAINT T106 T106
+BASECONSTRAINT T111 T111
+CONSTRAINT T113 constraint=nil default=nil
+BASECONSTRAINT T113 nil
+CONSTRAINT T114 constraint=T112 default=nil
+BASECONSTRAINT T114 T112
+STATE
+COUNTS TypeCount=118 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=125
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=118 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=118
+RESOLUTIONSTACK 0 []
+TYPE 86 flags=0x100000 objectFlags=0x6 data=Interface symbol="Base"@InterfaceDeclaration@/interfaces.ts:0:52/0x40 target=T86 inst=[T86 T115 T116] targs=[T87] tparams=[T87 T88] outer=0 this=T88
+TYPE 87 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/interfaces.ts:15:16/0x40000 baseConstraint=T43 constraint=T43 default=T43
+TYPE 88 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Base"@InterfaceDeclaration@/interfaces.ts:0:52/0x40 baseConstraint=T86 constraint=T86 isThisType default=T43
+TYPE 89 flags=0x100000 objectFlags=0x2 data=Interface symbol="Named"@InterfaceDeclaration@/interfaces.ts:52:99/0x40 targs=nil tparams=nil outer=0 this=nil
+TYPE 90 flags=0x100000 objectFlags=0x6 data=Interface symbol="Derived"@InterfaceDeclaration@/interfaces.ts:99:269/0x40 target=T90 inst=[T90] targs=[] tparams=[T91] outer=0 this=T91
+TYPE 91 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Derived"@InterfaceDeclaration@/interfaces.ts:99:269/0x40 baseConstraint=T90 constraint=T90 isThisType default=T43
+TYPE 92 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="U"@TypeParameter@/interfaces.ts:249:250/0x40000 baseConstraint=T43 constraint=T43 default=T43
+TYPE 93 flags=0x8800 objectFlags=0x0 data=Literal symbol="Red"@EnumMember@/interfaces.ts:322:326/0x8 value=n0 fresh=T94 regular=T93
+TYPE 94 flags=0x8800 objectFlags=0x0 data=Literal symbol="Red"@EnumMember@/interfaces.ts:322:326/0x8 value=n0 fresh=T94 regular=T93
+TYPE 95 flags=0x8800 objectFlags=0x0 data=Literal symbol="Green"@EnumMember@/interfaces.ts:327:337/0x8 value=n2 fresh=T96 regular=T95
+TYPE 96 flags=0x8800 objectFlags=0x0 data=Literal symbol="Green"@EnumMember@/interfaces.ts:327:337/0x8 value=n2 fresh=T96 regular=T95
+TYPE 97 flags=0x8800 objectFlags=0x0 data=Literal symbol="Blue"@EnumMember@/interfaces.ts:338:343/0x8 value=n3 fresh=T98 regular=T97
+TYPE 98 flags=0x8800 objectFlags=0x0 data=Literal symbol="Blue"@EnumMember@/interfaces.ts:338:343/0x8 value=n3 fresh=T98 regular=T97
+TYPE 99 flags=0x8008000 objectFlags=0x8000 data=Union symbol="Color"@EnumDeclaration@/interfaces.ts:309:345/0x100 alias="Color"@EnumDeclaration@/interfaces.ts:309:345/0x100nil baseConstraint=T99 types=[T93 T95 T97] regular=T99
+TYPE 100 flags=0x8800 objectFlags=0x0 data=Literal symbol="None"@EnumMember@/interfaces.ts:372:381/0x8 value=n0 fresh=T101 regular=T100
+TYPE 101 flags=0x8800 objectFlags=0x0 data=Literal symbol="None"@EnumMember@/interfaces.ts:372:381/0x8 value=n0 fresh=T101 regular=T100
+TYPE 102 flags=0x8800 objectFlags=0x0 data=Literal symbol="A"@EnumMember@/interfaces.ts:382:393/0x8 value=n1 fresh=T103 regular=T102
+TYPE 103 flags=0x8800 objectFlags=0x0 data=Literal symbol="A"@EnumMember@/interfaces.ts:382:393/0x8 value=n1 fresh=T103 regular=T102
+TYPE 104 flags=0x8800 objectFlags=0x0 data=Literal symbol="B"@EnumMember@/interfaces.ts:394:404/0x8 value=n3 fresh=T105 regular=T104
+TYPE 105 flags=0x8800 objectFlags=0x0 data=Literal symbol="B"@EnumMember@/interfaces.ts:394:404/0x8 value=n3 fresh=T105 regular=T104
+TYPE 106 flags=0x8008000 objectFlags=0x8000 data=Union symbol="Flags"@EnumDeclaration@/interfaces.ts:345:406/0x80 alias="Flags"@EnumDeclaration@/interfaces.ts:345:406/0x80nil baseConstraint=T106 types=[T100 T102 T104]
+TYPE 107 flags=0x8400 objectFlags=0x0 data=Literal symbol="First"@EnumMember@/interfaces.ts:427:443/0x8 value=s"first" fresh=T108 regular=T107
+TYPE 108 flags=0x8400 objectFlags=0x0 data=Literal symbol="First"@EnumMember@/interfaces.ts:427:443/0x8 value=s"first" fresh=T108 regular=T107
+TYPE 109 flags=0x8400 objectFlags=0x0 data=Literal symbol="Second"@EnumMember@/interfaces.ts:444:462/0x8 value=s"second" fresh=T110 regular=T109
+TYPE 110 flags=0x8400 objectFlags=0x0 data=Literal symbol="Second"@EnumMember@/interfaces.ts:444:462/0x8 value=s"second" fresh=T110 regular=T109
+TYPE 111 flags=0x8008000 objectFlags=0x8000 data=Union symbol="Names"@EnumDeclaration@/interfaces.ts:406:464/0x100 alias="Names"@EnumDeclaration@/interfaces.ts:406:464/0x100nil baseConstraint=T111 types=[T107 T109]
+TYPE 112 flags=0x100000 objectFlags=0x6 data=Interface symbol="Outer"@InterfaceDeclaration@/interfaces.ts:464:523/0x40 target=T112 inst=[T112] targs=[T113] tparams=[T113 T114] outer=0 this=T114
+TYPE 113 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="T"@TypeParameter@/interfaces.ts:481:482/0x40000 baseConstraint=T43 constraint=T43 default=T43
+TYPE 114 flags=0x80000 objectFlags=0x0 data=TypeParameter symbol="Outer"@InterfaceDeclaration@/interfaces.ts:464:523/0x40 baseConstraint=T112 constraint=T112 isThisType default=T43
+TYPE 115 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Base"@InterfaceDeclaration@/interfaces.ts:0:52/0x40 target=T86 targs=[T14]
+TYPE 116 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Base"@InterfaceDeclaration@/interfaces.ts:0:52/0x40 target=T86 targs=[T92]
+TYPE 117 flags=0x100000 objectFlags=0x10 data=Object symbol="\xFEtype"@TypeLiteral@/interfaces.ts:496:520/0x800
+TYPE 118 flags=0x100000 objectFlags=0x40000004 data=TypeReference symbol="Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 target=T65 targs=[T113]
+LINKS "Array"@InterfaceDeclaration@/lib.es5.d.ts:58108:71219/0x41 declaredType=T65
+LINKS "T"@TypeParameter@/lib.es5.d.ts:58128:58129/0x40000 declaredType=T66
+LINKS "Boolean"@InterfaceDeclaration@/lib.es5.d.ts:21801:21917/0x41 declaredType=T74
+LINKS "CallableFunction"@InterfaceDeclaration@/lib.es5.d.ts:11491:13479/0x40 declaredType=T70
+LINKS "Function"@InterfaceDeclaration@/lib.es5.d.ts:9286:10750/0x41 declaredType=T69
+LINKS "IArguments"@InterfaceDeclaration@/lib.es5.d.ts:15413:15513/0x40 declaredType=T63
+LINKS "NewableFunction"@InterfaceDeclaration@/lib.es5.d.ts:13479:15413/0x40 declaredType=T71
+LINKS "Number"@InterfaceDeclaration@/lib.es5.d.ts:22095:23260/0x41 declaredType=T73
+LINKS "Object"@InterfaceDeclaration@/lib.es5.d.ts:3290:4293/0x41 declaredType=T68
+LINKS "ReadonlyArray"@InterfaceDeclaration@/lib.es5.d.ts:48207:57929/0x40 declaredType=T79
+LINKS "T"@TypeParameter@/lib.es5.d.ts:48357:48358/0x40000 declaredType=T80
+LINKS "RegExp"@InterfaceDeclaration@/lib.es5.d.ts:40902:42363/0x41 declaredType=T75
+LINKS "String"@InterfaceDeclaration@/lib.es5.d.ts:15513:21457/0x41 declaredType=T72
+LINKS "ThisType"@InterfaceDeclaration@/lib.es5.d.ts:76786:76862/0x40 declaredType=T83
+LINKS "T"@TypeParameter@/lib.es5.d.ts:76857:76858/0x40000 declaredType=T84
+LINKS "Base"@InterfaceDeclaration@/interfaces.ts:0:52/0x40 declaredType=T86
+LINKS "T"@TypeParameter@/interfaces.ts:15:16/0x40000 declaredType=T87 referenceKinds=0xc09e8
+LINKS "Color"@EnumDeclaration@/interfaces.ts:309:345/0x100 declaredType=T99
+LINKS "Blue"@EnumMember@/interfaces.ts:338:343/0x8 declaredType=T98
+LINKS "Green"@EnumMember@/interfaces.ts:327:337/0x8 declaredType=T96
+LINKS "Red"@EnumMember@/interfaces.ts:322:326/0x8 declaredType=T94
+LINKS "Derived"@InterfaceDeclaration@/interfaces.ts:99:269/0x40 declaredType=T90
+LINKS "Flags"@EnumDeclaration@/interfaces.ts:345:406/0x80 declaredType=T106
+LINKS "A"@EnumMember@/interfaces.ts:382:393/0x8 declaredType=T103 referenceKinds=0x1b3bf
+LINKS "B"@EnumMember@/interfaces.ts:394:404/0x8 declaredType=T105
+LINKS "None"@EnumMember@/interfaces.ts:372:381/0x8 declaredType=T101
+LINKS "Named"@InterfaceDeclaration@/interfaces.ts:52:99/0x40 declaredType=T89
+LINKS "Names"@EnumDeclaration@/interfaces.ts:406:464/0x100 declaredType=T111
+LINKS "First"@EnumMember@/interfaces.ts:427:443/0x8 declaredType=T108
+LINKS "Second"@EnumMember@/interfaces.ts:444:462/0x8 declaredType=T110
+LINKS "Outer"@InterfaceDeclaration@/interfaces.ts:464:523/0x40 declaredType=T112
+LINKS "T"@TypeParameter@/interfaces.ts:481:482/0x40000 declaredType=T113 referenceKinds=0xc09e8
+LINKS "U"@TypeParameter@/interfaces.ts:249:250/0x40000 declaredType=T92 referenceKinds=0xc09e8
+LINKS "\xFEtype"@TypeLiteral@/interfaces.ts:496:520/0x800 resolvedMembers={"list":"list"@PropertySignature@/interfaces.ts:508:518/0x4 "value":"value"@PropertySignature@/interfaces.ts:498:508/0x4}
+GLOBALS count=125 transient=2
+SYMBOLS named=0 unnamed=6

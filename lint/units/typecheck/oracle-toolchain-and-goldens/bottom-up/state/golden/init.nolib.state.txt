@@ -1,0 +1,190 @@
+checker-state v1
+OPTIONS [strict=true]
+FILE /empty.ts
+SINCE type=0 signature=0
+STATE
+MARK after inline part of NewChecker (line 1117): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK start of initializeChecker: TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK after global merge and global augmentations (line 1349): TypeCount=62 SymbolCount=6 SignatureCount=4 globals=1 mergedSymbols=0 diagnostics=0
+MARK after special types (line 1376): TypeCount=64 SymbolCount=6 SignatureCount=4 globals=2 mergedSymbols=0 diagnostics=10
+MARK end of initializeChecker: TypeCount=64 SymbolCount=6 SignatureCount=4 globals=2 mergedSymbols=0 diagnostics=10
+COUNTS TypeCount=64 SymbolCount=6 SignatureCount=4 TotalInstantiationCount=0 transientSymbols=6 mergedSymbols=0 globals=2
+STATE flowInvocationCount=0 flowAnalysisDisabled=false
+STATE flowLoopCache=0 flowLoopStack=0 sharedFlows=0 antecedentTypes=0 flowTypeCache=0 freeFlowStates=0
+STATE flowNodeReachable=0 flowNodePostSuper=0 lastFlowNodeSet=false lastFlowNodeReachable=false
+STATE contextualInfos=0 inferenceContextInfos=0 awaitedTypeStack=0 reverseMappedSourceStack=0
+STATE typeResolutions=0 contextFreeTypes=0 currentNodeNil=true inlineLevel=0 instantiationDepth=0 isInferencePartiallyBlocked=false withinUnreachableCode=false
+STATE TypeCount=64 SymbolCount=6 SignatureCount=4
+SIZES identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=64
+RESOLUTIONSTACK 0 []
+TYPE 1 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 2 flags=0x1 objectFlags=0x40000 data=Intrinsic name="any"
+TYPE 3 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 4 flags=0x1 objectFlags=0x0 data=Intrinsic name="any"
+TYPE 5 flags=0x1 objectFlags=0x0 data=Intrinsic name="error"
+TYPE 6 flags=0x1 objectFlags=0x0 data=Intrinsic name="unresolved"
+TYPE 7 flags=0x1 objectFlags=0x10000 data=Intrinsic name="any"
+TYPE 8 flags=0x1 objectFlags=0x0 data=Intrinsic name="intrinsic"
+TYPE 9 flags=0x2 objectFlags=0x0 data=Intrinsic name="unknown"
+TYPE 10 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 11 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 12 flags=0x4 objectFlags=0x0 data=Intrinsic name="undefined"
+TYPE 13 flags=0x8 objectFlags=0x0 data=Intrinsic name="null"
+TYPE 14 flags=0x20 objectFlags=0x0 data=Intrinsic name="string"
+TYPE 15 flags=0x40 objectFlags=0x0 data=Intrinsic name="number"
+TYPE 16 flags=0x80 objectFlags=0x0 data=Intrinsic name="bigint"
+TYPE 17 flags=0x2000 objectFlags=0x0 data=Literal value=false fresh=T18 regular=T17
+TYPE 18 flags=0x2000 objectFlags=0x0 data=Literal value=false fresh=T18 regular=T17
+TYPE 19 flags=0x2000 objectFlags=0x0 data=Literal value=true fresh=T20 regular=T19
+TYPE 20 flags=0x2000 objectFlags=0x0 data=Literal value=true fresh=T20 regular=T19
+TYPE 21 flags=0x8000100 objectFlags=0x8000 data=Union types=[T17 T19]
+TYPE 22 flags=0x200 objectFlags=0x0 data=Intrinsic name="symbol"
+TYPE 23 flags=0x10 objectFlags=0x0 data=Intrinsic name="void"
+TYPE 24 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 25 flags=0x40000 objectFlags=0x40000 data=Intrinsic name="never"
+TYPE 26 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 27 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 28 flags=0x20000 objectFlags=0x0 data=Intrinsic name="object"
+TYPE 29 flags=0x8000000 objectFlags=0x8000 data=Union types=[T14 T15]
+TYPE 30 flags=0x8000000 objectFlags=0x8000 data=Union types=[T14 T15 T22]
+TYPE 31 flags=0x8000000 objectFlags=0x8000 data=Union types=[T15 T16]
+TYPE 32 flags=0x400000 objectFlags=0x0 data=TemplateLiteral texts=["" ""] types=[T15]
+TYPE 33 flags=0x8000000 objectFlags=0x8000 data=Union types=[T10 T13 T14 T15 T16 T17 T19]
+TYPE 34 flags=0x40000 objectFlags=0x0 data=Intrinsic name="never"
+TYPE 35 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 36 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 37 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 38 flags=0x100000 objectFlags=0x200010 data=Object symbol=Y1 members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 39 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 40 flags=0x8000000 objectFlags=0x0 data=Union types=[T10 T13 T39]
+TYPE 41 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil inst=[]
+TYPE 42 flags=0x100000 objectFlags=0x240010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 43 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 44 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 45 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+TYPE 46 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 47 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T46
+TYPE 48 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 49 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=nil
+TYPE 50 flags=0x80000 objectFlags=0x0 data=TypeParameter constraint=T49
+TYPE 51 flags=0x400 objectFlags=0x0 data=Literal value=s"" fresh=nil regular=T51
+TYPE 52 flags=0x800 objectFlags=0x0 data=Literal value=n0 fresh=nil regular=T52
+TYPE 53 flags=0x1000 objectFlags=0x0 data=Literal value=b0 fresh=nil regular=T53
+TYPE 54 flags=0x400 objectFlags=0x0 data=Literal value=s"bigint" fresh=nil regular=T54
+TYPE 55 flags=0x400 objectFlags=0x0 data=Literal value=s"boolean" fresh=nil regular=T55
+TYPE 56 flags=0x400 objectFlags=0x0 data=Literal value=s"function" fresh=nil regular=T56
+TYPE 57 flags=0x400 objectFlags=0x0 data=Literal value=s"number" fresh=nil regular=T57
+TYPE 58 flags=0x400 objectFlags=0x0 data=Literal value=s"object" fresh=nil regular=T58
+TYPE 59 flags=0x400 objectFlags=0x0 data=Literal value=s"string" fresh=nil regular=T59
+TYPE 60 flags=0x400 objectFlags=0x0 data=Literal value=s"symbol" fresh=nil regular=T60
+TYPE 61 flags=0x400 objectFlags=0x0 data=Literal value=s"undefined" fresh=nil regular=T61
+TYPE 62 flags=0x8000000 objectFlags=0x8000 data=Union types=[T54 T55 T56 T57 T58 T59 T60 T61]
+TYPE 63 flags=0x100000 objectFlags=0x10 data=Object symbol=Y2
+TYPE 64 flags=0x100000 objectFlags=0x200010 data=Object members=nil props=nil sigs=nil calls=0 index=nil
+SIGNATURE 1 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T1
+SIGNATURE 2 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T5
+SIGNATURE 3 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T1
+SIGNATURE 4 flags=0x0 minArgumentCount=0 resolvedMinArgumentCount=-1 typeParameters=nil parameters=nil returnType=T25
+FIELD varianceTypeParameter nil
+FIELD nanType nil
+FIELD undefinedSymbol Y3
+FIELD argumentsSymbol Y4
+FIELD requireSymbol Y5
+FIELD unknownSymbol Y6
+FIELD globalThisSymbol Y2
+FIELD anyType T1
+FIELD autoType T2
+FIELD wildcardType T3
+FIELD blockedStringType T4
+FIELD errorType T5
+FIELD unresolvedType T6
+FIELD nonInferrableAnyType T7
+FIELD intrinsicMarkerType T8
+FIELD unknownType T9
+FIELD undefinedType T10
+FIELD undefinedWideningType T10
+FIELD missingType T11
+FIELD undefinedOrMissingType T10
+FIELD optionalType T12
+FIELD nullType T13
+FIELD nullWideningType T13
+FIELD stringType T14
+FIELD numberType T15
+FIELD bigintType T16
+FIELD regularFalseType T17
+FIELD falseType T18
+FIELD regularTrueType T19
+FIELD trueType T20
+FIELD booleanType T21
+FIELD esSymbolType T22
+FIELD voidType T23
+FIELD neverType T24
+FIELD silentNeverType T25
+FIELD implicitNeverType T26
+FIELD unreachableNeverType T27
+FIELD nonPrimitiveType T28
+FIELD stringOrNumberType T29
+FIELD stringNumberSymbolType T30
+FIELD numberOrBigIntType T31
+FIELD templateConstraintType T33
+FIELD numericStringType T32
+FIELD uniqueLiteralType T34
+FIELD emptyObjectType T35
+FIELD emptyJsxObjectType T36
+FIELD emptyFreshJsxObjectType T37
+FIELD emptyTypeLiteralType T38
+FIELD unknownEmptyObjectType T39
+FIELD unknownUnionType T40
+FIELD emptyGenericType T41
+FIELD anyFunctionType T42
+FIELD noConstraintType T43
+FIELD circularConstraintType T44
+FIELD resolvingDefaultType T45
+FIELD markerSuperType T46
+FIELD markerSubType T47
+FIELD markerOtherType T48
+FIELD markerSuperTypeForCheck T49
+FIELD markerSubTypeForCheck T50
+FIELD anySignature S1
+FIELD unknownSignature S2
+FIELD resolvingSignature S3
+FIELD silentNeverSignature S4
+FIELD globalObjectType T35
+FIELD globalFunctionType T35
+FIELD globalCallableFunctionType T35
+FIELD globalNewableFunctionType T35
+FIELD globalArrayType T41
+FIELD globalReadonlyArrayType T41
+FIELD globalStringType T35
+FIELD globalNumberType T35
+FIELD globalBooleanType T35
+FIELD globalRegExpType T35
+FIELD globalThisType T41
+FIELD anyArrayType T35
+FIELD autoArrayType T64
+FIELD anyReadonlyArrayType T35
+FIELD deferredGlobalImportMetaExpressionType nil
+FIELD emptyStringType T51
+FIELD zeroType T52
+FIELD zeroBigIntType T53
+FIELD typeofType T62
+GLOBALS count=2 transient=2
+GLOBAL "globalThis" Y2
+GLOBAL "undefined" Y3
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+GLOBALDIAG -(0,0) TS2318 category=1
+SYMBOL Y1 name="\xFEtype" flags=0x2000800 checkFlags=0x0 declarations=[]
+SYMBOL Y2 name="globalThis" flags=0x2000600 checkFlags=0x8 declarations=[] exports=2 type=T63
+SYMBOL Y3 name="undefined" flags=0x2000004 checkFlags=0x0 declarations=[] type=T10
+SYMBOL Y4 name="arguments" flags=0x2000004 checkFlags=0x0 declarations=[] type=T35
+SYMBOL Y5 name="require" flags=0x2000004 checkFlags=0x0 declarations=[]
+SYMBOL Y6 name="unknown" flags=0x2000004 checkFlags=0x0 declarations=[] type=T5
+SYMBOLS named=6 unnamed=0

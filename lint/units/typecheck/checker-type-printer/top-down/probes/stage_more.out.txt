@@ -1,0 +1,20 @@
+stage_more.ts(4,5): error TS2322: Type '(x: unknown) => x is number' is not assignable to type '(x: unknown) => x is string'.
+  chain TS1226: Type predicate 'x is number' is not assignable to 'x is string'.
+stage_more.ts(5,5): error TS2322: Type '(x: unknown) => boolean' is not assignable to type '(x: unknown) => x is string'.
+  chain TS1224: Signature '(x: unknown): boolean' must be a type predicate.
+stage_more.ts(9,35): error TS2371: A parameter initializer is only allowed in a function or constructor implementation.
+stage_more.ts(12,1): error TS2322: Type '<T>() => { [K in keyof T]: T[K]; }' is not assignable to type 'never'.
+stage_more.ts(12,10): error TS2322: Type '<T>() => { readonly [K in keyof T]?: K | undefined; }' is not assignable to type 'never'.
+stage_more.ts(12,20): error TS2322: Type '<T extends string>() => { [K in T as `x${K}`]-?: K; }' is not assignable to type 'never'.
+stage_more.ts(12,30): error TS2322: Type '({ a, b: [c, , d], ...rest }: { a: string; b: number[]; z: 1; }, [e, f]: [number, string]) => void' is not assignable to type 'never'.
+stage_more.ts(12,39): error TS2322: Type '() => void' is not assignable to type 'never'.
+stage_more.ts(12,51): error TS2322: Type 'typeof Named' is not assignable to type 'never'.
+stage_more.ts(12,62): error TS2322: Type 'Named' is not assignable to type 'never'.
+stage_more.ts(12,79): error TS2322: Type '(typeof En)["a-b"]' is not assignable to type 'never'.
+stage_more.ts(12,98): error TS2322: Type 'En.c' is not assignable to type 'never'.
+stage_more.ts(12,112): error TS2322: Type 'typeof En' is not assignable to type 'never'.
+stage_more.ts(14,1): error TS2322: Type '[Al, () => void, En, Named]' is not assignable to type 'never'.
+stage_more.ts(16,1): error TS2322: Type 'Priv' is not assignable to type 'never'.
+stage_more.ts(16,18): error TS2322: Type 'typeof Priv' is not assignable to type 'never'.
+stage_more.ts(18,1): error TS2322: Type '{ "-1": 1; "-2": 2; 3: 3; "a b": 4; a$: 5; "": 6; }' is not assignable to type 'never'.
+stage_more.ts(19,59): error TS2322: Type '{ m(): ...; }' is not assignable to type 'never'.

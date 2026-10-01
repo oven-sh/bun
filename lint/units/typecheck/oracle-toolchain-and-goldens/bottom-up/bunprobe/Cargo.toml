@@ -1,0 +1,24 @@
+# Scratch package: prints the tree that bun_js_parser::Parser::parse_only returns (what a lowering into the node table reads).
+# It is built outside the repository, against the crates of a worktree, and links without the C and C++ objects of the
+# real build: src/shims.rs stands in for mimalloc, src/native.rs for the SIMD scans and the stack limit.
+# usage: see ../bunprobe.sh
+[package]
+name = "bun_parse_only_probe"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "bunparseonly"
+path = "src/main.rs"
+
+[dependencies]
+bun_js_parser = { path = "/workspace/wt/typecheck/src/js_parser" }
+bun_ast = { path = "/workspace/wt/typecheck/src/ast" }
+bun_alloc = { path = "/workspace/wt/typecheck/src/bun_alloc" }
+
+[workspace]
+
+[profile.dev]
+panic = "abort"
+debug = 0
+incremental = false

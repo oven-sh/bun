@@ -1,0 +1,6 @@
+sources that typescript-go 89d5d5b rejects (primary dialect): 188925
+  tsc 6.0.2 has the same first code and span: 188282
+  the base build accepts: 20560; rejects: 168365; rejects with its first error at the start of the first diagnostic of typescript-go: 118767
+  distinct first codes (code and message, long quoted arguments cut): 231; distinct Bun messages (names and literals replaced): 1012
+  Bun messages that meet exactly one typescript-go code: 432 (1992 rows)
+  most frequent first codes: TS1005 ',' expected. (45789); TS1110 Type expected. (31133); TS1005 ';' expected. (15433); TS1109 Expression expected. (12516); TS1005 ')' expected. (10270); TS1131 Property or signature expected. (9873); TS1005 '(' expected. (6538); TS1005 '=>' expected. (5904); TS1005 '?' expected. (5772); TS1005 '>' expected. (5415); TS1005 ']' expected. (5150); TS1138 Parameter declaration expected. (4663)

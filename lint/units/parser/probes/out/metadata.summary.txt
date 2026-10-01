@@ -1,0 +1,23 @@
+inputs 18281
+tsc rejects 2132; tsc parses and Bun rejects 966; both accept 15183
+both accept: same as tsc loose 13433 (of these 682 differ from tsc strict), differ 1750, values that did not normalise 0
+
+differences by cause (distinct forms / records):
+  235 / 741  merge rule: a conditional type merges its branches as an intersection (tsc: as a union of the two branches)
+  62 / 252  outside the grammar: parameter decorator (parse_fn.rs:289-295 and :375-377 read a type for metadata only when a decorator was seen before it)
+  36 / 123  tree shape: operand of | or & swallows extends ? :
+  31 / 111  tree shape: operand of keyof / readonly / unique swallows extends ? :
+  28 / 84  tree shape: level of the false branch (the metadata sink reads it at Level::BitwiseAnd)
+  18 / 75  type predicate: x is T / this is T (Bun: reference to x or Object, tsc: Boolean)
+  11 / 51  form without a tag: import type, unique symbol and infer leave MNone, which | and & treat as absent and [] as an array
+  51 / 51  outside the grammar: decorated getter that has a setter (p.rs:7843-7852 writes [] for a getter; tsc writes the parameter type of the setter)
+  50 / 50  outside the grammar: decorated declare field (Bun emits no metadata call)
+  28 / 46  type predicate: asserts x / asserts x is T (Bun: Object, tsc: undefined)
+  7 / 39  name read as a modifier: const / abstract / asserts as a type name leave no tag (Bun: Object, tsc: reference)
+  39 / 39  outside the grammar: no type form (position or symbol resolution)
+  10 / 30  tree shape: keyword followed by '.' is a type reference (parser.go:2804-2811)
+  22 / 27  outside the grammar: rest parameter (parse_fn.rs:299-302 never reads metadata; tsc serializes the element type)
+  7 / 21  readonly operand: the sink answers Array for every operand (tsc serializes the operand; differs only where tsc reports TS1354)
+  2 / 6  tree shape: operand of unique (tsc: TypeOperator over the whole postfix type)
+  1 / 3  outside the grammar: a reference named Object (Bun decides on the name, tsc on the resolved symbol)
+  1 / 1  type predicate inside another type (tsc parses it only at the top of a return type)

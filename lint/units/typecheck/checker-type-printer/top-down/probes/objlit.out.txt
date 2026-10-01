@@ -1,0 +1,1 @@
+objlit.ts(1,7): error TS2322: Type '{ a: number; b: string; c: number[]; d: { e: boolean; }; f(): number; g: (x: number) => number; }' is not assignable to type 'string'.

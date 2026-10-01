@@ -1,0 +1,3 @@
+SIZES after NewChecker: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=85
+min.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+SIZES after check: identity=0 assignable=0 comparable=0 subtype=0 strictSubtype=0 enum=0 types=87

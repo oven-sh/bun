@@ -1,0 +1,60 @@
+Measurements of the node table prototype (top-down/proto, crate ntproto), 2026-09-30.
+Machine: 16 cores shared, load average 550 to 780 during every run. rustc 1.100.0-nightly (574ff7d98 2026-09-14).
+Logs: ../logs/compile-times.log, test-debug.log, test-opt3.log (five runs), test-opt3-all.log, corpus.log.
+
+Source sizes
+  generated: ast_generated.rs 18,222 lines, kind_generated.rs 1,587, flags_generated.rs 124 (19,933 together)
+  hand-written: context 572, ast 427, factory 371, table 323, dump 321, builder 271, symbol 237, node_arena 220, stable 122, golang 67, program 65, ids 58, internal 54, core 34 (3,142 lines); importer 224 + json 214; tests 752
+  generated items: 351 kinds, 34 markers, 34 kind guards; 194 structs (192 of ast.json + the two flow data structs), 678 slots,
+  194 casts, 194 New, 167 Update, 192 Clone arms, 167 VisitEachChild arms, 198 Is functions, 28 switch accessors, 3 setters, 21 base-data slot tables
+
+Compile time of the crate, cold, CARGO_INCREMENTAL=0, dependencies already built (wall / user CPU)
+  cargo check (lib)                              16.4 s /  8.1 s
+  cargo build (lib, debug)                       21.1 s / 18.6 s
+  cargo test --no-run (debug test binary, link)  25.2 s / 15.7 s
+  cargo clippy --all-targets --no-deps           22.2 s /  8.4 s
+  cargo test --no-run, opt-level 3 for the crate  9.6 s / 20.9 s
+  with incremental compilation and no change: 2.6 to 3.4 s
+
+Build, freeze and memory (opt-level 3 for the crate, five runs; in brackets the debug build)
+                                   es5 closure            esnext.full closure
+  files                            3                      93
+  nodes (with JSDoc subtrees)      15,198                 161,791
+  lists                            4,212                  41,768
+  source text                      233,387 bytes          2,983,921 bytes
+  converted flat dump (JSON)       999,897 bytes          12,552,275 bytes
+  read the JSON                    3.3 to 6.5 ms [22]     25 to 44 ms [235]
+  build (raw calls into the arena) 2.6 to 5.1 ms [24]     30 to 54 ms [458]
+  finish (canonical order, copy)   2.0 to 3.3 ms [22]     21 to 33 ms [369]
+  freeze (rebase every id)         0.08 to 0.17 ms [1.8]  0.97 to 1.16 ms [19]
+  first program (page table)       0.000 to 0.001 ms      0.004 to 0.006 ms
+  second program, files reversed   0.000 ms               0.001 to 0.006 ms   (127 pages of 4096 ids)
+  walk of all nodes by ForEachChild 0.4 to 0.7 ms         3.8 to 5.5 ms [41]  (139,412 nodes outside JSDoc)
+  table heap                       942,411 bytes          11,535,466 bytes (71.3 per node; 52.9 without the source text)
+    node records (24 bytes each)   364,752                3,882,984
+    slots (4 bytes each)           171,112                1,729,364  (2.67 slots per node)
+    list records (20 bytes each)   84,240                 835,360
+    list items                     25,556                 269,640
+    node texts (interned per file) 57,972                 1,773,213
+    source text                    233,387                2,983,921
+  arena while building             798,240 bytes          9,518,417 bytes
+  id pages used                    6                      126
+
+Agreement with the reference (FNV-1a digest of the tree without JSDoc, printed in the format of the Go probe, and node count)
+  es5 closure                      3 of 3 files
+  esnext.full closure              93 of 93 files
+  conformance corpus, TypeScript   14,912 of 14,935 units; all 14,162 units without parse errors
+  conformance corpus, JavaScript   769 of 1,276 units (the reparser is not modelled)
+  importer faults (a field the table does not have)   0 in 16,211 units, 1,483,326 nodes
+  structs exercised                186 of 194 (the other eight are never made by a parser)
+  kinds exercised                  271 of 351
+  whole corpus: import and finish  0.55 to 0.82 s [9.3 s], tables 71,182,245 bytes
+  children out of source order 0, ids out of ForEachChild order 0 (esnext closure)
+
+Names (probes/snake-collisions.ts, snake-wrappers.ts)
+  7,840 functions and methods in 18 packages; 100 pairs collide in snake_case (ast 5, binder 1, checker 85, core 1, others 8)
+  in 92 pairs the exported function calls the unexported one; the other 8: ast.NodeVisitor VisitNode, VisitEmbeddedStatement,
+  VisitNodes, VisitModifiers; checker IsValidPropertyAccessForCompletions; tspath, printer (3, not ported)
+
+Uses in checker and binder (non-test, 63,870 lines): .Parent 1,209; .Kind 723; As*() 1,543; ast.Is*( 2,032; .Name() 439;
+  .Expression() 363; .Text() 274; factory New* 406; Update* 24; .Parent = 34; .Loc = 11; core.* 1,263

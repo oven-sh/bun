@@ -1,0 +1,238 @@
+use-isnan: 112 valid, 114 invalid, 8 different
+VALID:
+"var x = NaN;"
+"isNaN(NaN) === true;"
+"isNaN(123) !== true;"
+"Number.isNaN(NaN) === true;"
+"Number.isNaN(123) !== true;"
+"foo(NaN + 1);"
+"foo(1 + NaN);"
+"foo(NaN - 1)"
+"foo(1 - NaN)"
+"foo(NaN * 2)"
+"foo(2 * NaN)"
+"foo(NaN / 2)"
+"foo(2 / NaN)"
+"var x; if (x = NaN) { }"
+"var x = Number.NaN;"
+"isNaN(Number.NaN) === true;"
+"Number.isNaN(Number.NaN) === true;"
+"foo(Number.NaN + 1);"
+"foo(1 + Number.NaN);"
+"foo(Number.NaN - 1)"
+"foo(1 - Number.NaN)"
+"foo(Number.NaN * 2)"
+"foo(2 * Number.NaN)"
+"foo(Number.NaN / 2)"
+"foo(2 / Number.NaN)"
+"var x; if (x = Number.NaN) { }"
+"x === Number[NaN];"
+"x === (NaN, 1)"
+"x === (doStuff(), NaN, 1)"
+"x === (doStuff(), Number.NaN, 1)"
+"switch(foo) {}"
+"switch(foo) { case bar: NaN; }"
+"switch(foo) { default: NaN; }"
+"switch(Nan) {}"
+"switch('NaN') { default: break; }"
+"switch(foo(NaN)) {}"
+"switch(foo.NaN) {}"
+"switch(foo) { case Nan: break }"
+"switch(foo) { case 'NaN': break }"
+"switch(foo) { case foo(NaN): break }"
+"switch(foo) { case foo.NaN: break }"
+"switch(foo) { case bar: break; case 1: break; default: break; }"
+"switch(foo) { case bar: Number.NaN; }"
+"switch(foo) { default: Number.NaN; }"
+"switch(Number.Nan) {}"
+"switch('Number.NaN') { default: break; }"
+"switch(foo(Number.NaN)) {}"
+"switch(foo.Number.NaN) {}"
+"switch(foo) { case Number.Nan: break }"
+"switch(foo) { case 'Number.NaN': break }"
+"switch(foo) { case foo(Number.NaN): break }"
+"switch(foo) { case foo.Number.NaN: break }"
+"switch((NaN, doStuff(), 1)) {}"
+"switch((Number.NaN, doStuff(), 1)) {}"
+"foo.indexOf(NaN)"
+"foo.lastIndexOf(NaN)"
+"foo.indexOf(Number.NaN)"
+"foo.lastIndexOf(Number.NaN)"
+"let NaN; if (x === NaN) {}"
+"let Number; if (x === Number.NaN) {}"
+"function f(NaN) { return x === NaN; }"
+"function f(Number) { return x === Number.NaN; }"
+"let NaN; switch (foo) { case NaN: break; }"
+"let Number; switch (foo) { case Number.NaN: break; }"
+"let NaN; switch (NaN) { case a: break; }"
+"let Number; switch (Number.NaN) { case a: break; }"
+"let Number; if (x === Number?.NaN) {}"
+"function f(Number) { return x === Number?.NaN; }"
+"let Number; switch (foo) { case Number?.NaN: break; }"
+"let Number; switch (Number?.NaN) { case a: break; }"
+"x == Number.NaN.toString"
+"x == Number[NaN]"
+"x == window.NaN"
+"x == globalThis.NaN"
+"x == Math.NaN"
+"x == a.Number.NaN"
+"x == Number.NaN()"
+"x == NaN.x"
+"x == \"NaN\""
+"x == (a, (b, NaN))"
+"x == (NaN, a)"
+"x + NaN"
+"x = NaN"
+"x && NaN"
+"x in NaN"
+"x instanceof NaN"
+"x ?? NaN"
+"isNaN(x)"
+"Number.isNaN(x)"
+"foo(NaN)"
+"[NaN].indexOf(NaN)"
+"a.indexOf(NaN)"
+"a.lastIndexOf(NaN)"
+"x == -NaN"
+"x == +NaN"
+"x == !NaN"
+"x == typeof NaN"
+"x == NaN + 1"
+"switch (x) { case NaN + 1: }"
+"switch (foo(NaN)) {}"
+"switch (x) { case foo(NaN): }"
+"let NaN = 1; x === NaN"
+"function g(NaN) { x === NaN }"
+"function g(Number) { x === Number.NaN }"
+"let Number = 1; x === Number.NaN"
+"import NaN from \"x\"; y == NaN"
+"try {} catch (NaN) { x == NaN }"
+"function g(NaN) { switch (NaN) { case NaN: } }"
+"class NaN {} x == NaN"
+"(function NaN() { x == NaN })"
+"(class NaN { m() { return x == NaN } })"
+"function f(NaN) { eval(\"\"); return x === NaN }"
+INVALID:
+"123 == NaN;" => 1:1C
+"123 === NaN;" => 1:1C
+"NaN === \"abc\";" => 1:1C
+"NaN == \"abc\";" => 1:1C
+"123 != NaN;" => 1:1C
+"123 !== NaN;" => 1:1C
+"NaN !== \"abc\";" => 1:1C
+"NaN != \"abc\";" => 1:1C
+"NaN < \"abc\";" => 1:1C
+"\"abc\" < NaN;" => 1:1C
+"NaN > \"abc\";" => 1:1C
+"\"abc\" > NaN;" => 1:1C
+"NaN <= \"abc\";" => 1:1C
+"\"abc\" <= NaN;" => 1:1C
+"NaN >= \"abc\";" => 1:1C
+"\"abc\" >= NaN;" => 1:1C
+"123 == Number.NaN;" => 1:1C
+"123 === Number.NaN;" => 1:1C
+"Number.NaN === \"abc\";" => 1:1C
+"Number.NaN == \"abc\";" => 1:1C
+"123 != Number.NaN;" => 1:1C
+"123 !== Number.NaN;" => 1:1C
+"Number.NaN !== \"abc\";" => 1:1C
+"Number.NaN != \"abc\";" => 1:1C
+"Number.NaN < \"abc\";" => 1:1C
+"\"abc\" < Number.NaN;" => 1:1C
+"Number.NaN > \"abc\";" => 1:1C
+"\"abc\" > Number.NaN;" => 1:1C
+"Number.NaN <= \"abc\";" => 1:1C
+"\"abc\" <= Number.NaN;" => 1:1C
+"Number.NaN >= \"abc\";" => 1:1C
+"\"abc\" >= Number.NaN;" => 1:1C
+"x === Number?.NaN;" => 1:1C
+"x !== Number?.NaN;" => 1:1C
+"x === Number['NaN'];" => 1:1C
+"/* just\n                adding */ x /* some */ === /* comments */ NaN; // here" => 2:27C
+"(1, 2) === NaN;" => 1:1C
+"x === (doStuff(), NaN);" => 1:1C
+"x === (doStuff(), Number.NaN);" => 1:1C
+"x == (doStuff(), NaN);" => 1:1C
+"x == (doStuff(), Number.NaN);" => 1:1C
+"switch(NaN) { case foo: break; }" => 1:1S
+"switch(foo) { case NaN: break; }" => 1:15K
+"switch(NaN) {}" => 1:1S
+"switch(NaN) { default: break; }" => 1:1S
+"switch(NaN) { case foo: break; default: break; }" => 1:1S
+"switch(foo) { case NaN: }" => 1:15K
+"switch(foo) { case (NaN): break; }" => 1:15K
+"switch(foo) { case bar: break; case NaN: break; default: break; }" => 1:32K
+"switch(foo) { case bar: case NaN: default: break; }" => 1:25K
+"switch(foo) { case bar: break; case NaN: break; case baz: break; case NaN: break; }" => 1:32K 1:66K
+"switch(NaN) { case NaN: break; }" => 1:1S 1:15K
+"switch(Number.NaN) { case foo: break; }" => 1:1S
+"switch(foo) { case Number.NaN: break; }" => 1:15K
+"switch(Number.NaN) {}" => 1:1S
+"switch(Number.NaN) { default: break; }" => 1:1S
+"switch(Number.NaN) { case foo: break; default: break; }" => 1:1S
+"switch(foo) { case Number.NaN: }" => 1:15K
+"switch(foo) { case (Number.NaN): break; }" => 1:15K
+"switch(foo) { case bar: break; case Number.NaN: break; default: break; }" => 1:32K
+"switch(foo) { case bar: case Number.NaN: default: break; }" => 1:25K
+"switch(foo) { case bar: break; case NaN: break; case baz: break; case Number.NaN: break; }" => 1:32K 1:66K
+"switch(Number.NaN) { case Number.NaN: break; }" => 1:1S 1:22K
+"switch((doStuff(), NaN)) {}" => 1:1S
+"switch((doStuff(), Number.NaN)) {}" => 1:1S
+"x == NaN" => 1:1C
+"x === NaN" => 1:1C
+"x != NaN" => 1:1C
+"x !== NaN" => 1:1C
+"x < NaN" => 1:1C
+"x <= NaN" => 1:1C
+"x > NaN" => 1:1C
+"x >= NaN" => 1:1C
+"NaN == x" => 1:1C
+"NaN === NaN" => 1:1C
+"x == Number.NaN" => 1:1C
+"Number.NaN === x" => 1:1C
+"x == Number[\"NaN\"]" => 1:1C
+"x == Number['NaN']" => 1:1C
+"x == Number[`NaN`]" => 1:1C
+"x == Number?.NaN" => 1:1C
+"x == Number?.[\"NaN\"]" => 1:1C
+"x == (Number).NaN" => 1:1C
+"x == (Number?.NaN)" => 1:1C
+"x == (NaN)" => 1:1C
+"x == (a, NaN)" => 1:1C
+"x == (a, b, NaN)" => 1:1C
+"x == ((a, b), NaN)" => 1:1C
+"(a, NaN) == x" => 1:1C
+"x == (a, Number.NaN)" => 1:1C
+"x == NaN == y" => 1:1C
+"a == NaN || b != NaN" => 1:1C 1:13C
+"switch (NaN) {}" => 1:1S
+"switch (NaN) { case 1: break; }" => 1:1S
+"switch (Number.NaN) {}" => 1:1S
+"switch ((a, NaN)) {}" => 1:1S
+"switch (a, NaN) {}" => 1:1S
+"switch (x) { case NaN: break; }" => 1:14K
+"switch (x) { case Number.NaN: break; default: }" => 1:14K
+"switch (x) {\n  case 1:\n    break;\n  case NaN:\n  case Number.NaN:\n    break;\n  default:\n    break;\n}" => 4:3K 5:3K
+"switch (x) { case (NaN): }" => 1:14K
+"switch (x) { case (a, NaN): }" => 1:14K
+"switch (x) { case a, NaN: }" => 1:14K
+"switch (x) { case y == NaN: }" => 1:19C
+"switch (NaN) { case NaN: }" => 1:1S 1:16K
+"  switch (NaN) {\n    case NaN:\n  }" => 1:3S 2:5K
+"NaN = 1; x == NaN" => 1:10C
+"NaN: for(;;){ x == NaN; break NaN; }" => 1:15C
+"var o = { NaN: 1 }; x == NaN" => 1:21C
+"function f() { eval(\"\"); return x === NaN }" => 1:33C
+"x === NaN === NaN" => 1:1C 1:1C
+"x == NaN != NaN" => 1:1C 1:1C
+"NaN == NaN == NaN" => 1:1C 1:1C
+"x === NaN === -0" => 1:1C
+DIFFERENT:
+"switch (x) { case /* c */ NaN: }" => ESLint 1:14K; bun 1:27K
+"switch (x) { case\n NaN: }" => ESLint 1:14K; bun 2:2K
+"x === NaN; function g(NaN) {}" => ESLint 1:1C; bun none
+"function g(Number) {} x === Number.NaN" => ESLint 1:23C; bun none
+"function g(NaN) {} switch (NaN) { case NaN: }" => ESLint 1:20S 1:35K; bun none
+"(function NaN() {}); x == NaN" => ESLint 1:22C; bun none
+"(class NaN {}); x == NaN" => ESLint 1:17C; bun none
+"function f(a = x === NaN) { var NaN; }" => ESLint 1:16C; bun none

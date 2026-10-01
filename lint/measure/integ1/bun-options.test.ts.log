@@ -1,0 +1,20 @@
+bun test v1.4.3 (367d939d9)
+
+test/cli/env/bun-options.test.ts:
+(pass) BUN_OPTIONS environment variable > basic usage - passes options to bun command [650.38ms]
+(pass) BUN_OPTIONS environment variable > multiple options - passes all options to bun command [1418.65ms]
+(pass) BUN_OPTIONS environment variable > options with quotes - properly handles quoted options [387.39ms]
+(pass) BUN_OPTIONS environment variable > priority - environment options go before command line options [1390.10ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized [388.02ms]
+(pass) BUN_OPTIONS environment variable > bare flag before flag with value is recognized (standalone executable) [3674.95ms]
+(pass) BUN_OPTIONS environment variable > empty BUN_OPTIONS - should work normally [476.47ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun x.ts` runs nothing [675.61ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun run x.ts` runs nothing [424.07ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--smol --lint' is refused and `bun x.ts` runs nothing [816.23ms]
+(pass) BUN_OPTIONS environment variable > --lint > BUN_OPTIONS='--lint' is refused and `bun --lint x.ts` runs nothing [527.95ms]
+(pass) BUN_OPTIONS environment variable > --lint > another option in BUN_OPTIONS does not refuse --lint on the command line [382.23ms]
+
+ 12 pass
+ 0 fail
+ 30 expect() calls
+Ran 12 tests across 1 file. [15.02s]

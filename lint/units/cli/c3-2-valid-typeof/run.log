@@ -1,0 +1,14 @@
+rustfmt: clean
+comment runs and markers found: 0
+valid_typeof.rs against the stand-ins: 239 checks hold
+clippy-driver with the lint levels of the workspace: clean
+control with a std HashMap in the file: rejected
+fault 1 (a type name misspelled): a check fails, as it should
+fault 2 (the typeof itself checked for a typeof on the left): a check fails, as it should
+fault 3 (null is no literal): a check fails, as it should
+fault 4 (undefined reported without waiting for its declarations): a check fails, as it should
+valid-typeof: 476 cases: same 448, missing 28
+476 cases: 219 with a report, 257 without, 28 that differ from ESLint (missing), 52 with the code of a case of ESLint's own test, 13 with jsx; 0 that are not what the oracle says
+275 added cases, 0 of them not in the fixture
+52 codes in the test of ESLint, 0 of them not in the fixture, 0 cases marked that are not among them
+valid-typeof: 476 cases, 0 wrong, 0 unexpected lines, 0 files that do not parse; 234 lines of this rule, 16 of other rules (no-compare-neg-zero, no-unsafe-negation, use-isnan)

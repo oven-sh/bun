@@ -1,0 +1,23 @@
+[
+"type A = 1; type B = 2; type C = 3; type D = 4; type X<Q> = Q extends [infer T extends A | B ? C : D] ? 1 : 2;",
+"type A = 1; type B = 2; type C = 3; type X<Q> = Q extends keyof infer T extends A ? B : C;",
+"declare function f(keyof: any): keyof is string;",
+"declare function f(x: any): asserts x\nis string;",
+"declare const a: any, x: any, b: any; let z = a as typeof x << b;",
+"type T = import('x')<string>;",
+"class Foo {} let t: unique Foo;",
+"let t: unique keyof Foo;",
+"declare const y: any; let a: asserts y;",
+"let a: string?; let b: ?string; let c: !string; let d: *; let e: string!;",
+"namespace A { export type B<T> = T } let a: A.<string>;",
+"type Foo<T> = T; let a: Foo<>; let b: Foo<string,>;",
+"let a: if;",
+"declare const a: any; let z = a as const<T>;",
+"let g: (a = 1) => void;",
+"type X<Q> = Q extends [infer T extends string?] ? 1 : 2;",
+"let x: [string?]; let y: [a?: string];",
+"declare const f: any; f<>(); f<string,>();",
+"type X = typeof import('x')<string>;",
+"let x: readonly string; let y: readonly Foo2<string>; class Foo2<T> {}",
+"let x: abstract new () => void; let y: keyof (() => void); let z: string | (() => void);"
+]

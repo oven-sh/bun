@@ -1,0 +1,5 @@
+file p8.ts bytes=256 error=parse errors=4
+  Unexpected "super"
+  Expected ";" but found "z"
+  Expected identifier but found "="
+  Expected ";" but found "w"

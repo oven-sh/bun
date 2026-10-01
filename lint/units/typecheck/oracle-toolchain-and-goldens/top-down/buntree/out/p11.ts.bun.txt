@@ -1,0 +1,89 @@
+file p11.ts bytes=196 statements=12
+s_expr @0
+  e_binary @0
+    e_identifier @8 c
+  e_binary @0
+    e_identifier @4 b
+    e_identifier @0 a
+s_expr @11
+  e_binary @11
+    e_identifier @20 c
+  e_binary @11
+    e_identifier @15 b
+    e_identifier @11 a
+s_expr @24
+  e_binary @24
+    e_identifier @29 b
+    e_identifier @24 a
+s_expr @32
+  e_binary @32
+    e_binary @37
+      e_identifier @42 c
+      e_identifier @37 b
+    e_identifier @32 a
+s_expr @45
+  e_binary @45
+    e_binary @49
+      e_identifier @53 c
+      e_identifier @49 b
+    e_identifier @45 a
+s_expr @56
+  e_if @56
+    e_identifier @56 a
+    e_identifier @60 b
+    e_if @64
+      e_identifier @64 c
+      e_identifier @68 d
+      e_identifier @72 e
+s_expr @75
+  e_binary @75
+    e_binary @80
+      e_binary @85
+        e_binary @89
+          e_binary @93
+            e_binary @97
+              e_binary @102
+                e_binary @106
+                  e_binary @111
+                    e_binary @115
+                      e_identifier @119 k
+                      e_identifier @115 j
+                    e_identifier @111 i
+                  e_identifier @106 h
+                e_identifier @102 g
+              e_identifier @97 f
+            e_identifier @93 e
+          e_identifier @89 d
+        e_identifier @85 c
+      e_identifier @80 b
+    e_identifier @75 a
+s_expr @122
+  e_binary @122
+    e_binary @130
+      e_identifier @143 b
+      e_identifier @130 a
+  e_binary @122
+    e_identifier @127 b
+    e_identifier @122 a
+s_expr @146
+  e_binary @146
+    e_binary @150
+      e_identifier @166 d
+    e_binary @150
+      e_identifier @161 c
+    e_binary @150
+      e_identifier @155 b
+      e_identifier @150 a
+    e_identifier @146 x
+s_expr @169
+  e_binary @169
+    e_number @175
+    e_identifier @169 x
+s_expr @178
+  e_binary @178
+    e_number @185
+    e_identifier @178 x
+s_expr @188
+  e_binary @188
+    e_number @193
+    e_identifier @188 x

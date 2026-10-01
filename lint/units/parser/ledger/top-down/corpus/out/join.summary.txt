@@ -1,0 +1,37 @@
+corpus 327745 distinct sources
+base build      1.4.3 e3566be889995ffff8b08823b9233617f979c889  (/workspace/notes/lint/units/parser/measure/base/bin/bun)
+installed build 1.4.3 367d939d9afc919c6ccce278c970e7c3f23da8c9  (/workspace/bun/build/release/bun)
+tsc 6.0.2, typescript-go 89d5d5b
+
+classes with the base build (A: tsc parses, Bun rejects.  B: Bun accepts, tsc rejects)
+  primary dialect  AA=121630 RR=168194 A=17350 B=20569 CRASH=2
+  as .ts           AA=121514 RR=168330 A=17334 B=20565 CRASH=2
+  as .tsx          AA=117143 RR=174006 A=16755 B=19839 CRASH=2
+  as .d.ts (Bun: loader ts; only sources of a declaration-file origin)  AA=2494 RR=560 A=237 B=18 CRASH=0
+  per origin set, primary dialect (a source counts in every set that carries it)
+    bu    AA=50997 RR=15613 A=9716 B=4039 CRASH=2
+    lex   AA=260 RR=430 A=222 B=40 CRASH=0
+    sc    AA=695 RR=27 A=53 B=41 CRASH=0
+    res   AA=1619 RR=444 A=838 B=220 CRASH=0
+    td    AA=29534 RR=5838 A=2812 B=1541 CRASH=0
+    otg   AA=1428 RR=299 A=541 B=123 CRASH=0
+    gd    AA=44550 RR=147757 A=4587 B=15094 CRASH=0
+    test  AA=644 RR=126 A=101 B=9 CRASH=0
+  rows written for the checker pass (class A in the primary dialect, or A only as tsx for a tsx origin): 17350
+
+installed build against base build: 11912 (source, configuration) pairs differ, in 3066 sources of 327745
+    11816  R>R  first error differs: installed says "Backtrack" without a position
+       96  R>R  first error equal, later errors differ
+
+base build, verdict changes when experimentalDecorators + emitDecoratorMetadata are on: 1829 (loader, source) pairs
+
+tsc 6.0.2 against typescript-go 89d5d5b: 1620 (source, dialect) pairs differ, in 830 sources (3 pairs with a non-ASCII source)
+  VERDICT  tsc parses, typescript-go reports a diagnostic: ts=276 tsx=266 dts=2
+  VERDICT  tsc reports a diagnostic, typescript-go parses: ts=114 tsx=111
+  first code differs: ts=233 tsx=222
+  first code equal, its start or length differs: ts=134 tsx=124
+  first code equal, start or length differs, source is not ASCII (UTF-16 against UTF-8 offsets): tsx=3
+  first diagnostic and count equal, a later diagnostic differs: ts=4 tsx=4
+  first diagnostic equal, the number of diagnostics differs: ts=66 tsx=61
+
+crashes: 4 (build, source) pairs, see crashes.tsv

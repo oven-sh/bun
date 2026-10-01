@@ -1,0 +1,2 @@
+file p2.ts bytes=111 error=parse errors=1
+  Unexpected @

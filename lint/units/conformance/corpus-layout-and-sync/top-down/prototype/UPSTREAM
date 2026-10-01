@@ -1,0 +1,40 @@
+# Source of corpus/. Read by sync.sh: one record per line, fields separated by spaces. Never edit corpus/ by hand.
+
+repository typescript-go https://github.com/microsoft/typescript-go
+commit typescript-go 89d5d5b2849a0db0957065889ca58536fa6d2e4a
+license typescript-go Apache-2.0
+branch typescript-go main
+root typescript-go corpus/tsgo
+
+repository TypeScript https://github.com/microsoft/TypeScript
+commit TypeScript 5848bc5157b22ff7f4e3369f4645a514a433b15f
+license TypeScript Apache-2.0
+branch TypeScript tsgo-port
+root TypeScript corpus/ts
+
+# The TypeScript commit is the one that typescript-go records for this submodule path.
+submodule typescript-go _submodules/TypeScript TypeScript
+
+# cases: every file below the directory. A file that ends in .ts or .tsx is a test case of the suite named by the directory.
+copy TypeScript cases tests/cases/conformance
+copy TypeScript cases tests/cases/compiler
+
+# tree: every file below the directory. The harness mounts tests/lib at /.lib.
+copy TypeScript tree tests/lib
+
+# errors: files directly in the directory named <stem>.errors.txt or <stem>(<options>).errors.txt, <stem> being a case name without .ts or .tsx.
+copy TypeScript errors tests/baselines/reference
+
+# overlay: as errors, in <directory>/<suite>, only the files whose bytes differ from TypeScript's file of that name or that have none.
+copy typescript-go overlay testdata/baselines/reference/submodule
+
+# file: that file.
+copy typescript-go file testdata/submoduleAccepted.txt
+copy typescript-go file testdata/submoduleTriaged.txt
+copy typescript-go file LICENSE
+copy typescript-go file NOTICE.txt
+copy TypeScript file LICENSE.txt
+copy TypeScript file ThirdPartyNoticeText.txt
+
+# Written by sync.sh, not copied: <suite>/<name>.errors.txt where a .errors.txt.diff exists in one of the directories and typescript-go has no .errors.txt.
+derive typescript-go expects-no-errors corpus/tsgo.expects-no-errors.txt testdata/baselines/reference/submodule testdata/baselines/reference/submoduleAccepted testdata/baselines/reference/submoduleTriaged

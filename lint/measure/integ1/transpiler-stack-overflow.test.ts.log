@@ -1,0 +1,9 @@
+bun test v1.4.3 (367d939d9)
+
+test/bundler/transpiler/transpiler-stack-overflow.test.ts:
+(pass) long chain of expressions does not cause stack overflow [19358.90ms]
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [21.75s]

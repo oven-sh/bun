@@ -1,0 +1,17 @@
+declare const lit: "x" | "y" | 1 | 2n | true | null | undefined;
+declare const mixed: string | number | "x";
+declare const inter: { a: string } & { b: number };
+declare const arr: string[];
+declare const ro: readonly number[];
+declare const tup: [string, number?, ...boolean[]];
+declare const named: readonly [first: string, second: number];
+declare const fn: (this: void, x: number, y?: string, ...rest: boolean[]) => void;
+declare const ctor: new <T>(x: T) => T[];
+declare const obj: { a: 1; b?: "two"; readonly c: [3]; m(x: number): string; [k: number]: unknown };
+declare const paren: (string | number)[];
+declare const sym: unique symbol;
+declare function over(x: string): string;
+declare function over(x: number): number;
+declare function pred(x: unknown): x is string;
+declare function assertion(x: unknown): asserts x;
+declare function generic<T extends { a: number }, U = T[]>(t: T, u?: U): [T, U];

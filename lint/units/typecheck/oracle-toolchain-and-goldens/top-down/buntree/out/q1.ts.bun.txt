@@ -1,0 +1,37 @@
+file q1.ts bytes=128 statements=1
+s_for @0
+  s_local @5
+    b_identifier @9 f
+    e_function @13
+      s_expr @27
+        e_identifier @27 a
+    b_identifier @33 g
+    e_arrow @37
+      s_return @43
+        e_identifier @43 b
+    b_identifier @46 h
+    e_array @50
+      e_identifier @51 c
+    b_identifier @55 i
+    e_object @59
+      e_string @60
+      e_identifier @63 k
+    b_identifier @67 l
+    e_identifier @72 m
+    b_identifier @76 n
+    e_if @80
+      e_identifier @80 o
+      e_identifier @84 p
+      e_identifier @88 q
+    b_identifier @91 r
+    e_call @95
+      e_identifier @95 s
+      e_identifier @97 t
+    b_identifier @101 u
+    e_template @105
+      e_identifier @108 v
+    b_identifier @113 w
+    e_index @117
+      e_identifier @117 x
+      e_identifier @119 y
+  s_empty @-1

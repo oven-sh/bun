@@ -1,0 +1,12 @@
+pin	tsc first code	start	length	tsc message	typescript-go first	source
+test/bundler/transpiler/transpiler.test.js:1340 ts transformSync ok	1110	16	1	Type expected.	1110,16,1	const x: unique = y
+test/bundler/transpiler/transpiler.test.js:1341 ts transformSync ok	1110	15	1	Type expected.	1110,15,1	const x: unique<T> = y
+test/bundler/transpiler/transpiler.test.js:659 ts transformSync ok	1128	0	6	Declaration or statement expected.	1128,0,6	export abstract\nclass Foo {}\nnew Foo
+test/bundler/transpiler/transpiler.test.js:660 ts transformSync ok	1128	0	6	Declaration or statement expected.	1128,0,6	export declare\nclass Foo {}\nnew Foo
+test/bundler/transpiler/transpiler.test.js:661 ts transformSync ok	1128	0	6	Declaration or statement expected.	1128,0,6	export declare\nlet x = 1\nuse(x)
+test/bundler/transpiler/transpiler.test.js:1567 ts transformSync ok	1003	47	0	Identifier expected.		class Container { get data(): typeof this.#data {} }
+test/bundler/transpiler/transpiler.test.js:1568 ts transformSync ok	1003	23	0	Identifier expected.		const a: typeof this.#a = 1;
+test/bundler/transpiler/transpiler.test.js:1581 ts transformSync ok	1131	16	3	Property or signature expected.	1131,16,3	interface Foo { new bar<const T>(): T }
+test/bundler/transpiler/transpiler.test.js:1583 ts transformSync ok	1131	9	3	Property or signature expected.	1131,9,3	let x: { new bar<const T>(): T }
+test/js/bun/transpiler/repl-transform.test.ts:103 tsx transformSync ok	1005	8	1	';' expected.	1005,8,1	{a: 1, b: 2}
+test/js/bun/transpiler/repl-transform.test.ts:198 tsx transformSync ok	1005	8	1	';' expected.	1005,8,1	{a: 1, b: 2}

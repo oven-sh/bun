@@ -8,6 +8,7 @@
 //! its hash once, at build time, so the runtime never has to page in and hash
 //! every embedded library to find out what to write and where.
 
+use bun_core::Environment::OperatingSystem;
 use bun_core::strings;
 
 use crate::StandaloneModuleGraph::{BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX};
@@ -51,15 +52,49 @@ impl NativeLibrarySet {
 /// `.node`, `.dylib`, `.dll` (any case), `.so`, and a versioned soname: `.so`
 /// followed by digits and dots only (`libvips-cpp.so.42`, `libvips-cpp.so.8.17.3`).
 pub fn is_shared_library_name(name: &[u8]) -> bool {
+    shared_library_kind(name).is_some()
+}
+
+/// The shared-library names that `os` can load: `.node` anywhere, and the
+/// platform's own extension. A package that ships every platform's prebuilt
+/// binaries embeds them all, and the others are never written out.
+pub fn is_shared_library_name_for(name: &[u8], os: OperatingSystem) -> bool {
+    match shared_library_kind(name) {
+        Some(SharedLibraryKind::Node) => true,
+        Some(SharedLibraryKind::So) => {
+            matches!(os, OperatingSystem::Linux | OperatingSystem::Freebsd)
+        }
+        Some(SharedLibraryKind::Dylib) => os == OperatingSystem::Mac,
+        Some(SharedLibraryKind::Dll) => os == OperatingSystem::Windows,
+        None => false,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SharedLibraryKind {
+    Node,
+    So,
+    Dylib,
+    Dll,
+}
+
+fn shared_library_kind(name: &[u8]) -> Option<SharedLibraryKind> {
     let ends_with_ignore_case = |suffix: &[u8]| {
         name.len() >= suffix.len() && name[name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
     };
-    if ends_with_ignore_case(b".node")
-        || ends_with_ignore_case(b".dylib")
-        || ends_with_ignore_case(b".dll")
-    {
-        return true;
+    if ends_with_ignore_case(b".node") {
+        return Some(SharedLibraryKind::Node);
     }
+    if ends_with_ignore_case(b".dylib") {
+        return Some(SharedLibraryKind::Dylib);
+    }
+    if ends_with_ignore_case(b".dll") {
+        return Some(SharedLibraryKind::Dll);
+    }
+    is_versioned_so(name).then_some(SharedLibraryKind::So)
+}
+
+fn is_versioned_so(name: &[u8]) -> bool {
     let Some(so) = strings::index_of(name, b".so") else {
         return false;
     };
@@ -161,6 +196,27 @@ mod tests {
         ] {
             assert!(!is_shared_library_name(name), "{}", bstr::BStr::new(name));
         }
+    }
+
+    #[test]
+    fn shared_library_names_per_os() {
+        let linux = OperatingSystem::Linux;
+        assert!(is_shared_library_name_for(b"a.node", linux));
+        assert!(is_shared_library_name_for(b"libfoo.so.1", linux));
+        assert!(!is_shared_library_name_for(b"foo.dll", linux));
+        assert!(!is_shared_library_name_for(b"libfoo.dylib", linux));
+        assert!(is_shared_library_name_for(
+            b"libfoo.dylib",
+            OperatingSystem::Mac
+        ));
+        assert!(is_shared_library_name_for(
+            b"FOO.DLL",
+            OperatingSystem::Windows
+        ));
+        assert!(!is_shared_library_name_for(
+            b"libfoo.so",
+            OperatingSystem::Windows
+        ));
     }
 
     #[test]

@@ -1519,13 +1519,16 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
-/// `Flags::HAS_NATIVE_LIBRARY_SET`: every shared library among `module_files`, by name
-/// (`native_libs::is_shared_library_name`), whatever its loader. Members read from one
+/// `Flags::HAS_NATIVE_LIBRARY_SET`: every shared library among `module_files` that the
+/// target can load, by name (`native_libs::is_shared_library_name_for`), whatever its loader. Members read from one
 /// source file (by real path) share one copy: the bundler hoists a required `.node` to
 /// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
 /// libraries it links. The `--asset` copy (deepest, then first, if several) is the one
 /// the runtime loads, every other copy aliases it, and the executable stores the bytes once.
-fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
+fn collect_native_library_set<'a>(
+    module_files: &[&'a OutputFile],
+    os: bun_core::Environment::OperatingSystem,
+) -> NativeLibrarySet {
     struct Candidate<'a> {
         file_index: u32,
         rel_name: &'a [u8],
@@ -1541,8 +1544,8 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
         let rel_name = module_dest_path(output_file);
         let src_path = output_file.src_path.text;
         // A hoisted `libfoo.so.1` is named `libfoo.so-[hash].1`: its source name still says what it is.
-        let is_library = native_libs::is_shared_library_name(rel_name)
-            || native_libs::is_shared_library_name(path::basename(src_path));
+        let is_library = native_libs::is_shared_library_name_for(rel_name, os)
+            || native_libs::is_shared_library_name_for(path::basename(src_path), os);
         if is_stored_as_string(output_file) || !is_library {
             continue;
         }
@@ -1722,7 +1725,7 @@ pub(crate) fn to_bytes(
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))
         .unwrap();
-    let native_library_set = collect_native_library_set(&module_files);
+    let native_library_set = collect_native_library_set(&module_files, target.os);
 
     // The internal-module bytecode and the string table go right after the
     // last startup module's bytecode, so everything a cold start decodes

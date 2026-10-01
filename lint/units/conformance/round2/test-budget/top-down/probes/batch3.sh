@@ -33,3 +33,11 @@ for mode in debug debug-leak debug-ci; do
   slowest "$out/$label-$mode.log" 10
 done
 echo "### $(date -u +%FT%TZ) done"
+# The logs go to the notes without their colours, with the tables, and the notes are saved: the batch may end after the session that queued it.
+notes=$here/../observed
+mkdir -p "$notes/batch3"
+for f in "$out"/*.log; do sed -E 's/\x1b\[[0-9;]*m//g' "$f" > "$notes/batch3/$(basename "$f")"; done
+[ -f "$out/batch3.out" ] && sed -E 's/\x1b\[[0-9;]*m//g' "$out/batch3.out" > "$notes/batch3.txt"
+(cd "$out" && bun "$here/table.ts" 900 "$label-debug.log" "$label-debug-leak.log" "$label-debug-ci.log" > "$notes/batch3-debug-table.txt" 2>&1)
+(cd "$out" && bun "$here/by-describe.ts" "$label-release-warm2.log" "$label-debug.log" "$label-debug-leak.log" "$label-debug-ci.log" > "$notes/batch3-by-describe.txt" 2>&1)
+/workspace/tools/save-notes "conformance: research of the test budget (top-down): the third batch, the tree with the default check laid in" > /dev/null 2>&1

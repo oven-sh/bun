@@ -1,0 +1,22 @@
+bun probes/cold-reads.ts /tmp/tb1b/budget/test/cli/lint/conformance, installed bun 1.4.3-canary.1+367d939d9, not under the lock (one process), 2026-10-01T16:14Z
+the files that the test file reads once the whole enumeration has left it; count; wall time of the phase
+
+== cold: python3 probes/evict.py corpus fixtures just before; load 510.64
+the walk of 385 directories of cases                        12444     17 ms
+the cases of one in 40, read                                  333    394 ms
+the cases of one in 250, read                                  54     76 ms
+the list and the vectors, read                                  3      6 ms
+the names of the error baselines                             9730     28 ms
+the sample of the error baselines (it asks for sizes)         200     22 ms
+the sample of the error baselines, read                       200    144 ms
+== warm, right after
+the walk of 385 directories of cases                        12444     13 ms
+the cases of one in 40, read                                  333     39 ms
+the cases of one in 250, read                                  54      4 ms
+the list and the vectors, read                                  3      1 ms
+the names of the error baselines                             9730     15 ms
+the sample of the error baselines (it asks for sizes)         200     11 ms
+the sample of the error baselines, read                       200      2 ms
+
+A cold case costs 1.2 ms here (394 ms for 333). All 12,444 at that rate are 15 s, and the test that read them took 21.2 s in the
+cold run of batch1 (1.7 ms each). What is left in the file is about 0.6 s of cold reads.

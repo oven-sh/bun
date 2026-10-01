@@ -1,0 +1,245 @@
+# NEEDS of the unit "conformance"
+
+Nothing below is granted yet, and nothing of it was changed on the side of another owner.
+How to read an entry. To: the owner of the file. Ask: the exact change. Why: what was measured. Until then: what
+happens without it, and what the unit does on its own side.
+
+## Files of the repository that no unit owns
+
+State: measured on 2026-10-01 on Linux x64, in a scratch clone of the unit branch at 3110ce85cf with the corpus
+written by `sync.sh` (22,182 files below `test/cli/lint/conformance/corpus`, 4 licence files beside it; 22,230
+paths below `test/cli/lint/conformance`). The repository then tracks 42,220 files (29,090 before), 37,250 of
+them below `test/`. Nothing was measured on Windows or on macOS. The probes and their output are in
+`round2/repo-hazards/bottom-up/`.
+
+The rule that the unit follows on its own side: no file of the corpus is renamed, dropped or rewritten for a
+tool. Every entry below asks for one line in a list that the tool already has.
+
+What the repository did for the vendoring it has (`test/bundler/transpiler/react-compiler-fixtures`, 3,614
+files, 270 of them `.ts` or `.tsx`): one line, `.prettierignore:3`. `.claude/docs/landing-prs.md:48` asks for
+more: "Vendored code (vendor/, WPT fixtures, Node test files) is read-only ... exclude vendored dirs from
+mechanical rewrites".
+
+### RP-1. `test/tsconfig.json`, `"exclude"` (lines 39 to 47)
+
+To: integrator.
+
+Ask: one entry after line 46 (which gets a comma):
+
+    "cli/lint/conformance/corpus" // test cases of TypeScript, byte for byte: scripts that share one global scope
+
+Why. `"include"` (lines 26 to 38) has `**/*.ts` and `**/*.tsx`. Measured with tsc 6.0.2 and
+`tsc -p test/tsconfig.json --listFilesOnly`:
+
+- as the file is, with the corpus: 18,739 files in the project and 5,080 syntax errors, all below `corpus/`,
+  in 1,005 files (TS1005 2,925 times, TS1109 346, TS1128 282). 12,437 of the files are cases (12,448 `.ts` and
+  `.tsx` files of the corpus, less 11 `.d.ts` that have a `.ts` of the same name beside them), and 4 are files
+  that only a case pulls in.
+- with the entry: 6,298 files, no error from the listing.
+- the entry `"fixtures"` of line 40 takes out `test/fixtures` only: in a model project of five files tsc keeps
+  `cli/lint/conformance/fixtures/x.ts` and `cli/lint/conformance/corpus/cases/compiler/x.ts`, and the entry
+  above takes out the second.
+
+tsc reports the semantic errors of a project only when it has no syntax error (`src/compiler/watch.ts:579-595`
+of TypeScript). So with the corpus, `cd test && bun run typecheck` (`package.json:60`, `test/package.json:118`)
+prints 5,080 errors of the corpus and no error of any test file. No workflow runs that command: `lint.yml:30-44`
+checks `scripts/build`, `scripts`, `src/js`, `src` and `src/runtime/bake`. It is the project that an editor
+loads for every file below `test/`: three times the files, and the declarations of the cases are global.
+
+Until then: nothing in CI changes. The unit cannot help it from its side: the names are upstream's, and a
+`tsconfig.json` inside the corpus would be a file that configures a tool.
+Side effect of the edit: `source-lints.yml:56` names `test/tsconfig.json` in its path filter.
+
+### RP-2. `oxlint.json`, `"ignorePatterns"` (lines 40 to 74)
+
+To: integrator.
+
+Ask: one entry, for example after line 69:
+
+    "test/cli/lint/conformance/corpus", // test cases of TypeScript, byte for byte
+
+Why. `bun run lint:fix` (`package.json:65`) is `oxlint --config oxlint.json --fix` without a path. Measured
+with oxlint 1.70.0 (`package.json:14`), this configuration and its plugin:
+
+- `oxlint --config oxlint.json --fix test/cli/lint/conformance/corpus`: 12,448 files linted, 330 files
+  rewritten (106 below `cases/compiler`, 224 below `cases/conformance`), 15,541 errors left.
+- with the entry, on `test/cli/lint/conformance`: 33 files linted, none of the corpus, none rewritten.
+
+CI runs `bun lint` (`lint.yml:29`), which names `src/js` only (`package.json:64`).
+
+Until then: a file `.eslintignore` with the one line `*` directly in `corpus/` has the same effect with this
+version of oxlint and `--config oxlint.json` (measured: no file below `corpus/` is linted, none rewritten; a
+`.oxlintrc.json` there has no effect when `--config` is given). `sync.sh` leaves a file directly in `corpus/`
+whose name starts with a dot, and its `--verify` and the digest of the corpus leave it out. A rewritten file
+shows in `sync.sh --check`.
+Side effect of the edit: `packages-ci.yml:20-26` names `oxlint.json` and `.prettierignore` in its path filter.
+
+### RP-3. `.prettierignore`
+
+To: integrator. Not urgent.
+
+Ask: one line after line 3:
+
+    test/cli/lint/conformance/corpus
+
+Why. The formatter of CI does not take the corpus today: `bun run prettier` (`package.json:80`, run by
+`format.yml:65`) names `scripts packages src docs 'test/**/*.{test,spec}.{...}'`, and no name below
+`test/cli/lint/conformance` matches (run with prettier 3.6.2 on `test/cli/lint/**`: four files, the four test
+files of `test/cli/lint`). `conformance.test.ts` keeps that true: it fails when a name of the corpus is one that
+CI takes for a test, and those names include the names of the glob. The line is for the editor:
+`.vscode/settings.json:5` formats a file when it is saved, with prettier for TypeScript (lines 64 to 69), and
+the extension reads the `.prettierignore` of the root only.
+
+Until then: a case that someone opens and saves in an editor is rewritten, and `sync.sh --check` shows it.
+The unit's own duty: `format.yml` rewrites `test/cli/lint/conformance.test.ts` when it is not formatted.
+
+### RP-4. `.github/CODEOWNERS`
+
+To: integrator, with the consent of @Jarred-Sumner (line 2).
+
+Ask: one line after line 9, a path without an owner:
+
+    /test/cli/lint/conformance/corpus/
+
+Why. Line 8, `*.d.ts @alii`, matches 44 files of the corpus: 4 below `cases/compiler`, 36 below
+`cases/conformance`, 4 below `lib`. The last pattern that matches a file decides, and a pattern without an
+owner gives the file none.
+
+Until then: @alii is asked for a review of the pull request. Nothing fails.
+
+### RP-5. `.coderabbit.yaml`, `path_filters` (lines 30 and 31)
+
+To: integrator, for the maintainers.
+
+Ask: one entry after line 31, as the one that is there for the Node.js tests:
+
+    - "!test/cli/lint/conformance/corpus/"
+
+Why. `auto_review` is on (lines 33 to 35) and the only path that is left out is `test/js/node/test/`. The
+corpus is 22,182 files that nobody of this repository wrote.
+
+Until then: not verified what the review does with them.
+
+### RP-6. `.vscode/settings.json`, `"search.exclude"` (lines 12 to 20)
+
+To: integrator. Optional.
+
+Ask: `"test/cli/lint/conformance/corpus": true`, for the reason that line 17 gives for the fixtures of the
+Node.js tests: 31 MB of TypeScript in every search of the workspace.
+
+### RP-7. `test/parallel-allowlist.json`
+
+To: nobody. No change is asked.
+
+`cli/lint` is not among its 250 `dirs`, so `conformance.test.ts` and the other test files of `test/cli/lint`
+run in the serial part of a shard (`scripts/runner.node.ts:561-567`, `:1319-1337`). The file is generated
+(`_meta.generated_by`: `scripts/update-parallel-allowlist.mjs`), from the durations and the annotations of
+past builds. Its generator walks `test/` with its own copy of the name rule (lines 51 to 67): no file below
+`test/cli/lint/conformance` has such a name, so none can enter `excludeFiles`.
+
+### RP-8. `test/no-validate-leaksan.txt`
+
+To: nobody. No line is asked.
+
+For a test file that is not in this list the runner sets `BUN_DESTRUCT_VM_ON_EXIT=1`,
+`ASAN_OPTIONS=...:detect_leaks=1:abort_on_error=1` and `LSAN_OPTIONS` (`scripts/runner.node.ts:2201-2206`),
+and `test/harness.ts:67` and `:95` pass them on to every process that a test starts. The list has no line for
+`test/cli/lint`. With that environment and the debug build of 3110ce85cf the whole test file ends without a
+report of a sanitizer.
+
+### RP-9. The file list of the pull request
+
+To: integrator. For information, no file to change.
+
+- GitHub lists the files of a pull request in the byte order of their paths (read for pull request 44200, 93
+  files) and lists 3,000 at most. `scripts/buildkite.ts:435-465` reads 500 at most (10 pages of 50), and
+  `.buildkite/ci.ts:1941-1943` stores them for every shard.
+- With the corpus the pull request has 22,592 files (today's unit branches together). In that order
+  `test/cli/lint/conformance.test.ts` is file 345 and the directory `test/cli/lint/conformance/` is files 346
+  to 22,575. Every path that sorts after it is in no list: `test/cli/lint/diagnostics.test.ts`,
+  `test/cli/lint/lint.test.ts`, `test/cli/lint/rules.test.ts`, `test/cli/run/as-node.test.ts`,
+  `test/internal/typecheck-ast-generated.test.ts`. This holds as soon as the 9,056 baselines that the unit
+  branch has already are merged.
+- What the runner does with the list: it runs the changed test files first and outside the parallel bucket
+  (`scripts/runner.node.ts:1315-1337`, `:2817-2836`) and marks a new file that fails with "(new)" (`:3018`).
+  Those five files lose that. No test is left out: the runner finds its tests on disk (`:728`, `:2683-2684`).
+- 339 of the first 500 places are taken by files before `test/`. When the files below `src/` of this work
+  grow by 155 more, `conformance.test.ts` itself is past place 500, with or without the corpus.
+- The path filters of the workflows are not touched by this: a filter looks at the first 300 files of the
+  diff, and every path that a filter of `rust-lints.yml` or `source-lints.yml` names sorts before `test/cli`.
+- `comment-cop.yml:92-94` reads the same list from GitHub, and `src/` sorts before `test/`: it sees every
+  file below `src/` as long as the pull request has fewer than 3,000 files before `test/`.
+
+### RP-10. `scripts/runner.node.ts`: the rule by which a file is a test
+
+To: integrator. Optional.
+
+Ask: the functions `isJavaScript`, `isNodeTest`, `isClusterTest`, `isTest`, `isTestStrict`, `isHidden` (lines
+2459 to 2498) exported from a module that runs nothing when it is imported, as `scripts/buildkite.ts` exports
+`parseJunitFileSuites` for `test/internal/runner-junit.test.ts`.
+
+Why. `getTests` (lines 2500 to 2519) walks all of `test/` and leaves out only a path below `node_modules` or
+`node.js` and a name that starts with a dot. So the corpus is walked, and only its names keep it out of a
+test run. `conformance.test.ts` proves that for every name below `test/cli/lint/conformance`, with the
+functions themselves: it cuts them out of the source of the runner, holds their text in a snapshot and
+evaluates them.
+
+Until then: a change of one of these functions, or of `getTests`, fails the snapshot of
+`conformance.test.ts`, and `bun bd test test/cli/lint/conformance.test.ts -u` takes the new text. Then the
+next test of that file says whether a name of the corpus is a test by the new rule.
+
+## The checks of the integrator at a merge
+
+### CK-1. Comment runs and markers
+
+To: integrator.
+
+- `.github/workflows/comment-cop.yml` reads only paths that start with `src/` (line 99), for a pull request
+  with the label `claude` (lines 17 to 20). The corpus needs no change there.
+- `tools/commentcop.py` of the notes, which `internal/STATE.md` runs at a merge, reads `git diff ... -- src/`
+  (line 7). The corpus needs no change there either.
+
+Ask: when one of the two is ever widened to `test/`, or when the diff of a merge is searched for the markers
+of rule 5 of `goals/COMMON.md`, leave the corpus out, for example with the pathspec
+`':(exclude)test/cli/lint/conformance/corpus'`. The files of the runner, `sweep.ts` and `conformance.test.ts`
+are checked as any other file.
+
+What such a check would find in the corpus, which is copied byte for byte (line test of `comment-cop.yml`,
+each file read as a wholly added file):
+
+- a run of two or more comment lines: 8,199 of the 12,445 case files (10,553 runs; in most of them the run is
+  the directives of the case, such as `// @target: es2015`), and 3 of the 4 files of `lib` (578 runs).
+- `TODO`, `FIXME` or `XXX`: 29 case files (39, 5 and 4 places; none has `HACK`), 2 files of `lib`, 19
+  baselines of TypeScript and 9 of typescript-go.
+- `#` and three or more digits: 547 case files.
+- an error baseline has no ending that either check reads.
+
+### CK-2. The list may not shrink
+
+To: integrator.
+
+`goals/conformance.md`: "A committed list of passing names may grow and may not shrink." The test file sees
+one commit: it fails when a listed instance does not pass, and it cannot see that a commit took a name out.
+
+Ask: before a branch is merged that changes `test/cli/lint/conformance/expectations.json`:
+
+    bun test/cli/lint/conformance/sweep.ts --no-run --since <the commit before the merge>
+
+It runs no instance and exits with 1 when a name left a list that may still hold it.
+
+Until then: only the review of the diff guards the rule.
+
+## What only CI can verify
+
+No Windows machine and no macOS machine was available. A green run on Linux says nothing about them.
+
+- Long paths (Windows). The longest path is 191 characters (159 outside this directory), 4 are longer than
+  180, and `sync.sh` refuses more than 200. The CI image sets `core.longpaths`
+  (`scripts/build/ci-images/spec.ts:1376`); a clone without it needs a root of at most 67 characters.
+- Line endings. The image sets `core.autocrlf` false (`spec.ts:1374`), `format.yml:30` sets it true after the
+  checkout. `corpus/** -text` of the unit's `.gitattributes` keeps the corpus as it is (proved on Linux with
+  `git -c core.autocrlf=true add --renormalize`).
+- Time. 22,186 more files in every checkout, and 394 more directories and 22,230 more names in every walk of
+  `test/` by the runner, in each of about 150 jobs of a build. Not measured on Windows.
+- That the test ran: `.claude/docs/landing-prs.md:66`. Look for `test/cli/lint/conformance.test.ts` in the
+  log of one shard of every platform.

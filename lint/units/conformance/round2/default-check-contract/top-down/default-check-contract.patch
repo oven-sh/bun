@@ -1,5 +1,5 @@
 diff --git a/test/cli/lint/conformance.test.ts b/test/cli/lint/conformance.test.ts
-index 0f294fa055..2033657e43 100644
+index 0f294fa055..11c60e6cb4 100644
 --- a/test/cli/lint/conformance.test.ts
 +++ b/test/cli/lint/conformance.test.ts
 @@ -12,10 +12,12 @@ import type {
@@ -244,11 +244,11 @@ index 0f294fa055..2033657e43 100644
  
    test.concurrent.each([
      ["a command that lints", "lints-fixture.ts", { ok: true, reason: "" }],
-@@ -974,6 +1110,51 @@ describe("default check", () => {
+@@ -974,6 +1110,80 @@ describe("default check", () => {
      expect(verdict.reason).toStartWith("a file without an error: the command did not start: ");
    });
  
-+  // The three tests of this file that need `bun --lint` itself: four processes of the binary under test. A binary without the flag runs the first file of the probe, and no instance reaches it.
++  // The four tests of this file that need `bun --lint` itself: six processes of the binary under test. A binary without the flag runs the first file of the probe, and no instance reaches it.
 +  const binary = { command: [bunExe()], env: bunEnv };
 +  const probedBinary = lazy(() => probe(binary));
 +  const binaryTimeout = small ? 120_000 : 20_000;
@@ -293,10 +293,39 @@ index 0f294fa055..2033657e43 100644
 +    binaryTimeout,
 +  );
 +
++  test.concurrent(
++    "the binary under test: a case of the corpus without errors passes, and one with a syntax error of the parser fails and is no crash",
++    async () => {
++      const check = createSpawnCheck({ ...binary, probed: await probedBinary() });
++      using dir = tempDir("lint-conformance", {});
++      // An instance of the corpus goes the whole way: its files are laid out, and the command gets them as its operands.
++      const ofCorpus = (name: string) =>
++        runInstance(instanceOf(name)!, check, { ...corpusRun, directory: String(dir), timeoutMs: binaryTimeout });
++      const [clean, broken] = await Promise.all([ofCorpus("2dArrays.ts"), ofCorpus("ArrowFunctionExpression1.ts")]);
++      expect(classOf(clean)).toEqual({
++        outcome: "pass",
++        cause: undefined,
++        reason: "",
++        named: undefined,
++        rules: undefined,
++        death: undefined,
++      });
++      // At the level of the whole baseline the plain format passes no instance with errors, whatever code the parser gives its errors.
++      const { outcome, cause, death } = broken;
++      const difference = cause === "syntax" || cause === "first section" || cause === "lengths";
++      expect({ outcome, death, cause: difference ? "a difference from the oracle" : cause }).toEqual({
++        outcome: "fail",
++        death: undefined,
++        cause: "a difference from the oracle",
++      });
++    },
++    binaryTimeout,
++  );
++
    test.concurrent(
      "a command that lints gets the written unit as its operand, and no diagnostic passes an instance without errors",
      async () => {
-@@ -983,7 +1164,7 @@ describe("default check", () => {
+@@ -983,7 +1193,7 @@ describe("default check", () => {
    );
  
    test.concurrent(
@@ -305,7 +334,7 @@ index 0f294fa055..2033657e43 100644
      async () => {
        const unit: InputFile = {
          unitName: "/.src/a.ts",
-@@ -1005,10 +1186,21 @@ describe("default check", () => {
+@@ -1005,10 +1215,21 @@ describe("default check", () => {
            },
          ],
        );
@@ -328,7 +357,7 @@ index 0f294fa055..2033657e43 100644
        });
      },
      spawnTimeout,
-@@ -1034,44 +1226,325 @@ describe("default check", () => {
+@@ -1034,44 +1255,325 @@ describe("default check", () => {
      spawnTimeout,
    );
  
@@ -669,7 +698,7 @@ index 0f294fa055..2033657e43 100644
        });
      },
      spawnTimeout,
-@@ -1141,12 +1614,17 @@ describe("expectations.json", () => {
+@@ -1141,12 +1643,17 @@ describe("expectations.json", () => {
      expect(formatExpectations(lists)).toBe(text);
    });
  

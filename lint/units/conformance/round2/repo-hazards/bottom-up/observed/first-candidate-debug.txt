@@ -1,0 +1,62 @@
+got the lock 17:55:18, loadavg 405.43 393.99 372.21 251/21532 805948
+8f7835222e9477c1ea02379d2cbe7c9de5cc66dfd92943b2d680409150eae67f  ./test/cli/lint/repository-candidate.test.ts
+== debug run 1
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/repository-candidate.test.ts:
+(pass) repository > CI finds its tests by these functions of scripts/runner.node.ts [1067.30ms]
+(pass) repository > the rule takes a file for a test by its name or by its directory [329.94ms]
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [41963.89ms]
+  ^ this test timed out after 5000ms.
+(fail) repository > `bun test` takes none of them either [9385.99ms]
+  ^ this test timed out after 5000ms.
+
+ 2 pass
+ 2 fail
+ 1 snapshots, 5 expect() calls
+Ran 4 tests across 1 file. [69.33s]
+
+real	1m10.470s
+user	0m26.146s
+sys	0m0.439s
+exit 1
+== debug run 2
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/repository-candidate.test.ts:
+(pass) repository > CI finds its tests by these functions of scripts/runner.node.ts [160.63ms]
+(pass) repository > the rule takes a file for a test by its name or by its directory [44.51ms]
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [42984.99ms]
+  ^ this test timed out after 5000ms.
+(fail) repository > `bun test` takes none of them either [7168.50ms]
+  ^ this test timed out after 5000ms.
+
+ 2 pass
+ 2 fail
+ 1 snapshots, 5 expect() calls
+Ran 4 tests across 1 file. [53.00s]
+
+real	0m53.379s
+user	0m24.997s
+sys	0m0.326s
+exit 1
+== debug run with the leak check of CI
+bun test v1.4.3 (3110ce85c)
+
+test/cli/lint/repository-candidate.test.ts:
+(pass) repository > CI finds its tests by these functions of scripts/runner.node.ts [62.52ms]
+(pass) repository > the rule takes a file for a test by its name or by its directory [74.09ms]
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [32096.54ms]
+  ^ this test timed out after 5000ms.
+(pass) repository > `bun test` takes none of them either [3111.53ms]
+
+ 3 pass
+ 1 fail
+ 1 snapshots, 5 expect() calls
+Ran 4 tests across 1 file. [41.33s]
+
+real	0m44.348s
+user	0m23.947s
+sys	0m0.301s
+exit 1
+done 17:58:08

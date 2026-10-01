@@ -1,0 +1,61 @@
+got the lock 18:17:26, loadavg 444.19 473.77 438.32 222/20308 822722
+-- m0-unchanged:  4 pass  0 fail exit 0 
+-- m1-a-case-named-dot-test:  2 pass  2 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [624.09ms]
+error: expect(received).toEqual(expected)
+(fail) repository > `bun test` takes none of them either [23.34ms]
+-- m2-a-directory-of-node-tests:  3 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [81.61ms]
+-- m3-a-case-named-underscore-test:  2 pass  2 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [233.20ms]
+error: expect(received).toEqual(expected)
+(fail) repository > `bun test` takes none of them either [607.78ms]
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+-- m4-the-runner-takes-more-names:  1 pass  3 fail exit 1 
+error: expect(received).toMatchInlineSnapshot(expected)
+(fail) repository > CI finds its tests by these functions of scripts/runner.node.ts [437.53ms]
+error: expect(received).toEqual(expected)
+(fail) repository > the rule takes a file for a test by its name or by its directory [85.04ms]
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [147.40ms]
+-- m5-a-function-of-the-runner-is-renamed:  1 pass  3 fail exit 1 
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > CI finds its tests by these functions of scripts/runner.node.ts [0.90ms]
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > the rule takes a file for a test by its name or by its directory [0.46ms]
+error: scripts/runner.node.ts has 0 functions named isHidden
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [0.30ms]
+-- m6-the-cases-are-not-there:  3 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [353.00ms]
+-- m7-a-dot-file-directly-in-corpus:  4 pass  0 fail exit 0 
+-- m8-a-directory-that-the-walk-leaves-out:  3 pass  1 fail exit 1 
+error: expect(received).toEqual(expected)
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [71.40ms]
+== whole file, release build 18:17:49
+real	0m37.182s
+(pass) repository > CI finds its tests by these functions of scripts/runner.node.ts [1.29ms]
+(pass) repository > the rule takes a file for a test by its name or by its directory [1.70ms]
+(pass) repository > CI walks every directory below conformance/ and takes none of its files for a test [92.43ms]
+(pass) repository > `bun test` takes none of them either [16.68ms]
+ 108 pass
+ 1 fail
+Ran 109 tests across 1 file. [37.13s]
+exit 1
+== whole file, debug build with the leak check of CI 18:18:27
+real	2m10.309s
+(pass) repository > CI finds its tests by these functions of scripts/runner.node.ts [114.07ms]
+(pass) repository > the rule takes a file for a test by its name or by its directory [256.17ms]
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [27067.60ms]
+(pass) repository > `bun test` takes none of them either [2873.54ms]
+(fail) repository > CI walks every directory below conformance/ and takes none of its files for a test [27067.60ms]
+ 105 pass
+ 1 skip
+ 3 fail
+Ran 109 tests across 1 file. [129.10s]
+exit 1
+sanitizer reports: 0
+done 18:20:37

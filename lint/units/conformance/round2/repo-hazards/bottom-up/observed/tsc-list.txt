@@ -1,0 +1,6 @@
+got the lock 18:04:03, loadavg 385.19 404.21 394.06 234/22430 813401
+real	0m45.586s
+test/tsconfig.json: exit 1, 23821 lines, 12437 of the corpus, 12471 below conformance/
+real	0m18.235s
+test/tsconfig.excl.json: exit 0, 6300 lines, 0 of the corpus, 34 below conformance/
+done 18:05:08

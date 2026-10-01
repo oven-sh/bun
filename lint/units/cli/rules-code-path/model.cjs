@@ -526,4 +526,4 @@ function main() {
 	console.log(JSON.stringify(count), JSON.stringify(perRule));
 }
 if (require.main === module) main();
-module.exports = { model, run, RULES };
+module.exports = { model, run, RULES, constructorSuper, noThisBeforeSuper };

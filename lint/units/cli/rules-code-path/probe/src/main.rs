@@ -367,9 +367,9 @@ impl<'a> Walk<'_, 'a> {
             word.extend_from_slice(private);
             words.push(word);
         } else if let Some(name) = property.key.as_ref().and_then(|key| self.static_string(key)) {
-            words.push([b"'".as_slice(), &name, b"'"].concat());
+            words.push([b"'".as_slice(), name.as_slice(), b"'".as_slice()].concat());
         } else if let Some(name) = own_name {
-            words.push([b"'".as_slice(), name, b"'"].concat());
+            words.push([b"'".as_slice(), name, b"'".as_slice()].concat());
         }
         words.join(&b' ')
     }
@@ -1496,7 +1496,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
         }
         if self.with_nodes {
             if let Some((global, at, is_map)) = self.descriptor_call(node) {
-                if let Some(argument) = node.args.get(at) {
+                if let Some(argument) = node.args.iter().nth(at) {
                     if matches!(argument.data, ExprData::EObject(_)) && !self.is_ts_wrapped(argument) {
                         if let ExprData::EObject(object) = &argument.data {
                             self.descriptors.push((core::ptr::from_ref::<E::Object>(object).addr(), is_map, global));
@@ -1550,7 +1550,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                     } else {
                         match descriptor {
                             Some((_, false, global))
-                                if property.key.as_ref().and_then(|key| self.static_string(key)).as_deref() == Some(b"get") =>
+                                if property.key.as_ref().and_then(|key| self.static_string(key)).as_deref() == Some(b"get".as_slice()) =>
                             {
                                 Some(global)
                             }

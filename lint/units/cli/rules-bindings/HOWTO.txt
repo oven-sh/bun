@@ -1,0 +1,31 @@
+RESEARCH OF D4, "rules-bindings" (pass 1a, from the code): the tools. Nothing here is in the tree.
+The ten rules: no-class-assign, no-ex-assign, no-func-assign, no-import-assign, no-global-assign, no-dupe-args, no-redeclare,
+no-shadow-restricted-names, no-obj-calls, no-new-native-nonconstructor. Read at be1ebe5295 (worktree /workspace/wt/cli), 2026-10-01.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint, eslint-scope 9.1.2, eslint-utils 4.10.1) and
+typescript-eslint 8.58.2 (/workspace/ref/tseslint): sh ../tools/eslint-oracle-setup.sh restores both. The globals are ESLint's
+es2026 list and ../name-resolution/oracle/bun-globals.txt. A `.js` case is asked as a module and, when ESLint's parser rejects
+that, as commonjs (no case of the lists has two answers); a TypeScript case is asked with typescript-eslint's parser, and
+no-redeclare is then @typescript-eslint/no-redeclare.
+
+oracle/rb-oracle.cjs      node rb-oracle.cjs [--type module|commonjs|script] [--ts|--tsx] [--rules r1,r2] [--bun-globals] [--json] <code | list.json>...
+                          what the ten rules (or the named ones) report, case by case.
+oracle/extract.cjs        node extract.cjs <rule> > cases/upstream-<rule>.json     ESLint's own cases of the rule, with the
+                          languageOptions and options of each (the defaults of the tester merged in).
+oracle/classify.cjs       node classify.cjs <rule> <list.json>... [--ts] > vectors/<name>.json    per case: ESLint as a module and as
+                          commonjs (null: its parser rejects), and whether the debug build of the worktree parses the file
+                          (bun --lint; for a TypeScript file that build still uses Parser::parse: ask ../name-resolution/probe, nrprobe --no-tree).
+oracle/compare-upstream.cjs   node compare-upstream.cjs <rule>    the cases whose answer under the configuration of a lint run is not
+                          the expectation of ESLint's own test (script-only answers, globals of a test, comments that configure).
+oracle/cross-add.cjs      node cross-add.cjs [--dir <fixtures>] [--json]    the cases of the fixtures of other rules on which one of
+                          the ten reports: each has to be a case of that rule too (rules.test.ts).
+proto/view-driven.cjs     node view-driven.cjs [--ts] [--type module|commonjs|script] <list.json>...    seven rules as ONE pass over the
+                          scopes and variables of the scope manager, with no node handler and no parent link, against ESLint.
+proto/tracker-down.cjs    node tracker-down.cjs [--ts] <list.json>...    ReferenceTracker.iterateGlobalReferences without parent links
+                          (the value of a callee read downwards, the aliases as a fixpoint with the variable stack), against no-obj-calls.
+proto/gen-tracker-random.cjs   node gen-tracker-random.cjs <count> <seed> > list.json    random programs that alias the tracked globals.
+proto/import-assign-down.cjs   node import-assign-down.cjs [--ts] <list.json>...    no-import-assign made at the node that writes, against ESLint.
+
+cases/upstream-<rule>.json   extract.cjs. cases/js-probe-1..4.json, js-probe-redeclare.json, ts-probe-1..5.json: written here.
+vectors/upstream-<rule>.json, vectors/probe-<rule>.json   classify.cjs over them.
+answers/                  the output of the prototypes and of rb-oracle.cjs over the probe lists.

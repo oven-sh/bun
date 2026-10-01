@@ -27,6 +27,8 @@ module.exports = {
 		};
 		const targets = new Map(), forHeads = new Set(), setters = new Set(), exported = new Set(), marked = new Set(), typeQueries = new Set(), typePredicates = new Set();
 		const globalBlocks = []; // a `global { }` block that stands inside a module declaration: that declaration
+		const namedInParameters = []; // every identifier, whatever it is, inside the parameters of a signature or of a setter
+		const identifiersUnder = (node, out) => { if (node.type === "Identifier") out.push(node); for (const [, child] of children(node)) identifiersUnder(child, out); return out; };
 		let loopDepth = 0;
 
 		const patternNames = (pattern, out) => {
@@ -76,7 +78,7 @@ module.exports = {
 				}
 				case "Property":
 				case "MethodDefinition":
-					if (node.kind === "set") setters.add(node.value);
+					if (node.kind === "set") { setters.add(node.value); for (const p of node.value.params) identifiersUnder(p, namedInParameters); }
 					break;
 				case "TSParameterProperty": for (const id of patternNames(node.parameter, []).slice(0, 1)) marked.add(id.range[0]); break;
 				case "ExportNamedDeclaration":
@@ -88,6 +90,7 @@ module.exports = {
 					if (node.body && node.body.type === "TSModuleBlock" && (node.declare || declared || definitionFile)) markAmbient(node.body.body);
 					break;
 			}
+			if (SIGNATURES.has(node.type)) for (const p of node.params) identifiersUnder(p, namedInParameters);
 			const saved = loopDepth;
 			if (isFn(node)) loopDepth = 0;
 			if (isLoop(node)) loopDepth++;
@@ -168,6 +171,11 @@ module.exports = {
 				for (const module of globalBlocks) {
 					for (let s = scopeManager.acquire(module, true); s; s = s.upper) { const v = s.variables.find(x => x.name === "global"); if (v) { quirk.add(v); break; } }
 				}
+				// The model may read `parent` here: it stands for "the innermost scope at the identifier", which the scope pass knows.
+				const scopeAt = node => { for (let n = node; n; n = n.parent) { const s = scopeManager.acquire(n, n.type !== "Program"); if (s) return s.type === "functionExpressionName" ? s.childScopes[0] : s; } return scopeManager.scopes[0]; };
+				for (const id of namedInParameters) {
+					for (let s = scopeAt(id); s; s = s.upper) { const v = s.variables.find(x => x.name === id.name); if (v) { quirk.add(v); break; } }
+				}
 				for (const scope of scopeManager.scopes) {
 					if (scope.functionExpressionScope) continue;
 					scope.variables.forEach((variable, index) => {
@@ -177,7 +185,7 @@ module.exports = {
 						if (variable.defs.some(d => d.type !== "Parameter" && exported.has(d.name.range[0]))) return;
 						if (isUsed(variable)) return;
 						if (def.type === "Parameter" && isPlainParameter(def) &&
-							scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && (v.references.length > 0 || isMarked(v, scope)))) return;
+							scope.variables.slice(index + 1).some(v => v.defs.some(d => d.type === "Parameter") && (v.references.length > 0 || quirk.has(v) || isMarked(v, scope)))) return;
 						const asType = variable.references.some(onlyAsType);
 						if (asType && variable.defs.some(d => d.type === "ImportBinding")) return;
 						const writes = variable.references.filter(ref => ref.isWrite() && ref.from.variableScope === scope.variableScope);

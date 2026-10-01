@@ -2071,7 +2071,7 @@ impl H2FrameParser {
                 0,
                 ErrorCode::MAX_PENDING_SETTINGS_ACK,
                 b"Maximum number of pending settings acknowledgements",
-                self.last_peer_stream_id.get(),
+                None,
                 true,
             );
             return false;
@@ -2188,14 +2188,17 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// `last_stream_id`: `None` names the last peer stream this session processed (§6.8). Only
+    /// `session.goaway(code, lastStreamID)` chooses an id of its own.
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
         rst_code: ErrorCode,
         debug_data: &[u8],
-        last_stream_id: u32,
+        last_stream_id: Option<u32>,
         emit_error: bool,
     ) {
+        let last_stream_id = last_stream_id.unwrap_or_else(|| self.last_peer_stream_id.get());
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
@@ -4168,7 +4171,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 stream_id,
                 ErrorCode::ENHANCE_YOUR_CALM,
                 b"ENHANCE_YOUR_CALM",
-                self.last_peer_stream_id.get(),
+                None,
                 true,
             );
         }
@@ -4706,7 +4709,7 @@ impl H2FrameParser {
         }
         let error_code = error_code_arg.to_int32();
 
-        let mut last_stream_id = this.last_peer_stream_id.get();
+        let mut last_stream_id = None;
         if callframe.arguments_count() >= 2 {
             if !last_stream_arg.is_empty_or_undefined_or_null() {
                 if !last_stream_arg.is_number() {
@@ -4721,7 +4724,7 @@ impl H2FrameParser {
                 // Without this, graceful close puts Last-Stream-ID=0 on the wire, telling the
                 // peer that every in-flight stream is safe to retry.
                 if id > 0 {
-                    last_stream_id = u32::try_from(id).expect("int cast");
+                    last_stream_id = Some(u32::try_from(id).expect("int cast"));
                 }
             }
             if callframe.arguments_count() >= 3 {
@@ -5051,7 +5054,7 @@ impl H2FrameParser {
                     stream_id,
                     ErrorCode::ENHANCE_YOUR_CALM,
                     b"ENHANCE_YOUR_CALM",
-                    this.last_peer_stream_id.get(),
+                    None,
                     true,
                 );
                 return Ok(JSValue::UNDEFINED);
@@ -5676,13 +5679,7 @@ impl H2FrameParser {
                         );
                         let triggering_id = stream.id;
                         this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                        this.send_go_away(
-                            triggering_id,
-                            ErrorCode::NO_ERROR,
-                            b"",
-                            this.last_peer_stream_id.get(),
-                            true,
-                        );
+                        this.send_go_away(triggering_id, ErrorCode::NO_ERROR, b"", None, true);
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }

@@ -335,18 +335,10 @@ impl FilePoll {
     }
 
     #[cfg(windows)]
-    pub(crate) fn on_socket_event(
-        &mut self,
-        loop_: *mut Loop,
-        event: bun_uws_sys::loop_::EventType,
-    ) {
+    pub(crate) fn on_socket_event(&mut self, event: bun_uws_sys::loop_::EventType) {
+        // The loop re-arms a socket poll by itself.
+        debug_assert!(!self.flags.contains(Flags::OneShot));
         self.update_flags(Flags::from_socket_event(event));
-        // The loop re-arms a socket poll by itself; a one-shot owner hears
-        // nothing more until it registers again.
-        if self.flags.contains(Flags::OneShot) && !self.socket_poll.is_null() {
-            // SAFETY: `socket_poll` is this poll's live registration on `loop_`.
-            unsafe { bun_uws_sys::iocp::us_iocp_poll_socket_change(loop_, self.socket_poll, 0) };
-        }
         self.on_update(0);
     }
 
@@ -1493,7 +1485,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     #[cfg(any(target_os = "linux", target_os = "android"))]
     file_poll.on_epoll_event(&ev);
     #[cfg(windows)]
-    file_poll.on_socket_event(loop_, ev);
+    file_poll.on_socket_event(ev);
 }
 
 #[cfg(target_os = "macos")]

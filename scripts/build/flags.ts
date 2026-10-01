@@ -1739,7 +1739,7 @@ export function bunIncludes(cfg: Config): string[] {
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
   }
-  // libuv's headers: the UV_E* numbers, and the types of the uv_* stubs and polyfills.
+  // <uv/errno.h>: the UV__E* numbers.
   includes.push(join(cwd, "src/jsc/bindings/libuv"));
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles

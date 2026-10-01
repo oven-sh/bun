@@ -100,7 +100,7 @@ namespace WebCore {
     V(onReadIntoRequestCloseStepsDeferred)
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
-// onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
+// onAsyncIterableSourceErrorRethrow, whose context is
 // an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement), and
 // onAsyncIterableSourceCancelRejected, whose context is the reason cancel() threw into the iterator.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
@@ -110,7 +110,6 @@ namespace WebCore {
     V(onAsyncIterableSourceEndFulfilled)                               \
     V(onAsyncIterableSourceCleanupSettled)                             \
     V(onAsyncIterableSourceErrorRethrow)                               \
-    V(onAsyncIterableSourceErrorSwallowed)                             \
     V(onAsyncIterableSourceCancelRejected)
 
 // owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,

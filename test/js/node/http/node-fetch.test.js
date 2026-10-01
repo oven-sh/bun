@@ -1,6 +1,8 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
 import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import { once } from "node:events";
+import http from "node:http";
 import * as stream from "stream";
 
 import { afterEach, expect, test } from "bun:test";
@@ -275,6 +277,144 @@ test("node-fetch body taken before clone() does not break the body after clone()
     original: Buffer.concat(await Array.fromAsync(res.body)).toString(),
     clone: Buffer.concat(await Array.fromAsync(cloned.body)).toString(),
   }).toEqual({ original: "hello world", clone: "hello world" });
+});
+
+// node-fetch's json() is JSON.parse(await this.text()), so a body with nothing to parse rejects.
+test.each([
+  ["a body with Content-Length: 0", "/empty"],
+  ["an empty chunked body", "/chunked"],
+  ["a 204", "/204"],
+])("node-fetch json() rejects on %s like JSON.parse('')", async (_, path) => {
+  // node:http sends an empty chunked body as such. Bun.serve turns it into Content-Length: 0.
+  await using server = http.createServer((req, res) => {
+    if (req.url === "/chunked") res.setHeader("transfer-encoding", "chunked");
+    else if (req.url === "/204") res.statusCode = 204;
+    else res.setHeader("content-length", "0");
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const url = `http://127.0.0.1:${server.address().port}${path}`;
+  const outcome = promise =>
+    promise.then(
+      value => ({ value }),
+      ({ name, message }) => ({ name, message }),
+    );
+  const expected = await outcome(Promise.try(JSON.parse, ""));
+  expect(expected.name).toBe("SyntaxError");
+
+  expect({
+    json: await outcome(fetch2(url).then(res => res.json())),
+    // The outcome does not depend on whether `body` was read before.
+    bodyThenJson: await outcome(fetch2(url).then(res => (void res.body, res.json()))),
+    cloneJson: await outcome(fetch2(url).then(res => res.clone().json())),
+  }).toEqual({ json: expected, bodyThenJson: expected, cloneJson: expected });
+});
+
+test("node-fetch Response accepts an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const text = response.text();
+  legacy.emit("data", Buffer.from("hello "));
+  legacy.emit("data", Buffer.from("world"));
+  legacy.emit("end");
+  expect(await text).toBe("hello world");
+});
+
+// Not expect(promise).rejects: it blocks on a promise that stays pending, so the test cannot time out (#14950).
+test.each([true, false])(
+  "node-fetch Response rejects the body read when an old-style Stream body fails (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    // Without a listener of its own, the source throws out of emit("error") unless the body handles the error.
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    const text = response.text();
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("integrity check failed");
+    legacy.emit("error", error);
+    expect(await text.catch(e => e)).toBe(error);
+  },
+);
+
+test("node-fetch Response rejects the body read when an old-style Stream body failed before the read", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect(await response.text().catch(e => e)).toBe(error);
+});
+
+test.each([true, false])(
+  "node-fetch Response keeps a complete old-style Stream body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = new Response(legacy);
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await response.text()).toBe("hello world");
+  },
+);
+
+test("node-fetch Response body stream emits the error of an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const { body } = new Response(legacy);
+  const failed = once(body, "error");
+  body.resume();
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect((await failed)[0]).toBe(error);
+});
+
+const discard = () => new stream.Writable({ write: (chunk, encoding, callback) => callback() });
+
+test("node-fetch Response rejects the body read for a Writable body", async () => {
+  const response = new Response(discard());
+  expect(await response.text().catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+function serveRequestBody() {
+  return Bun.serve({ port: 0, fetch: async req => new Response(await req.text().catch(() => "aborted")) });
+}
+
+test.each([true, false])(
+  "node-fetch fetch() rejects when an old-style Stream request body fails (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("upload failed");
+    legacy.emit("error", error);
+    expect(await response.catch(e => e)).toBe(error);
+  },
+);
+
+test.each([true, false])(
+  "node-fetch fetch() sends a complete old-style Stream request body when the source fails after its end (own error listener: %p)",
+  async ownListener => {
+    using server = serveRequestBody();
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const response = fetch2(server.url, { method: "POST", body: legacy });
+    legacy.emit("data", Buffer.from("hello world"));
+    legacy.emit("end");
+    legacy.emit("error", new Error("close failed"));
+    expect(await (await response).text()).toBe("hello world");
+  },
+);
+
+test("node-fetch fetch() rejects for a Writable request body", async () => {
+  using server = serveRequestBody();
+  const response = fetch2(server.url, { method: "POST", body: discard() });
+  expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
+  expect(await (await fetch2(server.url)).json()).toBeNull();
 });
 
 test("node-fetch request body streams properly", async () => {

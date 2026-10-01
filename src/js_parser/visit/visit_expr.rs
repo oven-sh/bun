@@ -334,7 +334,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .ref_,
                         ),
                 )
-                .with_was_originally_identifier(true),
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(in_.is_property_access_target),
         );
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
@@ -872,6 +873,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if is_call_target {
                         p.call_target = dot.data;
                     }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
+                    }
                     if is_delete_target {
                         p.delete_target = dot.data;
                     }
@@ -883,7 +887,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn {
+                is_property_access_target: !is_delete_target,
+                ..Default::default()
+            },
+        );
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1008,7 +1018,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_call_target(is_call_target)
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target);
+                                .with_assign_target(in_.assign_target)
+                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1393,6 +1404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
+                is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
         );
@@ -1433,7 +1445,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
-                .with_is_delete_target(is_delete_target);
+                .with_is_delete_target(is_delete_target)
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
@@ -2691,7 +2704,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
+        // A method cannot be wrapped in a call. Like react-refresh/babel, ignore its hook calls.
+        let is_method = e_
+            .func
+            .flags
+            .contains(Flags::Function::IsUniqueFormalParameters);
+        p.react_refresh.hook_ctx_storage = if is_method {
+            None
+        } else {
+            Some(core::ptr::NonNull::from(&mut react_hook_data))
+        };
 
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly

@@ -1266,11 +1266,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
             a = a.add(core::mem::size_of::<u16>());
         }
 
-        if (len & 1) != 0 && *a != *b {
-            return false;
-        }
-
-        true
+        (len & 1) == 0 || *a == *b
     }
 }
 

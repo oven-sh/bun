@@ -47,6 +47,7 @@ Bun statically links these libraries:
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |
 | `__cxa_thread_atexit` fallback from [LLVM libc++abi](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxxabi/src/cxa_thread_atexit.cpp) | Apache 2.0 with LLVM exception |
+| The type checker behind `bun check` is a port of [`typescript-go`](https://github.com/microsoft/typescript-go), and uses TypeScript's diagnostic messages and `lib.*.d.ts` files | Apache 2.0 |
 
 ## Polyfills
 

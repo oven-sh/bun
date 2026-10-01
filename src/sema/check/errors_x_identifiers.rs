@@ -689,7 +689,7 @@ impl Walk {
     }
 }
 
-const MAX_STEPS: u32 = 20_000;
+const MAX_STEPS: u32 = 2_000_000;
 
 /// `finalizeEvolvingArrayType`
 fn finalize(ty: Abs) -> Abs {

@@ -78,7 +78,7 @@ struct Walk {
     incomplete: bool,
 }
 
-const MAX_STEPS: u32 = 20_000;
+const MAX_STEPS: u32 = 2_000_000;
 
 /// `getTypeAtFlowNode`: the invocation that finds this many under way gives up.
 const MAX_FLOW_DEPTH: u32 = 2000;

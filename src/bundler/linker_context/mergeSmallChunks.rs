@@ -855,7 +855,7 @@ fn keep_apart_from_files_that_run<'a>(
     Ok(())
 }
 
-/// The classes (`bit_of_class`) of the files with side effects that the load of `root` evaluates. `root` is in a class of several entry points, so the answer is the same for each of them: `run_below` keeps it.
+/// The classes (`bit_of_class`) of the files with side effects that the load of `root` evaluates. The answer is the same for each entry point whose walk asks: `run_below` keeps it.
 fn classes_that_run_below<'a>(
     this: &'a LinkerContext,
     walks: &mut EntryChunkWalks<'a>,
@@ -953,6 +953,8 @@ fn files_that_leave_entry_chunk<'a>(
     if !own(entry_source) || flags[entry_source as usize].wrap != WrapKind::None {
         return Ok(0);
     }
+    // No `import()` target has an entry point in `awaits` ahead of it. So no chunk repeats the imports of a file with top-level await, which `has_tla` of the chunk would count.
+    debug_assert!(!flags[entry_source as usize].is_async_or_has_async_dependency);
 
     // In evaluation order, with the part of the entry point's file that leads there: the own files that do more than declare, and the own wrapped files that the entry point's file starts.
     let mut candidates: Vec<(u32, u32)> = Vec::new();
@@ -975,8 +977,8 @@ fn files_that_leave_entry_chunk<'a>(
     // The files of other classes whose load evaluates nothing with side effects, with `met` there. The parent imports from the first `inert_for_parent`.
     let mut inert: Vec<(u32, u64)> = Vec::new();
     let mut inert_for_parent = 0;
-    // In `entered`: such a file is not in `inert` yet, because no file that can be in the parent imports it.
-    const ONLY_FROM_ENTRY_FILE: u32 = 1 << 31;
+    // In `entered`: such a file, while only own files and the entry point's file import it. Each more import of it counts.
+    const NO_IMPORT_FROM_PARENT: u32 = 1 << 31;
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
@@ -984,7 +986,11 @@ fn files_that_leave_entry_chunk<'a>(
                 if !live(file) || file == entry_source {
                     continue;
                 }
-                let runs = !this.loading_file_only_declares(file);
+                let mut runs = !this.loading_file_only_declares(file);
+                // An external `import` below a wrapped file loads with the chunk of that file.
+                if cuts_parent && !runs && !own(file) {
+                    runs = classes_that_run_below(this, walks, load_class, file)? != 0;
+                }
                 if cuts_parent {
                     walks.segment_of_file[file as usize] = segment;
                     if segment > last_segment {
@@ -995,26 +1001,27 @@ fn files_that_leave_entry_chunk<'a>(
                         no_cut_from = u32::MAX;
                     }
                 }
-                if !own(file) {
+                let mut is_last_of_parent = runs;
+                if own(file) {
                     if runs {
-                        (last_part, cut, depth_at_cut) = (part, candidates.len(), depth);
-                        (last_segment, segment_runs) = (segment, true);
-                        unconfirmed.clear();
-                        inert_for_parent = inert.len();
+                        candidates.push((file, part));
                     }
-                    continue;
+                    // The walk was inside of it at that file. What its `import` statements run precedes files that go, so it goes too.
+                    is_last_of_parent = false;
+                    if depth <= depth_at_cut {
+                        this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, _| {
+                            is_last_of_parent = true;
+                        });
+                    }
+                    depth -= 1;
+                    depth_at_cut = depth_at_cut.min(depth);
                 }
-                if runs {
-                    candidates.push((file, part));
+                if is_last_of_parent {
+                    (last_part, cut, depth_at_cut) = (part, candidates.len(), depth);
+                    (last_segment, segment_runs) = (segment, true);
+                    unconfirmed.clear();
+                    inert_for_parent = inert.len();
                 }
-                // The walk was inside of it at that file. What its `import` statements run precedes files that go, so it goes too.
-                if depth <= depth_at_cut {
-                    depth_at_cut = depth - 1;
-                    this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, _| {
-                        cut = candidates.len();
-                    });
-                }
-                depth -= 1;
                 continue;
             }
             OrderFrame::EntryPart(part_index) => {
@@ -1033,20 +1040,15 @@ fn files_that_leave_entry_chunk<'a>(
         if css[file as usize].is_some() {
             continue;
         }
-        if entered & !ONLY_FROM_ENTRY_FILE == entry_id as u32 {
+        let mut is_inert = entered == entry_id as u32 | NO_IMPORT_FROM_PARENT;
+        if entered & !NO_IMPORT_FROM_PARENT == entry_id as u32 {
             if walks.segment_of_file[file as usize] & OPEN != 0 {
                 no_cut_from = no_cut_from.min(walks.segment_of_file[file as usize] & !OPEN);
             }
-            if entered != entry_id as u32 {
-                if open > 0 {
-                    inert.push((file, met & !MORE_CLASSES));
-                } else {
-                    walks.entered[file as usize] = entered;
-                }
+            if !is_inert {
+                continue;
             }
-            continue;
-        }
-        if live(file) && !own(file) {
+        } else if live(file) && !own(file) {
             let key = walks.key_index(&bits[file as usize], entry_points_len, load_class)?;
             let class = &walks.class_by_key.values()[key];
             let when_chunk_runs = if !class.is_set(entry_id) {
@@ -1073,21 +1075,31 @@ fn files_that_leave_entry_chunk<'a>(
                         walks.cuts.push(part);
                     }
                     met |= loads;
-                    // The entry point's file keeps its bindings. The parent only repeats its call of a wrapper.
-                    if loads == 0 {
-                        if open > 0 || flags[file as usize].wrap != WrapKind::None {
-                            inert.push((file, met & !MORE_CLASSES));
-                        } else {
-                            walks.entered[file as usize] |= ONLY_FROM_ENTRY_FILE;
-                        }
+                    if loads != 0 {
+                        continue;
                     }
-                    continue;
+                    is_inert = true;
                 }
                 // Its chunk runs before both, and so does what it imports.
                 Runs::BeforeEntry => continue,
             }
         } else if live(file) && file != entry_source {
             depth += 1;
+        }
+        if is_inert {
+            // The entry point's file keeps its bindings. The parent only repeats its call of a wrapper.
+            if open > 0 || flags[file as usize].wrap != WrapKind::None {
+                inert.push((file, met & !MORE_CLASSES));
+            }
+            // A file that other entry points of the class share only imports such files, and all of them are in the parent.
+            if open > depth {
+                let last = inert.len() - 1;
+                inert.swap(inert_for_parent, last);
+                inert_for_parent += 1;
+            } else {
+                walks.entered[file as usize] |= NO_IMPORT_FROM_PARENT;
+            }
+            continue;
         }
         if cuts_parent && live(file) && file != entry_source {
             open += 1;

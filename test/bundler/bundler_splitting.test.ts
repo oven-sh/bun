@@ -1177,6 +1177,98 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "setup 1\nconfig 1\nindex s 1\nroute s" },
   });
+  // f.js calls require_x() after store.js has run, so f.js counts as shared code too, with what it imports after store.js.
+  for (const [name, index, files, stdout] of [
+    [
+      "DeclarationIsKeptApartFromFileThatRuns",
+      `import "./f.js"; import "./config.js";`,
+      {
+        "/f.js": `import "./store.js"; import x from "./x.cjs"; import { d } from "./shared.js"; console.log("f", d(), x);`,
+        "/shared.js": `export function d() { return 1; }`,
+      },
+      "x\nf 1 1\nconfig 1\nroute",
+    ],
+    [
+      "TwoFilesDeep",
+      `import "./f.js"; import "./config.js";`,
+      {
+        "/f.js": `import "./g.js"; import x from "./x.cjs"; import { d } from "./shared.js"; console.log("f", d(), x);`,
+        "/g.js": `import "./store.js"; console.log("g");`,
+        "/shared.js": `export function d() { return 1; }`,
+      },
+      "g\nx\nf 1 1\nconfig 1\nroute",
+    ],
+    [
+      "FileThatRunsPrecedesIt",
+      `import "./f.js";`,
+      {
+        "/f.js": `import "./store.js"; import { d } from "./shared.js"; import x from "./x.cjs"; console.log("f", d(), x);`,
+        "/shared.js": `console.log("shared", globalThis.STORE); export function d() { return 1; }`,
+      },
+      "shared 1\nx\nf 1 1\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/FileThatRunsItsImportsAfterSharedCode/" + name, {
+      files: {
+        "/index.js": index + `import("./route.js");`,
+        "/other.js": `import { d } from "./shared.js"; import "./config.js"; console.log("other", d());`,
+        "/route.js": `import "./store.js"; console.log("route");`,
+        "/x.cjs": `console.log("x"); module.exports = 1;`,
+        "/store.js": `globalThis.STORE = 1;`,
+        "/config.js": `console.log("config", globalThis.STORE);`,
+        ...files,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  // shared.cjs is in the chunk beside index.js, after setup.js, and only declares a wrapper. What it requires is in a chunk that other.js shares, like config.js.
+  for (const [name, index, declares, options, stdout] of [
+    ["RequiresDeclaration", "", "", {}, "config 1\nindex 1\nroute 1"],
+    ["FileThatStaysImportsDeclarationFirst", `import "./app.js";`, "", {}, "config 1\nindex 1\nroute 1"],
+    [
+      "ReachesExternalImport",
+      "",
+      `import "ext-reader";`,
+      {
+        external: ["ext-reader"],
+        runtimeFiles: {
+          "/node_modules/ext-reader/package.json": `{ "name": "ext-reader", "type": "module", "main": "index.js" }`,
+          "/node_modules/ext-reader/index.js": `console.log("ext", globalThis.STORE);`,
+        },
+      },
+      "ext 1\nconfig 1\nindex 1\nroute 1",
+    ],
+  ] as const) {
+    itBundled("splitting/WrappedFileAfterSharedCodeThatRuns/" + name, {
+      ...options,
+      files: {
+        "/index.js": /* js */ `
+          import "./setup.js";
+          ${index}
+          import s from "./shared.cjs";
+          import "./config.js";
+          console.log("index", s.v);
+          import("./route.js");
+        `,
+        "/other.js": `import { d } from "./declares.js"; import "./config.js"; console.log("other", d());`,
+        "/route.js": `import "./setup.js"; import s from "./shared.cjs"; console.log("route", s.v);`,
+        "/app.js": `import { d } from "./declares.js"; globalThis.APP = d();`,
+        "/setup.js": `globalThis.STORE = 1;`,
+        "/shared.cjs": `const { d } = require("./declares.js"); module.exports = { v: d() };`,
+        "/declares.js": declares + `export function d() { return 1; }`,
+        "/config.js": `console.log("config", globalThis.STORE);`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout },
+    });
+  }
   // Each s*.js is in a chunk that one more entry point shares. The walk tells 61 such chunks apart, and the chunk that last.js shares comes after them.
   const manyShared = Array.from({ length: 63 }, (_, i) => "s" + i);
   for (const [name, index, last, files, stdout] of [

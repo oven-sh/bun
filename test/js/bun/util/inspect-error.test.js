@@ -237,6 +237,203 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   }).toThrow();
 });
 
+// `new Error(message, { cause })` defines a `cause` that is not enumerable. One
+// that is not an Error is a line of the property block.
+describe("a cause that is not an Error", () => {
+  // The `name: message` line and the property lines of each printed error,
+  // without the source preview, the stack frames and the blank lines.
+  const printed = text =>
+    text
+      .split(/\r?\n/)
+      .filter(line => line.trim() !== "" && !/^ *\d+ \||^ *\^$|^ +at |^Bun v/.test(line))
+      .join("\n");
+  const inspect = value => printed(Bun.inspect(value));
+
+  test.each([
+    ["a string", "a string cause", [' cause: "a string cause",']],
+    ["an empty string", "", [' cause: "",']],
+    ["a number", 404, [" cause: 404,"]],
+    ["zero", 0, [" cause: 0,"]],
+    ["false", false, [" cause: false,"]],
+    ["null", null, [" cause: null,"]],
+    ["undefined", undefined, [" cause: undefined,"]],
+    ["a bigint", 10n, [" cause: 10n,"]],
+    ["a symbol", Symbol("why"), [" cause: Symbol(why),"]],
+    ["an object", { code: "E_PLAIN", detail: 42 }, [" cause: {", '  code: "E_PLAIN",', "  detail: 42,", "},"]],
+    ["an array", [1, "two"], [' cause: [ 1, "two" ],']],
+    ["a function", function why() {}, [" cause: [Function: why],"]],
+  ])("%s from the constructor is printed as a property", (_, cause, lines) => {
+    expect(inspect(new Error("outer", { cause })).split("\n")).toEqual(["error: outer", ...lines]);
+  });
+
+  test.each([
+    ["assigned", () => Object.assign(new Error("outer"), { cause: "why" })],
+    [
+      "from the constructor and then made enumerable",
+      () => Object.defineProperty(new Error("outer", { cause: "why" }), "cause", { enumerable: true }),
+    ],
+    [
+      "from the constructor and then assigned again",
+      () => Object.assign(new Error("outer", { cause: "first" }), { cause: "why" }),
+    ],
+    ["defined as not enumerable", () => Object.defineProperty(new Error("outer"), "cause", { value: "why" })],
+    ["of a subclass", () => new (class HttpError extends Error {})("outer", { cause: "why" })],
+    ["of a frozen error", () => Object.freeze(new Error("outer", { cause: "why" }))],
+  ])("a cause %s is printed once", (_, make) => {
+    expect(inspect(make())).toBe('error: outer\n cause: "why",');
+  });
+
+  test.each([
+    ["without options", () => new Error("outer")],
+    ["with options that have no cause", () => new Error("outer", {})],
+    [
+      "with a deleted cause",
+      () => {
+        const error = new Error("outer", { cause: "gone" });
+        delete error.cause;
+        return error;
+      },
+    ],
+  ])("an error %s prints no cause", (_, make) => {
+    expect(inspect(make())).toBe("error: outer");
+  });
+
+  test("of a TypeError, and of an AggregateError that has no members", () => {
+    expect(inspect(new TypeError("outer", { cause: "why" }))).toBe('TypeError: outer\n cause: "why",');
+    expect(inspect(new AggregateError([], "outer", { cause: "why" }))).toBe('AggregateError: outer\n cause: "why",');
+  });
+
+  test("at every level of a cause chain, and of an error inside a value", () => {
+    const nested = new Error("L1", { cause: new Error("L2", { cause: "deep" }) });
+    expect(inspect(nested)).toBe('error: L1\nerror: L2\n cause: "deep",');
+
+    const member = new Error("member", { cause: "why" });
+    expect(inspect(new AggregateError([member], "outer"))).toBe('error: member\n cause: "why",');
+    expect(inspect([member])).toContain('error: member\n cause: "why",');
+    expect(inspect({ wrapped: member })).toContain('error: member\n cause: "why",');
+  });
+
+  test("the name is aligned with the other property names", () => {
+    const make = (properties, cause = "why") => Object.assign(new Error("outer", { cause }), properties);
+    expect(inspect(make({ a: 1 })).split("\n")).toEqual(["error: outer", "     a: 1,", ' cause: "why",']);
+    expect(inspect(make({ code: "E_X" })).split("\n")).toEqual(["error: outer", ' cause: "why",', '  code: "E_X"']);
+    expect(inspect(make({ longPropertyName: 2 })).split("\n")).toEqual([
+      "error: outer",
+      " longPropertyName: 2,",
+      '      cause: "why",',
+    ]);
+    // An Error cause is printed after the stack, so it does not widen the column.
+    expect(inspect(make({ code: "E_X" }, new Error("inner"))).split("\n")).toEqual([
+      "error: outer",
+      ' code: "E_X"',
+      "error: inner",
+    ]);
+  });
+
+  test('next to an enumerable Symbol("cause") property', () => {
+    const error = new Error("outer", { cause: "from the constructor" });
+    error[Symbol("cause")] = "from the symbol";
+    const lines = inspect(error).split("\n");
+    expect(lines).toContain(' cause: "from the constructor",');
+    expect(lines.filter(line => line.includes("from the symbol"))).toHaveLength(1);
+  });
+
+  // An accessor is read after the property lines. Only an Error it returns is printed.
+  test("a getter is read once, after the property lines", () => {
+    const order = [];
+    const error = new Error("outer");
+    error.label = Object.assign(new String("label"), {
+      toString() {
+        order.push("label");
+        return "label";
+      },
+    });
+    Object.defineProperty(error, "cause", {
+      get() {
+        order.push("cause");
+        return new Error("from the getter");
+      },
+    });
+    expect(inspect(error)).toBe('error: outer\n label: "label",\nerror: from the getter');
+    expect(order).toEqual(["label", "cause"]);
+  });
+
+  // An own `cause` that is undefined would print a `cause: undefined` line.
+  test("errors that bun creates have no own cause", async () => {
+    const thrown = async run => {
+      try {
+        await run();
+      } catch (error) {
+        return error;
+      }
+    };
+    const errors = [
+      await thrown(() => process.cpuUsage({ user: -1, system: 0 })),
+      await thrown(() => new Bun.Transpiler().transformSync("export function f() {\n  const v = {b: {},),r,};\n}\n")),
+      await thrown(() => Bun.build({ entrypoints: ["/broken.js"], files: { "/broken.js": "const a = ;" } })),
+    ];
+    expect(errors.map(error => [error?.name, Object.hasOwn(error ?? {}, "cause")])).toEqual([
+      ["RangeError", false],
+      ["AggregateError", false],
+      ["AggregateError", false],
+    ]);
+  });
+
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: printed(stdout), stderr: printed(stderr), exitCode };
+  }
+
+  // The values are made at run time, so the source preview cannot contain the printed lines.
+  const fixture = `
+    const causes = {
+      string: ["a", "string", "cause"].join(" "),
+      number: 400 + 4,
+      object: { code: ["E", "PLAIN"].join("_"), detail: 40 + 2 },
+    };
+    const make = (via, kind) => new Error(via + " " + kind, { cause: causes[kind] });
+  `;
+  const lines = {
+    string: [' cause: "a string cause",'],
+    number: [" cause: 404,"],
+    object: [" cause: {", '  code: "E_PLAIN",', "  detail: 42,", "},"],
+  };
+  const expected = (via, kinds = Object.keys(lines)) =>
+    kinds.flatMap(kind => [`error: ${via} ${kind}`, ...lines[kind]]).join("\n");
+
+  test.concurrent("console.log, console.error and reportError print it", async () => {
+    const result = await run(`${fixture}
+      for (const kind in causes) console.log(make("console.log", kind));
+      for (const kind in causes) console.error(make("console.error", kind));
+      for (const kind in causes) reportError(make("reportError", kind));
+    `);
+    expect(result).toEqual({
+      stdout: expected("console.log"),
+      stderr: expected("console.error") + "\n" + expected("reportError"),
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent.each([
+    ["an uncaught throw", "string", "throw error;"],
+    ["an uncaught throw", "number", "throw error;"],
+    ["an uncaught throw", "object", "throw error;"],
+    ["an unhandled rejection", "object", "Promise.reject(error);"],
+  ])("%s prints the %s cause", async (_, kind, raise) => {
+    const result = await run(`${fixture}
+      const error = make("uncaught", ${JSON.stringify(kind)});
+      ${raise}
+    `);
+    expect(result).toEqual({ stdout: "", stderr: expected("uncaught", [kind]), exitCode: 1 });
+  });
+});
+
 describe("source map remapping of the printed stack", () => {
   // The "at ..." lines that mention one of `files`, with the temp dir removed
   // from the paths.

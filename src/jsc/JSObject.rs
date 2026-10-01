@@ -14,6 +14,11 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         obj: &JSObject,
     ) -> JSValue;
+    safe fn Bun__JSObject__getOwnCauseDirect(
+        global: &JSGlobalObject,
+        obj: &JSObject,
+        value: &mut JSValue,
+    ) -> OwnCauseKind;
     fn JSC__createStructure(
         global: *mut JSGlobalObject,
         owner: *mut JSCell,
@@ -215,6 +220,38 @@ impl JSObject {
         }
         Some(v)
     }
+
+    /// This will not call getters or be observable from JavaScript.
+    pub(crate) fn get_own_cause_direct(&self, global: &JSGlobalObject) -> OwnCause {
+        let mut value = JSValue::ZERO;
+        match Bun__JSObject__getOwnCauseDirect(global, self, &mut value) {
+            OwnCauseKind::Absent => OwnCause::Absent,
+            OwnCauseKind::Accessor => OwnCause::Accessor,
+            OwnCauseKind::HiddenData => OwnCause::Hidden(value),
+            OwnCauseKind::EnumerableData => OwnCause::Enumerable(value),
+        }
+    }
+}
+
+/// Mirrors `OwnCauseKind` in ObjectBindings.cpp.
+#[repr(u8)]
+pub enum OwnCauseKind {
+    Absent = 0,
+    Accessor = 1,
+    HiddenData = 2,
+    EnumerableData = 3,
+}
+
+/// The own `cause` property of an object, as its slot holds it.
+#[derive(Clone, Copy)]
+pub(crate) enum OwnCause {
+    Absent,
+    /// A getter or a setter. Nothing called it.
+    Accessor,
+    /// A data property that is not enumerable: `new Error(message, { cause })`.
+    Hidden(JSValue),
+    /// A data property that is enumerable: `error.cause = value`.
+    Enumerable(JSValue),
 }
 
 #[repr(C)]

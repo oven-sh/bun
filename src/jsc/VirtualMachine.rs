@@ -7048,6 +7048,7 @@ impl VirtualMachine {
         ));
 
         if is_error_instance {
+            use crate::js_object::OwnCause;
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
             let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
@@ -7063,9 +7064,28 @@ impl VirtualMachine {
                     include_symbols: true,
                 },
             )?;
-            let longest_name = iterator.get_longest_property_name().min(10);
+            let own_cause = crate::JSObject::opaque_ref(error_obj).get_own_cause_direct(global_ref);
+            // An Error `cause` is printed after the stack, from `errors_to_append`.
+            let cause_is_error = |cause: JSValue| cause.js_type() == JSType::ErrorInstance;
+            // The iterator skips the `cause` of `new Error(message, { cause })`: it is not
+            // enumerable. One that is not an Error is the last row of the loop.
+            let mut hidden_cause = match own_cause {
+                OwnCause::Hidden(cause) if !cause_is_error(cause) => Some(cause),
+                _ => None,
+            };
+            let longest_name = iterator
+                .get_longest_property_name()
+                .max(hidden_cause.map_or(0, |_| b"cause".len()))
+                .min(10);
             let mut is_first_property = true;
-            while let Some((field, value)) = iterator.next()? {
+            loop {
+                let (field, value) = match iterator.next()? {
+                    Some(row) => row,
+                    None => match hidden_cause.take() {
+                        Some(cause) => (bun_core::StringView::static_("cause"), cause),
+                        None => break,
+                    },
+                };
                 if field.eq_ascii(b"message") || field.eq_ascii(b"name") || field.eq_ascii(b"stack")
                 {
                     continue;
@@ -7173,14 +7193,18 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
             }
 
-            // "cause" is not enumerable, so the above loop won't see it.
+            // An Error "cause" that the above loop did not queue.
             if !saw_cause {
-                let key = bun_core::String::static_("cause");
-                if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
-                        cause.protect();
-                        errors_to_append.push(cause);
+                let cause = match own_cause {
+                    OwnCause::Hidden(cause) | OwnCause::Enumerable(cause) => Some(cause),
+                    OwnCause::Accessor => {
+                        error_instance.get_own(global_ref, &bun_core::String::static_("cause"))?
                     }
+                    OwnCause::Absent => None,
+                };
+                if let Some(cause) = cause.filter(|&cause| cause_is_error(cause)) {
+                    cause.protect();
+                    errors_to_append.push(cause);
                 }
             }
         } else if error_instance != JSValue::ZERO {

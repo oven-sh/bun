@@ -943,7 +943,7 @@ impl JSGlobalObject {
                 self,
                 error_array,
                 &message,
-                JSValue::UNDEFINED,
+                JSValue::ZERO,
             )
         })
     }
@@ -1542,7 +1542,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         error_array: JSValue,
         message: &BunString,
-        options: JSValue,
+        cause: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 

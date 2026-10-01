@@ -107,4 +107,26 @@ JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSOb
     return value;
 }
 
+// Mirrors `OwnCauseKind` in JSObject.rs.
+enum class OwnCauseKind : uint8_t {
+    Absent = 0,
+    Accessor = 1,
+    HiddenData = 2,
+    EnumerableData = 3,
+};
+
+// Reads the slot, so no getter runs and an Error does not materialize its stack. `value` is written for a data property only.
+extern "C" OwnCauseKind Bun__JSObject__getOwnCauseDirect(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::EncodedJSValue* value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    unsigned attributes = 0;
+    JSValue cause = object->getDirect(vm, vm.propertyNames->cause, attributes);
+    if (!cause)
+        return OwnCauseKind::Absent;
+    if (cause.isCell() && (cause.asCell()->isGetterSetter() || cause.asCell()->isCustomGetterSetter()))
+        return OwnCauseKind::Accessor;
+    *value = JSValue::encode(cause);
+    return (attributes & PropertyAttribute::DontEnum) ? OwnCauseKind::HiddenData : OwnCauseKind::EnumerableData;
+}
+
 }

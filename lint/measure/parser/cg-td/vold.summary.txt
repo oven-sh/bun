@@ -1,0 +1,5 @@
+vold bun-types {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 510366361, "Bc": 96343080, "Bi": 5564728}, "match": "bun_js_parser", "matched_symbols": 127, "matched": {"Ir": 327755039, "Bc": 45729538, "Bi": 4543691}}
+vold typescript-lib {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 1706860750, "Bc": 337380243, "Bi": 16849604}, "match": "bun_js_parser", "matched_symbols": 100, "matched": {"Ir": 1161234219, "Bc": 166944358, "Bi": 14550551}}
+vold src-js {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 7515472348, "Bc": 1123513986, "Bi": 74131924}, "match": "bun_js_parser", "matched_symbols": 269, "matched": {"Ir": 4464029106, "Bc": 514735726, "Bi": 47713750}}
+vold tsx {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 2123795668, "Bc": 336614696, "Bi": 19705969}, "match": "bun_js_parser", "matched_symbols": 214, "matched": {"Ir": 1202503157, "Bc": 139375479, "Bi": 13028990}}
+vold js-control {"events": ["Ir", "Bc", "Bcm", "Bi", "Bim"], "total": {"Ir": 5113629523, "Bc": 706192397, "Bi": 53864352}, "match": "bun_js_parser", "matched_symbols": 161, "matched": {"Ir": 2901946283, "Bc": 312467438, "Bi": 35874170}}

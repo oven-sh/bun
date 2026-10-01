@@ -16,7 +16,7 @@ class RuleTester {
 	defineRule() {}
 	run(name, rule, tests) { runs.push({ config: this.config, tests }); }
 }
-const noFormat = (strings, ...keys) => String.raw({ raw: strings.raw }, ...keys);
+const noFormat = (strings, ...keys) => String.raw({ raw: strings }, ...keys);
 const stub = request => {
 	if (request === "@typescript-eslint/rule-tester") return { RuleTester, noFormat };
 	if (request.endsWith("/RuleTester")) return { getFixturesRootDir: () => "/fixtures" };

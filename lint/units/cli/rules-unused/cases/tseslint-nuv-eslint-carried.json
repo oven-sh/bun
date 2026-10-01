@@ -1,0 +1,2047 @@
+[
+	{
+		"code": "\nvar foo = 5;\n\nlabel: while (true) {\n  console.log(foo);\n  break label;\n}\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar foo = 5;\n\nwhile (true) {\n  console.log(foo);\n  break;\n}\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfor (let prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar box = { a: 2 };\nfor (var prop in box) {\n  box[prop] = parseInt(box[prop]);\n}\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nf({\n  set foo(a) {\n    return;\n  },\n});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\na;\nvar a;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\nalert(a);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\n(function () {\n  alert(a);\n})();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\n(function () {\n  setTimeout(function () {\n    alert(a);\n  }, 0);\n})();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\nd[a] = 0;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function () {\n  var a = 10;\n  return a;\n})();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "(function g() {})();",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f(a) {\n  alert(a);\n}\nf();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar c = 0;\nfunction f(a) {\n  var b = a;\n  return b;\n}\nf(c);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction a(x, y) {\n  return y;\n}\na();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar arr1 = [1, 2];\nvar arr2 = [3, 4];\nfor (var i in arr1) {\n  arr1[i] = 5;\n}\nfor (var i in arr2) {\n  arr2[i] = 10;\n}\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar min = 'min';\nMath[min];\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nFoo.bar = function (baz) {\n  return baz;\n};\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "myFunc(function foo() {}.bind(this));",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "myFunc(function foo() {}.toString());",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function () {\n  var doSomething = function doSomething() {};\n  doSomething();\n})();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "/*global a */ a;",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction g(bar, baz) {\n  return baz;\n}\ng();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function z() {\n  z();\n})();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": " ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar who = 'Paul';\nmodule.exports = `Hello ${who}!`;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "export var foo = 123;",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "export function foo() {}",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nlet toUpper = partial => partial.toUpperCase;\nexport { toUpper };\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "export class foo {}",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nclass Foo {}\nvar x = new Foo();\nx.foo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst foo = 'hello!';\nfunction bar(foobar = foo) {\n  foobar.replace(/!$/, ' world!');\n}\nbar();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction Foo() {}\nvar x = new Foo();\nx.foo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo() {\n  var foo = 1;\n  return foo;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(foo) {\n  return foo;\n}\nfoo(1);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo() {\n  function foo() {\n    return 1;\n  }\n  return foo();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nconst [y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nconst { y = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nconst {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = [];\nconst { z: [y] = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nlet y;\n[y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nlet y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = [];\nlet y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nvar [y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nvar { y = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nvar {\n  z: [y = x],\n} = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = [];\nvar { z: [y] = x } = {};\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1,\n  y;\n[y = x] = [];\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1,\n  y;\n({\n  z: [y = x],\n} = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = [],\n  y;\n({ z: [y] = x } = {});\nfoo(y);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nfunction foo(y = x) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nfunction foo({ y = x } = {}) {\n  bar(y);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nfunction foo(\n  y = function (z = x) {\n    bar(z);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar x = 1;\nfunction foo(\n  y = function () {\n    bar(x);\n  },\n) {\n  y();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "/*exported toaster*/ var toaster = 'great';",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "'toaster' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\n/*exported toaster, poster*/ var toaster = 1;\nposter = 0;\n    ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 34,
+				"message": "'toaster' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "/*exported x*/ var { x } = y;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "/*exported x, y*/ var { x, y } = z;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 25,
+				"message": "'x' is assigned a value but never used."
+			},
+			{
+				"line": 1,
+				"column": 28,
+				"message": "'y' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "/*eslint @rule-tester/use-every-a:1*/ var a;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 43,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (a) {\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 50,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function () {\n  var a;\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 7,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) return;\n})({});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    return;\n  }\n})({});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (var name in obj) {\n    return true;\n  }\n})({});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (var name in obj) return true;\n})({});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  let name;\n  for (name in obj) return;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  let name;\n  for (name in obj) {\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (let name in obj) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (let name in obj) return true;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (const name in obj) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (const name in obj) return true;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  let name;\n  for (name of iter) return;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  let name;\n  for (name of iter) {\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  for (let name of iter) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  for (let name of iter) return true;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  for (const name of iter) {\n    return true;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  for (const name of iter) return true;\n})({});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = (0, x++);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = (0, (x += 1));\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = (0, (x = x + 1));\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\ntry {\n} catch (err) {\n  console.error(err);\n}\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0,\n  b;\nb = a = a + 1;\nfoo(b);\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0,\n  b;\nb = a += a + 1;\nfoo(b);\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0,\n  b;\nb = a++;\nfoo(b);\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  var b = (a = a + 1);\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  var b = (a += a + 1);\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  var b = a++;\n  bar(b);\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar unregisterFooWatcher;\n// ...\nunregisterFooWatcher = $scope.$watch('foo', function () {\n  // ...some code..\n  unregisterFooWatcher();\n});\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar ref;\nref = setInterval(function () {\n  clearInterval(ref);\n}, 10);\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar _timer;\nfunction f() {\n  _timer = setTimeout(function () {}, _timer ? 100 : 0);\n}\nf();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb = (function () {\n    function something(a) {\n      cb(1 + a);\n    }\n    register(something);\n  })();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction* foo(cb) {\n  cb = yield function (a) {\n    cb(1 + a);\n  };\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb = tag`hello${function (a) {\n    cb(1 + a);\n  }}`;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  var b;\n  cb = b = function (a) {\n    cb(1 + a);\n  };\n  b();\n}\nfoo();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction someFunction() {\n  var a = 0,\n    i;\n  for (i = 0; i < 2; i++) {\n    a = myFunction(a);\n  }\n}\nsomeFunction();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n(class {\n  set foo(UNUSED) {}\n});\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nclass Foo {\n  set bar(UNUSED) {}\n}\nconsole.log(Foo);\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\n/*eslint @rule-tester/use-every-a:1*/ !function (b, a) {\n  return 1;\n};\n    ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 50,
+				"message": "'b' is defined but never used."
+			},
+			{
+				"line": 2,
+				"column": 53,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\nvar a = function () {\n  a();\n};\na();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\na();\n    ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst a = () => {\n  a();\n};\na();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nconst a = () => () => {\n  a();\n};\na();\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "export * as ns from 'source';",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "import.meta;",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a;\na ||= 1;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a;\na &&= 1;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a;\na ??= 1;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foox() {\n  return foox();\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'foox' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function () {\n  function foox() {\n    if (true) {\n      return foox();\n    }\n  }\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 12,
+				"message": "'foox' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "var a = 10;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a *= 2));\n  };\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f(++a);\n  };\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "/*global a */",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\nfunction foo(first, second) {\n  doStuff(function () {\n    console.log(second);\n  });\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\na = 20;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10;\n(function () {\n  var a = 1;\n  alert(a);\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 5,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nalert(a + b);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 3,
+				"message": "'c' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'b' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 10,\n  b = 0,\n  c = null;\nsetTimeout(function () {\n  var b = 2;\n  var c = 2;\n  alert(a + b + c);\n}, 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'b' is assigned a value but never used."
+			},
+			{
+				"line": 4,
+				"column": 3,
+				"message": "'c' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var a = [];\n  return a.map(function () {});\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var a = [];\n  return a.map(function g() {});\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo() {\n  function foo(x) {\n    return x;\n  }\n  return function () {\n    return foo;\n  };\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var x;\n  function a() {\n    x = 42;\n  }\n  function b() {\n    alert(x);\n  }\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			},
+			{
+				"line": 4,
+				"column": 12,
+				"message": "'a' is defined but never used."
+			},
+			{
+				"line": 7,
+				"column": 12,
+				"message": "'b' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f(a) {}\nf();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 12,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction a(x, y, z) {\n  return y;\n}\na();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 18,
+				"message": "'z' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "var min = Math.min;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "'min' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "var min = { min: 1 };",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 5,
+				"message": "'min' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nFoo.bar = function (baz) {\n  return 1;\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 21,
+				"message": "'baz' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction gg(baz, bar) {\n  return baz;\n}\ngg();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 18,
+				"message": "'bar' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (foo, baz, bar) {\n  return baz;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 22,
+				"message": "'bar' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function z(foo) {\n  z();\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 13,
+				"message": "'foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction f() {\n  var a = 1;\n  return function () {\n    f((a = 2));\n  };\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'f' is defined but never used."
+			},
+			{
+				"line": 3,
+				"column": 7,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "import x from 'y';",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 8,
+				"message": "'x' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nexport function fn2({ x, y }) {\n  console.log(x);\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 26,
+				"message": "'y' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nexport function fn2(x, y) {\n  console.log(x);\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 24,
+				"message": "'y' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n/*exported max*/ var max = 1,\n  min = { min: 1 };\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 22,
+				"message": "'max' is assigned a value but never used."
+			},
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'min' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "/*exported x*/ var { x, y } = z;",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 22,
+				"message": "'x' is assigned a value but never used."
+			},
+			{
+				"line": 1,
+				"column": 25,
+				"message": "'y' is assigned a value but never used."
+			}
+		],
+		"own": "differs"
+	},
+	{
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n    i();\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 8,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  var name;\n  for (name in obj) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 8,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (obj) {\n  for (var name in obj) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 12,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n    i();\n    return;\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 8,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  var name;\n  for (name of iter) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 8,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function (iter) {\n  for (var name of iter) {\n  }\n})({});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 12,
+				"message": "'name' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n/* global foobar, foo, bar */\nfoobar;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\n/* global foobar,\n   foo,\n   bar\n */\nfoobar;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\nconst data = { type: 'coords', x: 1, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 9,
+				"message": "'type' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst data = { type: 'coords', x: 3, y: 2 };\nconst { type, ...coords } = data;\nconsole.log(type);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 18,
+				"message": "'coords' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst data = { vars: ['x', 'y'], x: 1, y: 2 };\nconst {\n  vars: [x],\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 10,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst data = { defaults: { x: 0 }, x: 1, y: 2 };\nconst {\n  defaults: { x },\n  ...coords\n} = data;\nconsole.log(coords);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 15,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n/* global a$fooz,$foo */\na$fooz;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\n/* globals a$fooz, $ */\na$fooz;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "/*globals $foo*/",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "/* global global*/",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "/*global foo:true*/",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\n/*global 変数, 数*/\n\n変数;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\n/*global 𠮷𩸽, 𠮷*/\n𠮷𩸽;\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "export default function (a) {}",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 26,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nexport default function (a, b) {\n  console.log(a);\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 29,
+				"message": "'b' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "export default (function (a) {});",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 27,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nexport default (function (a, b) {\n  console.log(a);\n});\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 30,
+				"message": "'b' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "export default a => {};",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 1,
+				"column": 16,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nexport default (a, b) => {\n  console.log(a);\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 20,
+				"message": "'b' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\ntry {\n} catch (err) {}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 10,
+				"message": "'err' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0;\na = a + 1;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0;\na = a + a;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0;\na += a + 1;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 0;\na++;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  a = a + 1;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  a += a + 1;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(a) {\n  a++;\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 3;\na = a * 5 + 6;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = 2,\n  b = 4;\na = a * 2 + b;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb = function (a) {\n    cb(1 + a);\n  };\n  bar(not_cb);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'cb' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb = (function (a) {\n    return cb(1 + a);\n  })();\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'cb' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb =\n    (function (a) {\n      cb(1 + a);\n    },\n    cb);\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'cb' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(cb) {\n  cb =\n    (0,\n    function (a) {\n      cb(1 + a);\n    });\n}\nfoo();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'cb' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nwhile (a) {\n  function foo(b) {\n    b = b + 1;\n  }\n  foo();\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 5,
+				"message": "'b' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n/*global\nfoo*/\n      ",
+		"ext": "ts",
+		"expect": [],
+		"own": "differs"
+	},
+	{
+		"code": "\n(function ({ a }, b) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 14,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function ({ a }, { b, c }) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 14,
+				"message": "'a' is defined but never used."
+			},
+			{
+				"line": 2,
+				"column": 24,
+				"message": "'c' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(x++, (x = 0));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 8,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(x++, (x = 0));\nx = 3;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 1,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(x++, 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 2,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, x++);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 5,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, (1, x++));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 9,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = (x++, 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 8,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = ((0, x++), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 12,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n((x += 1), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, (x += 1));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 6,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, (1, (x += 1)));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 10,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = ((x += 1), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 9,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = ((0, (x += 1)), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 13,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 16,
+				"message": "'z' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = 3;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 1,
+				"message": "'z' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet z = 0;\n((z = z + 1), (z = 2));\nz = z + 3;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 1,
+				"message": "'z' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, (x = x + 1));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 6,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n((x = x + 1), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 3,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = ((0, (x = x + 1)), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 13,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\nfoo = ((x = x + 1), 0);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 9,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = 0;\n(0, (1, (x = x + 1)));\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 10,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function ({ a, b }, { c }) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 14,
+				"message": "'a' is defined but never used."
+			},
+			{
+				"line": 2,
+				"column": 24,
+				"message": "'c' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function ([a], b) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 13,
+				"message": "'a' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function ([a], [b, c]) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 13,
+				"message": "'a' is defined but never used."
+			},
+			{
+				"line": 2,
+				"column": 21,
+				"message": "'c' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\n(function ([a, b], [c]) {\n  return b;\n})();\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 13,
+				"message": "'a' is defined but never used."
+			},
+			{
+				"line": 2,
+				"column": 21,
+				"message": "'c' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = function () {\n  a();\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 5,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nvar a = function () {\n  return function () {\n    a();\n  };\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 5,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst a = () => () => {\n  a();\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 7,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet myArray = [1, 2, 3, 4].filter(x => x == 0);\nmyArray = myArray.filter(x => x == 1);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'myArray' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst a = 1;\na += 1;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nconst a = () => {\n  a();\n};\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 7,
+				"message": "'a' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet x = [];\nx = x.concat(x);\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'x' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet a = 'a';\na = 10;\nfunction foo() {\n  a = 11;\n  a = () => {\n    a = 13;\n  };\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 3,
+				"column": 1,
+				"message": "'a' is assigned a value but never used."
+			},
+			{
+				"line": 4,
+				"column": 10,
+				"message": "'foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet foo;\ninit();\nfoo = foo + 2;\nfunction init() {\n  foo = 1;\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 4,
+				"column": 1,
+				"message": "'foo' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nfunction foo(n) {\n  if (n < 2) return 1;\n  return n * foo(n - 1);\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 10,
+				"message": "'foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nlet c = 'c';\nc = 10;\nfunction foo1() {\n  c = 11;\n  c = () => {\n    c = 13;\n  };\n}\n\nc = foo1;\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 11,
+				"column": 1,
+				"message": "'c' is assigned a value but never used."
+			}
+		],
+		"own": "same"
+	},
+	{
+		"code": "\nclass Foo {\n  static {}\n}\n      ",
+		"ext": "ts",
+		"expect": [
+			{
+				"line": 2,
+				"column": 7,
+				"message": "'Foo' is defined but never used."
+			}
+		],
+		"own": "same"
+	}
+]

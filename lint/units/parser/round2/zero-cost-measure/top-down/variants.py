@@ -384,12 +384,85 @@ def f1b(t):
     t.write('parse/mod.rs', s[:i] + MEMBER.lstrip('\n') + s[i:])
     return c
 
+def vold2(t):
+    """vold with the whole trigger: the grammar of the base logs most errors and reads on (Lexer::expect returns Ok), so a reading
+    failed when it returned Err OR the count of errors of the log moved. One jump decides: `is_err() | (errors != mark.errors)`."""
+    c = vold(t)
+    f = 'parse/parse_skip_typescript.rs'
+    t.rep(f, """            return match self.old_skip_type_script_type_with_opts::<crate::parse::old_sink::Discard>(level, opts, &mut ()) {
+                Ok(()) => Ok(()),
+                Err(err) => self.skip_type_after_old_failed(&mark, err, opts),
+            };""", """            let read = self.old_skip_type_script_type_with_opts::<crate::parse::old_sink::Discard>(level, opts, &mut ());
+            if read.is_err() | (self.log().errors != mark.errors) {
+                return self.skip_type_after_old_failed(&mark, read, opts);
+            }
+            return Ok(());""")
+    t.rep(f, """    fn skip_type_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error, opts: SkipTypeOptionsBitset) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }""", """    fn skip_type_after_old_failed(&mut self, mark: &ReadMark<'a>, read: Result<(), Error>, opts: SkipTypeOptionsBitset) -> Result<(), Error> {
+        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = read {
+            return Err(err);
+        }""")
+    t.rep(f, """        match self.old_skip_type_script_object_type() {
+            Ok(()) => Ok(()),
+            Err(err) => self.skip_object_type_after_old_failed(&mark, err),
+        }
+    }
+
+    fn new_skip_type_script_object_type""", """        let read = self.old_skip_type_script_object_type();
+        if read.is_err() | (self.log().errors != mark.errors) {
+            return self.skip_object_type_after_old_failed(&mark, read);
+        }
+        Ok(())
+    }
+
+    fn new_skip_type_script_object_type""")
+    t.rep(f, """    fn skip_object_type_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }""", """    fn skip_object_type_after_old_failed(&mut self, mark: &ReadMark<'a>, read: Result<(), Error>) -> Result<(), Error> {
+        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = read {
+            return Err(err);
+        }""")
+    t.rep(f, """        match self.old_skip_type_script_object_type() {
+            Ok(()) => Ok(()),
+            Err(err) => self.object_type_members_after_old_failed(&mark, err),
+        }""", """        let read = self.old_skip_type_script_object_type();
+        if read.is_err() | (self.log().errors != mark.errors) {
+            return self.object_type_members_after_old_failed(&mark, read);
+        }
+        Ok(())""")
+    t.rep(f, """    fn object_type_members_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }""", """    fn object_type_members_after_old_failed(&mut self, mark: &ReadMark<'a>, read: Result<(), Error>) -> Result<(), Error> {
+        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = read {
+            return Err(err);
+        }""")
+    t.rep(f, """        match self.old_skip_type_script_type_arguments::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>() {
+            Ok(has_type_arguments) => Ok(has_type_arguments),
+            Err(err) => self.skip_type_arguments_after_old_failed::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>(&mark, err),
+        }""", """        let read = self.old_skip_type_script_type_arguments::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>();
+        if read.is_err() | (self.log().errors != mark.errors) {
+            return self.skip_type_arguments_after_old_failed::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>(&mark, read);
+        }
+        read""")
+    t.rep(f, """(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<bool, Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }""", """(&mut self, mark: &ReadMark<'a>, read: Result<bool, Error>) -> Result<bool, Error> {
+        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = read {
+            return Err(err);
+        }""")
+    return c
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'f1b': f1b, 'vold': vold, 'vold2': vold2}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

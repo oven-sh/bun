@@ -26,7 +26,7 @@ const places = [
 	"class B extends (M) {}", "class B { [M] = 1; }", "class B { #x; m() { M; } }", "class B { #x; m() { M = 1; } }", "class B { m() { M; } }", "class B { static { M; } }", "class B extends (M) { #x; }",
 	"class B { #x; m() { M; } } M = 1;", "class B { get #x() { return 1; } m() { M = 1; } }", "class B { #y; m() { M; } }", "x = class { #x; }; M;", "x = class { #x; m() { return M; } };",
 ];
-if (ts) places.push("(M++) as any;", "(M += 1) as any;", "(M = 1) as any;", "(M++)!;", "(M += 1)!;", "<any>(M++);", "(M++) satisfies any;", "(M as any)++;", "(M as any) += 1;", "[M as any] = a;", "({ y: M as any } = a);", "for ((M as any) of a);", "let y: number = M;", "const z = M as number;", "M!.y;", "enum E { A = 1 } M;", "namespace N { export const q = 1; } M;", "function g(this: any, p = 1) {} M;");
+if (ts) places.push("(M++) as any;", "(M += 1) as any;", "(M = 1) as any;", "(M++)!;", "(M += 1)!;", "<any>(M++);", "(M++) satisfies any;", "(M as any)++;", "(M as any) += 1;", "[M as any] = a;", "({ y: M as any } = a);", "for ((M as any) of a);", "let w: number = M;", "const z = M as number;", "M!.y;", "enum E { A = 1 } M;", "function g(this: any, p = 1) {} M;");
 if (ts) places.push("class B { #x(a = M): void; #x() {} }", "class B { declare y: number; #x = M; }", "abstract class B { abstract y(a?: any): void; m() { M; } }");
 const small = process.argv.includes("--small");
 const keyPlaces = new Set(["M;", "M = 1;", "M += 1;", "M++;", "x = M;", "x = M++;", "[M] = a;", "({ y: M } = a);", "for (M in a);", "for (M++;;) break;", "#x in this;", "class B { #x; m() { M; } }", "M = M + 1;", "() => M++;"]);

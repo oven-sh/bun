@@ -1254,7 +1254,7 @@
 			}
 		},
 		{
-			"code": "\ntype VerticalAlignment = \"top\" | \"middle\" | \"bottom\";\ntype HorizontalAlignment = \"left\" | \"center\" | \"right\";\n\nexport declare function setAlignment(value: \\`\\${VerticalAlignment}-\\${HorizontalAlignment}\\`): void;\n      ",
+			"code": "\ntype VerticalAlignment = \"top\" | \"middle\" | \"bottom\";\ntype HorizontalAlignment = \"left\" | \"center\" | \"right\";\n\nexport declare function setAlignment(value: `${VerticalAlignment}-${HorizontalAlignment}`): void;\n      ",
 			"languageOptions": {
 				"parserOptions": {
 					"ecmaFeatures": {},
@@ -1264,7 +1264,7 @@
 			}
 		},
 		{
-			"code": "\ntype EnthusiasticGreeting<T extends string> = \\`\\${Uppercase<T>} - \\${Lowercase<T>} - \\${Capitalize<T>} - \\${Uncapitalize<T>}\\`;\nexport type HELLO = EnthusiasticGreeting<\"heLLo\">;\n      ",
+			"code": "\ntype EnthusiasticGreeting<T extends string> = `${Uppercase<T>} - ${Lowercase<T>} - ${Capitalize<T>} - ${Uncapitalize<T>}`;\nexport type HELLO = EnthusiasticGreeting<\"heLLo\">;\n      ",
 			"languageOptions": {
 				"parserOptions": {
 					"ecmaFeatures": {},

@@ -1,0 +1,38 @@
+class C { @d m(): asserts is { return x; } }
+class C { @d m(): asserts is is A { return x; } }
+class C { @d m(): asserts a.b { return x; } }
+class C { @d x: A extends infer U[] ? U : never; }
+class C { @d x: A extends infer U extends  ? U : never; }
+class C { @d x: A extends (infer U extends ) ? U : never; }
+class C { @d x: A extends [infer U extends ] ? U : never; }
+class C { @d x: A extends { a infer U } ? U : never; }
+class C { @d x: A extends { a infer U extends B } ? U : never; }
+class C { @d x: A extends { a: infer U extends  } ? U : never; }
+class C { @d x: A extends B<infer U extends > ? U : never; }
+class C { @d x: A extends B ? U : never; }
+class C { @d x: A extends B ? string : never; }
+class C { @d x: A extends B ? U : U; }
+class C { @d x: A extends B ? C : never; }
+class C { @d x: A extends B ? C : C; }
+class D {} class C { @d x: A extends B ? D : never; }
+class C { @d x: A extends B ? D : never; } class D {}
+class C { @d x: A extends B ? C | string : never; }
+class C { @d x: (A extends B ? C : never) | undefined; }
+class C { @d x: A extends B ? C[] : never; }
+class C { @d x: A extends B ? (C) : never; }
+class C { @d m(a: A extends B ? C : never) {} }
+class C { @d m(): A extends B ? C : never { return x; } }
+@d class C { constructor(a: A extends B ? C : never) {} }
+class C { @d x: A extends B ? (A extends B ? C : C) : C; }
+class C { @d x: A extends B ? import("x").C : never; }
+import { D } from "d"; class C { @d x: A extends B ? D : never; }
+enum E { A } class C { @d x: A extends B ? E : never; }
+function F() {} class C { @d x: A extends B ? F : never; }
+var V; class C { @d x: A extends B ? V : never; }
+interface I {} class C { @d x: A extends B ? I : never; }
+type T = string; class C { @d x: A extends B ? T : never; }
+class C<T> { @d x: A extends B ? T : never; }
+namespace N { export class D {} } class C { @d x: A extends B ? N.D : never; }
+class C { @d x: A extends B ? C.D : never; }
+declare class D {} class C { @d x: A extends B ? D : never; }
+class C { @d x: C | undefined; }

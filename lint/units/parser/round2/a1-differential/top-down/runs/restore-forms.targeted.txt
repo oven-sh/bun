@@ -1,0 +1,258 @@
+
+## FORBIDDEN metadata: differs from tsc   (1 forms)
+  S "class C { @d a: A extends B ? C : C }"  ctx[-] apis:4 srcs:1  oth:TS2304,TS2564
+       base: o
+
+## RESTORE: grammar error of the checker TS1009   (1 forms)
+  S "interface I extends A, {}"  ctx[-] apis:15 srcs:1  chk:TS1009  oth:TS2304
+       base: Expected "{" but found end of file
+
+## RESTORE: grammar error of the checker TS1015   (16 forms)
+  S "type X = (a?: A = 1) => R;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "class K { @d p: (a?: A = 1) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371,TS2564
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>"
+  S "type X = (a? = 1) => R;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found "=" | Expected ";" but found ")" | Unexpected =>
+  S "class K { @d p: (a? = 1) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371,TS2564
+       base: Expected ")" but found "?" | Expected ";" but found ")" | Expected identifier but found "=>"
+  S "type X = (a?: A = 1) => B;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "let x: (a?: A = 1) => B;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "function f(x: (a?: A = 1) => B) {}"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ")" but found ":" | Expected ";" but found "A" | Unexpected =
+  S "function f(x: any): (a?: A = 1) => B { return null as any }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "let f = (x: (a?: A = 1) => B) => x;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ")" but found ":" | Unexpected ":"
+  S "let v = x as (a?: A = 1) => B;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "let v = x satisfies (a?: A = 1) => B;"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "let v = <(a?: A = 1) => B>x;"  ctx[-] apis:10 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ">" but found ":"
+  S "function f<U extends (a?: A = 1) => B, V = (a?: A = 1) => B>() {}"  ctx[-] apis:15 srcs:1  chk:TS1015,TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ">" but found ":" | Expected ";" but found "=>" | Unexpected )
+  S "class K { @d p: (a?: A = 1) => B; }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371,TS2564
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>"
+  S "class K { @d m(x: (a?: A = 1) => B) {} }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found "=" | Expected ";" but found ")" | Expected
+  S "class K { @d m(x: any): (a?: A = 1) => B { return null as any } }"  ctx[-] apis:15 srcs:1  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{" | Expecte
+
+## RESTORE: grammar error of the checker TS1017   (1 forms)
+  S "class K { @d p: { [...k: string[]]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1017  oth:TS2304,TS2564
+       base: Unexpected ... | Unexpected k
+
+## RESTORE: grammar error of the checker TS1019   (3 forms)
+  S "class K { @d p: { [k?: string]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1019  oth:TS2304,TS2564
+       base: Expected "]" but found "?" | Unexpected ]
+  S "type X = { [k?]: A };"  ctx[-] apis:15 srcs:1  chk:TS1019  oth:TS2304,TS7006
+       base: Expected "]" but found "?" | Unexpected ]
+  S "class K { @d p: { [k?]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1019  oth:TS2304,TS2564,TS7006
+       base: Expected "]" but found "?" | Unexpected ]
+
+## RESTORE: grammar error of the checker TS1021   (1 forms)
+  S "class C { [k: string] }"  ctx[-] apis:15 srcs:1  chk:TS1021
+       base: Expected ":" but found "}" | Unexpected end of file
+
+## RESTORE: grammar error of the checker TS1025   (1 forms)
+  S "class K { @d p: { [k: string,]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1025  oth:TS2304,TS2564
+       base: Expected "]" but found "," | Unexpected ]
+
+## RESTORE: grammar error of the checker TS1028   (6 forms)
+  S "type X = (public private a: A) => R;"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369
+       base: Expected ")" but found "private" | Expected ";" but found "a" | Unexpected :
+  S "class K { @d p: (public private a: A) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369,TS2564
+       base: Expected ")" but found "private" | Expected ";" but found "a" | Expected identifier but found ":" | Expected ";" but found ")" | Expected identifier but found "
+  S "type X = (public public a: A) => R;"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Unexpected :
+  S "class K { @d p: (public public a: A) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369,TS2564
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Expected identifier but found ":" | Expected ";" but found ")" | Expected identifier but found "=
+  S "function f(public private a: A) {}"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369
+       base: Expected ")" but found "private" | Expected ";" but found "a" | Unexpected :
+  S "function f(public public a: A) {}"  ctx[-] apis:15 srcs:1  chk:TS1028  oth:TS2304,TS2369
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Unexpected :
+
+## RESTORE: grammar error of the checker TS1029   (6 forms)
+  S "type X = (readonly public a: A) => R;"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369
+       base: Expected ")" but found "a" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+  S "class K { @d p: (readonly public a: A) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369,TS2564
+       base: Expected ")" but found "a" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>"
+  S "type X = (override public a: A) => R;"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Unexpected :
+  S "class K { @d p: (override public a: A) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369,TS2564
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Expected identifier but found ":" | Expected ";" but found ")" | Expected identifier but found "=
+  S "function f(readonly public a: A) {}"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Unexpected :
+  S "function f(override public a: A) {}"  ctx[-] apis:15 srcs:1  chk:TS1029  oth:TS2304,TS2369
+       base: Expected ")" but found "public" | Expected ";" but found "a" | Unexpected :
+
+## RESTORE: grammar error of the checker TS1030   (3 forms)
+  S "type X = (readonly readonly a: A) => R;"  ctx[-] apis:15 srcs:1  chk:TS1030  oth:TS2304,TS2369
+       base: Expected ")" but found ":" | Expected ";" but found "A" | Unexpected )
+  S "class K { @d p: (readonly readonly a: A) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1030  oth:TS2304,TS2369,TS2564
+       base: Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found ")" | Expected ";" but found "R"
+  S "function f(readonly readonly a: A) {}"  ctx[-] apis:15 srcs:1  chk:TS1030  oth:TS2304,TS2369
+       base: Expected ")" but found "readonly" | Expected ";" but found "a" | Unexpected :
+
+## RESTORE: grammar error of the checker TS1048   (6 forms)
+  S "type X = (...a = []) => R;"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371
+       base: Unexpected ... | Expected ";" but found "a" | Unexpected =
+  S "class K { @d p: (...a = []) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371,TS2564
+       base: Unexpected ... | Expected ";" but found "a" | Expected identifier but found "=" | Expected ";" but found "]" | Expected identifier but found ")" | Expected ";" 
+  S "type X = (...a: A[] = []) => R;"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371
+       base: Unexpected ... | Expected ";" but found "a" | Unexpected :
+  S "class K { @d p: (...a: A[] = []) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371,TS2564
+       base: Unexpected ... | Expected ";" but found "a" | Expected identifier but found ":" | Expected ";" but found "[" | Expected identifier but found "]" | Expected ";" 
+  S "type X = (...[a] = []) => R;"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371,TS7031
+       base: Unexpected ... | Expected ";" but found "=" | Expected ";" but found ")" | Unexpected =>
+  S "class K { @d p: (...[a] = []) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1048  oth:TS2304,TS2371,TS2564,TS7031
+       base: Unexpected ... | Expected ";" but found ")" | Expected identifier but found "=>"
+
+## RESTORE: grammar error of the checker TS1096   (7 forms)
+  S "class C { [k: string, l: number]: A }"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304
+       base: Expected "]" but found "," | Expected ":" but found "l" | Unexpected : | Expected ";" but found "]" | Expected identifier but found ":"
+  S "type X = { [a, b]: A };"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS7006
+       base: Expected "]" but found "," | Unexpected b
+  S "class K { @d p: { [a, b]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS2564,TS7006
+       base: Expected "]" but found "," | Unexpected b
+  S "class K { @d p: { []: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS2564
+       base: Unexpected ]
+  S "class K { @d p: { [k: string, l: number]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS2564
+       base: Expected "]" but found "," | Unexpected l
+  S "type X = { [k, l]: A };"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS7006
+       base: Expected "]" but found "," | Unexpected l
+  S "class K { @d p: { [k, l]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1096  oth:TS2304,TS2564,TS7006
+       base: Expected "]" but found "," | Unexpected l
+
+## RESTORE: grammar error of the checker TS1097   (1 forms)
+  S "interface I extends {}"  ctx[-] apis:15 srcs:1  chk:TS1097
+       base: Expected "{" but found end of file
+
+## RESTORE: grammar error of the checker TS1108   (1 forms)
+  S "function f(x: any): class {} { return null as any }"  ctx[-] apis:15 srcs:1  chk:TS1108  oth:TS2304
+       base: Unexpected class
+
+## RESTORE: grammar error of the checker TS1110   (2 forms)
+  S "function f<U extends #a, V = #a>() {}"  ctx[-] apis:15 srcs:1  chk:TS1110,TS2304
+       base: Unexpected #a | Expected identifier but found "," | Expected ")" but found "V" | Expected ";" but found "=" | Unexpected #a
+  S "function f<U extends super.A, V = super.A>() {}"  ctx[-] apis:15 srcs:1  chk:TS1110  oth:TS2503
+       base: Unexpected super | Expected identifier but found "." | Expected ")" but found "A" | Expected ";" but found "," | Unexpected "super" | Unexpected )
+
+## RESTORE: grammar error of the checker TS1170   (4 forms)
+  S "type X = { [\"a\" + \"b\"]: A };"  ctx[-] apis:15 srcs:1  chk:TS1170  oth:TS2304
+       base: Expected "]" but found "+" | Unexpected "b"
+  S "class K { @d p: { [\"a\" + \"b\"]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1170  oth:TS2304,TS2564
+       base: Expected "]" but found "+" | Unexpected "b"
+  S "class K { @d p: { [a as B]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1170  oth:TS2304,TS2564
+       base: Expected "]" but found "as" | Unexpected B
+  S "class K { @d p: { [k = 1]: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1170  oth:TS2304,TS2564
+       base: Expected "]" but found "=" | Unexpected 1
+
+## RESTORE: grammar error of the checker TS1172   (3 forms)
+  S "interface I extends A extends B {}"  ctx[-] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  S "interface I extends A, B extends C {}"  ctx[-] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  S "interface I extends A<B> extends C<D> {}"  ctx[-] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+
+## RESTORE: grammar error of the checker TS1176   (1 forms)
+  S "interface I implements A extends B {}"  ctx[-] apis:15 srcs:1  chk:TS1176  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+
+## RESTORE: grammar error of the checker TS1183   (2 forms)
+  S "type X = { get a(): A {} };"  ctx[-] apis:15 srcs:1  chk:TS1183  oth:TS2304,TS2378
+       base: Unexpected {
+  S "class K { @d p: { get a(): A {} }; }"  ctx[-] apis:15 srcs:1  chk:TS1183  oth:TS2304,TS2378,TS2564
+       base: Unexpected {
+
+## RESTORE: grammar error of the checker TS1186   (2 forms)
+  S "type X = ({ ...a = 1 }) => R;"  ctx[-] apis:15 srcs:1  chk:TS1186  oth:TS2304,TS2371
+       base: Unexpected ...
+  S "class K { @d p: ({ ...a = 1 }) => R; }"  ctx[-] apis:15 srcs:1  chk:TS1186  oth:TS2304,TS2371,TS2564
+       base: Unexpected ...
+
+## RESTORE: grammar error of the checker TS1243   (2 forms)
+  S "class C { readonly accessor a: A }"  ctx[-] apis:9 srcs:1  chk:TS1243  oth:TS2304
+       base: Expected ";" but found "a" | Expected identifier but found ":"
+  S "class C { declare accessor a: A }"  ctx[-] apis:9 srcs:1  chk:TS1243  oth:TS2304
+       base: Expected ";" but found "a" | Expected identifier but found ":"
+
+## RESTORE: grammar error of the checker TS1247   (3 forms)
+  S "class K { @d p: { a: A = 1 }; }"  ctx[-] apis:15 srcs:1  chk:TS1247  oth:TS2304,TS2564
+       base: Unexpected =
+  S "type X = { a?: A = 1 };"  ctx[-] apis:15 srcs:1  chk:TS1247  oth:TS2304
+       base: Unexpected =
+  S "class K { @d p: { a?: A = 1 }; }"  ctx[-] apis:15 srcs:1  chk:TS1247  oth:TS2304,TS2564
+       base: Unexpected =
+
+## RESTORE: grammar error of the checker TS1276   (1 forms)
+  S "class C { accessor a?: A }"  ctx[-] apis:9 srcs:1  chk:TS1276  oth:TS2304
+       base: Expected ";" but found "a" | Expected identifier but found "?" | Expected ";" but found "A"
+
+## RESTORE: grammar error of the checker TS1539   (1 forms)
+  S "class K { @d p: { 1n: A }; }"  ctx[-] apis:15 srcs:1  chk:TS1539  oth:TS2304,TS2564
+       base: Unexpected 1n
+
+## RESTORE: grammar error of the checker TS18016   (3 forms)
+  S "interface I { #a: A }"  ctx[-] apis:15 srcs:1  chk:TS18016  oth:TS2304
+       base: Unexpected #a
+  S "interface I { #a(): void }"  ctx[-] apis:15 srcs:1  chk:TS18016
+       base: Unexpected #a
+  S "class K { @d p: { #a: A }; }"  ctx[-] apis:15 srcs:1  chk:TS18016  oth:TS2304,TS2564
+       base: Unexpected #a
+
+## RESTORE: grammar error of the checker TS2304   (3 forms)
+  S "let x: keyof #a;"  ctx[-] apis:15 srcs:1  chk:TS2304
+       base: Unexpected #a
+  S "let x: #a[];"  ctx[-] apis:15 srcs:1  chk:TS2304
+       base: Unexpected #a
+  S "let x: #a | B;"  ctx[-] apis:15 srcs:1  chk:TS2304  oth:TS2304
+       base: Unexpected #a | Unexpected |
+
+## RESTORE: grammar error of the checker TS8020   (16 forms)
+  S "function f(x: A.<B>) {}"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Expected ";" but found ")"
+  S "function f(x: any): A.<B> { return null as any }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  S "let f = (x: A.<B>) => x;"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Unexpected ":"
+  S "let f = (x: any): A.<B> => x;"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Unexpected ":"
+  S "function f<U extends A.<B>, V = A.<B>>() {}"  ctx[-] apis:15 srcs:1  chk:TS8020,TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected "(" but found "," | Expected identifier but found "<" | Unexpected )
+  S "class K { @d p: A.<B>; }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  S "class K { @d m(x: A.<B>) {} }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Expected ";" but found ")" | Expected identifier but found "{"
+  S "class K { @d m(x: any): A.<B> { return null as any } }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">" | Expected identifier but found "{" | Expected ";" but found "null" | Expected ";" but found "any
+  S "function f(x: Array.<A>) {}"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Expected ";" but found ")"
+  S "function f(x: any): Array.<A> { return null as any }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  S "let f = (x: Array.<A>) => x;"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Unexpected ":"
+  S "let f = (x: any): Array.<A> => x;"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Unexpected ":"
+  S "function f<U extends Array.<A>, V = Array.<A>>() {}"  ctx[-] apis:15 srcs:1  chk:TS8020,TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected "(" but found "," | Expected identifier but found "<" | Unexpected )
+  S "class K { @d p: Array.<A>; }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  S "class K { @d m(x: Array.<A>) {} }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ")" but found ">" | Expected ";" but found ")" | Expected identifier but found "{"
+  S "class K { @d m(x: any): Array.<A> { return null as any } }"  ctx[-] apis:15 srcs:1  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">" | Expected identifier but found "{" | Expected ";" but found "null" | Expected ";" but found "any
+
+## ruling: A>A a declaration named as or satisfies, where the base read a cast   (2 forms)
+  S "namespace as {}"  ctx[-] apis:10 srcs:1
+       base: o
+  S "module as {}"  ctx[-] apis:1 srcs:1  oth:TS1540
+       base: o
+
+## ruling: metadata of a source that tsc does not parse   (1 forms)
+  S "class C { @d a: b is A }"  ctx[-] apis:4 srcs:1  parse:TS1442@18,TS1128@23
+       base: o

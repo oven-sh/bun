@@ -1,0 +1,59 @@
+== 18:39:30 start
+31248200b0fcf27351d066f0b55e0eecaac97d4f7287d44b3c41f9c4b23d7d3c  /workspace/notes/lint/measure/parser/base/bun
+7e1111b462362a5748907049a1c7a424638fbdc976790a9e265d05ebfb04b8e6  /workspace/notes/lint/measure/parser/head/bun
+1.4.3-canary.1+e3566be88
+1.4.3-canary.1+be1ebe529
+== 18:39:33 harvest with the base binary
+rc 0
+1547 lines, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+09 unchanged
+== 18:39:40 gen targeted
+rc 0
+/tmp/a1td/gd/corpus.targeted.json: 3952 sources
+== 18:39:40 harness base testrows
+rc 0
+/tmp/a1td/runs/base.testrows.jsonl.gz: 301 inputs x 15 apis, 0 crashes, 0.8 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+== 18:39:41 harness head testrows
+rc 0
+/tmp/a1td/runs/head.testrows.jsonl.gz: 301 inputs x 15 apis, 0 crashes, 0.5 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+== 18:39:42 harness base targeted
+rc 0
+/tmp/a1td/runs/base.targeted.jsonl.gz: 3952 inputs x 15 apis, 0 crashes, 4.4 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+== 18:39:47 harness head targeted
+rc 0
+/tmp/a1td/runs/head.targeted.jsonl.gz: 3952 inputs x 15 apis, 0 crashes, 3.6 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+== 18:39:51 harness base small
+rc 0
+/tmp/a1td/runs/base.small.jsonl.gz: 209628 inputs x 15 apis, 0 crashes, 122.0 s, bun 1.4.3 e3566be889995ffff8b08823b9233617f979c889
+== 18:41:55 harness head small
+rc 0
+/tmp/a1td/runs/head.small.jsonl.gz: 209628 inputs x 15 apis, 0 crashes, 67.1 s, bun 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb
+== 18:43:02 oracle testrows
+rc 0
+/tmp/a1td/runs/oracle.testrows.jsonl.gz: 301 sources, 292 parse as .ts without a diagnostic, 286 of them without a grammar error of the checker, 0 where the checker threw, typescript 6.0.2
+== 18:43:05 oracle targeted
+rc 0
+/tmp/a1td/runs/oracle.targeted.jsonl.gz: 3952 sources, 3662 parse as .ts without a diagnostic, 1898 of them without a grammar error of the checker, 0 where the checker threw, typescript 6.0.2
+== 18:43:17 oracle small
+rc 0
+/tmp/a1td/runs/oracle.small.jsonl.gz: 209628 sources, 47057 parse as .ts without a diagnostic, 42366 of them without a grammar error of the checker, 0 where the checker threw, typescript 6.0.2
+== 18:44:34 diff testrows
+diff testrows rc=1
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+4515 records compared, 3556 differ, in 301 sources
+15 records with the mark !!, 175 with the mark ??
+== 18:44:37 diff targeted
+diff targeted rc=1
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (3952 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (3952 sources)
+59280 records compared, 2423 differ, in 180 sources
+1421 records with the mark !!, 15 with the mark ??
+== 18:44:43 diff small
+diff small rc=1
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (209628 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (209628 sources)
+3144420 records compared, 111240 differ, in 7772 sources
+8345 records with the mark !!, 414 with the mark ??
+== 18:44:53 done
+ALL-DONE

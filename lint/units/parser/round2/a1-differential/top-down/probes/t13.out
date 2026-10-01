@@ -1,0 +1,114 @@
+"class C implements (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements new (a: A) => B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends new (a: A) => B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [a: A] {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends [a: A] {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [...a: A[]] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends [...a: A[]] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [a?: A] {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends [a?: A] {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements { (b: B): void } {}"
+    tsc: parse.ts[TS1136,TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1136,TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends { (b: B): void } {}"
+    tsc: parse.ts[TS1136,TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1136,TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements { [K in keyof A]: V } {}"
+    tsc: parse.ts[TS1005,TS1005,TS1136] parse.tsx[TS1005,TS1005,TS1136] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends { [K in keyof A]: V } {}"
+    tsc: parse.ts[TS1005,TS1005,TS1136] parse.tsx[TS1005,TS1005,TS1136] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A extends B ? 1 : 2 {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A extends B ? 1 : 2 {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements <T>() => T {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends <T>() => T {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements <T>(a: T) => void {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends <T>(a: T) => void {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements (a: A) => asserts a is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (a: A) => asserts a is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements (a: A) => a is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (a: A) => a is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements typeof import(\"x\") {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends typeof import(\"x\") {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements import(\"x\").A<C, D> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"interface I extends import(\"x\").A<C, D> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2499]
+    t.ts.plain: A ==
+"class C implements import(\"x\").A.B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends import(\"x\").A.B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C implements { m(a: A): void } {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends { m(a: A): void } {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C implements [A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends [A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C implements (readonly A[]) {}"
+    tsc: parse.ts[TS1005,TS1011,TS1005] parse.tsx[TS1005,TS1011,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (readonly A[]) {}"
+    tsc: parse.ts[TS1005,TS1011,TS1005] parse.tsx[TS1005,TS1011,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements keyof A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends keyof A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

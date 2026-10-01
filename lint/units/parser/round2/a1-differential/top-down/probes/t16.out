@@ -1,0 +1,54 @@
+"class C { @d m(): (a: A) =>  { return x; } }"
+    tsc: parse.ts[TS1131,TS1128,TS1128] parse.tsx[TS1131,TS1128,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(): (a: A) =>  { return x; }"
+    tsc: parse.ts[TS1131,TS1128] parse.tsx[TS1131,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { @d m(): (a = 1) =>  { return x; } }"
+    tsc: parse.ts[TS1131,TS1128,TS1128] parse.tsx[TS1131,TS1128,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +5 -> A
+"function f(): (a = 1) =>  { return x; }"
+    tsc: parse.ts[TS1131,TS1128] parse.tsx[TS1131,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"function f(): <T>() =>  { return x; }"
+    tsc: parse.ts[TS1131,TS1128] parse.tsx[TS1131,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(): <out>() =>  { return x; }"
+    tsc: parse.ts[TS1131,TS1128] parse.tsx[TS1131,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f(): new (a: A) =>  { return x; }"
+    tsc: parse.ts[TS1131,TS1128] parse.tsx[TS1131,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = (a): [a: ?] => a;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \";\" but found \":\"" +2 -> A
+"let f = (a): [a: A] => a;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7006]
+    t.ts.plain: A ==
+"f<[a: ?]>(x);"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"]\" but found \":\"" +1 -> A
+"f<{ #a:  }>(x);"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#a\"" +1 -> A
+"let f = (a): { #a:  } => a;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \";\" but found \":\"" +1 -> A
+"let f = (a): { a:  } => a;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"f<{ a:  }>(x);"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"f<<out>() => >(x);"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"f<<T>() => >(x);"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = (a): <out>() =>  => a;"
+    tsc: parse.ts[TS1005,TS1134,TS1005] parse.tsx[TS1005,TS1134,TS1382,TS1382,TS1382,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = (a): <T>() =>  => a;"
+    tsc: parse.ts[TS1005,TS1134,TS1005] parse.tsx[TS1005,TS1134,TS1382,TS1382,TS1382,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

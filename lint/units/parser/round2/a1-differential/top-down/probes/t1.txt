@@ -1,0 +1,21 @@
+class C { @d a: asserts }
+class C { @d a: asserts is A }
+class C { @d a: b is A }
+class C { @d m(): b is A {} }
+class C { @d m(): (b is A) {} }
+class C { @d m(): asserts b {} }
+class C { @d m(): asserts b is A {} }
+class C { @d m(): asserts is A {} }
+function f(x: any): class {}
+function f(x: any): A {} { return null as any }
+{ return 1 }
+import type A from "x" with { type: "json" };
+import B from "y"⏎with (A) {}
+import A from "x" with { type: "json" };⏎import B from "y"⏎with (A) {}
+type a = 1⏎type as any
+type as any
+interface as any
+interface a {}⏎interface as any⏎foo()
+export * from "x" with { type: "json" };
+export * from "x"⏎with { type: "json" };
+import A from "x"⏎with { type: "json" };

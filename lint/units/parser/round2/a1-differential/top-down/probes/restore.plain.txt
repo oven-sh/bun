@@ -1,0 +1,393 @@
+function f(public public a: A) {}
+type X = (public public a: A) => R;
+type X = { m(public public a: A): R };
+function f(public private a: A) {}
+type X = (public private a: A) => R;
+type X = { m(public private a: A): R };
+function f(public protected a: A) {}
+type X = (public protected a: A) => R;
+type X = { m(public protected a: A): R };
+function f(private public a: A) {}
+type X = (private public a: A) => R;
+type X = { m(private public a: A): R };
+function f(private private a: A) {}
+type X = (private private a: A) => R;
+type X = { m(private private a: A): R };
+function f(private protected a: A) {}
+type X = (private protected a: A) => R;
+type X = { m(private protected a: A): R };
+function f(protected public a: A) {}
+type X = (protected public a: A) => R;
+type X = { m(protected public a: A): R };
+function f(protected private a: A) {}
+type X = (protected private a: A) => R;
+type X = { m(protected private a: A): R };
+function f(protected protected a: A) {}
+type X = (protected protected a: A) => R;
+type X = { m(protected protected a: A): R };
+function f(readonly public a: A) {}
+type X = (readonly public a: A) => R;
+type X = { m(readonly public a: A): R };
+function f(readonly private a: A) {}
+type X = (readonly private a: A) => R;
+type X = { m(readonly private a: A): R };
+function f(readonly protected a: A) {}
+type X = (readonly protected a: A) => R;
+type X = { m(readonly protected a: A): R };
+function f(readonly readonly a: A) {}
+type X = (readonly readonly a: A) => R;
+type X = { m(readonly readonly a: A): R };
+function f(readonly override a: A) {}
+type X = (readonly override a: A) => R;
+type X = { m(readonly override a: A): R };
+function f(override public a: A) {}
+type X = (override public a: A) => R;
+type X = { m(override public a: A): R };
+function f(override private a: A) {}
+type X = (override private a: A) => R;
+type X = { m(override private a: A): R };
+function f(override protected a: A) {}
+type X = (override protected a: A) => R;
+type X = { m(override protected a: A): R };
+function f(override override a: A) {}
+type X = (override override a: A) => R;
+type X = { m(override override a: A): R };
+function f(public public public a: A) {}
+type X = (public public public a: A) => R;
+type X = { m(public public public a: A): R };
+function f(public public readonly a: A) {}
+type X = (public public readonly a: A) => R;
+type X = { m(public public readonly a: A): R };
+function f(public public override a: A) {}
+type X = (public public override a: A) => R;
+type X = { m(public public override a: A): R };
+function f(public readonly public a: A) {}
+type X = (public readonly public a: A) => R;
+type X = { m(public readonly public a: A): R };
+function f(public readonly readonly a: A) {}
+type X = (public readonly readonly a: A) => R;
+type X = { m(public readonly readonly a: A): R };
+function f(public readonly override a: A) {}
+type X = (public readonly override a: A) => R;
+type X = { m(public readonly override a: A): R };
+function f(public override public a: A) {}
+type X = (public override public a: A) => R;
+type X = { m(public override public a: A): R };
+function f(public override override a: A) {}
+type X = (public override override a: A) => R;
+type X = { m(public override override a: A): R };
+function f(readonly public public a: A) {}
+type X = (readonly public public a: A) => R;
+type X = { m(readonly public public a: A): R };
+function f(readonly public readonly a: A) {}
+type X = (readonly public readonly a: A) => R;
+type X = { m(readonly public readonly a: A): R };
+function f(readonly public override a: A) {}
+type X = (readonly public override a: A) => R;
+type X = { m(readonly public override a: A): R };
+function f(readonly readonly public a: A) {}
+type X = (readonly readonly public a: A) => R;
+type X = { m(readonly readonly public a: A): R };
+function f(readonly readonly readonly a: A) {}
+type X = (readonly readonly readonly a: A) => R;
+type X = { m(readonly readonly readonly a: A): R };
+function f(readonly readonly override a: A) {}
+type X = (readonly readonly override a: A) => R;
+type X = { m(readonly readonly override a: A): R };
+function f(readonly override public a: A) {}
+type X = (readonly override public a: A) => R;
+type X = { m(readonly override public a: A): R };
+function f(readonly override readonly a: A) {}
+type X = (readonly override readonly a: A) => R;
+type X = { m(readonly override readonly a: A): R };
+function f(readonly override override a: A) {}
+type X = (readonly override override a: A) => R;
+type X = { m(readonly override override a: A): R };
+function f(override public public a: A) {}
+type X = (override public public a: A) => R;
+type X = { m(override public public a: A): R };
+function f(override public readonly a: A) {}
+type X = (override public readonly a: A) => R;
+type X = { m(override public readonly a: A): R };
+function f(override public override a: A) {}
+type X = (override public override a: A) => R;
+type X = { m(override public override a: A): R };
+function f(override readonly public a: A) {}
+type X = (override readonly public a: A) => R;
+type X = { m(override readonly public a: A): R };
+function f(override readonly readonly a: A) {}
+type X = (override readonly readonly a: A) => R;
+type X = { m(override readonly readonly a: A): R };
+function f(override readonly override a: A) {}
+type X = (override readonly override a: A) => R;
+type X = { m(override readonly override a: A): R };
+function f(override override public a: A) {}
+type X = (override override public a: A) => R;
+type X = { m(override override public a: A): R };
+function f(override override readonly a: A) {}
+type X = (override override readonly a: A) => R;
+type X = { m(override override readonly a: A): R };
+function f(override override override a: A) {}
+type X = (override override override a: A) => R;
+type X = { m(override override override a: A): R };
+type X = (a?: A = 1) => R;
+type X = { m(a?: A = 1): R };
+type X = new (a?: A = 1) => R;
+type X = (a? = 1) => R;
+type X = { m(a? = 1): R };
+type X = new (a? = 1) => R;
+type X = (...a = []) => R;
+type X = { m(...a = []): R };
+type X = new (...a = []) => R;
+type X = (...a: A[] = []) => R;
+type X = { m(...a: A[] = []): R };
+type X = new (...a: A[] = []) => R;
+type X = (...[a] = []) => R;
+type X = { m(...[a] = []): R };
+type X = new (...[a] = []) => R;
+type X = ({ ...a = 1 }) => R;
+type X = { m({ ...a = 1 }): R };
+type X = new ({ ...a = 1 }) => R;
+type X = ([...a = 1]) => R;
+type X = { m([...a = 1]): R };
+type X = new ([...a = 1]) => R;
+type X = (this = 1) => R;
+type X = { m(this = 1): R };
+type X = new (this = 1) => R;
+type X = [a: A?];
+type X = [a?: A?];
+type X = [a: A?, b: B];
+type X = [...a: A[]?];
+type X = [a: ...A[]];
+type X = [a?: ...A[]];
+type X = [...a: ...A[]];
+f<[a: A?]>(x);
+let f = (a): [a: A?] => a;
+let v = x as [a: A?];
+f<[a?: A?]>(x);
+let f = (a): [a?: A?] => a;
+let v = x as [a?: A?];
+f<[a: ?]>(x);
+let f = (a): [a: ?] => a;
+type X = { [k: string,]: A };
+type X = { [k?: string]: A };
+type X = { [k?]: A };
+type X = { [...k: string[]]: A };
+type X = { [...k]: A };
+type X = { [k: string, l: number]: A };
+type X = { [k, l]: A };
+type X = { [a, b]: A };
+type X = { []: A };
+type X = { readonly []: A };
+type X = { [k = 1]: A };
+type X = { [k: string = 1]: A };
+type X = { [a + b]: A };
+type X = { ["a" + "b"]: A };
+type X = { [a as B]: A };
+type X = { [+a]: A };
+type X = { [a()]: A };
+type X = { [a, b] };
+type X = { [a = 1]: A };
+type X = { [new a]: A };
+type X = { [super.a]: A };
+type X = { [a + b](): A };
+type X = { [a + b]?: A };
+type X = { [await a]: A };
+type X = { [a ? b : c]: A };
+type X = { [<T>a]: A };
+type X = { [a satisfies B]: A };
+type X = { [void 0]: A };
+type X = { [!a]: A };
+type X = { [a = b]: A };
+type X = { [async () => 1]: A };
+type X = { [function () {}]: A };
+type X = { [class {}]: A };
+type X = { #a: A };
+type X = { #a(): void };
+type X = { #a?: A };
+type X = { #a };
+type X = { readonly #a: A };
+type X = { static #a: A };
+type X = { 1n: A };
+type X = { a: A = 1 };
+type X = { a?: A = 1 };
+type X = { a? = 1 };
+type X = { "a": A = 1 };
+type X = { 1: A = 1 };
+type X = { [a]: A = 1 };
+type X = { readonly a: A = 1 };
+type X = { a: A = 1, b: B };
+type X = { a: A = 1; b: B };
+type X = { a: A = b as C };
+type X = { get a(): A {} };
+type X = { set a(v) {} };
+type X = { get a(): A { return 1 } };
+type X = { get a() {} };
+type X = { get "a"(): A {} };
+type X = { get [a](): A {} };
+type X = { static get a(): A {} };
+interface I { [k?: string]: A }
+let v = x as { [k?: string]: A };
+class K { @d p: { [k?: string]: A }; }
+interface I { [k: string,]: A }
+let v = x as { [k: string,]: A };
+class K { @d p: { [k: string,]: A }; }
+interface I { []: A }
+let v = x as { []: A };
+class K { @d p: { []: A }; }
+interface I { [a + b]: A }
+let v = x as { [a + b]: A };
+class K { @d p: { [a + b]: A }; }
+interface I { #a: A }
+f<{ #a: A }>(x);
+let v = x as { #a: A };
+class K { @d p: { #a: A }; }
+interface I { 1n: A }
+let v = x as { 1n: A };
+class K { @d p: { 1n: A }; }
+interface I { a: A = 1 }
+let v = x as { a: A = 1 };
+class K { @d p: { a: A = 1 }; }
+interface I { get a(): A {} }
+let v = x as { get a(): A {} };
+class K { @d p: { get a(): A {} }; }
+interface I { [k: string, l: number]: A }
+let v = x as { [k: string, l: number]: A };
+class K { @d p: { [k: string, l: number]: A }; }
+interface I { [a, b]: A }
+let v = x as { [a, b]: A };
+class K { @d p: { [a, b]: A }; }
+interface I { [...k: string[]]: A }
+let v = x as { [...k: string[]]: A };
+class K { @d p: { [...k: string[]]: A }; }
+interface I { [k = 1]: A }
+let v = x as { [k = 1]: A };
+class K { @d p: { [k = 1]: A }; }
+class C implements +1 {}
+interface I extends +1 {}
+class C extends B implements +1 {}
+class C implements -a {}
+interface I extends -a {}
+class C extends B implements -a {}
+class C implements !A {}
+interface I extends !A {}
+class C extends B implements !A {}
+class C implements ~A {}
+interface I extends ~A {}
+class C extends B implements ~A {}
+class C implements typeof a() {}
+interface I extends typeof a() {}
+class C extends B implements typeof a() {}
+class C implements void A {}
+interface I extends void A {}
+class C extends B implements void A {}
+class C implements delete A {}
+interface I extends delete A {}
+class C extends B implements delete A {}
+class C implements await A {}
+interface I extends await A {}
+class C extends B implements await A {}
+class C implements <B>a {}
+interface I extends <B>a {}
+class C extends B implements <B>a {}
+class C implements <B>[] {}
+interface I extends <B>[] {}
+class C extends B implements <B>[] {}
+class C implements A<>.C {}
+interface I extends A<>.C {}
+class C extends B implements A<>.C {}
+class C implements A.<B> {}
+interface I extends A.<B> {}
+class C extends B implements A.<B> {}
+class C implements ++a {}
+interface I extends ++a {}
+class C extends B implements ++a {}
+interface I extends A extends B {}
+interface I implements A extends B {}
+interface I implements A implements B {}
+interface I extends A, {}
+interface I extends {}
+interface I extends A, B, {}
+interface I extends⏎{}
+interface I extends A, {}⏎foo()
+function f<U extends class>() {}
+type X<U extends class> = U;
+class C<U extends class> {}
+interface I<U extends class> {}
+let f = <U extends class>() => 1;
+type X = { m<U extends class>(): void };
+function f<U extends delete>() {}
+type X<U extends delete> = U;
+class C<U extends delete> {}
+interface I<U extends delete> {}
+type X = { m<U extends delete>(): void };
+f<extends>(x);
+let x: A[extends];
+function f<U extends in>() {}
+type X<U extends in> = U;
+class C<U extends in> {}
+interface I<U extends in> {}
+type X = { m<U extends in>(): void };
+function f<U extends instanceof>() {}
+type X<U extends instanceof> = U;
+class C<U extends instanceof> {}
+interface I<U extends instanceof> {}
+type X = { m<U extends instanceof>(): void };
+function f<U extends super>() {}
+type X<U extends super> = U;
+class C<U extends super> {}
+interface I<U extends super> {}
+type X = { m<U extends super>(): void };
+type X = #a;
+let x: #a;
+function f(a: #a) {}
+function f(): #a { return x; }
+function f(): #a {}
+let v = x as #a;
+let v = <#a>x;
+function f<U extends #a>() {}
+function f<U = #a>() {}
+type X<U extends #a> = U;
+class C<U extends #a> {}
+interface I<U extends #a> {}
+type X = { m<U extends #a>(): void };
+let x: A | #a;
+let x: #a[];
+let x: keyof #a;
+type X = A extends #a ? 1 : 2;
+function f<U extends super.a>() {}
+type X<U extends super.a> = U;
+class C<U extends super.a> {}
+interface I<U extends super.a> {}
+type X = { m<U extends super.a>(): void };
+function f(): class {} { return x; }
+function f<U extends #a.b>() {}
+type X<U extends #a.b> = U;
+class C<U extends #a.b> {}
+interface I<U extends #a.b> {}
+type X = { m<U extends #a.b>(): void };
+f<A, extends>(x);
+f<extends, A>(x);
+let x: A<extends>;
+let x: A<B, extends>;
+let v = x as A<extends>;
+new A<extends>();
+class C { [k: string, l: number]: A }
+class C { [k: string,]: A }
+class C { [k?: string]: A }
+class C { [...k: string[]]: A }
+class C { [k: string] }
+class C { [k: string]; }
+class C { []: A }
+class C { [k, l]: A }
+class C { a(public private b: B) {} }
+class C { a(readonly readonly b: B) {} }
+declare class C { [k: string, l: number]: A }
+abstract class C { [k: string, l: number]: A }
+let v = class { [k: string, l: number]: A };
+declare class C { [k: string] }
+abstract class C { [k: string] }
+let v = class { [k: string] };
+declare class C { a(public private b: B) {} }
+abstract class C { a(public private b: B) {} }
+let v = class { a(public private b: B) {} };

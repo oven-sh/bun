@@ -1,0 +1,8 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (122 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (122 sources)
+854 records compared, 50 differ, in 18 sources
+!!       50 records      18 sources  R>A          unexplained
+              t.ts.min.ids     "type Cc = { [1 /* zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz */ + 2]: number }; export function g(){ let longName = 1; return longName; }"
+                base ["e",[["Expected \"]\" but found \"+\"",1,63],["Unexpected 2",1,65]]]
+                next ["o","export function g() {\n  let z = 1;\n  return z;\n}\n"]
+50 records with the mark !!, 0 with the mark ??

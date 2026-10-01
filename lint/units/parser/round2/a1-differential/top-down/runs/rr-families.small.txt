@@ -1,0 +1,61 @@
+86300 R>R records
+   5060 records    339 sources  1 same first error, fewer errors after it
+          e.g. t.ts.plain "class C { @d m(): keyof<A> { return x; } }"
+               base ["Expected \"(\" but found \"{\"","Unexpected return","Expected \";\" but found \"x\"","Unexpected }"]
+               next ["Expected \"(\" but found \"{\"","Expected \")\" but found \"x\"","Unexpected }"]
+   5025 records    336 sources  2 same first error, more errors after it
+          e.g. t.ts.plain "class C { @d m(): A extends B { return x; } }"
+               base ["Expected \"?\" but found \"{\"","Unexpected return","Unexpected }"]
+               next ["Expected \"?\" but found \"{\"","Expected \":\" but found \"x\"","Unexpected ;","Unexpected }"]
+   3100 records    210 sources  3 same first error, other errors after it
+          e.g. t.ts.plain "class C { @d m(): A extends B ? C { return x; } }"
+               base ["Expected \":\" but found \"{\"","Unexpected return","Unexpected }"]
+               next ["Expected \":\" but found \"{\"","Expected \";\" but found \"x\"","Unexpected }"]
+  11495 records    778 sources  5 the first error of one side is a later error of the other
+          e.g. t.ts.plain "interface I extends function {}"
+               base ["Unexpected function","Unexpected {"]
+               next ["Unexpected {"]
+   4185 records    281 sources  6 another first message: Expected "…" but found "…"  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "interface I extends A\nextends B ? C : D {}"
+               base ["Expected \"{\" but found \"extends\"","Unexpected C"]
+               next ["Expected \"{\" but found \"?\"","Unexpected {"]
+    495 records     33 sources  6 another first message: Expected "…" but found "…"  ->  Expected "…" but found end of file
+          e.g. t.ts.plain "class C implements (a = 1) =>  {}"
+               base ["Expected \")\" but found \"=\"","Expected \"{\" but found \"1\"","Expected identifier but found \")\"","Expected \";\" but found \"{\""]
+               next ["Expected \"{\" but found end of file"]
+   4755 records    324 sources  6 another first message: Expected "…" but found "…"  ->  Unexpected …
+          e.g. t.ts.plain "let f = (a): (function) => void => a;"
+               base ["Expected \";\" but found \":\"","Expected \"(\" but found \")\"","Expected identifier but found \"=>\"","Expected \")\" but found \"void\"","Expecte
+               next ["Unexpected =>"]
+    780 records     52 sources  6 another first message: Expected "…" but found end of file  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "interface I extends A extends B ? {}"
+               base ["Expected \":\" but found end of file"]
+               next ["Expected \"{\" but found \"?\"","Unexpected {"]
+     30 records      2 sources  6 another first message: Expected "…" but found end of file  ->  Expected "…" but found end of file
+          e.g. t.ts.plain "interface I extends A extends (...a: infer P) => infer R extends B ? P :  {}"
+               base ["Expected \"?\" but found end of file"]
+               next ["Expected \"{\" but found end of file"]
+    105 records      7 sources  6 another first message: Expected identifier but found "…"  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "interface I extends A extends infer infer ? infer : never {}"
+               base ["Expected identifier but found \":\"","Expected \":\" but found \"never\"","Expected \"{\" but found end of file"]
+               next ["Expected \"{\" but found \"?\"","Unexpected {"]
+     60 records      4 sources  6 another first message: Expected identifier but found "…"  ->  Unexpected …
+          e.g. t.ts.plain "interface I extends A extends infer extends ? 1 : 2 {}"
+               base ["Expected identifier but found \"extends\""]
+               next ["Unexpected ?","Unexpected {"]
+    160 records     16 sources  6 another first message: The modifier "…" is not valid here  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "let v = <in: A]>x;"
+               base ["The modifier \"in\" is not valid here","Unexpected in"]
+               next ["Expected \">\" but found \":\""]
+  42935 records   2935 sources  6 another first message: Unexpected …  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "class C { @d m(): A\n[] { return x; } }"
+               base ["Unexpected ]"]
+               next ["Expected \";\" but found \"{\"","Expected \";\" but found \"x\"","Unexpected }"]
+   1140 records     76 sources  6 another first message: Unexpected …  ->  Expected "…" but found end of file
+          e.g. t.ts.plain "class C implements ({ a = 1 }: A) =>  {}"
+               base ["Unexpected ="]
+               next ["Expected \"{\" but found end of file"]
+   6975 records    471 sources  6 another first message: Unexpected …  ->  Unexpected …
+          e.g. t.ts.plain "class C implements function {}"
+               base ["Unexpected function","Expected identifier but found \"{\"","Expected \"}\" but found end of file"]
+               next ["Unexpected {"]

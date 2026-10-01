@@ -1,0 +1,13 @@
+let f = <A[]>() => 1;
+let f = <A.B>() => 1;
+let f = <if>() => 1;
+let f = <in>() => 1;
+let f = <in>x;
+let f = <out.T>() => 1;
+let f = <out.T>x;
+let f = <#T>() => 1;
+let f = <#T>x;
+let f = <A | B>() => 1;
+let f = <string>() => 1;
+let f = <A[]>x => 1;
+let f = <A[]>async () => 1;

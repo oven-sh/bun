@@ -1,0 +1,897 @@
+"class C implements A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C extends B implements A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C implements A.B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: A ==
+"interface I extends A.B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: A ==
+"class C extends B implements A.B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2503]
+    t.ts.plain: A ==
+"class C implements A<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends A<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C extends B implements A<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C implements A.B<C> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2503]
+    t.ts.plain: A ==
+"interface I extends A.B<C> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2503]
+    t.ts.plain: A ==
+"class C extends B implements A.B<C> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2503]
+    t.ts.plain: A ==
+"class C implements a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"interface I extends a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C extends B implements a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C implements a.b() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"interface I extends a.b() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C extends B implements a.b() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C implements a[0] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends a[0] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements a[0] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements new a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"interface I extends new a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"class C extends B implements new a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"class C implements new a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +4 -> A
+"interface I extends new a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +4 -> A
+"class C extends B implements new a() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +4 -> A
+"class C implements a! {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends a! {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements a! {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements a!.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends a!.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements a!.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements this {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends this {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements this {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements this.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends this.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements this.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements super.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Unexpected super" +2 -> A
+"interface I extends super.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Unexpected super" +1 -> A
+"class C extends B implements super.a {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Unexpected super" +2 -> A
+"class C implements \"a\" {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends \"a\" {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements \"a\" {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements 1 {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends 1 {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements 1 {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements [a] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends [a] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements [a] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements {a: 1} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends {a: 1} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements {a: 1} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements function(){} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Unexpected function" +2 -> A
+"interface I extends function(){} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Unexpected function" +1 -> A
+"class C extends B implements function(){} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Unexpected function" +2 -> A
+"class C implements class {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Unexpected class" +2 -> A
+"interface I extends class {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Unexpected class" +1 -> A
+"class C extends B implements class {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Unexpected class" +2 -> A
+"class C implements (a) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends (a) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements (a) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements (A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends (A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements (A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements a`` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"{\" but found \"``\"" +2 -> A
+"interface I extends a`` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"{\" but found \"``\"" +1 -> A
+"class C extends B implements a`` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"{\" but found \"``\"" +2 -> A
+"class C implements import(\"x\") {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends import(\"x\") {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements import(\"x\") {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements import.meta {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +4 -> A
+"interface I extends import.meta {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +4 -> A
+"class C extends B implements import.meta {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +4 -> A
+"class C implements a?.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500,2503]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +1 -> A
+"interface I extends a?.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499,2503]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +1 -> A
+"class C extends B implements a?.b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500,2503]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +1 -> A
+"class C implements a?.() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +2 -> A
+"interface I extends a?.() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +1 -> A
+"class C extends B implements a?.() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"{\" but found \"?.\"" +2 -> A
+"class C implements +1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected +" +1 -> A
+"interface I extends +1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected +" +1 -> A
+"class C extends B implements +1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected +" +1 -> A
+"class C implements -1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends -1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements -1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements -a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected number but found \"a\"" -> A
+"interface I extends -a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected number but found \"a\"" -> A
+"class C extends B implements -a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected number but found \"a\"" -> A
+"class C implements !A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected !" +3 -> A
+"interface I extends !A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected !" +2 -> A
+"class C extends B implements !A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected !" +3 -> A
+"class C implements ~A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ~" +1 -> A
+"interface I extends ~A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ~" +1 -> A
+"class C extends B implements ~A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ~" +1 -> A
+"class C implements typeof a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends typeof a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements typeof a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements typeof a() {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"interface I extends typeof a() {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C extends B implements typeof a() {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C implements void A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 -> A
+"interface I extends void A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +1 -> A
+"class C extends B implements void A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 -> A
+"class C implements delete A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"interface I extends delete A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C extends B implements delete A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C implements await A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 -> A
+"interface I extends await A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +1 -> A
+"class C extends B implements await A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 -> A
+"class C implements yield A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 ==
+"interface I extends yield A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +1 ==
+"class C extends B implements yield A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"A\"" +2 ==
+"class C implements <B>a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"interface I extends <B>a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"class C extends B implements <B>a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"a\"" +1 -> A
+"class C implements <B>[] {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"[\"" +1 -> A
+"interface I extends <B>[] {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"[\"" +1 -> A
+"class C extends B implements <B>[] {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"[\"" +1 -> A
+"class C implements a as B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"as\"" +1 ==
+"interface I extends a as B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"as\"" +1 ==
+"class C extends B implements a as B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"as\"" +1 ==
+"class C implements a satisfies B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"satisfies\"" +1 ==
+"interface I extends a satisfies B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"satisfies\"" +1 ==
+"class C extends B implements a satisfies B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"satisfies\"" +1 ==
+"class C implements a + b {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"+\"" +1 ==
+"interface I extends a + b {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"+\"" +1 ==
+"class C extends B implements a + b {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"+\"" +1 ==
+"class C implements a, b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends a, b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C extends B implements a, b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C implements a = b {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=\"" +1 ==
+"interface I extends a = b {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=\"" +1 ==
+"class C extends B implements a = b {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=\"" +1 ==
+"class C implements a ? b : c {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"?\"" +1 ==
+"interface I extends a ? b : c {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"?\"" +1 ==
+"class C extends B implements a ? b : c {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"?\"" +1 ==
+"class C implements () => 1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends () => 1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements () => 1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements async () => 1 {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +4 ==
+"interface I extends async () => 1 {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 ==
+"class C extends B implements async () => 1 {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +4 ==
+"class C implements a => a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=>\"" +1 ==
+"interface I extends a => a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=>\"" +1 ==
+"class C extends B implements a => a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"=>\"" +1 ==
+"class C implements A | B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A | B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements A | B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A & B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A & B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements A & B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A[] {}"
+    tsc: parse.ts[TS1011] parse.tsx[TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A[] {}"
+    tsc: parse.ts[TS1011] parse.tsx[TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements A[] {}"
+    tsc: parse.ts[TS1011] parse.tsx[TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A[B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends A[B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements A[B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements new () => A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends new () => A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements new () => A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements keyof A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends keyof A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements keyof A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements readonly A[] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends readonly A[] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements readonly A[] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements { a: A } {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends { a: A } {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements { a: A } {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements [A, B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends [A, B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements [A, B] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements typeof A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends typeof A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements typeof A {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements typeof a.b {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends typeof a.b {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements typeof a.b {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements typeof a<B> {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends typeof a<B> {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements typeof a<B> {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements unique symbol {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends unique symbol {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements unique symbol {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements `a${A}` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends `a${A}` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements `a${A}` {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements A extends B ? C : D {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A extends B ? C : D {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements A extends B ? C : D {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements infer A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends infer A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements infer A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements a is B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends a is B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements a is B {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements asserts a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"a\"" +2 ==
+"interface I extends asserts a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"a\"" +1 ==
+"class C extends B implements asserts a {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"a\"" +2 ==
+"class C implements null {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends null {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"class C extends B implements null {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C implements undefined {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2749]
+    t.ts.plain: A ==
+"interface I extends undefined {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2749]
+    t.ts.plain: A ==
+"class C extends B implements undefined {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2749]
+    t.ts.plain: A ==
+"class C implements void {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends void {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements void {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements any {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2864]
+    t.ts.plain: A ==
+"interface I extends any {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2840]
+    t.ts.plain: A ==
+"class C extends B implements any {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2864]
+    t.ts.plain: A ==
+"class C implements if {}"
+    tsc: parse.ts[TS1109,TS1005,TS1005] parse.tsx[TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected if" +2 -> R "Unexpected {"
+"interface I extends if {}"
+    tsc: parse.ts[TS1109,TS1005,TS1005] parse.tsx[TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected if" +1 ==
+"class C extends B implements if {}"
+    tsc: parse.ts[TS1109,TS1005,TS1005] parse.tsx[TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected if" +2 -> R "Unexpected {"
+"class C implements class {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected class" +2 -> R "Unexpected {"
+"interface I extends class {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected class" +1 ==
+"class C extends B implements class {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected class" +2 -> R "Unexpected {"
+"class C implements function {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected function" +2 -> R "Unexpected {"
+"interface I extends function {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected function" +1 -> R "Unexpected {"
+"class C extends B implements function {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected function" +2 -> R "Unexpected {"
+"class C implements in {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected in" +2 -> R "Unexpected {"
+"interface I extends in {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected in" +1 ==
+"class C extends B implements in {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected in" +2 -> R "Unexpected {"
+"class C implements #a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected #a" +2 -> R "Unexpected {"
+"interface I extends #a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected #a" +1 ==
+"class C extends B implements #a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected #a" +2 -> R "Unexpected {"
+"class C implements a.#b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected identifier but found \"#b\"" +2 -> A
+"interface I extends a.#b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected identifier but found \"#b\"" +2 -> A
+"class C extends B implements a.#b {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected identifier but found \"#b\"" +2 -> A
+"class C implements A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"interface I extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"class C extends B implements A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"class C implements A.<B> {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"<\"" +3 -> A
+"interface I extends A.<B> {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"<\"" +2 -> A
+"class C extends B implements A.<B> {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"<\"" +3 -> A
+"class C implements a<B>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"interface I extends a<B>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C extends B implements a<B>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"{\" but found \"(\"" +1 -> A
+"class C implements a<B>.c {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends a<B>.c {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends B implements a<B>.c {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements a<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends a<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C extends B implements a<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C implements A<B,> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"interface I extends A<B,> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"class C extends B implements A<B,> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"class C implements new.target {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +3 -> A
+"interface I extends new.target {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +3 -> A
+"class C extends B implements new.target {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: R "Expected \"(\" but found \".\"" +3 -> A
+"class C implements a++ {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"++\"" +2 ==
+"interface I extends a++ {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"++\"" +1 ==
+"class C extends B implements a++ {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"++\"" +2 ==
+"class C implements ++a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ++" +1 -> A
+"interface I extends ++a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ++" +1 -> A
+"class C extends B implements ++a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ++" +1 -> A
+"class C implements a\n<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"<\"" +3 -> A
+"interface I extends a\n<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"<\"" +1 -> A
+"class C extends B implements a\n<B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"<\"" +3 -> A
+"class C implements A\n, B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends A\n, B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C extends B implements A\n, B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends A extends B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1172] chk.tsx[TS1172] oth[2304]
+    t.ts.plain: R "Expected \"?\" but found \"{\"" +2 -> A
+"interface I extends A implements B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1176] chk.tsx[TS1176] oth[2304]
+    t.ts.plain: A ==
+"interface I implements A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1176] chk.tsx[TS1176] oth[]
+    t.ts.plain: A ==
+"interface I implements A extends B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1176] chk.tsx[TS1176] oth[2304]
+    t.ts.plain: R "Expected \"?\" but found \"{\"" +2 -> A
+"interface I implements A implements B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1176] chk.tsx[TS1176] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"implements\"" +1 -> A
+"interface I extends A, B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I extends A, {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found end of file" -> A
+"interface I extends {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097] chk.tsx[TS1097] oth[]
+    t.ts.plain: R "Expected \"{\" but found end of file" -> A
+"interface I extends {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"interface I extends A, {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2499]
+    t.ts.plain: A ==
+"interface I extends {a: 1} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2499]
+    t.ts.plain: A ==
+"interface I implements {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1176] chk.tsx[TS1176] oth[]
+    t.ts.plain: A ==
+"interface I extends A, B, {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found end of file" -> A
+"interface I extends\n{}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097] chk.tsx[TS1097] oth[]
+    t.ts.plain: R "Expected \"{\" but found end of file" -> A
+"interface I extends A {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C implements A implements B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1175] chk.tsx[TS1175] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"implements\"" +1 ==
+"class C implements A extends B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1173] chk.tsx[TS1173] oth[2304]
+    t.ts.plain: R "Expected \"?\" but found \"{\"" +2 ==
+"class C extends A extends B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1172] chk.tsx[TS1172] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"extends\"" +1 ==
+"class C implements {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"class C implements A, {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found end of file" ==
+"class C implements {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097] chk.tsx[TS1097] oth[]
+    t.ts.plain: R "Expected \"{\" but found end of file" ==
+"class C implements A, {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2500]
+    t.ts.plain: A ==
+"class C extends A, B {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1174] chk.tsx[TS1174] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \",\"" +1 ==
+"class C extends {} {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2507]
+    t.ts.plain: A ==
+"class C implements {}\n{}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: A ==
+"interface I extends A, {}\nfoo()"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009] chk.tsx[TS1009] oth[2304]
+    t.ts.plain: R "Expected \"{\" but found \"foo\"" +1 -> A
+"interface I extends A extends B ? C : D {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (A extends B ? C : D) {}"
+    tsc: parse.ts[TS1005,TS1005,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A extends B ? C : D {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

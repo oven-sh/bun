@@ -1,0 +1,675 @@
+"function f(public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"type X = (public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"function f(private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"type X = (private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"function f(protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"type X = (protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"function f(readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"type X = (readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 -> A
+"type X = { m(readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"function f(override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"type X = (override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 -> A
+"function f(public public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (public public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(public public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(public private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = (public private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = { m(public private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +1 -> A
+"function f(public protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = (public protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = { m(public protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +1 -> A
+"function f(public readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (public readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(public readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(public override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (public override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(public override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(private public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (private public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(private public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(private private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = (private private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = { m(private private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +1 -> A
+"function f(private protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = (private protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = { m(private protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +1 -> A
+"function f(private readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (private readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(private readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(private override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (private override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(private override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(protected public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (protected public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(protected public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(protected private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = (protected private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = { m(protected private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +1 -> A
+"function f(protected protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = (protected protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = { m(protected protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +1 -> A
+"function f(protected readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (protected readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(protected readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(protected override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (protected override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(protected override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(readonly public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (readonly public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(readonly private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = (readonly private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +1 -> A
+"function f(readonly protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = (readonly protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +1 -> A
+"function f(readonly readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (readonly readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 -> A
+"type X = { m(readonly readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(readonly override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (readonly override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(override public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (override public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(override public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(override private a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = (override private a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +2 -> A
+"type X = { m(override private a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"private\"" +1 -> A
+"function f(override protected a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = (override protected a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +2 -> A
+"type X = { m(override protected a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"protected\"" +1 -> A
+"function f(override readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (override readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(override readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(override override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (override override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(override override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(public public public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (public public public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(public public public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(public public readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (public public readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(public public readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(public public override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (public public override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(public public override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(public readonly public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (public readonly public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(public readonly public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(public readonly readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (public readonly readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(public readonly readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(public readonly override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (public readonly override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(public readonly override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(public override public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (public override public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(public override public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1028] chk.tsx[TS1028] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(public override readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (public override readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(public override readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(public override override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (public override override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(public override override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(readonly public public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (readonly public public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(readonly public public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(readonly public readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (readonly public readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(readonly public readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(readonly public override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (readonly public override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(readonly public override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(readonly readonly public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (readonly readonly public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly readonly public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(readonly readonly readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (readonly readonly readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 -> A
+"type X = { m(readonly readonly readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(readonly readonly override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (readonly readonly override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 -> A
+"type X = { m(readonly readonly override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(readonly override public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (readonly override public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = { m(readonly override public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(readonly override readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (readonly override readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = { m(readonly override readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(readonly override override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (readonly override override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = { m(readonly override override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(override public public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (override public public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(override public public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(override public readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (override public readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(override public readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(override public override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +2 -> A
+"type X = (override public override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +3 -> A
+"type X = { m(override public override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"public\"" +1 -> A
+"function f(override readonly public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (override readonly public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(override readonly public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(override readonly readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (override readonly readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(override readonly readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(override readonly override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +2 -> A
+"type X = (override readonly override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +3 -> A
+"type X = { m(override readonly override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"readonly\"" +1 -> A
+"function f(override override public a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (override override public a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(override override public a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(override override readonly a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (override override readonly a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(override override readonly a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(override override override a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +2 -> A
+"type X = (override override override a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +3 -> A
+"type X = { m(override override override a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"override\"" +1 -> A
+"function f(static a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (static a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(static a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(declare a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (declare a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(declare a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(abstract a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (abstract a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(abstract a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(async a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (async a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(async a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(accessor a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (accessor a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(accessor a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(export a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Expected identifier but found \"export\"" +2 ==
+"type X = (export a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Unexpected export" +2 -> R "Expected \")\" but found \"a\"" +3
+"type X = { m(export a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304]
+    t.ts.plain: R "Unexpected export" ==
+"function f(const a: A) {}"
+    tsc: parse.ts[TS1359,TS1005] parse.tsx[TS1359,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"const\"" +2 ==
+"type X = (const a: A) => R;"
+    tsc: parse.ts[TS1005,TS1434,TS1128,TS1128] parse.tsx[TS1005,TS1434,TS1128,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(const a: A): R };"
+    tsc: parse.ts[TS1359,TS1005] parse.tsx[TS1359,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected const" ==
+"function f(in a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Expected identifier but found \"in\"" +2 ==
+"type X = (in a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Unexpected in" +2 -> R "Expected \")\" but found \"a\"" +3
+"type X = { m(in a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Unexpected in" ==
+"function f(out a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"type X = (out a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +3 ==
+"type X = { m(out a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +1 ==
+"function f(public static a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"static\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public static a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"static\"" +2 ==
+"type X = { m(public static a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"static\"" +1 -> R "Expected \")\" but found \"a\"" +1
+"function f(public declare a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"declare\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public declare a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"declare\"" +2 ==
+"type X = { m(public declare a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"declare\"" +1 -> R "Expected \")\" but found \"a\"" +1
+"function f(public abstract a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"abstract\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public abstract a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"abstract\"" +2 ==
+"type X = { m(public abstract a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1242] chk.tsx[TS1242] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"abstract\"" +1 -> R "Expected \")\" but found \"a\"" +1
+"function f(public async a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"async\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public async a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"async\"" +2 ==
+"type X = { m(public async a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"async\"" +1 -> R "Expected \")\" but found \"a\"" +1
+"function f(public accessor a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"accessor\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public accessor a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"accessor\"" +2 ==
+"type X = { m(public accessor a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1275] chk.tsx[TS1275] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"accessor\"" +1 -> R "Expected \")\" but found \"a\"" +1
+"function f(public export a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"export\"" +2 ==
+"type X = (public export a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"export\"" +2 ==
+"type X = { m(public export a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1090] chk.tsx[TS1090] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"export\"" +1 ==
+"function f(public const a: A) {}"
+    tsc: parse.ts[TS1359,TS1005] parse.tsx[TS1359,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"const\"" +2 ==
+"type X = (public const a: A) => R;"
+    tsc: parse.ts[TS1005,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"const\"" +2 ==
+"type X = { m(public const a: A): R };"
+    tsc: parse.ts[TS1359,TS1005] parse.tsx[TS1359,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"const\"" +1 ==
+"function f(public in a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"in\"" +2 ==
+"type X = (public in a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"in\"" +2 ==
+"type X = { m(public in a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"in\"" +1 ==
+"function f(public out a: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"out\"" +2 -> R "Expected \")\" but found \"a\"" +1
+"type X = (public out a: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"out\"" +2 ==
+"type X = { m(public out a: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"out\"" +1 -> R "Expected \")\" but found \"a\"" +1

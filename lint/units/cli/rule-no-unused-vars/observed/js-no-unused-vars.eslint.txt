@@ -1,0 +1,254 @@
+[js] "function g(o) { for (var x in o) { ; return; } } g();"
+    1:26 'x' is assigned a value but never used.
+[js] "function g(o) { for (var x in o) { return; ; } } g();"
+[js] "function g(o) { for (var x in o) { 'use strict'; return; } } g();"
+    1:26 'x' is assigned a value but never used.
+[js] "function g(o) { for (var x in o) { /*! kept */ return; } } g();"
+[js] "function f(b) { for (const a of b) { { return } } } f();"
+    1:28 'a' is assigned a value but never used.
+[js] "function f(b) { for (const a of b) { return; ; } } f();"
+[js] "function f(b) { for (const [a] of b) return; } f();"
+    1:29 'a' is assigned a value but never used.
+[js] "function f(b) { var a; for ([a] of b) return; } f();"
+    1:30 'a' is assigned a value but never used.
+[js] "function f(b) { var a; for (a.x of b) return; } f();"
+[js] "function f(b) { var a; for ((a) of b) return; } f();"
+[js] "function foo(o) { for (var k in foo) { return; } }"
+    1:14 'o' is defined but never used.
+[js] "var a, b; for (a of b);"
+    1:16 'a' is assigned a value but never used.
+[js] "function f(a, b = 1) {} f();"
+    1:15 'b' is assigned a value but never used.
+[js] "function f(a, {b}) {} f();"
+    1:12 'a' is defined but never used.
+    1:16 'b' is defined but never used.
+[js] "function f(a, b) { b = 1 } f();"
+    1:20 'b' is assigned a value but never used.
+[js] "function f(a, b) { b++ } f();"
+    1:20 'b' is assigned a value but never used.
+[js] "function f(a, b, c) { return b; } f();"
+    1:18 'c' is defined but never used.
+[js] "function f(a, [b], c) { return c; } f();"
+    1:16 'b' is defined but never used.
+[js] "(function(a, b) { return arguments; })();"
+    1:11 'a' is defined but never used.
+    1:14 'b' is defined but never used.
+[js] "function f(a, a2) { a2; } f();"
+[js] "const f = (a, b) => b; f();"
+[js] "const f = (a, ...b) => 1; f();"
+    1:12 'a' is defined but never used.
+    1:18 'b' is defined but never used.
+[js] "({ set x(v) {}, m(w) {} });"
+    1:19 'w' is defined but never used.
+[js] "class A { set x(v) {} static set y({ a }) {} m(w) {} } new A();"
+    1:48 'w' is defined but never used.
+[js] "function f(a) { var a; } f();"
+    1:12 'a' is defined but never used.
+[js] "function f(a) { function a() {} } f();"
+    1:12 'a' is defined but never used.
+[js] "var a; a = function() { a(); };"
+    1:8 'a' is assigned a value but never used.
+[js] "let a; a ??= 1;"
+[js] "let a; a ||= 1, 0;"
+[js] "var i; for (i = 0;;) {}"
+    1:13 'i' is assigned a value but never used.
+[js] "for (var i = 0; i < 1; i++) {}"
+[js] "var x, c; while (c) { x = x + 1 }"
+[js] "var x, c; do x = x + 1; while (c)"
+[js] "var x; for (;;) { x = x + 1 }"
+[js] "var x; for (x = x + 1;;) {}"
+[js] "let a = 1; { a = a + 1; }"
+    1:14 'a' is assigned a value but never used.
+[js] "let a; function f() { a = a + 1 } f();"
+[js] "let a, b; a = (b = a); "
+    1:11 'a' is assigned a value but never used.
+    1:16 'b' is assigned a value but never used.
+[js] "var a = 1; a = a || 2;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = (a, 2);"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = b(a);"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = b(() => a);"
+[js] "var a = 1; a = (() => a)();"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = [() => a];"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = { m() { return a } };"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = class { m() { return a } };"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = class { static { function g() { return a } } };"
+    1:12 'a' is assigned a value but never used.
+    1:42 'g' is defined but never used.
+[js] "var a = 1; a = class { static { g(function() { return a }) } };"
+[js] "var a = 1; a = class { static x = () => a; };"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = class { [(() => a)()]() {} };"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = function() { function g() { return a } };"
+    1:38 'g' is defined but never used.
+[js] "var a = 1; a = function() { return () => a };"
+[js] "var a = 1; a = function() { var g = () => a; };"
+    1:33 'g' is assigned a value but never used.
+[js] "var a = 1; a = () => () => a;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = function(x = () => a) {};"
+    1:12 'a' is assigned a value but never used.
+    1:25 'x' is assigned a value but never used.
+[js] "var a = 1; a = function({ x = () => a }) {};"
+    1:12 'a' is assigned a value but never used.
+    1:27 'x' is assigned a value but never used.
+[js] "var a = 1; a = `${() => a}`;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = t`${() => a}`;"
+[js] "var a = 1; a = (() => a)`x`;"
+[js] "var a = 1; a = new (function() { a })();"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = new B(function() { a });"
+[js] "function* g() { var a = 1; a = yield () => a; } g();"
+[js] "async function g() { var a = 1; a = await (() => a); } g();"
+    1:33 'a' is assigned a value but never used.
+[js] "var a = 1; a = (b = () => a);"
+[js] "var a = 1; a = ([b = () => a] = c);"
+[js] "var a = 1; a = (() => a, 1);"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = (1, () => a);"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = (1, (2, () => a));"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = b?.(() => a);"
+[js] "var a = 1; a = b ? () => a : 0;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = a ? a : a;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; a = a++;"
+    1:16 'a' is assigned a value but never used.
+[js] "var a = 1; a += a++;"
+    1:17 'a' is assigned a value but never used.
+[js] "var a = 1; a = 1, a;"
+[js] "var a = 1; a = 1; a = a + 1; a;"
+[js] "var a = 1; (a = a + 1);"
+    1:13 'a' is assigned a value but never used.
+[js] "var a = 1; a = a + 1, a = a + 2;"
+    1:23 'a' is assigned a value but never used.
+[js] "var a = 1; b = a = a + 1;"
+[js] "var a = 1; if (c) a = a + 1;"
+    1:19 'a' is assigned a value but never used.
+[js] "var a = 1; l: a = a + 1;"
+    1:15 'a' is assigned a value but never used.
+[js] "var a = 1; (() => a = a + 1)();"
+[js] "var a = 1; (() => { a = a + 1 })();"
+[js] "var a = 1; a++ ? 1 : 2;"
+[js] "var a = 1; +a++;"
+[js] "var a = 1; a--;"
+    1:12 'a' is assigned a value but never used.
+[js] "var a = 1; --a, ++a;"
+    1:19 'a' is assigned a value but never used.
+[js] "var a = 1; void (a += 1);"
+[js] "const {a, ...rest} = o; rest;"
+    1:8 'a' is assigned a value but never used.
+[js] "var a; ({ a } = obj);"
+    1:11 'a' is assigned a value but never used.
+[js] "var a; [a] = arr;"
+    1:9 'a' is assigned a value but never used.
+[js] "var a; ({ a = 1 } = obj)"
+    1:11 'a' is assigned a value but never used.
+[js] "var a; [a = a] = arr;"
+[js] "var a; ({ b: a = 1 } = obj), a;"
+[js] "var f = function g() { g() }; f()"
+[js] "var A = class B { m() { B } }; A;"
+[js] "class A { m() { return new A(); } }"
+    1:7 'A' is defined but never used.
+[js] "class A { static x = A; } "
+    1:7 'A' is defined but never used.
+[js] "(class A {});"
+[js] "function f() { return f2; function f2() {} } f();"
+[js] "const f = function() { f(); }, g = () => g();"
+    1:7 'f' is assigned a value but never used.
+    1:32 'g' is assigned a value but never used.
+[js] "var {f} = function() { f(); };"
+    1:6 'f' is assigned a value but never used.
+[js] "{ function f() {} } f();"
+    1:12 'f' is defined but never used.
+[js] "if (x) { function f() {} }"
+    1:19 'f' is defined but never used.
+[js] "try {} catch {}"
+[js] "try {} catch ({ message }) {}"
+    1:17 'message' is defined but never used.
+[js] "try {} catch ([a, b]) { b }"
+    1:16 'a' is defined but never used.
+[js] "try {} catch (e) { e = 1 }"
+    1:20 'e' is assigned a value but never used.
+[js] "import a from \"a\"; export { a }"
+[js] "var a; export { a as b };"
+[js] "export var a, { b, c: [d] } = x;"
+[js] "var a = 1; export default a;"
+[js] "export default function f() { f() }"
+[js] "export default class A {}"
+[js] "export default (function f() {});"
+[js] "function f() {} export { f as default };"
+[js] "import * as ns from \"a\"; ns.x;"
+[js] "import a, { b as c } from \"a\"; c;"
+    1:8 'a' is defined but never used.
+[js] "export * as ns from \"a\"; import { ns } from \"b\";"
+    1:35 'ns' is defined but never used.
+[js] "var a; typeof a;"
+[js] "var a; delete a.b;"
+[js] "var a; a;"
+[js] "var a; a?.b;"
+[js] "var a; ({ a });"
+[js] "var a; ({ [a]: 1 });"
+[js] "var a; ({ a: 1 });"
+    1:5 'a' is defined but never used.
+[js] "var a; b.a;"
+    1:5 'a' is defined but never used.
+[js] "a: for (;;) { break a; } var a;"
+    1:30 'a' is defined but never used.
+[js] "var a; a = 1; a = 2; var b = a;"
+    1:26 'b' is assigned a value but never used.
+[js] "using r = get(); "
+    1:7 'r' is assigned a value but never used.
+[js] "await using r = get();"
+    1:13 'r' is assigned a value but never used.
+[js] "var \\u0061; "
+    1:5 'a' is defined but never used.
+[js] "let a; a = 1; function f() { a = 2 } f();"
+    1:8 'a' is assigned a value but never used.
+[js] "let a; function f() { a = 2 } f();"
+    1:5 'a' is assigned a value but never used.
+[js] "var undefined;"
+    1:5 'undefined' is defined but never used.
+[js] "var arguments2; (function() { arguments; })();"
+    1:5 'arguments2' is defined but never used.
+[jsx] "import React from \"react\"; export default <div/>;"
+    1:8 'React' is defined but never used.
+[jsx] "import Foo from \"foo\"; export default <Foo/>;"
+[jsx] "import Foo from \"foo\"; export default <Foo></Foo>;"
+[jsx] "import foo from \"foo\"; export default <foo/>;"
+    1:8 'foo' is defined but never used.
+[jsx] "import foo from \"foo\"; export default <foo.bar/>;"
+[jsx] "import _x from \"x\"; import $y from \"y\"; export default <_x><$y/></_x>;"
+[jsx] "import a from \"a\"; export default <a:b/>;"
+    1:8 'a' is defined but never used.
+[jsx] "import a from \"a\"; export default <div a={a}/>;"
+[jsx] "import a from \"a\"; export default <div {...a}/>;"
+[jsx] "import a from \"a\"; export default <div>{a}</div>;"
+[jsx] "import a from \"a\"; export default <div a:b=\"1\"/>;"
+    1:8 'a' is defined but never used.
+[jsx] "import a from \"a\"; export default <></>;"
+    1:8 'a' is defined but never used.
+[jsx] "class C { m() { return <this.x/> } } export default C;"
+[cjs] "var a = 1; with (o) { a }"
+[cjs] "with (a) var foo;"
+    1:14 'foo' is defined but never used.
+[cjs] "function f(arguments) {} f();"
+    1:12 'arguments' is defined but never used.
+[cjs] "function f() { var arguments; } f();"
+    1:20 'arguments' is defined but never used.
+[cjs] "var a; return;"
+    1:5 'a' is defined but never used.
+[cjs] "x = 1; var y = x;"
+    1:12 'y' is assigned a value but never used.
+[cjs] "function f() { 'use strict'; var a; } f();"
+    1:34 'a' is defined but never used.

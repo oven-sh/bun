@@ -1,0 +1,18 @@
+class C { @d m(): (a: A) =>  { return x; } }
+function f(): (a: A) =>  { return x; }
+class C { @d m(): (a = 1) =>  { return x; } }
+function f(): (a = 1) =>  { return x; }
+function f(): <T>() =>  { return x; }
+function f(): <out>() =>  { return x; }
+function f(): new (a: A) =>  { return x; }
+let f = (a): [a: ?] => a;
+let f = (a): [a: A] => a;
+f<[a: ?]>(x);
+f<{ #a:  }>(x);
+let f = (a): { #a:  } => a;
+let f = (a): { a:  } => a;
+f<{ a:  }>(x);
+f<<out>() => >(x);
+f<<T>() => >(x);
+let f = (a): <out>() =>  => a;
+let f = (a): <T>() =>  => a;

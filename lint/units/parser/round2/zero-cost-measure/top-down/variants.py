@@ -7,7 +7,9 @@ Build one with paren-expr-seam/run.py (OUT=/tmp/zcm-td/seam/out RELAX=1), link i
            The five benchmark groups never hold a side table, so what they count is what a parse pays with the tests gone.
   nolintbt nolint, and the three lexer backtrackers as they were at the base (no read of the log, no truncate).
   f1       head with the test of a lint parse at "(" gone: the check of the stack bound in parse_expr_common is the seam.
-           A lint parse holds a bound that no frame passes; the cold side of the check reads its real bound from the side table."""
+           A lint parse holds a bound that no frame passes; the cold side of the check reads its real bound from the side table.
+  vold     head, and a type, an object type and a list of type arguments are read by the grammar of the base first where
+           the sink is Discard; where that fails, the lexer and the log go back and the grammar of the head reads."""
 import os, re, shutil, sys
 
 SRC = '/workspace/wt/parser/src/js_parser'
@@ -227,12 +229,122 @@ def f1(t):
         t.write(f, s2); n += k + k2
     return {'stack checks': n}
 
+BASE_PARSE = '/tmp/zcm-td/base-src/src/js_parser/parse/'
+
+def vold(t):
+    """The type grammar of the base (e3566be889) is the path of the Discard sink again; the grammar of the head reads a
+    type only where the one of the base failed, from where that one started (ReadMark: lexer and log)."""
+    # 1. the sink of the base, Discard only
+    sink = open(BASE_PARSE + 'type_sink.rs').read()
+    cut = sink.index('pub(crate) struct DecoratorMetadata;')
+    cut = sink.rindex('\n}\n', 0, cut) + 3
+    t.write('parse/old_sink.rs', sink[:cut])
+    # 2. the grammar of the base, every function of it named old_*
+    g = open(BASE_PARSE + 'parse_skip_typescript.rs').read()
+    g = g.replace('use crate::parse::type_sink::{\n    DecoratorMetadata, Discard, Operand, TypeKeyword, TypeLiteral, TypeSink,\n};', 'use crate::parse::old_sink::{Discard, Operand, TypeKeyword, TypeLiteral, TypeSink};')
+    assert 'old_sink' in g
+    def drop_fn(text, name):
+        i = text.index('pub(crate) fn ' + name + '(')
+        a = text.rindex('\n\n', 0, i) + 1
+        b = text.index('\n    }\n', i) + len('\n    }\n')
+        return text[:a] + text[b:]
+    for name in ('skip_typescript_return_type_with_metadata', 'skip_type_script_type_with_metadata'):
+        g = drop_fn(g, name)
+    names = sorted(set(re.findall(r'\bfn (\w+)', g)), key=len, reverse=True)
+    for n in names:
+        g = re.sub(r'(?<![\w.])(fn |self\s*\.|Self::|p\.|\|p\| p\.)' + n + r'\b', lambda m: m.group(1) + 'old_' + n, g)
+    g = re.sub(r'\bSelf::(skip_|try_skip_|is_type_script_|lexer_backtracker_)', r'Self::old_\1', g)
+    g = g.replace('#![warn(unused_must_use)]\n', '')
+    g = g.replace('pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;', 'type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;')
+    t.write('parse/old_skip.rs', g)
+    t.rep('parse/mod.rs', 'pub(crate) mod parse_skip_typescript;', 'pub(crate) mod old_sink;\npub(crate) mod old_skip;\npub(crate) mod parse_skip_typescript;')
+    f = 'parse/parse_skip_typescript.rs'
+    # 3. a whole type
+    t.rep(f, """        debug_assert_eq!(level, Level::Lowest);
+        self.parse_type::<S>(opts, out)
+    }
+""", """        debug_assert_eq!(level, Level::Lowest);
+        if !S::BUILDS && core::mem::size_of::<S::Out>() == 0 {
+            let mark = self.read_mark();
+            return match self.old_skip_type_script_type_with_opts::<crate::parse::old_sink::Discard>(level, opts, &mut ()) {
+                Ok(()) => Ok(()),
+                Err(err) => self.skip_type_after_old_failed(&mark, err, opts),
+            };
+        }
+        self.parse_type::<S>(opts, out)
+    }
+
+    /// The grammar of the base read no type at `mark`: the one of the reference reads there, with the messages of its own.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error, opts: SkipTypeOptionsBitset) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }
+        self.rewind_to_read_mark(mark);
+        self.parse_type::<Discard>(opts, &mut ())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn skip_object_type_after_old_failed(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<(), Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }
+        self.rewind_to_read_mark(mark);
+        self.new_skip_type_script_object_type()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn skip_type_arguments_after_old_failed<const IS_INSIDE_JSX_ELEMENT: bool, const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool>(&mut self, mark: &ReadMark<'a>, err: Error) -> Result<bool, Error> {
+        if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+            return Err(err);
+        }
+        self.rewind_to_read_mark(mark);
+        let (has_type_arguments, ()) = self.skip_type_script_type_arguments_in::<Discard, IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>()?;
+        Ok(has_type_arguments)
+    }
+""")
+    # 4. an object type
+    t.rep(f, """    pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+        self.mark_type_script_only();
+""", """    pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+        let mark = self.read_mark();
+        match self.old_skip_type_script_object_type() {
+            Ok(()) => Ok(()),
+            Err(err) => self.skip_object_type_after_old_failed(&mark, err),
+        }
+    }
+
+    fn new_skip_type_script_object_type(&mut self) -> Result<(), Error> {
+        self.mark_type_script_only();
+""")
+    # 5. type arguments
+    t.rep(f, """    ) -> Result<bool, Error> {
+        let (has_type_arguments, ()) = self.skip_type_script_type_arguments_in::<
+            Discard,
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+        >()?;
+        Ok(has_type_arguments)
+    }
+""", """    ) -> Result<bool, Error> {
+        let mark = self.read_mark();
+        match self.old_skip_type_script_type_arguments::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>() {
+            Ok(has_type_arguments) => Ok(has_type_arguments),
+            Err(err) => self.skip_type_arguments_after_old_failed::<IS_INSIDE_JSX_ELEMENT, IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION>(&mark, err),
+        }
+    }
+""")
+    return {'old fns': len(names)}
+
 def v0(t): return {}
 def v_nolint(t): return nolint(t)
 def v_nolintbt(t):
     c = nolint(t); bt(t); return c
 
-V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1}
+V = {'v0': v0, 'nolint': v_nolint, 'nolintbt': v_nolintbt, 'f1': f1, 'vold': vold}
 if __name__ == '__main__':
     if '--list' in sys.argv: print(' '.join(V)); sys.exit(0)
     for tag in sys.argv[1:]:

@@ -1,0 +1,71 @@
+The prototype of the research "sweep-tool", pass 1b (top-down), as run on 2026-10-01 against 3110ce85cf. H is test/cli/lint/conformance.
+Nothing here is committed to the worktree: these files ran in scratch clones of ../../scratch.sh (/tmp/st1b/repo as committed,
+/tmp/st1b/glue with the binding of ../../corpus-glue/bottom-up laid over it), with the installed bun 1.4.3-canary.1+367d939d9 and,
+where it says so, the debug build of the worktree (1.4.3-debug+3110ce85c) or the release build of /workspace/wt/parser (be1ebe529).
+The other pass (../bottom-up) made the same command with the same names of the options; what this pass has besides is marked (+).
+
+Files
+  sweep-tool.patch           over 3110ce85cf (git apply --check passes in the worktree): H/sweep.ts, H/runner/expectations.ts (--shard and
+                             --resume in the copy of the valued options), describe("sweep.ts") at the end of conformance.test.ts (four
+                             tests, five starts of the script), and the three check fixtures as new files
+  sweep.ts                   H/sweep.ts with the patch
+  sweep.over-corpus-glue.ts  H/sweep.ts of a tree with the binding of ../../corpus-glue/bottom-up and then lay.py --glue
+  lay.py                     the edits of sweep.ts and runner/expectations.ts as exact replacements: python3 lay.py <tree> [--glue];
+                             prettier --write H/sweep.ts after it. It stops where a text that it replaces is not there once.
+  apply.sh                   apply.sh <tree> [--glue]: the patch, or lay.py with the describe and the fixtures of the patch
+  replay-check-fixture.ts, empty-check-fixture.ts, wrong-check-fixture.ts   H/fixtures/: the modules of --check that the tests use
+  probes/verify-oracle-side.ts   every line "fail <name> line N: - <json>" of an output of --each against line N of the oracle file
+  probes/mutate-check.ts     a check that replays the oracle and changes it by the name of the instance: every form of a line
+                             (its first lines name the tree whose runner it imports)
+  probes/from-reports.ts     the nine reports of ../../lint-survey/bottom-up (debug build) -> a file of --resume
+  probes/epipe.ts, epipe2.ts console.log and writeSync(1) into a pipe whose reader goes away, or reads late
+  observed/                  what the runs below printed
+
+What the command does that sweep.ts of 3110ce85cf does not
+  --each                     stdout: one line for each instance of the selection, in the order of the names, nothing else
+                               pass <name>
+                               fail <name> line <n>: - <line of the oracle as JSON> + <line of the check as JSON>
+                               <outcome> <name> <reason>          (skip <name> <reason> for an instance that the reference does not run)
+                             stderr: "check ...", "resume ...", "instances N: pass a, fail b, skip c", "report ..."
+                             exit code 1 when an instance that runs does not pass; no list decides; a report only with --report
+  (+)                        the lines are written with writeSync(1): when the reader goes away (| head) no further instance is laid
+                             out or checked and the exit code is 1; console.log says nothing of a closed pipe and the sweep ran on
+  a directory                with or without "/" at its end
+  (+) a long list of names   the selectors that are no pattern and no directory are looked up: 7,027 names 36 s -> 5 s
+  --jobs                     default 4 (or the processors where they are fewer)
+  --shard <k>/<n>            every n-th instance of the selection in the order of the names
+  --resume <file>            JSON lines: a head (check, stamp, corpus), then an outcome for each instance as it is known
+  (+)                        the stamp of a module of --check holds the binary that runs the script as well
+  the tables                 by directory and in total, and by code: for each class the instances that ran and those of each outcome of
+                             the list outcomes of run.ts; report: directoryOutcomes, codes[TSn].outcomes
+  (+)                        the heads of the columns name the class ("E run  E fail  C run  C pass"); the counts of the report are in
+                             the order of the list outcomes
+
+What ran
+  bun H/sweep.ts --each --check <replay|empty|mutate> --no-files         14,915 lines each: pass 12,797 skip 2,118 (exit 0); pass 5,770
+                             fail 7,027 skip 2,118 (exit 1); pass 4,715 fail 6,330 skip 2,118 provisional 594 unavailable 587 crash 571
+                             (exit 1). Every line in one of the three forms, no control character, the longest 882 characters.
+  probes/verify-oracle-side.ts                                            3,488 of 3,488 (mutate) and 7,027 of 7,027 (empty) oracle sides
+                             are line N of the oracle file; 3,034 lines with two sides, none with equal sides
+  the same three with the binding of corpus-glue                          the same bytes
+  --shard k/3 --resume f, k = 1..3, then --resume f alone (mutate)        4,972 + 4,972 + 4,971 lines, sorted they are the lines of the one
+                             run; then 12,797 outcomes kept, nothing run, and the text and the report of a sweep in one run
+  sweep.ts of 3110ce85cf against the prototype, whole corpus (mutate)     every member of the report the same but seconds, text and the
+                             new directoryOutcomes; the text differs in the two tables only
+  24 command lines that run no instance (--round-trip, --no-run, --since, wrong options, files that are not there): the same stdout, exit
+                             code and first line of stderr as 3110ce85cf
+  17 command lines of selectors with the selection looked up against the selection of 3110ce85cf                the same
+  --each --bin /workspace/wt/parser/build/release/bun, 149 instances, twice (--jobs 4 and 3, selectors in another order): the same bytes;
+                             three shards with --resume and then the tables: observed/each-bin-release-head.txt
+  --each --bin <release> compiler | head -3                               three lines, the sweep ended after 4 s with the exit code 1, no
+                             directory left in /tmp (without the write through writeSync: the 6,282 instances run to the end)
+  a command that names a file of the run's temporary directory in what it says: two runs print the same bytes ("/.src/2dArrays.ts")
+  --resume of the outcomes of the debug build (probes/from-reports.ts)    observed/tables-of-the-debug-survey.txt: 9 s, no process
+  tests, in /tmp/st1b/glue, through /workspace/tools/lk, load of the machine 320 to 440:
+    USE_SYSTEM_BUN=1 bun test test/cli/lint/conformance.test.ts          109 pass, 0 fail (the four of sweep.ts 0.2 to 1.7 s)
+    debug build, -t "sweep.ts"                                            4 pass; 6.6 s, 49.7 s, 59.1 s, 90.0 s side by side
+    debug build with the leak check of CI, -t "sweep.ts"                  4 pass; 10.2 s, 41.1 s, 46.3 s, 67.0 s side by side
+    observed/test-first-prototype.txt, observed/test-with-selection-looked-up.txt (nine instances, timeouts 60 s and 120 s);
+    observed/test-final.txt where it is there: the describe of the patch (five instances, timeouts 120 s and 240 s under a debug build)
+  one start of the script under the debug build, processor time: --help 2.6 s, --no-run of one case 6.2 s, --each of nine instances 11.4 s
+Not run: anything on Windows (no such machine in the session); src/errno/windows_errno.rs:735 maps BROKEN_PIPE to EPIPE.

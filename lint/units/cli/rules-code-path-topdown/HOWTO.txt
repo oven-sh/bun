@@ -1,0 +1,40 @@
+RESEARCH "rules-code-path" (cli, round 2, pass 1b, top-down): getter-return, no-fallthrough, constructor-super and
+no-this-before-super. Scripts and data. Nothing here is in the tree (worktree clean at be1ebe5295).
+The unit with the other lens (pass 1a, bottom-up) is ../rules-code-path: its probe of the real tree and its lists are used here too.
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and the parser of typescript-eslint
+(/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both.
+
+model.cjs      The four rules on a tree of Bun's shape (../code-path-analysis/proto/bunshape.cjs, driver.cjs), written apart from
+               the model of ../rules-code-path: marks from above for getters and constructors, getter-return and no-fallthrough
+               live, the two constructor rules recorded per constructor of a derived class and replayed when its code path ends.
+               node model.cjs [--mode deferred|live] [--exact-globals] [--upstream] [--cases corpus.json] [--list cases.json]...
+                              [--files list.txt] [--show n] [--rules a,b]
+               stats: stateChecks / stateOtherSet compare the set that a rule keeps from the segment events with
+               CodePathState.currentSegments at every function exit and every SwitchCase exit.
+oracle.cjs     node oracle.cjs <rule[,rule]> <cases.json>   one JSON line per case with ESLint's reports (typescript-eslint's
+               parser for a case with `ext` ts/tsx).
+bun-side.cjs   /workspace/tools/lk node bun-side.cjs <out.jsonl> <cases.json>...   what build/debug/bun-debug --lint of the
+               worktree prints for each case today: which cases Bun's parser rejects, which of the eleven rules report.
+cases/         upstream-<rule>.raw.json (extract.cjs of ESLint's own tests: 56, 64, 82, 63 cases with default options),
+               edge-constructor-super.json = edge-no-this-before-super.json (515: 84 forms of superclass x 3 bodies, what is a
+               constructor, where `super()` stands), replay-*.json (27: 5 written, 22 from the fuzz, on which the rules
+               without the replay answer otherwise), ts-constructor-super.json = ts-no-this-before-super.json (74),
+               edge-no-fallthrough.json (201: 46 comment texts x 2 places, where a comment stands, blank lines, reachability),
+               ts-no-fallthrough.json (22), ts-getter-return.json (71). In the form that ../round2-oracle/proto-1b/regen.cjs reads.
+answers/       oracle.cjs over those lists; answers-bun-side.be1ebe5295.jsonl is bun-side.cjs over all of them.
+
+Results (2026-10-01):
+  model.cjs, deferred: ESLint's own tests of the four rules 265/265 (135 reports); every JavaScript case of ESLint's rule
+  tests (/tmp/cpa-1b/corpus.json) 25,140/25,140 (785 reports, 24 rejected); 2,922 real files the same (75 reports); fuzz of
+  ../rules-code-path/fuzz.cjs: 5,585 + 18,602 + 7,329 + 7,440 the same; 20,000 generated bodies 11,897/11,897; the edge lists
+  484/484 and 199/201 (the two others are `<!--` and `-->` comments). ../walk-order-code-paths/cases/edge-getter-return.json:
+  142/145 with "declared anywhere", 145/145 with the exact global test.
+  model.cjs, live: 3 of 5,585 and 19 of 18,602 fuzz constructors differ, 25 of the 27 of cases/replay-constructor-super.json.
+  stateOtherSet 0 of 139,804 checks: the current segments of the analyzer are the set a rule would keep.
+  bun-side.cjs at be1ebe5295: Bun's parser takes all 265 upstream cases; it rejects `{ get 1n() {} }`, `<!--`,
+  `case 1: import x = require("x")`, `super<T>()`, a decorator on a constructor, `enum E { a = super() }`.
+  ../rules-code-path/rules-sim.cjs (the real tree, through its probe) over the lists of cases/: edge-constructor-super 487/487;
+  replay 27/27 (2 places unknown); edge-no-fallthrough 196 same, 3 places unknown (the clause before ends with `;`: an S::Empty
+  has no place), 1 different (`-->`); ts-no-fallthrough 21/21; ts-constructor-super with --strict-heritage 66/71 (`(B<T>)`,
+  three accessibility modifiers before `constructor`, `typeof this.y` in a type); ts-getter-return 45 same, 21 places unknown
+  (member starts of a TypeScript class), 3 different (a type alias, an interface and a type parameter named Object).

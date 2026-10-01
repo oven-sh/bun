@@ -1,0 +1,49 @@
+# A pair: the R>A source that tsc rejects, then (next line, after "=> ") its witness: the same source with the newly accepted construct replaced by one the base reads. U+23CE is a line break.
+function f(x: any): class {} { return null as any }
+=> function f(x: any): A {} { return null as any }
+function f(): class {} { return x; }
+=> function f(): A {} { return x; }
+import A from "x"⏎with { type: "json" };⏎import B from "y"⏎with (A) {}
+=> import A from "x" with { type: "json" };⏎import B from "y"⏎with (A) {}
+import type A from "x"⏎with { type: "json" };
+=> import type A from "x" with { type: "json" };
+type as = 1⏎type as any
+=> type a = 1⏎type as any
+type as = 1⏎type as <T>(x: T) => void
+=> type a = 1⏎type as <T>(x: T) => void
+class C implements A<>.C {}
+=> class C extends A<>.C {}
+interface I extends A<>.C {}
+=> class C extends A<>.C {}
+class C implements [delete A] {}
+=> class C extends [delete A] {}
+interface I extends [delete A] {}
+=> class C extends [delete A] {}
+let f = <if>() => 1;
+=> let f = <A[]>() => 1;
+let f = <in>() => 1;
+=> let f = <A[]>() => 1;
+let f = <out.T>() => 1;
+=> let f = <A.B>() => 1;
+class C implements (a = 1) => void {}
+=> class C implements (a: A) => void {}
+interface I extends (public a: A) => void {}
+=> interface I extends (a: A) => void {}
+class C implements new (a = 1) => A {}
+=> class C implements new (a: A) => B {}
+class C implements [...class: A[]] {}
+=> class C implements [...a: A[]] {}
+class C implements [function] {}
+=> class C implements [a: A] {}
+class C implements { (b = 1): void } {}
+=> class C implements { (b: B): void } {}
+class C implements { [K in in ]: V } {}
+=> class C implements { [K in keyof A]: V } {}
+class C implements A extends  in ? 1 : 2 {}
+=> class C implements A extends B ? 1 : 2 {}
+class C implements <out>() => out {}
+=> class C implements <T>() => T {}
+class C implements (a: A) => asserts  is B {}
+=> class C implements (a: A) => asserts a is B {}
+class C implements import('x').A.<C, D> {}
+=> class C implements typeof import("x") {}

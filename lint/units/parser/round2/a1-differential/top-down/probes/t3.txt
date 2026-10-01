@@ -1,0 +1,184 @@
+type X = (a?: A = 1) => R;
+type X = { m(a?: A = 1): R };
+type X = new (a?: A = 1) => R;
+function f(a?: A = 1) {}
+type X = (a? = 1) => R;
+type X = { m(a? = 1): R };
+type X = new (a? = 1) => R;
+function f(a? = 1) {}
+type X = (a = 1) => R;
+type X = { m(a = 1): R };
+type X = new (a = 1) => R;
+function f(a = 1) {}
+type X = (a: A = 1) => R;
+type X = { m(a: A = 1): R };
+type X = new (a: A = 1) => R;
+function f(a: A = 1) {}
+type X = (...a = []) => R;
+type X = { m(...a = []): R };
+type X = new (...a = []) => R;
+function f(...a = []) {}
+type X = (...a: A[] = []) => R;
+type X = { m(...a: A[] = []): R };
+type X = new (...a: A[] = []) => R;
+function f(...a: A[] = []) {}
+type X = (...[a] = []) => R;
+type X = { m(...[a] = []): R };
+type X = new (...[a] = []) => R;
+function f(...[a] = []) {}
+type X = (...a?) => R;
+type X = { m(...a?): R };
+type X = new (...a?) => R;
+function f(...a?) {}
+type X = (...a?: A[]) => R;
+type X = { m(...a?: A[]): R };
+type X = new (...a?: A[]) => R;
+function f(...a?: A[]) {}
+type X = (...a, b) => R;
+type X = { m(...a, b): R };
+type X = new (...a, b) => R;
+function f(...a, b) {}
+type X = (a?, b) => R;
+type X = { m(a?, b): R };
+type X = new (a?, b) => R;
+function f(a?, b) {}
+type X = ({ ...a = 1 }) => R;
+type X = { m({ ...a = 1 }): R };
+type X = new ({ ...a = 1 }) => R;
+function f({ ...a = 1 }) {}
+type X = ([...a = 1]) => R;
+type X = { m([...a = 1]): R };
+type X = new ([...a = 1]) => R;
+function f([...a = 1]) {}
+type X = ({ a = 1 }) => R;
+type X = { m({ a = 1 }): R };
+type X = new ({ a = 1 }) => R;
+function f({ a = 1 }) {}
+type X = ([a = 1]) => R;
+type X = { m([a = 1]): R };
+type X = new ([a = 1]) => R;
+function f([a = 1]) {}
+type X = ({ a }?) => R;
+type X = { m({ a }?): R };
+type X = new ({ a }?) => R;
+function f({ a }?) {}
+type X = ([a]?) => R;
+type X = { m([a]?): R };
+type X = new ([a]?) => R;
+function f([a]?) {}
+type X = ({ a }?: A) => R;
+type X = { m({ a }?: A): R };
+type X = new ({ a }?: A) => R;
+function f({ a }?: A) {}
+type X = ({ a } = b) => R;
+type X = { m({ a } = b): R };
+type X = new ({ a } = b) => R;
+function f({ a } = b) {}
+type X = ([a, , b]) => R;
+type X = { m([a, , b]): R };
+type X = new ([a, , b]) => R;
+function f([a, , b]) {}
+type X = ([, a]) => R;
+type X = { m([, a]): R };
+type X = new ([, a]) => R;
+function f([, a]) {}
+type X = ([a,]) => R;
+type X = { m([a,]): R };
+type X = new ([a,]) => R;
+function f([a,]) {}
+type X = ([...a, b]) => R;
+type X = { m([...a, b]): R };
+type X = new ([...a, b]) => R;
+function f([...a, b]) {}
+type X = ({ ...a, b }) => R;
+type X = { m({ ...a, b }): R };
+type X = new ({ ...a, b }) => R;
+function f({ ...a, b }) {}
+type X = ({ 1n: a }) => R;
+type X = { m({ 1n: a }): R };
+type X = new ({ 1n: a }) => R;
+function f({ 1n: a }) {}
+type X = ({ [a + b]: c }) => R;
+type X = { m({ [a + b]: c }): R };
+type X = new ({ [a + b]: c }) => R;
+function f({ [a + b]: c }) {}
+type X = ({ [a]: c }) => R;
+type X = { m({ [a]: c }): R };
+type X = new ({ [a]: c }) => R;
+function f({ [a]: c }) {}
+type X = ({ "a": c }) => R;
+type X = { m({ "a": c }): R };
+type X = new ({ "a": c }) => R;
+function f({ "a": c }) {}
+type X = ({ #a: c }) => R;
+type X = { m({ #a: c }): R };
+type X = new ({ #a: c }) => R;
+function f({ #a: c }) {}
+type X = ({ a: { b = 1 } }) => R;
+type X = { m({ a: { b = 1 } }): R };
+type X = new ({ a: { b = 1 } }) => R;
+function f({ a: { b = 1 } }) {}
+type X = (this) => R;
+type X = { m(this): R };
+type X = new (this) => R;
+function f(this) {}
+type X = (this: A) => R;
+type X = { m(this: A): R };
+type X = new (this: A) => R;
+function f(this: A) {}
+type X = (this?: A) => R;
+type X = { m(this?: A): R };
+type X = new (this?: A) => R;
+function f(this?: A) {}
+type X = (this = 1) => R;
+type X = { m(this = 1): R };
+type X = new (this = 1) => R;
+function f(this = 1) {}
+type X = (a, this: A) => R;
+type X = { m(a, this: A): R };
+type X = new (a, this: A) => R;
+function f(a, this: A) {}
+type X = (...this) => R;
+type X = { m(...this): R };
+type X = new (...this) => R;
+function f(...this) {}
+type X = (public ...a) => R;
+type X = { m(public ...a): R };
+type X = new (public ...a) => R;
+function f(public ...a) {}
+type X = (public { a }) => R;
+type X = { m(public { a }): R };
+type X = new (public { a }) => R;
+function f(public { a }) {}
+type X = (public [a]) => R;
+type X = { m(public [a]): R };
+type X = new (public [a]) => R;
+function f(public [a]) {}
+type X = (readonly { a }: A) => R;
+type X = { m(readonly { a }: A): R };
+type X = new (readonly { a }: A) => R;
+function f(readonly { a }: A) {}
+type X = (a!) => R;
+type X = { m(a!): R };
+type X = new (a!) => R;
+function f(a!) {}
+type X = (a!: A) => R;
+type X = { m(a!: A): R };
+type X = new (a!: A) => R;
+function f(a!: A) {}
+type X = (...) => R;
+type X = { m(...): R };
+type X = new (...) => R;
+function f(...) {}
+type X = (a:) => R;
+type X = { m(a:): R };
+type X = new (a:) => R;
+function f(a:) {}
+type X = (?) => R;
+type X = { m(?): R };
+type X = new (?) => R;
+function f(?) {}
+type X = (a?: ) => R;
+type X = { m(a?: ): R };
+type X = new (a?: ) => R;
+function f(a?: ) {}

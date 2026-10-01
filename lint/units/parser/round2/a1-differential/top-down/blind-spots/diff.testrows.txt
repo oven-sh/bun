@@ -1,0 +1,16 @@
+base 1.4.3 e3566be889995ffff8b08823b9233617f979c889 (301 sources)
+next 1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb (301 sources)
+2107 records compared, 688 differ, in 236 sources
+!!       30 records      10 sources  A>A          unexplained
+              t.ts.min.ids     "namespace as {}"
+                base ["o","namespace;\n"]
+                next ["o",""]
+!!      656 records     224 sources  R>A          unexplained
+              t.ts.min.ids     "let x: if;"
+                base ["e",[["Unexpected if",1,8]]]
+                next ["o","let e;\n"]
+!!        2 records       2 sources  R>R          unexplained
+              i.js.plain       "class C { accessor x: T; }"
+                base ["e",[["Expected \";\" but found \"x\"",1,20],["Expected identifier but found \":\"",1,21]]]
+                next ["e",[["Expected \";\" but found \":\"",1,21]]]
+688 records with the mark !!, 0 with the mark ??

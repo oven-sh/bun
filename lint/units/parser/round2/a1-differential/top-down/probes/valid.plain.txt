@@ -1,0 +1,153 @@
+function f(public a: A) {}
+type X = (public a: A) => R;
+type X = { m(public a: A): R };
+function f(private a: A) {}
+type X = (private a: A) => R;
+type X = { m(private a: A): R };
+function f(protected a: A) {}
+type X = (protected a: A) => R;
+type X = { m(protected a: A): R };
+function f(readonly a: A) {}
+type X = (readonly a: A) => R;
+type X = { m(readonly a: A): R };
+function f(override a: A) {}
+type X = (override a: A) => R;
+type X = { m(override a: A): R };
+function f(public readonly a: A) {}
+type X = (public readonly a: A) => R;
+type X = { m(public readonly a: A): R };
+function f(public override a: A) {}
+type X = (public override a: A) => R;
+type X = { m(public override a: A): R };
+function f(private readonly a: A) {}
+type X = (private readonly a: A) => R;
+type X = { m(private readonly a: A): R };
+function f(private override a: A) {}
+type X = (private override a: A) => R;
+type X = { m(private override a: A): R };
+function f(protected readonly a: A) {}
+type X = (protected readonly a: A) => R;
+type X = { m(protected readonly a: A): R };
+function f(protected override a: A) {}
+type X = (protected override a: A) => R;
+type X = { m(protected override a: A): R };
+function f(override readonly a: A) {}
+type X = (override readonly a: A) => R;
+type X = { m(override readonly a: A): R };
+function f(public override readonly a: A) {}
+type X = (public override readonly a: A) => R;
+type X = { m(public override readonly a: A): R };
+type X = (a = 1) => R;
+type X = { m(a = 1): R };
+type X = new (a = 1) => R;
+type X = (a: A = 1) => R;
+type X = { m(a: A = 1): R };
+type X = new (a: A = 1) => R;
+type X = ({ a = 1 }) => R;
+type X = { m({ a = 1 }): R };
+type X = new ({ a = 1 }) => R;
+type X = ([a = 1]) => R;
+type X = { m([a = 1]): R };
+type X = new ([a = 1]) => R;
+type X = ({ a } = b) => R;
+type X = { m({ a } = b): R };
+type X = new ({ a } = b) => R;
+type X = ([a, , b]) => R;
+type X = { m([a, , b]): R };
+type X = new ([a, , b]) => R;
+type X = ({ 1n: a }) => R;
+type X = { m({ 1n: a }): R };
+type X = new ({ 1n: a }) => R;
+type X = ({ [a + b]: c }) => R;
+type X = { m({ [a + b]: c }): R };
+type X = new ({ [a + b]: c }) => R;
+type X = ({ [a]: c }) => R;
+type X = { m({ [a]: c }): R };
+type X = new ({ [a]: c }) => R;
+type X = ({ a: { b = 1 } }) => R;
+type X = { m({ a: { b = 1 } }): R };
+type X = new ({ a: { b = 1 } }) => R;
+type X = [...class: A];
+type X = [...if: A];
+type X = [function];
+type X = [...if];
+type X = [...function];
+let v = x as [...class: A];
+f<[function]>(x);
+let f = (a): [function] => a;
+let v = x as [function];
+let v = x as [...if: A];
+type X = { [+1]: A };
+type X = { [a?.b]: A };
+type X = { [+1](): A };
+type X = { [+1]?: A };
+type X = { get [a + b](): A };
+type X = { get [+1](): A };
+type X = { get #a(): A };
+type X = { set #a(v) };
+type X = { 1n(): A };
+type X = { get 1n(): A };
+interface I { [+1]: A }
+let v = x as { [+1]: A };
+class K { @d p: { [+1]: A }; }
+interface I { get #a(): A }
+f<{ get #a(): A }>(x);
+let v = x as { get #a(): A };
+class K { @d p: { get #a(): A }; }
+class C implements a() {}
+interface I extends a() {}
+class C extends B implements a() {}
+class C implements a.b() {}
+interface I extends a.b() {}
+class C extends B implements a.b() {}
+class C implements new a {}
+interface I extends new a {}
+class C extends B implements new a {}
+class C implements new a() {}
+interface I extends new a() {}
+class C extends B implements new a() {}
+class C implements super.a {}
+interface I extends super.a {}
+class C extends B implements super.a {}
+class C implements function(){} {}
+interface I extends function(){} {}
+class C extends B implements function(){} {}
+class C implements class {} {}
+interface I extends class {} {}
+class C extends B implements class {} {}
+class C implements a`` {}
+interface I extends a`` {}
+class C extends B implements a`` {}
+class C implements import.meta {}
+interface I extends import.meta {}
+class C extends B implements import.meta {}
+class C implements a?.b {}
+interface I extends a?.b {}
+class C extends B implements a?.b {}
+class C implements a?.() {}
+interface I extends a?.() {}
+class C extends B implements a?.() {}
+class C implements a.#b {}
+interface I extends a.#b {}
+class C extends B implements a.#b {}
+class C implements a<B>() {}
+interface I extends a<B>() {}
+class C extends B implements a<B>() {}
+class C implements new.target {}
+interface I extends new.target {}
+class C extends B implements new.target {}
+class C implements a⏎<B> {}
+interface I extends a⏎<B> {}
+class C extends B implements a⏎<B> {}
+class C implements (+1) {}
+class C implements (a, b) {}
+type X = extends;
+let x: [...extends];
+class C { [k: string]: A, }
+class C { [k: string]: A, [l: number]: B }
+class C { a(public b: B) {} }
+declare class C { [k: string]: A, }
+abstract class C { [k: string]: A, }
+let v = class { [k: string]: A, };
+class C implements [delete A] {}
+interface I extends [delete A] {}

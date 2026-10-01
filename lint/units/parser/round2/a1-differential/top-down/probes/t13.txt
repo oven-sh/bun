@@ -1,0 +1,38 @@
+class C implements (a: A) => void {}
+interface I extends (a: A) => void {}
+class C implements new (a: A) => B {}
+interface I extends new (a: A) => B {}
+class C implements [a: A] {}
+interface I extends [a: A] {}
+class C implements [...a: A[]] {}
+interface I extends [...a: A[]] {}
+class C implements [a?: A] {}
+interface I extends [a?: A] {}
+class C implements { (b: B): void } {}
+interface I extends { (b: B): void } {}
+class C implements { [K in keyof A]: V } {}
+interface I extends { [K in keyof A]: V } {}
+class C implements A extends B ? 1 : 2 {}
+interface I extends A extends B ? 1 : 2 {}
+class C implements <T>() => T {}
+interface I extends <T>() => T {}
+class C implements <T>(a: T) => void {}
+interface I extends <T>(a: T) => void {}
+class C implements (a: A) => asserts a is B {}
+interface I extends (a: A) => asserts a is B {}
+class C implements (a: A) => a is B {}
+interface I extends (a: A) => a is B {}
+class C implements typeof import("x") {}
+interface I extends typeof import("x") {}
+class C implements import("x").A<C, D> {}
+interface I extends import("x").A<C, D> {}
+class C implements import("x").A.B {}
+interface I extends import("x").A.B {}
+class C implements { m(a: A): void } {}
+interface I extends { m(a: A): void } {}
+class C implements [A] {}
+interface I extends [A] {}
+class C implements (readonly A[]) {}
+interface I extends (readonly A[]) {}
+class C implements keyof A {}
+interface I extends keyof A {}

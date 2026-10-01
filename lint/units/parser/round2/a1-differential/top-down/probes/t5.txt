@@ -1,0 +1,220 @@
+type X = { [k: string]: A };
+type X = { [k: string,]: A };
+type X = { [k?: string]: A };
+type X = { [k?]: A };
+type X = { [...k: string[]]: A };
+type X = { [...k]: A };
+type X = { [k: string, l: number]: A };
+type X = { [k, l]: A };
+type X = { [a, b]: A };
+type X = { []: A };
+type X = { readonly []: A };
+type X = { [k = 1]: A };
+type X = { [k: string = 1]: A };
+type X = { [public k: string]: A };
+type X = { [readonly k: string]: A };
+type X = { [k: string] };
+type X = { [k: string]; };
+type X = { [k] };
+type X = { [k]; };
+type X = { static [k: string]: A };
+type X = { readonly [k: string]: A };
+type X = { public [k: string]: A };
+type X = { declare [k: string]: A };
+type X = { [k: string]?: A };
+type X = { [k: string]!: A };
+type X = { [k: string](): A };
+type X = { [{a}: string]: A };
+type X = { [[a]: string]: A };
+type X = { [this: string]: A };
+type X = { [keyof: string]: A };
+type X = { [k: string | number]: A };
+type X = { [k in A]: B };
+type X = { [k in A] };
+type X = { [a + b]: A };
+type X = { ["a" + "b"]: A };
+type X = { [a as B]: A };
+type X = { [+1]: A };
+type X = { [-1]: A };
+type X = { [+a]: A };
+type X = { [a.b]: A };
+type X = { [a.b.c]: A };
+type X = { [a[0]]: A };
+type X = { [a()]: A };
+type X = { [a!]: A };
+type X = { [(a)]: A };
+type X = { [a?.b]: A };
+type X = { [`a`]: A };
+type X = { [`a${b}`]: A };
+type X = { [1n]: A };
+type X = { [-1n]: A };
+type X = { ["a"]: A };
+type X = { [1]: A };
+type X = { [a, b] };
+type X = { [a = 1]: A };
+type X = { [typeof a]: A };
+type X = { [new a]: A };
+type X = { [this]: A };
+type X = { [this.a]: A };
+type X = { [super.a]: A };
+type X = { [Symbol.iterator]: A };
+type X = { [Symbol.iterator](): A };
+type X = { [a + b](): A };
+type X = { [+1](): A };
+type X = { [a + b]?: A };
+type X = { [+1]?: A };
+type X = { get [a + b](): A };
+type X = { get [+1](): A };
+type X = { [await a]: A };
+type X = { [yield]: A };
+type X = { [a ? b : c]: A };
+type X = { [a, b]: A };
+type X = { [<T>a]: A };
+type X = { [a satisfies B]: A };
+type X = { [null]: A };
+type X = { [true]: A };
+type X = { [void 0]: A };
+type X = { [!a]: A };
+type X = { [a in b]: A };
+type X = { [a = b]: A };
+type X = { [async () => 1]: A };
+type X = { [function () {}]: A };
+type X = { [class {}]: A };
+type X = { #a: A };
+type X = { #a(): void };
+type X = { #a?: A };
+type X = { #a };
+type X = { get #a(): A };
+type X = { set #a(v) };
+type X = { readonly #a: A };
+type X = { static #a: A };
+type X = { 1n: A };
+type X = { 1n(): A };
+type X = { get 1n(): A };
+type X = { -1: A };
+type X = { +1: A };
+type X = { 1: A };
+type X = { "a": A };
+type X = { a: A = 1 };
+type X = { a?: A = 1 };
+type X = { a = 1 };
+type X = { a? = 1 };
+type X = { "a": A = 1 };
+type X = { 1: A = 1 };
+type X = { [a]: A = 1 };
+type X = { a(): A = 1 };
+type X = { readonly a: A = 1 };
+type X = { a!: A = 1 };
+type X = { a: A = 1, b: B };
+type X = { a: A = 1; b: B };
+type X = { a: A = b as C };
+type X = { get a(): A {} };
+type X = { set a(v) {} };
+type X = { get a(): A { return 1 } };
+type X = { get a() {} };
+type X = { get a(): A };
+type X = { set a(v: A) };
+type X = { get a() };
+type X = { get a: A };
+type X = { get(): A };
+type X = { get: A };
+type X = { get a(): A {}; b: B };
+type X = { get "a"(): A {} };
+type X = { get [a](): A {} };
+type X = { static get a(): A {} };
+type X = { get a?(): A };
+type X = { get a<T>(): A };
+type X = { set a(v) : A };
+type X = { a(): A {} };
+type X = { a() {} };
+type X = { (): A {} };
+type X = { new (): A {} };
+type X = { public a: A };
+type X = { private a: A };
+type X = { protected a: A };
+type X = { static a: A };
+type X = { declare a: A };
+type X = { abstract a: A };
+type X = { async a(): A };
+type X = { override a: A };
+type X = { export a: A };
+type X = { accessor a: A };
+type X = { readonly readonly a: A };
+type X = { public public a: A };
+type X = { readonly public a: A };
+type X = { static readonly a: A };
+type X = { in a: A };
+type X = { out a: A };
+type X = { const a: A };
+type X = { default a: A };
+type X = { public a(): A };
+type X = { async: A };
+type X = { static: A };
+type X = { public(): A };
+type X = { a?: A };
+type X = { a!: A };
+type X = { a?(): A };
+type X = { a!(): A };
+type X = { a?<T>(): A };
+type X = { +a: A };
+type X = { -a: A };
+type X = { +readonly a: A };
+type X = { a: A, b: B };
+type X = { a: A b: B };
+type X = { a b: c };
+interface I { [k?: string]: A }
+f<{ [k?: string]: A }>(x);
+let v = x as { [k?: string]: A };
+class K { @d p: { [k?: string]: A }; }
+interface I { [k: string,]: A }
+f<{ [k: string,]: A }>(x);
+let v = x as { [k: string,]: A };
+class K { @d p: { [k: string,]: A }; }
+interface I { []: A }
+f<{ []: A }>(x);
+let v = x as { []: A };
+class K { @d p: { []: A }; }
+interface I { [a + b]: A }
+f<{ [a + b]: A }>(x);
+let v = x as { [a + b]: A };
+class K { @d p: { [a + b]: A }; }
+interface I { [+1]: A }
+f<{ [+1]: A }>(x);
+let v = x as { [+1]: A };
+class K { @d p: { [+1]: A }; }
+interface I { #a: A }
+f<{ #a: A }>(x);
+let v = x as { #a: A };
+class K { @d p: { #a: A }; }
+interface I { 1n: A }
+f<{ 1n: A }>(x);
+let v = x as { 1n: A };
+class K { @d p: { 1n: A }; }
+interface I { a: A = 1 }
+f<{ a: A = 1 }>(x);
+let v = x as { a: A = 1 };
+class K { @d p: { a: A = 1 }; }
+interface I { get a(): A {} }
+f<{ get a(): A {} }>(x);
+let v = x as { get a(): A {} };
+class K { @d p: { get a(): A {} }; }
+interface I { [k: string, l: number]: A }
+f<{ [k: string, l: number]: A }>(x);
+let v = x as { [k: string, l: number]: A };
+class K { @d p: { [k: string, l: number]: A }; }
+interface I { [a, b]: A }
+f<{ [a, b]: A }>(x);
+let v = x as { [a, b]: A };
+class K { @d p: { [a, b]: A }; }
+interface I { [...k: string[]]: A }
+f<{ [...k: string[]]: A }>(x);
+let v = x as { [...k: string[]]: A };
+class K { @d p: { [...k: string[]]: A }; }
+interface I { get #a(): A }
+f<{ get #a(): A }>(x);
+let v = x as { get #a(): A };
+class K { @d p: { get #a(): A }; }
+interface I { [k = 1]: A }
+f<{ [k = 1]: A }>(x);
+let v = x as { [k = 1]: A };
+class K { @d p: { [k = 1]: A }; }

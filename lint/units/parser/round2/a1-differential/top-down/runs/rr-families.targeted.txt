@@ -1,0 +1,33 @@
+653 R>R records
+     30 records      2 sources  1 same first error, fewer errors after it
+          e.g. t.ts.plain "class K { @d p: !A[]; }"
+               base ["Unexpected !","Expected \";\" but found \"A\"","Unexpected ]"]
+               next ["Unexpected !","Expected \";\" but found \"A\""]
+     60 records      4 sources  2 same first error, more errors after it
+          e.g. t.ts.plain "class K { @d m(x: any): !A[] { return null as any } }"
+               base ["Unexpected !","Expected \";\" but found \"A\"","Unexpected ]"]
+               next ["Unexpected !","Expected \";\" but found \"A\"","Expected \";\" but found \"{\"","Expected \";\" but found \"null\"","Expected \";\" but found \"any\
+     15 records      1 sources  3 same first error, other errors after it
+          e.g. t.ts.plain "class K { @d m(x: any): A extends [infer H extends string?] ? H : never { return null as 
+               base ["Unexpected ]","Unexpected ?","Expected \"]\" but found \"H\"","Expected \"?\" but found \":\"","Expected \":\" but found \"{\"","Unexpected return",
+               next ["Unexpected ]","Unexpected ?","Expected \"]\" but found \"H\"","Expected \"?\" but found \":\"","Expected \":\" but found \"{\"","Expected \";\" but 
+      7 records      1 sources  6 another first message: Expected "…" but found "…"  ->  An "…" property is not supported in a class with experimental decorators
+          e.g. t.ts.exp "class C { @d accessor a: string }"
+               base ["Expected \";\" but found \"a\"","Expected identifier but found \":\""]
+               next ["An \"accessor\" property is not supported in a class with experimental decorators"]
+     87 records      7 sources  6 another first message: Expected "…" but found "…"  ->  Expected "…" but found "…"
+          e.g. t.ts.exp "class C { accessor static a: A }"
+               base ["Expected \";\" but found \"static\""]
+               next ["Expected \";\" but found \"a\"","Expected identifier but found \":\""]
+      9 records      1 sources  6 another first message: Expected "…" but found "…"  ->  auto-accessor properties cannot have a method body
+          e.g. t.ts.exp "class C { accessor m() {} }"
+               base ["Expected \";\" but found \"m\"","Expected identifier but found \"(\"","Expected \";\" but found \"{\"","Unexpected }"]
+               next ["auto-accessor properties cannot have a method body"]
+     20 records      2 sources  6 another first message: The modifier "…" is not valid here  ->  Syntax Error
+          e.g. t.ts.plain "const v = <in>x</in>;"
+               base ["The modifier \"in\" is not valid here","Unexpected in"]
+               next ["Syntax Error"]
+    425 records     29 sources  6 another first message: Unexpected …  ->  Expected "…" but found "…"
+          e.g. t.ts.plain "type X = function(A): B;"
+               base ["Unexpected function","Expected \";\" but found \":\""]
+               next ["Expected \";\" but found \"(\"","Expected \";\" but found \")\"","Unexpected :"]

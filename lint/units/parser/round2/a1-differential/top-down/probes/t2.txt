@@ -1,0 +1,225 @@
+function f(public a: A) {}
+type X = (public a: A) => R;
+type X = { m(public a: A): R };
+function f(private a: A) {}
+type X = (private a: A) => R;
+type X = { m(private a: A): R };
+function f(protected a: A) {}
+type X = (protected a: A) => R;
+type X = { m(protected a: A): R };
+function f(readonly a: A) {}
+type X = (readonly a: A) => R;
+type X = { m(readonly a: A): R };
+function f(override a: A) {}
+type X = (override a: A) => R;
+type X = { m(override a: A): R };
+function f(public public a: A) {}
+type X = (public public a: A) => R;
+type X = { m(public public a: A): R };
+function f(public private a: A) {}
+type X = (public private a: A) => R;
+type X = { m(public private a: A): R };
+function f(public protected a: A) {}
+type X = (public protected a: A) => R;
+type X = { m(public protected a: A): R };
+function f(public readonly a: A) {}
+type X = (public readonly a: A) => R;
+type X = { m(public readonly a: A): R };
+function f(public override a: A) {}
+type X = (public override a: A) => R;
+type X = { m(public override a: A): R };
+function f(private public a: A) {}
+type X = (private public a: A) => R;
+type X = { m(private public a: A): R };
+function f(private private a: A) {}
+type X = (private private a: A) => R;
+type X = { m(private private a: A): R };
+function f(private protected a: A) {}
+type X = (private protected a: A) => R;
+type X = { m(private protected a: A): R };
+function f(private readonly a: A) {}
+type X = (private readonly a: A) => R;
+type X = { m(private readonly a: A): R };
+function f(private override a: A) {}
+type X = (private override a: A) => R;
+type X = { m(private override a: A): R };
+function f(protected public a: A) {}
+type X = (protected public a: A) => R;
+type X = { m(protected public a: A): R };
+function f(protected private a: A) {}
+type X = (protected private a: A) => R;
+type X = { m(protected private a: A): R };
+function f(protected protected a: A) {}
+type X = (protected protected a: A) => R;
+type X = { m(protected protected a: A): R };
+function f(protected readonly a: A) {}
+type X = (protected readonly a: A) => R;
+type X = { m(protected readonly a: A): R };
+function f(protected override a: A) {}
+type X = (protected override a: A) => R;
+type X = { m(protected override a: A): R };
+function f(readonly public a: A) {}
+type X = (readonly public a: A) => R;
+type X = { m(readonly public a: A): R };
+function f(readonly private a: A) {}
+type X = (readonly private a: A) => R;
+type X = { m(readonly private a: A): R };
+function f(readonly protected a: A) {}
+type X = (readonly protected a: A) => R;
+type X = { m(readonly protected a: A): R };
+function f(readonly readonly a: A) {}
+type X = (readonly readonly a: A) => R;
+type X = { m(readonly readonly a: A): R };
+function f(readonly override a: A) {}
+type X = (readonly override a: A) => R;
+type X = { m(readonly override a: A): R };
+function f(override public a: A) {}
+type X = (override public a: A) => R;
+type X = { m(override public a: A): R };
+function f(override private a: A) {}
+type X = (override private a: A) => R;
+type X = { m(override private a: A): R };
+function f(override protected a: A) {}
+type X = (override protected a: A) => R;
+type X = { m(override protected a: A): R };
+function f(override readonly a: A) {}
+type X = (override readonly a: A) => R;
+type X = { m(override readonly a: A): R };
+function f(override override a: A) {}
+type X = (override override a: A) => R;
+type X = { m(override override a: A): R };
+function f(public public public a: A) {}
+type X = (public public public a: A) => R;
+type X = { m(public public public a: A): R };
+function f(public public readonly a: A) {}
+type X = (public public readonly a: A) => R;
+type X = { m(public public readonly a: A): R };
+function f(public public override a: A) {}
+type X = (public public override a: A) => R;
+type X = { m(public public override a: A): R };
+function f(public readonly public a: A) {}
+type X = (public readonly public a: A) => R;
+type X = { m(public readonly public a: A): R };
+function f(public readonly readonly a: A) {}
+type X = (public readonly readonly a: A) => R;
+type X = { m(public readonly readonly a: A): R };
+function f(public readonly override a: A) {}
+type X = (public readonly override a: A) => R;
+type X = { m(public readonly override a: A): R };
+function f(public override public a: A) {}
+type X = (public override public a: A) => R;
+type X = { m(public override public a: A): R };
+function f(public override readonly a: A) {}
+type X = (public override readonly a: A) => R;
+type X = { m(public override readonly a: A): R };
+function f(public override override a: A) {}
+type X = (public override override a: A) => R;
+type X = { m(public override override a: A): R };
+function f(readonly public public a: A) {}
+type X = (readonly public public a: A) => R;
+type X = { m(readonly public public a: A): R };
+function f(readonly public readonly a: A) {}
+type X = (readonly public readonly a: A) => R;
+type X = { m(readonly public readonly a: A): R };
+function f(readonly public override a: A) {}
+type X = (readonly public override a: A) => R;
+type X = { m(readonly public override a: A): R };
+function f(readonly readonly public a: A) {}
+type X = (readonly readonly public a: A) => R;
+type X = { m(readonly readonly public a: A): R };
+function f(readonly readonly readonly a: A) {}
+type X = (readonly readonly readonly a: A) => R;
+type X = { m(readonly readonly readonly a: A): R };
+function f(readonly readonly override a: A) {}
+type X = (readonly readonly override a: A) => R;
+type X = { m(readonly readonly override a: A): R };
+function f(readonly override public a: A) {}
+type X = (readonly override public a: A) => R;
+type X = { m(readonly override public a: A): R };
+function f(readonly override readonly a: A) {}
+type X = (readonly override readonly a: A) => R;
+type X = { m(readonly override readonly a: A): R };
+function f(readonly override override a: A) {}
+type X = (readonly override override a: A) => R;
+type X = { m(readonly override override a: A): R };
+function f(override public public a: A) {}
+type X = (override public public a: A) => R;
+type X = { m(override public public a: A): R };
+function f(override public readonly a: A) {}
+type X = (override public readonly a: A) => R;
+type X = { m(override public readonly a: A): R };
+function f(override public override a: A) {}
+type X = (override public override a: A) => R;
+type X = { m(override public override a: A): R };
+function f(override readonly public a: A) {}
+type X = (override readonly public a: A) => R;
+type X = { m(override readonly public a: A): R };
+function f(override readonly readonly a: A) {}
+type X = (override readonly readonly a: A) => R;
+type X = { m(override readonly readonly a: A): R };
+function f(override readonly override a: A) {}
+type X = (override readonly override a: A) => R;
+type X = { m(override readonly override a: A): R };
+function f(override override public a: A) {}
+type X = (override override public a: A) => R;
+type X = { m(override override public a: A): R };
+function f(override override readonly a: A) {}
+type X = (override override readonly a: A) => R;
+type X = { m(override override readonly a: A): R };
+function f(override override override a: A) {}
+type X = (override override override a: A) => R;
+type X = { m(override override override a: A): R };
+function f(static a: A) {}
+type X = (static a: A) => R;
+type X = { m(static a: A): R };
+function f(declare a: A) {}
+type X = (declare a: A) => R;
+type X = { m(declare a: A): R };
+function f(abstract a: A) {}
+type X = (abstract a: A) => R;
+type X = { m(abstract a: A): R };
+function f(async a: A) {}
+type X = (async a: A) => R;
+type X = { m(async a: A): R };
+function f(accessor a: A) {}
+type X = (accessor a: A) => R;
+type X = { m(accessor a: A): R };
+function f(export a: A) {}
+type X = (export a: A) => R;
+type X = { m(export a: A): R };
+function f(const a: A) {}
+type X = (const a: A) => R;
+type X = { m(const a: A): R };
+function f(in a: A) {}
+type X = (in a: A) => R;
+type X = { m(in a: A): R };
+function f(out a: A) {}
+type X = (out a: A) => R;
+type X = { m(out a: A): R };
+function f(public static a: A) {}
+type X = (public static a: A) => R;
+type X = { m(public static a: A): R };
+function f(public declare a: A) {}
+type X = (public declare a: A) => R;
+type X = { m(public declare a: A): R };
+function f(public abstract a: A) {}
+type X = (public abstract a: A) => R;
+type X = { m(public abstract a: A): R };
+function f(public async a: A) {}
+type X = (public async a: A) => R;
+type X = { m(public async a: A): R };
+function f(public accessor a: A) {}
+type X = (public accessor a: A) => R;
+type X = { m(public accessor a: A): R };
+function f(public export a: A) {}
+type X = (public export a: A) => R;
+type X = { m(public export a: A): R };
+function f(public const a: A) {}
+type X = (public const a: A) => R;
+type X = { m(public const a: A): R };
+function f(public in a: A) {}
+type X = (public in a: A) => R;
+type X = { m(public in a: A): R };
+function f(public out a: A) {}
+type X = (public out a: A) => R;
+type X = { m(public out a: A): R };

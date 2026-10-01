@@ -1,0 +1,43 @@
+   156 records   39 sources  D2 metadata of a source that tsc does not parse, conditional type or assertion (ruling)
+          e.g. "class C { @d x: A extends infer U[] ? U : never; }"
+   228 records   57 sources  P  metadata: a predicate outside a return type keeps the tag of its name (fix)
+          e.g. "class C { @d x: (a is A); }"
+  1060 records   72 sources  R1 .< after a dot of a type reference
+          e.g. "type X = A.<B>;"
+   810 records   56 sources  R11a heritage entry read as an expression: a unary operator or a type assertion
+          e.g. "class C implements +1 {}"
+   225 records   15 sources  R11c clauses of an interface: a second extends, implements before extends, an empty list
+          e.g. "interface I extends A extends B {}"
+    30 records    2 sources  R12 index signature of a class
+          e.g. "class C { @d x: A\n[]; }"
+   175 records   12 sources  R2 private name as the name of a type
+          e.g. "type X = #a;"
+   330 records   22 sources  R3 constraint of a type parameter: a word that starts an expression, a private name
+          e.g. "function f<U extends [a: A?]>() {}"
+    15 records    1 sources  R3b extends as an element of a list of types
+          e.g. "f< extends>(x);"
+  1465 records  100 sources  R4 index signature of a type with what the checker reports
+          e.g. "type X = { [k?: string]: A };"
+   875 records   60 sources  R5 computed name of a type member that is an expression
+          e.g. "type X = { [k = 1]: A };"
+   175 records   12 sources  R6 initializer of a property of a type
+          e.g. "type X = { a: A = 1 };"
+   205 records   14 sources  R7 parameters of a signature: modifiers, ? or ... with an initializer
+          e.g. "type X = (a?: A = 1) => void;"
+   560 records   38 sources  R8 labeled element of a tuple with ? or ... at its type
+          e.g. "type X = [a: A?];"
+   455 records   31 sources  R9 private name or bigint names a type member
+          e.g. "type X = { 1n: A };"
+    15 records    1 sources  W1 witness: a block with return after the function (TS1108)
+          e.g. "function f(): class {} { return x; }"
+    30 records    2 sources  W5 witness: an instantiation expression before a property access (TS1477)
+          e.g. "class C implements A<>.C {}"
+    30 records    2 sources  W6 witness: delete of a name in a heritage expression (TS1102)
+          e.g. "class C implements [delete A] {}"
+    30 records    2 sources  WA witness: a missing type inside an attempt is not reported (H3)
+          e.g. "let f = (a): <out>() =>  => a;"
+   510 records   34 sources  WB witness: a function type without a return type before a body, which is read as an object type
+          e.g. "class C { @d m(): (a = 1) =>  { return x; } }"
+  1380 records   92 sources  WH witness: a type in a heritage clause, where tsc reads an expression (H8)
+          e.g. "class C implements [...in: A[]] {}"
+8759 records

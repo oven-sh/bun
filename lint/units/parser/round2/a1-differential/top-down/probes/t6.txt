@@ -1,0 +1,299 @@
+class C implements A {}
+interface I extends A {}
+class C extends B implements A {}
+class C implements A.B {}
+interface I extends A.B {}
+class C extends B implements A.B {}
+class C implements A<B> {}
+interface I extends A<B> {}
+class C extends B implements A<B> {}
+class C implements A.B<C> {}
+interface I extends A.B<C> {}
+class C extends B implements A.B<C> {}
+class C implements a() {}
+interface I extends a() {}
+class C extends B implements a() {}
+class C implements a.b() {}
+interface I extends a.b() {}
+class C extends B implements a.b() {}
+class C implements a[0] {}
+interface I extends a[0] {}
+class C extends B implements a[0] {}
+class C implements new a {}
+interface I extends new a {}
+class C extends B implements new a {}
+class C implements new a() {}
+interface I extends new a() {}
+class C extends B implements new a() {}
+class C implements a! {}
+interface I extends a! {}
+class C extends B implements a! {}
+class C implements a!.b {}
+interface I extends a!.b {}
+class C extends B implements a!.b {}
+class C implements this {}
+interface I extends this {}
+class C extends B implements this {}
+class C implements this.a {}
+interface I extends this.a {}
+class C extends B implements this.a {}
+class C implements super.a {}
+interface I extends super.a {}
+class C extends B implements super.a {}
+class C implements "a" {}
+interface I extends "a" {}
+class C extends B implements "a" {}
+class C implements 1 {}
+interface I extends 1 {}
+class C extends B implements 1 {}
+class C implements [a] {}
+interface I extends [a] {}
+class C extends B implements [a] {}
+class C implements {a: 1} {}
+interface I extends {a: 1} {}
+class C extends B implements {a: 1} {}
+class C implements {} {}
+interface I extends {} {}
+class C extends B implements {} {}
+class C implements function(){} {}
+interface I extends function(){} {}
+class C extends B implements function(){} {}
+class C implements class {} {}
+interface I extends class {} {}
+class C extends B implements class {} {}
+class C implements (a) {}
+interface I extends (a) {}
+class C extends B implements (a) {}
+class C implements (A) {}
+interface I extends (A) {}
+class C extends B implements (A) {}
+class C implements a`` {}
+interface I extends a`` {}
+class C extends B implements a`` {}
+class C implements import("x") {}
+interface I extends import("x") {}
+class C extends B implements import("x") {}
+class C implements import.meta {}
+interface I extends import.meta {}
+class C extends B implements import.meta {}
+class C implements a?.b {}
+interface I extends a?.b {}
+class C extends B implements a?.b {}
+class C implements a?.() {}
+interface I extends a?.() {}
+class C extends B implements a?.() {}
+class C implements +1 {}
+interface I extends +1 {}
+class C extends B implements +1 {}
+class C implements -1 {}
+interface I extends -1 {}
+class C extends B implements -1 {}
+class C implements -a {}
+interface I extends -a {}
+class C extends B implements -a {}
+class C implements !A {}
+interface I extends !A {}
+class C extends B implements !A {}
+class C implements ~A {}
+interface I extends ~A {}
+class C extends B implements ~A {}
+class C implements typeof a {}
+interface I extends typeof a {}
+class C extends B implements typeof a {}
+class C implements typeof a() {}
+interface I extends typeof a() {}
+class C extends B implements typeof a() {}
+class C implements void A {}
+interface I extends void A {}
+class C extends B implements void A {}
+class C implements delete A {}
+interface I extends delete A {}
+class C extends B implements delete A {}
+class C implements await A {}
+interface I extends await A {}
+class C extends B implements await A {}
+class C implements yield A {}
+interface I extends yield A {}
+class C extends B implements yield A {}
+class C implements <B>a {}
+interface I extends <B>a {}
+class C extends B implements <B>a {}
+class C implements <B>[] {}
+interface I extends <B>[] {}
+class C extends B implements <B>[] {}
+class C implements a as B {}
+interface I extends a as B {}
+class C extends B implements a as B {}
+class C implements a satisfies B {}
+interface I extends a satisfies B {}
+class C extends B implements a satisfies B {}
+class C implements a + b {}
+interface I extends a + b {}
+class C extends B implements a + b {}
+class C implements a, b {}
+interface I extends a, b {}
+class C extends B implements a, b {}
+class C implements a = b {}
+interface I extends a = b {}
+class C extends B implements a = b {}
+class C implements a ? b : c {}
+interface I extends a ? b : c {}
+class C extends B implements a ? b : c {}
+class C implements () => 1 {}
+interface I extends () => 1 {}
+class C extends B implements () => 1 {}
+class C implements async () => 1 {}
+interface I extends async () => 1 {}
+class C extends B implements async () => 1 {}
+class C implements a => a {}
+interface I extends a => a {}
+class C extends B implements a => a {}
+class C implements A | B {}
+interface I extends A | B {}
+class C extends B implements A | B {}
+class C implements A & B {}
+interface I extends A & B {}
+class C extends B implements A & B {}
+class C implements A[] {}
+interface I extends A[] {}
+class C extends B implements A[] {}
+class C implements A[B] {}
+interface I extends A[B] {}
+class C extends B implements A[B] {}
+class C implements (a: A) => void {}
+interface I extends (a: A) => void {}
+class C extends B implements (a: A) => void {}
+class C implements new () => A {}
+interface I extends new () => A {}
+class C extends B implements new () => A {}
+class C implements keyof A {}
+interface I extends keyof A {}
+class C extends B implements keyof A {}
+class C implements readonly A[] {}
+interface I extends readonly A[] {}
+class C extends B implements readonly A[] {}
+class C implements { a: A } {}
+interface I extends { a: A } {}
+class C extends B implements { a: A } {}
+class C implements [A, B] {}
+interface I extends [A, B] {}
+class C extends B implements [A, B] {}
+class C implements typeof A {}
+interface I extends typeof A {}
+class C extends B implements typeof A {}
+class C implements typeof a.b {}
+interface I extends typeof a.b {}
+class C extends B implements typeof a.b {}
+class C implements typeof a<B> {}
+interface I extends typeof a<B> {}
+class C extends B implements typeof a<B> {}
+class C implements unique symbol {}
+interface I extends unique symbol {}
+class C extends B implements unique symbol {}
+class C implements `a${A}` {}
+interface I extends `a${A}` {}
+class C extends B implements `a${A}` {}
+class C implements A extends B ? C : D {}
+interface I extends A extends B ? C : D {}
+class C extends B implements A extends B ? C : D {}
+class C implements infer A {}
+interface I extends infer A {}
+class C extends B implements infer A {}
+class C implements a is B {}
+interface I extends a is B {}
+class C extends B implements a is B {}
+class C implements asserts a {}
+interface I extends asserts a {}
+class C extends B implements asserts a {}
+class C implements null {}
+interface I extends null {}
+class C extends B implements null {}
+class C implements undefined {}
+interface I extends undefined {}
+class C extends B implements undefined {}
+class C implements void {}
+interface I extends void {}
+class C extends B implements void {}
+class C implements any {}
+interface I extends any {}
+class C extends B implements any {}
+class C implements if {}
+interface I extends if {}
+class C extends B implements if {}
+class C implements class {}
+interface I extends class {}
+class C extends B implements class {}
+class C implements function {}
+interface I extends function {}
+class C extends B implements function {}
+class C implements in {}
+interface I extends in {}
+class C extends B implements in {}
+class C implements #a {}
+interface I extends #a {}
+class C extends B implements #a {}
+class C implements a.#b {}
+interface I extends a.#b {}
+class C extends B implements a.#b {}
+class C implements A<>.C {}
+interface I extends A<>.C {}
+class C extends B implements A<>.C {}
+class C implements A.<B> {}
+interface I extends A.<B> {}
+class C extends B implements A.<B> {}
+class C implements a<B>() {}
+interface I extends a<B>() {}
+class C extends B implements a<B>() {}
+class C implements a<B>.c {}
+interface I extends a<B>.c {}
+class C extends B implements a<B>.c {}
+class C implements a<B> {}
+interface I extends a<B> {}
+class C extends B implements a<B> {}
+class C implements A<B,> {}
+interface I extends A<B,> {}
+class C extends B implements A<B,> {}
+class C implements new.target {}
+interface I extends new.target {}
+class C extends B implements new.target {}
+class C implements a++ {}
+interface I extends a++ {}
+class C extends B implements a++ {}
+class C implements ++a {}
+interface I extends ++a {}
+class C extends B implements ++a {}
+class C implements a⏎<B> {}
+interface I extends a⏎<B> {}
+class C extends B implements a⏎<B> {}
+class C implements A⏎, B {}
+interface I extends A⏎, B {}
+class C extends B implements A⏎, B {}
+interface I extends A extends B {}
+interface I extends A implements B {}
+interface I implements A {}
+interface I implements A extends B {}
+interface I implements A implements B {}
+interface I extends A, B {}
+interface I extends A, {}
+interface I extends {}
+interface I extends {} {}
+interface I extends A, {} {}
+interface I extends {a: 1} {}
+interface I implements {} {}
+interface I extends A, B, {}
+interface I extends⏎{}
+interface I extends A {} {}
+class C implements A implements B {}
+class C implements A extends B {}
+class C extends A extends B {}
+class C implements {} {}
+class C implements A, {}
+class C implements {}
+class C implements A, {} {}
+class C extends A, B {}
+class C extends {} {}
+class C implements {}⏎{}
+interface I extends A, {}⏎foo()
+interface I extends A extends B ? C : D {}
+interface I extends (A extends B ? C : D) {}
+class C implements A extends B ? C : D {}

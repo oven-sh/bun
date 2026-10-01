@@ -1,0 +1,144 @@
+"function f(x: any): class {} { return null as any }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: R "Unexpected class" -> A
+"function f(x: any): A {} { return null as any }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: A ==
+"function f(): class {} { return x; }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: R "Unexpected class" -> A
+"function f(): A {} { return x; }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: A ==
+"import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"{\"" +2 -> A
+"import A from \"x\" with { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"import type A from \"x\"\nwith { type: \"json\" };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2857] chk.tsx[TS2857] oth[2307,2318]
+    t.ts.plain: R "Expected \"(\" but found \"{\"" +2 -> A
+"import type A from \"x\" with { type: \"json\" };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2857] chk.tsx[TS2857] oth[2307,2318]
+    t.ts.plain: A ==
+"type as = 1\ntype as any"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected =" -> A
+"type a = 1\ntype as any"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type as = 1\ntype as <T>(x: T) => void"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected =" -> A
+"type a = 1\ntype as <T>(x: T) => void"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"class C extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"class C extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2500]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C extends [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2304,2507,2703]
+    t.ts.plain: A ==
+"interface I extends [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2499]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C extends [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2304,2507,2703]
+    t.ts.plain: A ==
+"let f = <if>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected if" -> A
+"let f = <A[]>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <in>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +1 -> A
+"let f = <A[]>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <out.T>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = <A.B>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements (a = 1) => void {}"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +5 -> A
+"class C implements (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I extends (public a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"a\"" +2 -> A
+"interface I extends (a: A) => void {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements new (a = 1) => A {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +5 -> A
+"class C implements new (a: A) => B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [...class: A[]] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected class" -> A
+"class C implements [...a: A[]] {}"
+    tsc: parse.ts[TS1005,TS1011] parse.tsx[TS1005,TS1011] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements [function] {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \":\" but found \"]\"" +3 -> A
+"class C implements [a: A] {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements { (b = 1): void } {}"
+    tsc: parse.ts[TS1136,TS1005,TS1109,TS1109] parse.tsx[TS1136,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"class C implements { (b: B): void } {}"
+    tsc: parse.ts[TS1136,TS1005,TS1005,TS1109,TS1109] parse.tsx[TS1136,TS1005,TS1005,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements { [K in in ]: V } {}"
+    tsc: parse.ts[TS1109,TS1109] parse.tsx[TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected in" +1 -> A
+"class C implements { [K in keyof A]: V } {}"
+    tsc: parse.ts[TS1005,TS1005,TS1136] parse.tsx[TS1005,TS1005,TS1136] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A extends  in ? 1 : 2 {}"
+    tsc: parse.ts[TS1109,TS1109,TS1005] parse.tsx[TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected in" +3 -> A
+"class C implements A extends B ? 1 : 2 {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements <out>() => out {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C implements <T>() => T {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements (a: A) => asserts  is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"B\"" +2 -> A
+"class C implements (a: A) => asserts a is B {}"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements import('x').A.<C, D> {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"<\"" +3 -> A
+"class C implements typeof import(\"x\") {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

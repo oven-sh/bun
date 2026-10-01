@@ -1,0 +1,431 @@
+[ts] "import { A } from \"a\"; let x: A; export { x };"
+[ts] "import type { A } from \"a\"; let x: A; export { x };"
+[ts] "import type { A } from \"a\";"
+    1:15 'A' is defined but never used.
+[ts] "import { type A, b } from \"a\"; b();"
+    1:15 'A' is defined but never used.
+[ts] "import { type A, b } from \"a\"; let x: A = b(); export { x };"
+[ts] "import { A } from \"a\"; let x: typeof A; export { x };"
+[ts] "import type { A } from \"a\"; let x: typeof A; export { x };"
+[ts] "import type A from \"a\"; export let x: typeof A.x;"
+[ts] "import type * as N from \"n\"; export let x: N.T;"
+[ts] "import A, { type B } from \"a\"; export let x: B = A;"
+[ts] "const a = 1; let x: typeof a; export { x };"
+    1:7 'a' is assigned a value but only used as a type.
+[ts] "const a = 1; export type T = typeof a;"
+    1:7 'a' is assigned a value but only used as a type.
+[ts] "const a = { b: 1 }; export type T = typeof a.b;"
+    1:7 'a' is assigned a value but only used as a type.
+[ts] "const a = 1; export type T = keyof typeof a;"
+    1:7 'a' is assigned a value but only used as a type.
+[ts] "const a = [1]; export type T = (typeof a)[number];"
+    1:7 'a' is assigned a value but only used as a type.
+[ts] "function f(a: unknown): a is string { return true; } f(1);"
+    1:12 'a' is defined but only used as a type.
+[ts] "function f(a: unknown): asserts a is string {} f(1);"
+    1:12 'a' is defined but only used as a type.
+[ts] "function f(a: unknown): asserts a {} f(1);"
+    1:12 'a' is defined but only used as a type.
+[ts] "export function f(a: number, b: number): b is number { return true }"
+    1:30 'b' is defined but only used as a type.
+[ts] "export function f(a: number): typeof a { return a }"
+[ts] "export function f(a: number, _b: typeof a) {}"
+    1:19 'a' is defined but only used as a type.
+    1:30 '_b' is defined but never used.
+[ts] "function foo(): typeof foo { return 1 as any }"
+    1:10 'foo' is defined but only used as a type.
+[ts] "enum E { A, B }"
+    1:6 'E' is defined but never used.
+[ts] "enum E { A, B } E.A;"
+[ts] "export enum E { A, B }"
+[ts] "enum E { A = 1, B = A }"
+    1:6 'E' is defined but never used.
+[ts] "enum E { A = 1, B = E.A }"
+    1:6 'E' is defined but never used.
+[ts] "enum E { 'a' = 1, b = a }"
+    1:6 'E' is defined but never used.
+[ts] "enum E { A } export const e = E;"
+[ts] "const enum E { A } export const e = E.A;"
+[ts] "declare enum E { A }"
+    1:14 'E' is defined but never used.
+[ts] "enum E { A } namespace E { export const b = 1 }"
+    1:6 'E' is defined but never used.
+[ts] "enum E { A } enum E { B } E.A;"
+[ts] "namespace N { export const a = 1; }"
+    1:11 'N' is defined but never used.
+[ts] "namespace N { const a = 1; }"
+    1:11 'N' is defined but never used.
+    1:21 'a' is assigned a value but never used.
+[ts] "namespace N { export const a = 1; } N.a;"
+[ts] "export namespace N { const a = 1; export const b = 2; }"
+    1:28 'a' is assigned a value but never used.
+[ts] "namespace N { export namespace M { export const a = 1; } }"
+    1:11 'N' is defined but never used.
+[ts] "namespace N { export const a = N; }"
+    1:11 'N' is defined but never used.
+[ts] "namespace N { export const a = 1; export const b = a; }"
+    1:11 'N' is defined but never used.
+[ts] "namespace A { export const a = 1 } namespace A { export const b = a }"
+    1:11 'A' is defined but never used.
+[ts] "namespace N { export type T = number } let x: N.T; export { x };"
+[ts] "namespace A.B { const x = 1 }"
+    1:23 'x' is assigned a value but never used.
+[ts] "namespace A.B.C { export const x = 1 }"
+[ts] "declare namespace A.B { const x: number }"
+[ts] "namespace A { namespace B { const x = 1 } } export {};"
+    1:11 'A' is defined but never used.
+    1:25 'B' is defined but never used.
+    1:35 'x' is assigned a value but never used.
+[ts] "namespace A { declare namespace B { const x: number } } export {};"
+    1:11 'A' is defined but never used.
+    1:33 'B' is defined but never used.
+[ts] "declare namespace A { namespace B { const x: number } } export {};"
+    1:19 'A' is defined but never used.
+[ts] "declare namespace N { const a: number; function f(): void; class C {} interface I {} type T = 1; enum E {} namespace M { const z: number } }"
+    1:19 'N' is defined but never used.
+[ts] "declare namespace N { const a: number; export {}; }"
+    1:19 'N' is defined but never used.
+    1:29 'a' is defined but never used.
+[ts] "declare namespace N { const a: number; export { a }; const b: number; }"
+    1:19 'N' is defined but never used.
+    1:60 'b' is defined but never used.
+[ts] "declare namespace N { const a: number; export default a; const b: number; }"
+    1:19 'N' is defined but never used.
+    1:64 'b' is defined but never used.
+[ts] "declare namespace N { function f(): void; import x = M.y; }"
+    1:19 'N' is defined but never used.
+    1:50 'x' is defined but never used.
+[ts] "declare const a: number;"
+    1:15 'a' is defined but never used.
+[ts] "declare let [a, b]: number[];"
+    1:14 'a' is defined but never used.
+    1:17 'b' is defined but never used.
+[ts] "declare var v: number; v;"
+[ts] "declare function f(a: number): void;"
+    1:18 'f' is defined but never used.
+[ts] "declare function f(): void; f();"
+[ts] "declare class C { m(a: number): void }"
+    1:15 'C' is defined but never used.
+[ts] "declare class C { constructor(a: number); m(b: number): void; set x(v: number); } new C(1);"
+[ts] "declare global { const a: number; interface Window { x: number } }"
+[ts] "const global = 1; declare global { }"
+    1:7 'global' is assigned a value but never used.
+[ts] "const global = 1; declare module \"m\" { global { const q: number } }"
+[ts] "declare module \"m\" { const a: number; export const b: number; }"
+[ts] "declare module \"m\" { const a: number; export { }; }"
+    1:28 'a' is defined but never used.
+[ts] "declare module \"m\" { import { X } from \"x\"; const a: number; }"
+    1:31 'X' is defined but never used.
+[ts] "declare module \"m\" { namespace Q { const a: number; } }"
+[ts] "declare module \"m\";"
+[ts] "interface I { a: number }"
+    1:11 'I' is defined but never used.
+[ts] "interface I { next: I }"
+    1:11 'I' is defined but never used.
+[ts] "interface A { a: number } interface A { b: number }"
+    1:11 'A' is defined but never used.
+[ts] "interface A { a: number } interface A { b: A }"
+    1:11 'A' is defined but never used.
+[ts] "interface I { a: number } export const x: I = { a: 1 };"
+[ts] "class A {} interface A { x: number }"
+    1:7 'A' is defined but never used.
+[ts] "interface A {} class A {}"
+    1:11 'A' is defined but never used.
+[ts] "type T = number;"
+    1:6 'T' is defined but never used.
+[ts] "type T = T[];"
+    1:6 'T' is defined but never used.
+[ts] "type T<U> = number;"
+    1:6 'T' is defined but never used.
+    1:8 'U' is defined but never used.
+[ts] "type T<U> = U[]; export type { T };"
+[ts] "export type F = <T>(a: number) => void;"
+    1:18 'T' is defined but never used.
+[ts] "export type F = new <T>(a: number) => object;"
+    1:22 'T' is defined but never used.
+[ts] "export type A<T> = { [K in keyof T]: T[K] };"
+[ts] "export type A = { [K in \"a\" as `x${K}`]: number };"
+[ts] "export type C<T> = T extends (infer U)[] ? number : string;"
+    1:37 'U' is defined but never used.
+[ts] "export type C<T> = T extends (infer U)[] ? U : string;"
+[ts] "export interface I<T> { a: number }"
+    1:20 'T' is defined but never used.
+[ts] "export interface I<T> { a: T }"
+[ts] "export interface I { m(a: number): void; new (b: number): I; (c: number): void; get g(): number; set g(v: number) }"
+[ts] "function f<T>() {} f();"
+    1:12 'T' is defined but never used.
+[ts] "function f<T>(a: T) { return a } f(1);"
+[ts] "export function f<T, U = T>(u: U) { return u }"
+[ts] "export function f<const T>(a: T): T { return a }"
+[ts] "export function f<T>(x: T extends infer U ? U : never) { return x }"
+[ts] "export const x = <T,>(a: T) => a;"
+[ts] "class C<T> {} new C();"
+    1:9 'T' is defined but never used.
+[ts] "export default class { m<T>() {} }"
+    1:26 'T' is defined but never used.
+[ts] "class C { constructor(private a: number, b: number) {} } new C(1, 2);"
+    1:42 'b' is defined but never used.
+[ts] "class C { constructor(a: number, private b: number) {} } new C(1, 2);"
+[ts] "export class C { constructor(private readonly a = 1, public b?: number) {} }"
+[ts] "function f(this: Window, a: number) {} f(1);"
+    1:26 'a' is defined but never used.
+[ts] "export class C { m(this: C, a: number) { return this } }"
+    1:29 'a' is defined but never used.
+[ts] "function o(a: number): void; function o(a: number, b?: number): void {}"
+    1:10 'o' is defined but never used.
+    1:41 'a' is defined but never used.
+    1:52 'b' is defined but never used.
+[ts] "function f(a: number): void; function f(a: number, b?: number): void {} f(1);"
+    1:41 'a' is defined but never used.
+    1:52 'b' is defined but never used.
+[ts] "function f(): void; function f() { f(); }"
+    1:10 'f' is defined but never used.
+[ts] "export function f(): void; export function f() {}"
+[ts] "function f(): void; export function f() {}"
+[ts] "class C { m(): void; m(a?: number): void {} } new C();"
+    1:24 'a' is defined but never used.
+[ts] "abstract class C { abstract m(a: number): void; } new (C as any)();"
+[ts] "export abstract class C { constructor(protected readonly a: number) {} abstract get x(): number; abstract set x(v: number); }"
+[ts] "export class C { accessor a = 1; static { const z = 1; } }"
+    1:49 'z' is assigned a value but never used.
+[ts] "export const o = { set x(v: number) {} };"
+[ts] "export class C { set x(v: number) {} static set y({ a }: any) {} }"
+[ts] "function f() {} namespace f { export const a = 1 }"
+    1:10 'f' is defined but never used.
+[ts] "class C {} namespace C { export const x = C }"
+    1:7 'C' is defined but never used.
+[ts] "import a = require(\"a\");"
+    1:8 'a' is defined but never used.
+[ts] "import a = require(\"a\"); a();"
+[ts] "import type a = require(\"a\"); export let x: a.T;"
+[ts] "namespace N { export const x = 1 } import b = N.x;"
+    1:43 'b' is defined but never used.
+[ts] "namespace N { export const x = 1 } import b = N.x; b;"
+[ts] "namespace N { export const x = 1 } export import b = N.x;"
+[ts] "const a = 1; export = a;"
+[ts] "interface I {} export = I;"
+[ts] "import { a } from \"a\"; export = a;"
+[ts] "export default interface I {}"
+[ts] "interface I {} export default I;"
+[ts] "type T = number; export { T };"
+[ts] "type T = number; export { type T };"
+[ts] "type T = number; const v = 1; export { type T, v };"
+[ts] "type T = number; export type { T };"
+[ts] "type T = number; export type { T as U };"
+[ts] "const a = 1; export type { a };"
+    1:7 'a' is assigned a value but never used.
+[ts] "const a = 1; export { a as default };"
+[ts] "export as namespace Foo; const Foo = 1;"
+[ts] "function dec(x: any) { return x } @dec class C {} export {};"
+    1:46 'C' is defined but never used.
+[ts] "import { dec } from \"d\"; class C { @dec m() {} @dec p = 1; m2(@dec a: number) {} } new C();"
+    1:68 'a' is defined but never used.
+[ts] "import { I } from \"i\"; class C implements I {} new C();"
+[ts] "import { B } from \"b\"; class C<T extends B> { x!: T } new C();"
+[ts] "const x = 1; const y = x as number; export { y };"
+[ts] "import { T } from \"t\"; const y = 1 as T; export { y };"
+[ts] "import { T } from \"t\"; const y = <T>1; export { y };"
+[ts] "import { T } from \"t\"; const y = 1 satisfies T; export { y };"
+[ts] "import { T } from \"t\"; function f(a: T) { return a } f(1);"
+[ts] "import { T } from \"t\"; f<T>();"
+[ts] "import { T } from \"t\"; new F<T>();"
+[ts] "import { T } from \"t\"; new F<T>;"
+[ts] "import { T } from \"t\"; tag<T>`x`;"
+[ts] "import { T } from \"t\"; const g = f<T>; g();"
+[ts] "import { T } from \"t\"; export interface I { a: T }"
+[ts] "import { T } from \"t\"; export interface I extends T {}"
+[ts] "import { T } from \"t\"; export interface I extends A<T> {}"
+[ts] "import { T } from \"t\"; export type A = { a: T };"
+[ts] "import { T } from \"t\"; export type A = [T];"
+[ts] "import { T } from \"t\"; export type A = () => T;"
+[ts] "import { T } from \"t\"; export type A = `${T}`;"
+[ts] "import { T } from \"t\"; export type A = T extends string ? 1 : 2;"
+[ts] "import { T } from \"t\"; export type A = keyof T;"
+[ts] "import { T } from \"t\"; export type A = typeof T;"
+[ts] "import { T } from \"t\"; export type A = T.U.V;"
+[ts] "import { T } from \"t\"; export type A = import(\"x\").Y<T>;"
+[ts] "import { T } from \"t\"; export class C { [k: string]: T }"
+[ts] "import { T } from \"t\"; export class C { declare x: T }"
+[ts] "import { T } from \"t\"; export abstract class C { abstract m(a: T): void }"
+[ts] "import { T } from \"t\"; export abstract class C { abstract x: T }"
+[ts] "import { T } from \"t\"; export class C { m(): void; m(a?: T): void { a } }"
+[ts] "import { T } from \"t\"; export class C { m(): T; m(): any {} }"
+[ts] "import { T } from \"t\"; export function f(): T { return 1 as any }"
+[ts] "import { T } from \"t\"; export function f<U extends T>(u: U) { return u }"
+[ts] "import { T } from \"t\"; export function f<U = T>(u: U) { return u }"
+[ts] "import { T } from \"t\"; export const f = (x: unknown): x is T => true;"
+    1:42 'x' is defined but only used as a type.
+[ts] "import { T } from \"t\"; export let x: Array<T>;"
+[ts] "import { T } from \"t\"; export let x: T.U;"
+[ts] "import { T } from \"t\"; export let x: typeof T;"
+[ts] "import { T } from \"t\"; export let x: { [K in T]: number };"
+[ts] "import { T } from \"t\"; declare const d: T; export { d };"
+[ts] "import { T } from \"t\"; declare function g(a: T): void; g(1);"
+[ts] "import { T } from \"t\"; declare namespace N { const a: T } export { N };"
+[ts] "import { T } from \"t\"; export enum E { A = T }"
+[ts] "import { T } from \"t\"; export class C<U extends T> { u!: U }"
+[ts] "import { T } from \"t\"; export class C extends B<T> {}"
+[ts] "import { T } from \"t\"; try {} catch (e: T) { e }"
+    1:10 'T' is defined but never used.
+[ts] "import { T } from \"t\"; for (const x of y as T[]) { x }"
+[ts] "import { T } from \"t\"; export const x = { m(a: T) { return a } };"
+[ts] "import { T } from \"t\"; export const x = (a: T = 1) => a;"
+[ts] "import { T } from \"t\"; export const x = ({ a }: T) => a;"
+[ts] "import { T } from \"t\"; export const x = (...a: T[]) => a;"
+[ts] "import { T } from \"t\"; export function f(this: T) {}"
+[ts] "import { T } from \"t\"; export class C { accessor a: T = 1 }"
+[ts] "import { T } from \"t\"; export class C { get a(): T { return 1 } set a(v: T) {} }"
+[ts] "import { T } from \"t\"; export let x = y!.z as unknown as T;"
+[ts] "import { T } from \"t\"; export default <T,>(a: T) => a;"
+    1:10 'T' is defined but never used.
+[ts] "import { T } from \"t\"; let v: T; export {};"
+    1:28 'v' is defined but never used.
+[ts] "import { T } from \"t\"; export function f(a?: T) { return a }"
+[ts] "import { T } from \"t\"; export function f([a]: T[]) { return a }"
+[ts] "import { T } from \"t\"; export const f = function (a: T): void {};"
+    1:51 'a' is defined but never used.
+[ts] "import { T } from \"t\"; export const f = async <U extends T>(a: U): Promise<U> => a;"
+[ts] "import { T } from \"t\"; export let x: unique symbol, y: T;"
+[ts] "import { T } from \"t\"; export let x: [a: T, b?: string];"
+[ts] "import { T } from \"t\"; export let x: new () => T;"
+[ts] "import { T } from \"t\"; export let x: (a: T) => void;"
+[ts] "import { T } from \"t\"; export let x: { a: T; m(b: T): void };"
+[ts] "let a = 1; a! += 1;"
+[ts] "let a = 1; (a as any) = 2;"
+    1:13 'a' is assigned a value but never used.
+[ts] "let a = 1; (<any>a) = 2;"
+    1:18 'a' is assigned a value but never used.
+[ts] "let a = 1; a!++;"
+[ts] "let a = 1; (a as any)++;"
+[ts] "let a: any; a = a! + 1;"
+    1:13 'a' is assigned a value but never used.
+[ts] "let a: any; (a satisfies any) = 1;"
+[ts] "let a: any; (a as any) = a + 1;"
+[ts] "let x = 1; x = x satisfies number;"
+    1:12 'x' is assigned a value but never used.
+[ts] "let x: any; (x = 1) as any;"
+    1:14 'x' is assigned a value but never used.
+[ts] "let x: any; x = 1 as any;"
+    1:13 'x' is assigned a value but never used.
+[ts] "let x: any; x = (x as number) + 1;"
+    1:13 'x' is assigned a value but never used.
+[ts] "let x: any; (x = x + 1)!;"
+[ts] "let x: any; (x++) as any;"
+[ts] "let x: any; (x = 1, 2) as any;"
+    1:14 'x' is assigned a value but never used.
+[ts] "let x: any; ((2, x = 1) as any);"
+    1:18 'x' is assigned a value but never used.
+[ts] "const f = (() => { f(); }) as any;"
+[ts] "const f = function () { f(); } satisfies Function;"
+[ts] "const f = (function () { f(); })!;"
+[ts] "const f = <any>(() => f());"
+[ts] "const f = (() => { f(); });"
+    1:7 'f' is assigned a value but never used.
+[ts] "let a: any; a = (function () { a(); }) as any;"
+    1:13 'a' is assigned a value but never used.
+[ts] "let a: any; a = b(<any>function () { a(); });"
+[ts] "function g(o: any) { for (const k in o) { return; } } g(1);"
+[ts] "function g(o: any) { for (const k in o) { return; foo(); } } g(1);"
+    1:33 'k' is assigned a value but never used.
+[ts] "function g(o: any) { for (const k in o) { ; return; } } g(1);"
+    1:33 'k' is assigned a value but never used.
+[ts] "function g(o: any) { for (const k in o) { type T = 1; return; } } g(1);"
+    1:33 'k' is assigned a value but never used.
+    1:48 'T' is defined but never used.
+[ts] "function g(o: any) { for (const [a, b] of o) return; } g(1);"
+    1:37 'b' is assigned a value but never used.
+[ts] "function g(o: any) { for (const { a, b } of o) return; } g(1);"
+    1:38 'b' is assigned a value but never used.
+[ts] "function g(o: any) { let k; for (k in o) return; } g(1);"
+[ts] "function g(o: any) { let k; for ((k as any) in o) return; } g(1);"
+    1:35 'k' is assigned a value but never used.
+[ts] "function g(o: any) { let k; for (k! in o) return; } g(1);"
+    1:34 'k' is assigned a value but never used.
+[ts] "function g(o: any) { let k, j; for ([k, j] of o) return; } g(1);"
+    1:38 'k' is assigned a value but never used.
+    1:41 'j' is assigned a value but never used.
+[ts] "var a = 1; export var a = 2;"
+[ts] "label: for (;;) { break label; }"
+[ts] "let a: number; export default a;"
+[ts] "export function f(a: number, { b }: any) { return b }"
+[ts] "export function f({ a, ...rest }: any) { return rest }"
+    1:21 'a' is defined but never used.
+[ts] "export function f(a?: number, b = a) {}"
+    1:31 'b' is assigned a value but never used.
+[ts] "export let x: typeof import(\"m\");"
+[ts] "import { N } from \"n\"; export let x: N.T;"
+[ts] "import N from \"n\"; export let x: typeof N.x;"
+[ts] "import * as N from \"n\"; export let x: N.T<N.U>;"
+[ts] "export class C { private a = 1; #b = 2; }"
+[ts] "export const x = <const T,>(a: T) => a;"
+[ts] "using r = get();"
+    1:7 'r' is assigned a value but never used.
+[ts] "export {}; declare const a: number; const b = a; "
+    1:43 'b' is assigned a value but never used.
+[ts] "import React from \"react\"; export const a = 1;"
+    1:8 'React' is defined but never used.
+[d.ts] "declare const a: number; declare function f(x: number): void; declare class C {} interface I {} type T = 1; declare enum E { A } declare namespace N { const z: number }"
+[d.ts] "declare const a: number; export {};"
+    1:15 'a' is defined but never used.
+[d.ts] "declare const a: number; export declare const b: number;"
+[d.ts] "declare const a: number; export default a;"
+[d.ts] "declare const a: number; declare const b: number; export default b;"
+    1:15 'a' is defined but never used.
+[d.ts] "import { X } from \"x\"; declare const a: X;"
+[d.ts] "import { X } from \"x\"; declare const a: number;"
+    1:10 'X' is defined but never used.
+[d.ts] "declare namespace N { const a: number; export {}; } "
+    1:29 'a' is defined but never used.
+[d.ts] "namespace N { const a: number; }"
+[d.ts] "declare function f(): void; export = f;"
+[d.ts] "type T<U> = number;"
+    1:8 'U' is defined but never used.
+[d.ts] "declare function f<T>(a: number): void;"
+    1:20 'T' is defined but never used.
+[d.ts] "export * from \"x\"; declare const a: number;"
+    1:34 'a' is defined but never used.
+[d.ts] "export * as ns from \"x\"; declare const a: number;"
+    1:40 'a' is defined but never used.
+[d.ts] "export { x } from \"x\"; declare const a: number;"
+    1:38 'a' is defined but never used.
+[d.ts] "export type { X } from \"x\"; declare const a: number;"
+    1:43 'a' is defined but never used.
+[d.ts] "declare namespace A { namespace B { const x: number } }"
+[d.ts] "declare namespace A { namespace B { const x: number; export {} } }"
+    1:43 'x' is defined but never used.
+[d.ts] "declare namespace A.B { const x: number }"
+[d.ts] "declare let [a, b]: number[];"
+[d.ts] "declare module \"m\" { import { X } from \"x\"; const a: number; }"
+    1:31 'X' is defined but never used.
+[d.ts] "declare global { interface X {} } interface Y {}"
+[d.ts] "import a = require(\"a\"); declare const b: number;"
+    1:8 'a' is defined but never used.
+[d.ts] "declare function f(a: number): void; declare function f(a: string): void;"
+[d.ts] "declare class C<T> { m<U>(a: U): void }"
+    1:17 'T' is defined but never used.
+[d.ts] "interface I<T> {} type A = I<number>;"
+    1:13 'T' is defined but never used.
+[tsx] "import React from \"react\"; import Foo from \"foo\"; import bar from \"bar\"; const a = <Foo/>; const b = <bar.baz/>; const d = <div/>; export {a,b,d}"
+[tsx] "import React from \"react\"; export const x = 1;"
+    1:8 'React' is defined but never used.
+[tsx] "import React from \"react\"; export const x = <></>;"
+[tsx] "import React from \"react\"; export const x = <div/>;"
+[tsx] "const React = 1; export const x = <div/>;"
+[tsx] "function f(React: any) { return <div/> } f(1); import React from \"react\";"
+    1:55 'React' is defined but never used.
+[tsx] "import a from \"a\"; import b from \"b\"; export default <a:b/>;"
+[tsx] "import Foo from \"foo\"; import { T } from \"t\"; export default <Foo<T> />;"
+[tsx] "import Foo from \"foo\"; export default <Foo></Foo>;"
+[tsx] "import foo from \"foo\"; export default <foo/>;"
+    1:8 'foo' is defined but never used.
+[tsx] "import a from \"a\"; export default <div a={a as any}/>;"
+[tsx] "export class C { m() { return <this.x/> } }"
+[tsx] "import h from \"h\"; export default <div/>;"
+    1:8 'h' is defined but never used.
+[cts] "const a = 1; export = a;"
+[cts] "import a = require(\"a\"); const b = 1;"
+    1:8 'a' is defined but never used.
+    1:32 'b' is assigned a value but never used.
+[cts] "declare const d: number; function f() {}"
+    1:15 'd' is defined but never used.
+    1:35 'f' is defined but never used.

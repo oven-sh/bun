@@ -1,0 +1,161 @@
+class C { [k: string]: A }
+class C { [k: string]: A; }
+class C { [k: string]: A, }
+class C { [k: string]: A, [l: number]: B }
+class C { [k: string, l: number]: A }
+class C { [k: string,]: A }
+class C { [k?: string]: A }
+class C { [...k: string[]]: A }
+class C { [k: string] }
+class C { [k: string]; }
+class C { []: A }
+class C { [k]: A }
+class C { [k, l]: A }
+class C { static [k: string]: A }
+class C { readonly [k: string]: A }
+class C { declare [k: string]: A }
+class C { public [k: string]: A }
+class C { abstract [k: string]: A }
+class C { override [k: string]: A }
+class C { accessor [k: string]: A }
+class C { [k: string] = 1 }
+class C { [k: string]: A = 1 }
+class C { [k: string]?: A }
+class C { [k: string]!: A }
+class C { [k: string](): A {} }
+class C { static readonly [k: string]: A }
+class C { readonly static [k: string]: A }
+class C { [public k: string]: A }
+class C { [k: string]: A; [l: number]: B }
+class C { async [k: string]: A }
+class C { get [k: string]: A }
+class C { accessor a: A }
+class C { accessor a }
+class C { accessor a = 1 }
+class C { accessor a?: A }
+class C { accessor a!: A }
+class C { readonly accessor a: A }
+class C { declare accessor a: A }
+class C { static accessor a: A }
+class C { accessor static a: A }
+class C { public accessor a: A }
+class C { accessor public a: A }
+class C { abstract accessor a: A }
+class C { override accessor a: A }
+class C { accessor override a: A }
+class C { accessor readonly a: A }
+class C { accessor declare a: A }
+class C { accessor accessor a: A }
+class C { accessor a(): A {} }
+class C { accessor get a() {} }
+class C { accessor [a]: A }
+class C { accessor #a: A }
+class C { accessor "a": A }
+class C { accessor 1: A }
+class C { accessor⏎a: A }
+class C { accessor: A }
+class C { accessor = 1 }
+class C { accessor() {} }
+class C { accessor }
+class C { async accessor a: A }
+class C { accessor async a() {} }
+class C { accessor *a() {} }
+class C { accessor constructor }
+class C { accessor constructor() {} }
+class C { @d accessor a: A }
+class C { accessor a: A; }
+class C { static accessor #a = 1 }
+class C { a?: A = 1 }
+class C { a!: A = 1 }
+class C { a!?: A }
+class C { a?!: A }
+class C { a! }
+class C { a? }
+class C { a?() }
+class C { a?() {} }
+class C { a!() {} }
+class C { a?<T>() {} }
+class C { public public a: A }
+class C { public private a: A }
+class C { readonly readonly a: A }
+class C { readonly public a: A }
+class C { static static a: A }
+class C { static public a: A }
+class C { declare declare a: A }
+class C { override override a }
+class C { abstract a: A }
+class C { abstract a() {} }
+class C { declare a(): void }
+class C { declare a() {} }
+class C { declare get a(): A }
+class C { readonly a() {} }
+class C { readonly get a() {} }
+class C { override public a: A }
+class C { public override a: A }
+class C { public static override readonly a: A }
+class C { async async a() {} }
+class C { static async a() {} }
+class C { async static a() {} }
+class C { get get a() {} }
+class C { get a(): A }
+class C { set a(v) }
+class C { get a(); }
+class C { constructor(): A {} }
+class C { constructor<T>() {} }
+class C { public constructor() {} }
+class C { static constructor() {} }
+class C { a(public b: B) {} }
+class C { a(public private b: B) {} }
+class C { a(readonly readonly b: B) {} }
+class C { constructor(public private b: B) {} }
+class C { constructor(readonly public b: B) {} }
+class C { constructor(public public b: B) {} }
+class C { in a: A }
+class C { out a: A }
+class C { const a: A }
+class C { export a: A }
+class C { default a: A }
+class C { a: A, }
+class C { a: A, b: B }
+class C { a() {}, }
+class C { 1n: A }
+class C { 1n() {} }
+class C { #a?: A }
+class C { #a!: A }
+class C { static #a(): void; }
+class C { declare #a: A }
+class C { abstract #a: A }
+class C { a = 1, b = 2 }
+declare class C { [k: string]: A }
+abstract class C { [k: string]: A }
+let v = class { [k: string]: A };
+declare class C { [k: string, l: number]: A }
+abstract class C { [k: string, l: number]: A }
+let v = class { [k: string, l: number]: A };
+declare class C { [k: string] }
+abstract class C { [k: string] }
+let v = class { [k: string] };
+declare class C { accessor a: A }
+abstract class C { accessor a: A }
+let v = class { accessor a: A };
+declare class C { accessor a?: A }
+abstract class C { accessor a?: A }
+let v = class { accessor a?: A };
+declare class C { readonly accessor a: A }
+abstract class C { readonly accessor a: A }
+let v = class { readonly accessor a: A };
+declare class C { [k: string]: A, }
+abstract class C { [k: string]: A, }
+let v = class { [k: string]: A, };
+declare class C { a?: A = 1 }
+abstract class C { a?: A = 1 }
+let v = class { a?: A = 1 };
+declare class C { abstract a: A }
+abstract class C { abstract a: A }
+let v = class { abstract a: A };
+declare class C { constructor(public private b: B) {} }
+abstract class C { constructor(public private b: B) {} }
+let v = class { constructor(public private b: B) {} };
+declare class C { a(public private b: B) {} }
+abstract class C { a(public private b: B) {} }
+let v = class { a(public private b: B) {} };

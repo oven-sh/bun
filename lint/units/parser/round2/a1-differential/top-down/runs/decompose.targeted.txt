@@ -1,0 +1,35 @@
+    11 records    2 sources  D3 A>A that is no metadata: a declaration named as (output equals the emit of tsc) (ruling)
+          e.g. "namespace as {}"
+     4 records    1 sources  F1 metadata: a class of the file in a branch of a conditional type (fix)
+          e.g. "class C { @d a: A extends B ? C : C }"
+     4 records    1 sources  P  metadata: a predicate outside a return type keeps the tag of its name (fix)
+          e.g. "class C { @d a: b is A }"
+   240 records   16 sources  R1 .< after a dot of a type reference
+          e.g. "function f(x: A.<B>) {}"
+    30 records    2 sources  R10 body of an accessor of a type
+          e.g. "type X = { get a(): A {} };"
+    90 records    6 sources  R11c clauses of an interface: a second extends, implements before extends, an empty list
+          e.g. "interface I extends A, {}"
+    30 records    2 sources  R12 index signature of a class
+          e.g. "class C { [k: string] }"
+    75 records    5 sources  R13 order of parameter modifiers (parse_fn.rs)
+          e.g. "function f(readonly public a: A) {}"
+    45 records    3 sources  R2 private name as the name of a type
+          e.g. "let x: keyof #a;"
+    30 records    2 sources  R3 constraint of a type parameter: a word that starts an expression, a private name
+          e.g. "function f<U extends #a, V = #a>() {}"
+   165 records   11 sources  R4 index signature of a type with what the checker reports
+          e.g. "type X = { [a, b]: A };"
+    60 records    4 sources  R5 computed name of a type member that is an expression
+          e.g. "type X = { [\"a\" + \"b\"]: A };"
+    45 records    3 sources  R6 initializer of a property of a type
+          e.g. "class K { @d p: { a: A = 1 }; }"
+   505 records   34 sources  R7 parameters of a signature: modifiers, ? or ... with an initializer
+          e.g. "type X = (...a = []) => R;"
+    60 records    4 sources  R9 private name or bigint names a type member
+          e.g. "interface I { #a: A }"
+    15 records    1 sources  W1 witness: a block with return after the function (TS1108)
+          e.g. "function f(x: any): class {} { return null as any }"
+    27 records    3 sources  W7 witness: accessor with a modifier or ?, which the base reads with the default options
+          e.g. "class C { readonly accessor a: A }"
+1436 records

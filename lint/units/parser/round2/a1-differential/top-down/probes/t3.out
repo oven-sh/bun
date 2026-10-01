@@ -1,0 +1,552 @@
+"type X = (a?: A = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"?\"" +3 -> A
+"type X = { m(a?: A = 1): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (a?: A = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"?\"" +3 -> A
+"function f(a?: A = 1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304]
+    t.ts.plain: A ==
+"type X = (a? = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"?\"" +3 -> A
+"type X = { m(a? = 1): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (a? = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"?\"" +3 -> A
+"function f(a? = 1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1015] chk.tsx[TS1015] oth[]
+    t.ts.plain: A ==
+"type X = (a = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"type X = { m(a = 1): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (a = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"function f(a = 1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = (a: A = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 -> A
+"type X = { m(a: A = 1): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (a: A = 1) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 -> A
+"function f(a: A = 1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = (...a = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." +2 -> A
+"type X = { m(...a = []): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (...a = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." +2 -> A
+"function f(...a = []) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 ==
+"type X = (...a: A[] = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." +2 -> A
+"type X = { m(...a: A[] = []): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (...a: A[] = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." +2 -> A
+"function f(...a: A[] = []) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 ==
+"type X = (...[a] = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371,7031]
+    t.ts.plain: R "Unexpected ..." +3 -> A
+"type X = { m(...[a] = []): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371,7031]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (...[a] = []) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[2304,2371,7031]
+    t.ts.plain: R "Unexpected ..." +3 -> A
+"function f(...[a] = []) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1048] chk.tsx[TS1048] oth[7031]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 ==
+"type X = (...a?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,7019]
+    t.ts.plain: A ==
+"type X = { m(...a?): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,7019]
+    t.ts.plain: A ==
+"type X = new (...a?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,7019]
+    t.ts.plain: A ==
+"function f(...a?) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[7019]
+    t.ts.plain: A ==
+"type X = (...a?: A[]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,2370]
+    t.ts.plain: A ==
+"type X = { m(...a?: A[]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,2370]
+    t.ts.plain: A ==
+"type X = new (...a?: A[]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,2370]
+    t.ts.plain: A ==
+"function f(...a?: A[]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1047] chk.tsx[TS1047] oth[2304,2370]
+    t.ts.plain: A ==
+"type X = (...a, b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1014] chk.tsx[TS1014] oth[2304,7006,7019]
+    t.ts.plain: A ==
+"type X = { m(...a, b): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1014] chk.tsx[TS1014] oth[2304,7006,7019]
+    t.ts.plain: A ==
+"type X = new (...a, b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1014] chk.tsx[TS1014] oth[2304,7006,7019]
+    t.ts.plain: A ==
+"function f(...a, b) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1014] chk.tsx[TS1014] oth[7006,7019]
+    t.ts.plain: R "Expected \")\" but found \",\"" +2 ==
+"type X = (a?, b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1016] chk.tsx[TS1016] oth[2304,7006]
+    t.ts.plain: A ==
+"type X = { m(a?, b): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1016] chk.tsx[TS1016] oth[2304,7006]
+    t.ts.plain: A ==
+"type X = new (a?, b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1016] chk.tsx[TS1016] oth[2304,7006]
+    t.ts.plain: A ==
+"function f(a?, b) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1016] chk.tsx[TS1016] oth[7006]
+    t.ts.plain: A ==
+"type X = ({ ...a = 1 }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." -> A
+"type X = { m({ ...a = 1 }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2371]
+    t.ts.plain: R "Expected \"}\" but found \"=\"" +3 -> A
+"type X = new ({ ...a = 1 }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2371]
+    t.ts.plain: R "Unexpected ..." -> A
+"function f({ ...a = 1 }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[]
+    t.ts.plain: R "Expected \"}\" but found \"=\"" +2 ==
+"type X = ([...a = 1]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2318,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +3 -> A
+"type X = { m([...a = 1]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2318,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +2 -> A
+"type X = new ([...a = 1]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2304,2318,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +3 -> A
+"function f([...a = 1]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1186] chk.tsx[TS1186] oth[2318]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +3 ==
+"type X = ({ a = 1 }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Unexpected =" -> A
+"type X = { m({ a = 1 }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \"}\" but found \"=\"" +3 -> A
+"type X = new ({ a = 1 }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Unexpected =" -> A
+"function f({ a = 1 }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = ([a = 1]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +3 -> A
+"type X = { m([a = 1]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +2 -> A
+"type X = new ([a = 1]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \"]\" but found \"=\"" +3 -> A
+"function f([a = 1]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = ({ a }?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m({ a }?): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ({ a }?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"function f({ a }?) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2463,7031]
+    t.ts.plain: A ==
+"type X = ([a]?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m([a]?): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ([a]?) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"function f([a]?) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2463,7031]
+    t.ts.plain: A ==
+"type X = ({ a }?: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { m({ a }?: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = new ({ a }?: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"function f({ a }?: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2463]
+    t.ts.plain: A ==
+"type X = ({ a } = b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"type X = { m({ a } = b): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new ({ a } = b) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"function f({ a } = b) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = ([a, , b]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: R "Unexpected ," +1 -> A
+"type X = { m([a, , b]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: R "Unexpected ," -> A
+"type X = new ([a, , b]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: R "Unexpected ," +1 -> A
+"function f([a, , b]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7031]
+    t.ts.plain: A ==
+"type X = ([, a]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m([, a]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ([, a]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"function f([, a]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7031]
+    t.ts.plain: A ==
+"type X = ([a,]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m([a,]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ([a,]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7031]
+    t.ts.plain: A ==
+"function f([a,]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7031]
+    t.ts.plain: A ==
+"type X = ([...a, b]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m([...a, b]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ([...a, b]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"function f([...a, b]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[7031]
+    t.ts.plain: R "Unexpected \",\" after rest pattern" ==
+"type X = ({ ...a, b }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = { m({ ...a, b }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"type X = new ({ ...a, b }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[2304,7031]
+    t.ts.plain: A ==
+"function f({ ...a, b }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS2462] chk.tsx[TS2462] oth[7031]
+    t.ts.plain: R "Unexpected \",\" after rest pattern" ==
+"type X = ({ 1n: a }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected 1n" -> A
+"type X = { m({ 1n: a }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected 1n" +1 -> A
+"type X = new ({ 1n: a }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected 1n" -> A
+"function f({ 1n: a }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7031]
+    t.ts.plain: A ==
+"type X = ({ [a + b]: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Expected \"]\" but found \"+\"" +1 -> A
+"type X = { m({ [a + b]: c }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected [" +3 -> A
+"type X = new ({ [a + b]: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Expected \"]\" but found \"+\"" +1 -> A
+"function f({ [a + b]: c }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2538]
+    t.ts.plain: A ==
+"type X = ({ [a]: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" -> A
+"type X = { m({ [a]: c }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected [" +3 -> A
+"type X = new ({ [a]: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" -> A
+"function f({ [a]: c }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2538]
+    t.ts.plain: A ==
+"type X = ({ \"a\": c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: A ==
+"type X = { m({ \"a\": c }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: A ==
+"type X = new ({ \"a\": c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: A ==
+"function f({ \"a\": c }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7031]
+    t.ts.plain: A ==
+"type X = ({ #a: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected #a" -> R "Expected \";\" but found \"=>\""
+"type X = { m({ #a: c }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected #a" +1 ==
+"type X = new ({ #a: c }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2842]
+    t.ts.plain: R "Unexpected #a" -> R "Expected \";\" but found \"=>\""
+"function f({ #a: c }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#a\"" +3 ==
+"type X = ({ a: { b = 1 } }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Unexpected =" -> A
+"type X = { m({ a: { b = 1 } }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Expected \"}\" but found \"=\"" +4 -> A
+"type X = new ({ a: { b = 1 } }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2371]
+    t.ts.plain: R "Unexpected =" -> A
+"function f({ a: { b = 1 } }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = (this) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7006]
+    t.ts.plain: A ==
+"type X = { m(this): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,7006]
+    t.ts.plain: A ==
+"type X = new (this) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2681,7006]
+    t.ts.plain: A ==
+"function f(this) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[7006]
+    t.ts.plain: A ==
+"type X = (this: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { m(this: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = new (this: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2681]
+    t.ts.plain: A ==
+"function f(this: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = (this?: A) => R;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m(this?: A): R };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new (this?: A) => R;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(this?: A) {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"?\"" +1 ==
+"type X = (this = 1) => R;"
+    tsc: parse.ts[TS1005,TS1003] parse.tsx[TS1005,TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"type X = { m(this = 1): R };"
+    tsc: parse.ts[TS1005,TS1003] parse.tsx[TS1005,TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +1 -> A
+"type X = new (this = 1) => R;"
+    tsc: parse.ts[TS1005,TS1003] parse.tsx[TS1005,TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 -> A
+"function f(this = 1) {}"
+    tsc: parse.ts[TS1005,TS1003] parse.tsx[TS1005,TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"=\"" +2 ==
+"type X = (a, this: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2680,7006]
+    t.ts.plain: A ==
+"type X = { m(a, this: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2680,7006]
+    t.ts.plain: A ==
+"type X = new (a, this: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2680,2681,7006]
+    t.ts.plain: A ==
+"function f(a, this: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2680,7006]
+    t.ts.plain: A ==
+"type X = (...this) => R;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m(...this): R };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new (...this) => R;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(...this) {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X = (public ...a) => R;"
+    tsc: parse.ts[TS1005,TS1434,TS1128,TS1128] parse.tsx[TS1005,TS1434,TS1128,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"...\"" +2 ==
+"type X = { m(public ...a): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1317] chk.tsx[TS1317] oth[2304,2369,7019]
+    t.ts.plain: R "Expected \")\" but found \"...\"" +1 ==
+"type X = new (public ...a) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1317] chk.tsx[TS1317] oth[2304,2369,7019]
+    t.ts.plain: R "Expected \")\" but found \"...\"" +2 ==
+"function f(public ...a) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1317] chk.tsx[TS1317] oth[2369,7019]
+    t.ts.plain: R "Expected \")\" but found \"...\"" +2 ==
+"type X = (public { a }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +2 ==
+"type X = { m(public { a }): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +1 ==
+"type X = new (public { a }) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +2 ==
+"function f(public { a }) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +2 ==
+"type X = (public [a]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" ==
+"type X = { m(public [a]): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"[\"" +1 ==
+"type X = new (public [a]) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369,7031]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" ==
+"function f(public [a]) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2369,7031]
+    t.ts.plain: R "Expected \")\" but found \"[\"" +2 ==
+"type X = (readonly { a }: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 ==
+"type X = { m(readonly { a }: A): R };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +1 ==
+"type X = new (readonly { a }: A) => R;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 ==
+"function f(readonly { a }: A) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1187] chk.tsx[TS1187] oth[2304,2369]
+    t.ts.plain: R "Expected \")\" but found \"{\"" +2 ==
+"type X = (a!) => R;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" ==
+"type X = { m(a!): R };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"!\"" +1 ==
+"type X = new (a!) => R;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \";\" but found \"=>\"" ==
+"function f(a!) {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"!\"" +1 ==
+"type X = (a!: A) => R;"
+    tsc: parse.ts[TS1005,TS1434,TS1128,TS1128] parse.tsx[TS1005,TS1434,TS1128,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 ==
+"type X = { m(a!: A): R };"
+    tsc: parse.ts[TS1005,TS1138] parse.tsx[TS1005,TS1138] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"!\"" +1 ==
+"type X = new (a!: A) => R;"
+    tsc: parse.ts[TS1005,TS1138] parse.tsx[TS1005,TS1138] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \":\"" +2 ==
+"function f(a!: A) {}"
+    tsc: parse.ts[TS1005,TS1138] parse.tsx[TS1005,TS1138] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \")\" but found \"!\"" +1 ==
+"type X = (...) => R;"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ..." +2 ==
+"type X = { m(...): R };"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected )" ==
+"type X = new (...) => R;"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ..." +2 ==
+"function f(...) {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \")\"" +2 ==
+"type X = (a:) => R;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m(a:): R };"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected )" ==
+"type X = new (a:) => R;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(a:) {}"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected )" ==
+"type X = (?) => R;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ?" +2 ==
+"type X = { m(?): R };"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ?" ==
+"type X = new (?) => R;"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ?" +2 ==
+"function f(?) {}"
+    tsc: parse.ts[TS1003] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"?\"" ==
+"type X = (a?: ) => R;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m(a?: ): R };"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected )" ==
+"type X = new (a?: ) => R;"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f(a?: ) {}"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected )" ==

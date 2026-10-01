@@ -1,0 +1,39 @@
+"let f = <A[]>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <A.B>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <if>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected if" -> A
+"let f = <in>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +1 -> A
+"let f = <in>x;"
+    tsc: parse.ts[] parse.tsx[TS17008,TS1005] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +1 -> A
+"let f = <out.T>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = <out.T>x;"
+    tsc: parse.ts[] parse.tsx[TS17008,TS1005] chk.ts[] chk.tsx[] oth[2304,2503]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = <#T>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected #T" -> A
+"let f = <#T>x;"
+    tsc: parse.ts[] parse.tsx[TS17008,TS1005] chk.ts[TS2304] chk.tsx[] oth[2304]
+    t.ts.plain: R "Unexpected #T" -> A
+"let f = <A | B>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <string>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[2368]
+    t.ts.plain: A ==
+"let f = <A[]>x => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1003,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <A[]>async () => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1003,TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

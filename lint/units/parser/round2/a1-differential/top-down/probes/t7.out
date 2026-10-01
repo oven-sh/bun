@@ -1,0 +1,57 @@
+"let v = A<>.C;"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let v = A<>;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: A ==
+"let v = a<B>.c;"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let v = A<>();"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: A ==
+"let x: A<>;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"let x: A<>.C;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"class C extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends A<> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"class C implements A<> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"interface I extends A<> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1099] chk.tsx[TS1099] oth[2304]
+    t.ts.plain: R "Unexpected >" ==
+"class C implements a<B>.c {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let v = +1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends +1 {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends typeof a {}"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C extends (+1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2507]
+    t.ts.plain: A ==
+"class C implements (+1) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Unexpected +" +2 -> A
+"class C implements (a, b) {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2500]
+    t.ts.plain: R "Expected \")\" but found \",\"" +2 -> A
+"class C implements a.b<C>.d {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements a<B><C> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"{\" but found \"<\"" +3 ==

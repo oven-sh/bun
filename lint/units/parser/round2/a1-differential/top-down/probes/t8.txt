@@ -1,0 +1,726 @@
+type X = break;
+let x: break;
+function f(a: break) {}
+function f(): break { return x; }
+function f(): break {}
+let f = (a): break => a;
+let v = x as break;
+let v = <break>x;
+f<break>(x);
+function f<U extends break>() {}
+function f<U = break>() {}
+type X<U extends break> = U;
+class C<U extends break> {}
+interface I<U extends break> {}
+let f = <U extends break>() => 1;
+type X = { m<U extends break>(): void };
+let x: A | break;
+let x: break[];
+let x: keyof break;
+let x: A[break];
+let x: typeof break;
+type X = A extends break ? 1 : 2;
+type X = case;
+let x: case;
+function f(a: case) {}
+function f(): case { return x; }
+function f(): case {}
+let f = (a): case => a;
+let v = x as case;
+let v = <case>x;
+f<case>(x);
+function f<U extends case>() {}
+function f<U = case>() {}
+type X<U extends case> = U;
+class C<U extends case> {}
+interface I<U extends case> {}
+let f = <U extends case>() => 1;
+type X = { m<U extends case>(): void };
+let x: A | case;
+let x: case[];
+let x: keyof case;
+let x: A[case];
+let x: typeof case;
+type X = A extends case ? 1 : 2;
+type X = catch;
+let x: catch;
+function f(a: catch) {}
+function f(): catch { return x; }
+function f(): catch {}
+let f = (a): catch => a;
+let v = x as catch;
+let v = <catch>x;
+f<catch>(x);
+function f<U extends catch>() {}
+function f<U = catch>() {}
+type X<U extends catch> = U;
+class C<U extends catch> {}
+interface I<U extends catch> {}
+let f = <U extends catch>() => 1;
+type X = { m<U extends catch>(): void };
+let x: A | catch;
+let x: catch[];
+let x: keyof catch;
+let x: A[catch];
+let x: typeof catch;
+type X = A extends catch ? 1 : 2;
+type X = class;
+let x: class;
+function f(a: class) {}
+function f(): class { return x; }
+function f(): class {}
+let f = (a): class => a;
+let v = x as class;
+let v = <class>x;
+f<class>(x);
+function f<U extends class>() {}
+function f<U = class>() {}
+type X<U extends class> = U;
+class C<U extends class> {}
+interface I<U extends class> {}
+let f = <U extends class>() => 1;
+type X = { m<U extends class>(): void };
+let x: A | class;
+let x: class[];
+let x: keyof class;
+let x: A[class];
+let x: typeof class;
+type X = A extends class ? 1 : 2;
+type X = const;
+let x: const;
+function f(a: const) {}
+function f(): const { return x; }
+function f(): const {}
+let f = (a): const => a;
+let v = x as const;
+let v = <const>x;
+f<const>(x);
+function f<U extends const>() {}
+function f<U = const>() {}
+type X<U extends const> = U;
+class C<U extends const> {}
+interface I<U extends const> {}
+let f = <U extends const>() => 1;
+type X = { m<U extends const>(): void };
+let x: A | const;
+let x: const[];
+let x: keyof const;
+let x: A[const];
+let x: typeof const;
+type X = A extends const ? 1 : 2;
+type X = continue;
+let x: continue;
+function f(a: continue) {}
+function f(): continue { return x; }
+function f(): continue {}
+let f = (a): continue => a;
+let v = x as continue;
+let v = <continue>x;
+f<continue>(x);
+function f<U extends continue>() {}
+function f<U = continue>() {}
+type X<U extends continue> = U;
+class C<U extends continue> {}
+interface I<U extends continue> {}
+let f = <U extends continue>() => 1;
+type X = { m<U extends continue>(): void };
+let x: A | continue;
+let x: continue[];
+let x: keyof continue;
+let x: A[continue];
+let x: typeof continue;
+type X = A extends continue ? 1 : 2;
+type X = debugger;
+let x: debugger;
+function f(a: debugger) {}
+function f(): debugger { return x; }
+function f(): debugger {}
+let f = (a): debugger => a;
+let v = x as debugger;
+let v = <debugger>x;
+f<debugger>(x);
+function f<U extends debugger>() {}
+function f<U = debugger>() {}
+type X<U extends debugger> = U;
+class C<U extends debugger> {}
+interface I<U extends debugger> {}
+let f = <U extends debugger>() => 1;
+type X = { m<U extends debugger>(): void };
+let x: A | debugger;
+let x: debugger[];
+let x: keyof debugger;
+let x: A[debugger];
+let x: typeof debugger;
+type X = A extends debugger ? 1 : 2;
+type X = default;
+let x: default;
+function f(a: default) {}
+function f(): default { return x; }
+function f(): default {}
+let f = (a): default => a;
+let v = x as default;
+let v = <default>x;
+f<default>(x);
+function f<U extends default>() {}
+function f<U = default>() {}
+type X<U extends default> = U;
+class C<U extends default> {}
+interface I<U extends default> {}
+let f = <U extends default>() => 1;
+type X = { m<U extends default>(): void };
+let x: A | default;
+let x: default[];
+let x: keyof default;
+let x: A[default];
+let x: typeof default;
+type X = A extends default ? 1 : 2;
+type X = delete;
+let x: delete;
+function f(a: delete) {}
+function f(): delete { return x; }
+function f(): delete {}
+let f = (a): delete => a;
+let v = x as delete;
+let v = <delete>x;
+f<delete>(x);
+function f<U extends delete>() {}
+function f<U = delete>() {}
+type X<U extends delete> = U;
+class C<U extends delete> {}
+interface I<U extends delete> {}
+let f = <U extends delete>() => 1;
+type X = { m<U extends delete>(): void };
+let x: A | delete;
+let x: delete[];
+let x: keyof delete;
+let x: A[delete];
+let x: typeof delete;
+type X = A extends delete ? 1 : 2;
+type X = do;
+let x: do;
+function f(a: do) {}
+function f(): do { return x; }
+function f(): do {}
+let f = (a): do => a;
+let v = x as do;
+let v = <do>x;
+f<do>(x);
+function f<U extends do>() {}
+function f<U = do>() {}
+type X<U extends do> = U;
+class C<U extends do> {}
+interface I<U extends do> {}
+let f = <U extends do>() => 1;
+type X = { m<U extends do>(): void };
+let x: A | do;
+let x: do[];
+let x: keyof do;
+let x: A[do];
+let x: typeof do;
+type X = A extends do ? 1 : 2;
+type X = else;
+let x: else;
+function f(a: else) {}
+function f(): else { return x; }
+function f(): else {}
+let f = (a): else => a;
+let v = x as else;
+let v = <else>x;
+f<else>(x);
+function f<U extends else>() {}
+function f<U = else>() {}
+type X<U extends else> = U;
+class C<U extends else> {}
+interface I<U extends else> {}
+let f = <U extends else>() => 1;
+type X = { m<U extends else>(): void };
+let x: A | else;
+let x: else[];
+let x: keyof else;
+let x: A[else];
+let x: typeof else;
+type X = A extends else ? 1 : 2;
+type X = enum;
+let x: enum;
+function f(a: enum) {}
+function f(): enum { return x; }
+function f(): enum {}
+let f = (a): enum => a;
+let v = x as enum;
+let v = <enum>x;
+f<enum>(x);
+function f<U extends enum>() {}
+function f<U = enum>() {}
+type X<U extends enum> = U;
+class C<U extends enum> {}
+interface I<U extends enum> {}
+let f = <U extends enum>() => 1;
+type X = { m<U extends enum>(): void };
+let x: A | enum;
+let x: enum[];
+let x: keyof enum;
+let x: A[enum];
+let x: typeof enum;
+type X = A extends enum ? 1 : 2;
+type X = export;
+let x: export;
+function f(a: export) {}
+function f(): export { return x; }
+function f(): export {}
+let f = (a): export => a;
+let v = x as export;
+let v = <export>x;
+f<export>(x);
+function f<U extends export>() {}
+function f<U = export>() {}
+type X<U extends export> = U;
+class C<U extends export> {}
+interface I<U extends export> {}
+let f = <U extends export>() => 1;
+type X = { m<U extends export>(): void };
+let x: A | export;
+let x: export[];
+let x: keyof export;
+let x: A[export];
+let x: typeof export;
+type X = A extends export ? 1 : 2;
+type X = extends;
+let x: extends;
+function f(a: extends) {}
+function f(): extends { return x; }
+function f(): extends {}
+let f = (a): extends => a;
+let v = x as extends;
+let v = <extends>x;
+f<extends>(x);
+function f<U extends extends>() {}
+function f<U = extends>() {}
+type X<U extends extends> = U;
+class C<U extends extends> {}
+interface I<U extends extends> {}
+let f = <U extends extends>() => 1;
+type X = { m<U extends extends>(): void };
+let x: A | extends;
+let x: extends[];
+let x: keyof extends;
+let x: A[extends];
+let x: typeof extends;
+type X = A extends extends ? 1 : 2;
+type X = finally;
+let x: finally;
+function f(a: finally) {}
+function f(): finally { return x; }
+function f(): finally {}
+let f = (a): finally => a;
+let v = x as finally;
+let v = <finally>x;
+f<finally>(x);
+function f<U extends finally>() {}
+function f<U = finally>() {}
+type X<U extends finally> = U;
+class C<U extends finally> {}
+interface I<U extends finally> {}
+let f = <U extends finally>() => 1;
+type X = { m<U extends finally>(): void };
+let x: A | finally;
+let x: finally[];
+let x: keyof finally;
+let x: A[finally];
+let x: typeof finally;
+type X = A extends finally ? 1 : 2;
+type X = for;
+let x: for;
+function f(a: for) {}
+function f(): for { return x; }
+function f(): for {}
+let f = (a): for => a;
+let v = x as for;
+let v = <for>x;
+f<for>(x);
+function f<U extends for>() {}
+function f<U = for>() {}
+type X<U extends for> = U;
+class C<U extends for> {}
+interface I<U extends for> {}
+let f = <U extends for>() => 1;
+type X = { m<U extends for>(): void };
+let x: A | for;
+let x: for[];
+let x: keyof for;
+let x: A[for];
+let x: typeof for;
+type X = A extends for ? 1 : 2;
+type X = function;
+let x: function;
+function f(a: function) {}
+function f(): function { return x; }
+function f(): function {}
+let f = (a): function => a;
+let v = x as function;
+let v = <function>x;
+f<function>(x);
+function f<U extends function>() {}
+function f<U = function>() {}
+type X<U extends function> = U;
+class C<U extends function> {}
+interface I<U extends function> {}
+let f = <U extends function>() => 1;
+type X = { m<U extends function>(): void };
+let x: A | function;
+let x: function[];
+let x: keyof function;
+let x: A[function];
+let x: typeof function;
+type X = A extends function ? 1 : 2;
+type X = if;
+let x: if;
+function f(a: if) {}
+function f(): if { return x; }
+function f(): if {}
+let f = (a): if => a;
+let v = x as if;
+let v = <if>x;
+f<if>(x);
+function f<U extends if>() {}
+function f<U = if>() {}
+type X<U extends if> = U;
+class C<U extends if> {}
+interface I<U extends if> {}
+let f = <U extends if>() => 1;
+type X = { m<U extends if>(): void };
+let x: A | if;
+let x: if[];
+let x: keyof if;
+let x: A[if];
+let x: typeof if;
+type X = A extends if ? 1 : 2;
+type X = in;
+let x: in;
+function f(a: in) {}
+function f(): in { return x; }
+function f(): in {}
+let f = (a): in => a;
+let v = x as in;
+let v = <in>x;
+f<in>(x);
+function f<U extends in>() {}
+function f<U = in>() {}
+type X<U extends in> = U;
+class C<U extends in> {}
+interface I<U extends in> {}
+let f = <U extends in>() => 1;
+type X = { m<U extends in>(): void };
+let x: A | in;
+let x: in[];
+let x: keyof in;
+let x: A[in];
+let x: typeof in;
+type X = A extends in ? 1 : 2;
+type X = instanceof;
+let x: instanceof;
+function f(a: instanceof) {}
+function f(): instanceof { return x; }
+function f(): instanceof {}
+let f = (a): instanceof => a;
+let v = x as instanceof;
+let v = <instanceof>x;
+f<instanceof>(x);
+function f<U extends instanceof>() {}
+function f<U = instanceof>() {}
+type X<U extends instanceof> = U;
+class C<U extends instanceof> {}
+interface I<U extends instanceof> {}
+let f = <U extends instanceof>() => 1;
+type X = { m<U extends instanceof>(): void };
+let x: A | instanceof;
+let x: instanceof[];
+let x: keyof instanceof;
+let x: A[instanceof];
+let x: typeof instanceof;
+type X = A extends instanceof ? 1 : 2;
+type X = return;
+let x: return;
+function f(a: return) {}
+function f(): return { return x; }
+function f(): return {}
+let f = (a): return => a;
+let v = x as return;
+let v = <return>x;
+f<return>(x);
+function f<U extends return>() {}
+function f<U = return>() {}
+type X<U extends return> = U;
+class C<U extends return> {}
+interface I<U extends return> {}
+let f = <U extends return>() => 1;
+type X = { m<U extends return>(): void };
+let x: A | return;
+let x: return[];
+let x: keyof return;
+let x: A[return];
+let x: typeof return;
+type X = A extends return ? 1 : 2;
+type X = super;
+let x: super;
+function f(a: super) {}
+function f(): super { return x; }
+function f(): super {}
+let f = (a): super => a;
+let v = x as super;
+let v = <super>x;
+f<super>(x);
+function f<U extends super>() {}
+function f<U = super>() {}
+type X<U extends super> = U;
+class C<U extends super> {}
+interface I<U extends super> {}
+let f = <U extends super>() => 1;
+type X = { m<U extends super>(): void };
+let x: A | super;
+let x: super[];
+let x: keyof super;
+let x: A[super];
+let x: typeof super;
+type X = A extends super ? 1 : 2;
+type X = switch;
+let x: switch;
+function f(a: switch) {}
+function f(): switch { return x; }
+function f(): switch {}
+let f = (a): switch => a;
+let v = x as switch;
+let v = <switch>x;
+f<switch>(x);
+function f<U extends switch>() {}
+function f<U = switch>() {}
+type X<U extends switch> = U;
+class C<U extends switch> {}
+interface I<U extends switch> {}
+let f = <U extends switch>() => 1;
+type X = { m<U extends switch>(): void };
+let x: A | switch;
+let x: switch[];
+let x: keyof switch;
+let x: A[switch];
+let x: typeof switch;
+type X = A extends switch ? 1 : 2;
+type X = throw;
+let x: throw;
+function f(a: throw) {}
+function f(): throw { return x; }
+function f(): throw {}
+let f = (a): throw => a;
+let v = x as throw;
+let v = <throw>x;
+f<throw>(x);
+function f<U extends throw>() {}
+function f<U = throw>() {}
+type X<U extends throw> = U;
+class C<U extends throw> {}
+interface I<U extends throw> {}
+let f = <U extends throw>() => 1;
+type X = { m<U extends throw>(): void };
+let x: A | throw;
+let x: throw[];
+let x: keyof throw;
+let x: A[throw];
+let x: typeof throw;
+type X = A extends throw ? 1 : 2;
+type X = try;
+let x: try;
+function f(a: try) {}
+function f(): try { return x; }
+function f(): try {}
+let f = (a): try => a;
+let v = x as try;
+let v = <try>x;
+f<try>(x);
+function f<U extends try>() {}
+function f<U = try>() {}
+type X<U extends try> = U;
+class C<U extends try> {}
+interface I<U extends try> {}
+let f = <U extends try>() => 1;
+type X = { m<U extends try>(): void };
+let x: A | try;
+let x: try[];
+let x: keyof try;
+let x: A[try];
+let x: typeof try;
+type X = A extends try ? 1 : 2;
+type X = var;
+let x: var;
+function f(a: var) {}
+function f(): var { return x; }
+function f(): var {}
+let f = (a): var => a;
+let v = x as var;
+let v = <var>x;
+f<var>(x);
+function f<U extends var>() {}
+function f<U = var>() {}
+type X<U extends var> = U;
+class C<U extends var> {}
+interface I<U extends var> {}
+let f = <U extends var>() => 1;
+type X = { m<U extends var>(): void };
+let x: A | var;
+let x: var[];
+let x: keyof var;
+let x: A[var];
+let x: typeof var;
+type X = A extends var ? 1 : 2;
+type X = while;
+let x: while;
+function f(a: while) {}
+function f(): while { return x; }
+function f(): while {}
+let f = (a): while => a;
+let v = x as while;
+let v = <while>x;
+f<while>(x);
+function f<U extends while>() {}
+function f<U = while>() {}
+type X<U extends while> = U;
+class C<U extends while> {}
+interface I<U extends while> {}
+let f = <U extends while>() => 1;
+type X = { m<U extends while>(): void };
+let x: A | while;
+let x: while[];
+let x: keyof while;
+let x: A[while];
+let x: typeof while;
+type X = A extends while ? 1 : 2;
+type X = with;
+let x: with;
+function f(a: with) {}
+function f(): with { return x; }
+function f(): with {}
+let f = (a): with => a;
+let v = x as with;
+let v = <with>x;
+f<with>(x);
+function f<U extends with>() {}
+function f<U = with>() {}
+type X<U extends with> = U;
+class C<U extends with> {}
+interface I<U extends with> {}
+let f = <U extends with>() => 1;
+type X = { m<U extends with>(): void };
+let x: A | with;
+let x: with[];
+let x: keyof with;
+let x: A[with];
+let x: typeof with;
+type X = A extends with ? 1 : 2;
+type X = #a;
+let x: #a;
+function f(a: #a) {}
+function f(): #a { return x; }
+function f(): #a {}
+let f = (a): #a => a;
+let v = x as #a;
+let v = <#a>x;
+f<#a>(x);
+function f<U extends #a>() {}
+function f<U = #a>() {}
+type X<U extends #a> = U;
+class C<U extends #a> {}
+interface I<U extends #a> {}
+let f = <U extends #a>() => 1;
+type X = { m<U extends #a>(): void };
+let x: A | #a;
+let x: #a[];
+let x: keyof #a;
+let x: A[#a];
+let x: typeof #a;
+type X = A extends #a ? 1 : 2;
+type X = super.a;
+let x: super.a;
+function f(a: super.a) {}
+function f(): super.a { return x; }
+function f(): super.a {}
+let f = (a): super.a => a;
+let v = x as super.a;
+let v = <super.a>x;
+f<super.a>(x);
+function f<U extends super.a>() {}
+function f<U = super.a>() {}
+type X<U extends super.a> = U;
+class C<U extends super.a> {}
+interface I<U extends super.a> {}
+let f = <U extends super.a>() => 1;
+type X = { m<U extends super.a>(): void };
+let x: A | super.a;
+let x: super.a[];
+let x: keyof super.a;
+let x: A[super.a];
+let x: typeof super.a;
+type X = A extends super.a ? 1 : 2;
+type X = class {};
+let x: class {};
+function f(a: class {}) {}
+function f(): class {} { return x; }
+function f(): class {} {}
+let f = (a): class {} => a;
+let v = x as class {};
+let v = <class {}>x;
+f<class {}>(x);
+function f<U extends class {}>() {}
+function f<U = class {}>() {}
+type X<U extends class {}> = U;
+class C<U extends class {}> {}
+interface I<U extends class {}> {}
+let f = <U extends class {}>() => 1;
+type X = { m<U extends class {}>(): void };
+let x: A | class {};
+let x: class {}[];
+let x: keyof class {};
+let x: A[class {}];
+let x: typeof class {};
+type X = A extends class {} ? 1 : 2;
+type X = #a.b;
+let x: #a.b;
+function f(a: #a.b) {}
+function f(): #a.b { return x; }
+function f(): #a.b {}
+let f = (a): #a.b => a;
+let v = x as #a.b;
+let v = <#a.b>x;
+f<#a.b>(x);
+function f<U extends #a.b>() {}
+function f<U = #a.b>() {}
+type X<U extends #a.b> = U;
+class C<U extends #a.b> {}
+interface I<U extends #a.b> {}
+let f = <U extends #a.b>() => 1;
+type X = { m<U extends #a.b>(): void };
+let x: A | #a.b;
+let x: #a.b[];
+let x: keyof #a.b;
+let x: A[#a.b];
+let x: typeof #a.b;
+type X = A extends #a.b ? 1 : 2;
+type X = delete a;
+let x: delete a;
+function f(a: delete a) {}
+function f(): delete a { return x; }
+function f(): delete a {}
+let f = (a): delete a => a;
+let v = x as delete a;
+let v = <delete a>x;
+f<delete a>(x);
+function f<U extends delete a>() {}
+function f<U = delete a>() {}
+type X<U extends delete a> = U;
+class C<U extends delete a> {}
+interface I<U extends delete a> {}
+let f = <U extends delete a>() => 1;
+type X = { m<U extends delete a>(): void };
+let x: A | delete a;
+let x: delete a[];
+let x: keyof delete a;
+let x: A[delete a];
+let x: typeof delete a;
+type X = A extends delete a ? 1 : 2;

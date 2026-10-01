@@ -1,0 +1,436 @@
+
+## RESTORE: grammar error of the checker TS1015   (1 forms)
+  T "(a?: A = 1) => void"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1015  oth:TS2304,TS2371
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Unexpected =>
+
+## RESTORE: grammar error of the checker TS1017   (2 forms)
+  T "{ [...k: string[]]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1017  oth:TS2304
+       base: Unexpected ... | Unexpected k
+  T "{ [...k: []]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1017  oth:TS2304
+       base: Unexpected ... | Unexpected k
+
+## RESTORE: grammar error of the checker TS1019   (1 forms)
+  T "{ [k?: string]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1019  oth:TS2304
+       base: Expected "]" but found "?" | Unexpected ]
+
+## RESTORE: grammar error of the checker TS1025   (1 forms)
+  T "{ [k: string,]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1025  oth:TS2304
+       base: Expected "]" but found "," | Unexpected ]
+
+## RESTORE: grammar error of the checker TS1096   (5 forms)
+  T "A\n[]"  ctx[field] apis:15 srcs:1  chk:TS1096  oth:TS2304
+       base: Unexpected ]
+  T "(A)\n[]"  ctx[field] apis:15 srcs:1  chk:TS1096  oth:TS2304
+       base: Unexpected ]
+  T "{ [k: string, l: number]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1096  oth:TS2304
+       base: Expected "]" but found "," | Unexpected l
+  T "{ []: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,ternary,as,satisfies,angle,tparam] apis:15 srcs:14  chk:TS1096  oth:TS2304
+       base: Unexpected ]
+  T "{ readonly []: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,ternary,as,satisfies,angle,tparam] apis:15 srcs:14  chk:TS1096  oth:TS2304
+       base: Unexpected ]
+
+## RESTORE: grammar error of the checker TS1097   (1 forms)
+  T ""  ctx[iextends] apis:15 srcs:1  chk:TS1097
+       base: Expected "{" but found end of file
+
+## RESTORE: grammar error of the checker TS1108   (1 forms)
+  T "class {}"  ctx[fnret] apis:15 srcs:1  chk:TS1108  oth:TS2304
+       base: Unexpected class
+
+## RESTORE: grammar error of the checker TS1110   (2 forms)
+  T "#a"  ctx[tparam] apis:15 srcs:1  chk:TS1110
+       base: Unexpected #a | Expected identifier but found ">" | Expected ")" but found "(" | Expected ";" but found ")"
+  T "super.a"  ctx[tparam] apis:15 srcs:1  chk:TS1110
+       base: Unexpected super | Expected identifier but found "." | Expected ")" but found "a" | Expected ";" but found ">" | Expected "=>" but found "{"
+
+## RESTORE: grammar error of the checker TS1170   (5 forms)
+  T "{ [k = 1]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1170  oth:TS2304
+       base: Expected "]" but found "=" | Unexpected 1
+  T "{ [a + b]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1170  oth:TS2304
+       base: Expected "]" but found "+" | Unexpected b
+  T "{ [a as B]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1170  oth:TS2304
+       base: Expected "]" but found "as" | Unexpected B
+  T "{ [k `a${string}`]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1170  oth:TS2304,TS2693
+       base: Expected "]" but found "`a${" | Unexpected string
+  T "{ [ + b]: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1170  oth:TS2304
+       base: Unexpected + | Unexpected b
+
+## RESTORE: grammar error of the checker TS1172   (6 forms)
+  T "A extends B"  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends"  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found end of file
+  T "A extends B "  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends "  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found end of file
+  T " U extends A"  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "infer  extends A"  ctx[iextends] apis:15 srcs:1  chk:TS1172  oth:TS2304
+       base: Expected identifier but found "extends" | Expected "{" but found "A" | Unexpected {
+
+## RESTORE: grammar error of the checker TS1247   (1 forms)
+  T "{ a: A = 1 }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1247  oth:TS2304
+       base: Unexpected =
+
+## RESTORE: grammar error of the checker TS1539   (1 forms)
+  T "{ 1n: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle,tparam] apis:15 srcs:13  chk:TS1539  oth:TS2304
+       base: Unexpected 1n
+
+## RESTORE: grammar error of the checker TS18016   (1 forms)
+  T "{ #a: A }"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS18016  oth:TS2304
+       base: Unexpected #a
+
+## RESTORE: grammar error of the checker TS2304   (1 forms)
+  T "#a"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,as,satisfies,angle] apis:15 srcs:12  chk:TS2304
+       base: Unexpected #a
+
+## RESTORE: grammar error of the checker TS5086   (2 forms)
+  T "[a: A?]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS5086  oth:TS2304
+       base: Expected "]" but found "?" | Expected ";" but found "]"
+  T "[a?: A?]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS5086  oth:TS2304
+       base: Expected "]" but found "?" | Expected ";" but found "]"
+
+## RESTORE: grammar error of the checker TS8020   (4 forms)
+  T "A.<B>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  T "Array.<A>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  T "A.<C>"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS8020  oth:TS2304
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+  T "A.B.<D>[]"  ctx[alias,var,field,param,ctor,ret,fnparam,fnret,arrowparam,arrowret,ternary,as,satisfies,angle,targ,tparam] apis:15 srcs:16  chk:TS8020  oth:TS2304,TS2503
+       base: Expected identifier but found "<" | Expected ";" but found ">"
+
+## RESTORE: tsc does not parse TS1003   (5 forms)
+  T "A.<B>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1003@21
+       base: Expected identifier but found "<" | Expected "{" but found ">" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "Array.<A>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1003@25
+       base: Expected identifier but found "<" | Expected "{" but found ">" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "A.<C>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1003@21
+       base: Expected identifier but found "<" | Expected "{" but found ">" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "A.B.<D>[]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1003@23,TS1005@26
+       base: Expected identifier but found "<" | Expected "{" but found ">" | Unexpected ]
+  T "import('x').A.<C, D>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1003@33
+       base: Expected identifier but found "<" | Expected "{" but found ">" | Expected identifier but found "{" | Expected "}" but found end of file
+
+## RESTORE: tsc does not parse TS1005   (36 forms)
+  T "[a: A?]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@21,TS1109@25
+       base: Expected "]" but found "?" | Expected "{" but found "]" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "[function]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28
+       base: Expected ":" but found "]" | Expected "]" but found "{" | Expected "{" but found "}" | Expected "}" but found end of file
+  T "[...class: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28,TS1011@32
+       base: Unexpected class
+  T "A extends B extends C ? D : E"  ctx[iextends] apis:15 srcs:1  parse:TS1005@42,TS1005@46
+       base: Expected "?" but found "extends" | Expected ":" but found "?" | Expected "{" but found ":" | Unexpected {
+  T "(a = 1) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@27,TS1109@30
+       base: Expected ")" but found "=" | Expected "{" but found "1" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found "{" 
+  T "(a: A = 1) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@21,TS1005@25,TS1005@28,TS1109@30,TS1109@33
+       base: Expected ")" but found ":" | Expected "{" but found "A" | Expected identifier but found "=" | Expected ";" but found ")" | Expected identifier but found "=>" | 
+  T "(a = 1, b = 2) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@34,TS1109@37
+       base: Expected ")" but found "=" | Expected "{" but found "1" | Expected identifier but found "," | Expected ";" but found ")" | Expected identifier but found "=>" | 
+  T "(a = () => 1) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@33,TS1109@36
+       base: Expected ")" but found "=" | Expected "{" but found "(" | Expected identifier but found ")" | Expected ";" but found "1" | Expected identifier but found ")" | E
+  T "(a = b as C) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@32,TS1109@35
+       base: Expected ")" but found "=" | Expected "{" but found "b" | Expected ";" but found "C" | Expected identifier but found ")" | Expected ";" but found "void" | Expec
+  T "({ a = 1 }: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@29,TS1005@32,TS1109@34,TS1109@37
+       base: Unexpected =
+  T "({ a: b = 1 }: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@32,TS1005@35,TS1109@37,TS1109@40
+       base: Unexpected =
+  T "([a = 1]: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@27,TS1005@30,TS1109@32,TS1109@35
+       base: Expected "]" but found "=" | Expected ")" but found "1" | Expected "{" but found "]" | Expected identifier but found ":" | Expected ";" but found ")" | Expected
+  T "([a, , b]: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28,TS1005@31,TS1109@33,TS1109@36
+       base: Unexpected , | Expected ")" but found ":" | Expected "{" but found "A" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier
+  T "({ [a]: b }: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@30,TS1005@33,TS1109@35,TS1109@38
+       base: Expected ")" but found ":" | Expected "{" but found "A" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found "{" 
+  T "({ a, b } = c) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@34,TS1109@37
+       base: Expected ")" but found "=" | Expected "{" but found "c" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found "{" 
+  T "(public a: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@27,TS1005@28,TS1005@31,TS1109@33,TS1109@36
+       base: Expected ")" but found "a" | Expected "{" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "(private a: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28,TS1005@29,TS1005@32,TS1109@34,TS1109@37
+       base: Expected ")" but found "a" | Expected "{" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "(readonly a: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@29,TS1005@30,TS1005@33,TS1109@35,TS1109@38
+       base: Expected ")" but found ":" | Expected "{" but found "A" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found "{" 
+  T "new (a = 1) => A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@31
+       base: Expected ")" but found "=" | Expected "{" but found "1" | Expected identifier but found ")" | Expected ";" but found "A" | Expected identifier but found "{" | E
+  T "{ [k: string, l: number]: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@23,TS1005@42,TS1136@43
+       base: Expected "]" but found "," | Unexpected l
+  T "{ [k: string,]: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@23,TS1136@32,TS1136@33
+       base: Expected "]" but found "," | Unexpected ]
+  T "await A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@25
+       base: Expected "{" but found "A" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "[...class: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28
+       base: Unexpected class
+  T "A extends  U extends B ? U : never"  ctx[iextends] apis:15 srcs:1  parse:TS1005@43,TS1005@47
+       base: Expected "?" but found "extends" | Expected ":" but found "?" | Expected "{" but found ":" | Unexpected {
+  T "A extends (a: infer P) => infer R extends B ? P : R"  ctx[iextends] apis:15 srcs:1  parse:TS1005@32,TS1005@40,TS1005@41,TS1109@43,TS1005@52,TS1005@64,TS1005@68
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T " class"  ctx[tparam] apis:15 srcs:1  parse:TS1005@27
+       base: Unexpected class | Expected identifier but found ">" | Expected ")" but found "(" | Expected ";" but found ")"
+  T "([a, , ]: A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@27,TS1005@30,TS1109@32,TS1109@35
+       base: Unexpected , | Expected ")" but found ":" | Expected "{" but found "A" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier
+  T "({ a,  } = c) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@33,TS1109@36
+       base: Expected ")" but found "=" | Expected "{" but found "c" | Expected identifier but found ")" | Expected ";" but found "void" | Expected identifier but found "{" 
+  T "(a: A) => asserts  is B"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@21,TS1005@24,TS1109@26,TS1005@38,TS1005@41
+       base: Expected "{" but found "B" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "(readonly A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@29,TS1005@30,TS1109@32,TS1109@35
+       base: Expected "{" but found "=>" | Expected ";" but found "{"
+  T "(override A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@29,TS1005@30,TS1109@32,TS1109@35
+       base: Expected ")" but found "A" | Expected "{" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "(public A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@27,TS1005@28,TS1109@30,TS1109@33
+       base: Expected ")" but found "A" | Expected "{" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "(private A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28,TS1005@29,TS1109@31,TS1109@34
+       base: Expected ")" but found "A" | Expected "{" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "(protected A) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@30,TS1005@31,TS1109@33,TS1109@36
+       base: Expected ")" but found "A" | Expected "{" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "<out>() => "  ctx[arrowret] apis:15 srcs:1  parse:TS1005@11,TS1134@13,TS1005@25
+       base: The modifier "out" is not valid here
+  T " (a = 1) => A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1005@28
+       base: Expected ")" but found "=" | Expected "{" but found "1" | Expected identifier but found ")" | Expected ";" but found "A" | Expected identifier but found "{" | E
+
+## RESTORE: tsc does not parse TS1034   (1 forms)
+  T "super"  ctx[tparam] apis:15 srcs:1  parse:TS1034@26
+       base: Unexpected super | Expected identifier but found ">" | Expected ")" but found "(" | Expected ";" but found ")"
+
+## RESTORE: tsc does not parse TS1109   (59 forms)
+  T "+1"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@22
+       base: Unexpected + | Expected ";" but found "{"
+  T "-a"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@22
+       base: Expected number but found "a"
+  T "-true"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@25
+       base: Expected number but found "true"
+  T "[a?: A?]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@22,TS1109@26
+       base: Expected "]" but found "?" | Expected "{" but found "]" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "[...in: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1109@25,TS1011@29
+       base: Unexpected in
+  T "[...delete: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@29,TS1011@33
+       base: Unexpected delete
+  T "[...var: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1134@26,TS1005@29,TS1005@31
+       base: Unexpected var
+  T "[...const: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1134@28,TS1005@31,TS1005@33
+       base: Unexpected "const"
+  T "[...enum: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1003@27,TS1011@31,TS1005@32
+       base: Unexpected enum
+  T "[...extends: A[]]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1109@30,TS1011@34,TS1005@35
+       base: Unexpected extends
+  T "A extends (...a: infer P) => infer R extends B ? P : R"  ctx[iextends] apis:15 srcs:1  parse:TS1109@31,TS1005@35,TS1005@43,TS1005@44,TS1109@46,TS1005@55,TS1005@67,TS1005@71
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends () => infer R extends B ? R : never"  ctx[iextends] apis:15 srcs:1  parse:TS1109@31,TS1005@33,TS1005@42,TS1005@54,TS1005@58
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "typeof a\n<B>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19
+       base: Expected "{" but found "<" | Expected ";" but found ">" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "typeof typeof a"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@35
+       base: Expected "{" but found "a" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "typeof a.b()"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@32
+       base: Expected "{" but found "(" | Expected identifier but found ")"
+  T "typeof a()"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@30
+       base: Expected "{" but found "(" | Expected identifier but found ")"
+  T "typeof 'a'"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@30
+       base: Expected identifier but found "'a'"
+  T "typeof 1"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@28
+       base: Expected identifier but found "1"
+  T "typeof a?.b"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@31
+       base: Expected "{" but found "?." | Expected ";" but found "{"
+  T "typeof (a)"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@30
+       base: Expected identifier but found "(" | Expected "{" but found "a" | Expected identifier but found ")"
+  T "(a?: A = 1) => void"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@22,TS1005@31,TS1109@34
+       base: Expected ")" but found "?" | Expected "{" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "{"
+  T "<out>() => out"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@34
+       base: The modifier "out" is not valid here
+  T "{ [k?: string]: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@24
+       base: Expected "]" but found "?" | Unexpected ]
+  T "{ [...k: string[]]: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@22,TS1005@26,TS1005@34,TS1109@35,TS1005@36,TS1136@37
+       base: Unexpected ... | Unexpected k
+  T "!A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@22
+       base: Unexpected ! | Expected "{" but found "A" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "delete A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@28
+       base: Unexpected delete | Expected ";" but found "{"
+  T "void A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@26
+       base: Expected "{" but found "A" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "~A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@22
+       base: Unexpected ~ | Expected ";" but found "{"
+  T "<B>[]"  ctx[heritage,iextends] apis:10 srcs:2  parse:TS1109@19,TS1005@25
+       base: Expected "(" but found "[" | Unexpected ]
+  T "[...in: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1109@25
+       base: Unexpected in
+  T "[...delete: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@29
+       base: Unexpected delete
+  T "[...var: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1134@26,TS1005@30
+       base: Unexpected var
+  T "[...const: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1134@28,TS1005@32
+       base: Unexpected "const"
+  T "[...enum: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1003@27,TS1005@31
+       base: Unexpected enum
+  T "[...extends: []]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@23,TS1109@30,TS1005@34
+       base: Unexpected extends
+  T " extends"  ctx[targ] apis:15 srcs:1  parse:TS1109@3,TS1109@10
+       base: Unexpected extends
+  T "A extends (...a:  P) => infer R extends B ? P : R"  ctx[iextends] apis:15 srcs:1  parse:TS1109@31,TS1005@35,TS1005@39,TS1109@41,TS1005@50,TS1005@62,TS1005@66
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends (...a: infer P) =>  R extends B ? P : R"  ctx[iextends] apis:15 srcs:1  parse:TS1109@31,TS1005@35,TS1005@43,TS1005@44,TS1109@46,TS1005@62,TS1005@66
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends () =>  R extends B ? R : never"  ctx[iextends] apis:15 srcs:1  parse:TS1109@31,TS1005@33,TS1005@49,TS1005@53
+       base: Expected "?" but found "{" | Unexpected } | Unexpected end of file
+  T "A extends  in ? 1 : 2"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@30,TS1109@33,TS1005@41
+       base: Unexpected in | Unexpected ? | Expected "{" but found ":" | Expected ";" but found "{"
+  T "{ [K in in ]: V }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@27,TS1109@30
+       base: Unexpected in | Unexpected ]
+  T "<B>[C]"  ctx[heritage,iextends] apis:10 srcs:2  parse:TS1109@19,TS1005@26
+       base: Expected "(" but found "[" | Expected ")" but found "]"
+  T "typeof [B]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@30
+       base: Expected identifier but found "[" | Expected "{" but found "B" | Expected identifier but found "]"
+  T "typeof <B>[]"  ctx[heritage,iextends] apis:10 srcs:2  parse:TS1109@19,TS1005@32
+       base: Expected identifier but found "<" | Expected "{" but found "B" | Expected identifier but found ">" | Expected ";" but found "]" | Expected identifier but found 
+  T "typeof a<>.c"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1477@27,TS1005@32
+       base: Unexpected >
+  T "typeof []"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@29
+       base: Expected identifier but found "[" | Expected "{" but found "]" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "typeof [number]"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@35
+       base: Expected identifier but found "[" | Expected "{" but found "number" | Expected identifier but found "]"
+  T "typeof ['b']"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@32
+       base: Expected identifier but found "[" | Expected "{" but found "'b'" | Expected identifier but found "]"
+  T "typeof ('x')"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@32
+       base: Expected identifier but found "(" | Expected "{" but found "'x'" | Expected identifier but found ")"
+  T "typeof ('x').a"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@34
+       base: Expected identifier but found "(" | Expected "{" but found "'x'" | Expected identifier but found ")" | Expected ";" but found "a" | Expected identifier but foun
+  T "typeof ('x').a<B>"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19
+       base: Expected identifier but found "(" | Expected "{" but found "'x'" | Expected identifier but found ")" | Expected ";" but found "a" | Expected identifier but foun
+  T "typeof ab()"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@31
+       base: Expected "{" but found "(" | Expected identifier but found ")"
+  T " in"  ctx[tparam] apis:15 srcs:1  parse:TS1109@22
+       base: Unexpected in | Expected identifier but found ">" | Expected ")" but found "(" | Expected ";" but found ")"
+  T " delete"  ctx[tparam] apis:15 srcs:1  parse:TS1109@28
+       base: Unexpected delete | Expected identifier but found ">" | Expected ")" but found "(" | Expected ";" but found ")"
+  T "<out >() => T"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@19,TS1005@33
+       base: The modifier "out" is not valid here
+  T "() => asserts  is A"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@20,TS1005@22,TS1005@34,TS1005@37
+       base: Expected "{" but found "A" | Expected identifier but found "{" | Expected "}" but found end of file
+  T "{ [...k: []]: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@22,TS1005@26,TS1109@29,TS1005@30,TS1136@31
+       base: Unexpected ... | Unexpected k
+  T "{ []: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@22
+       base: Unexpected ]
+  T "{ readonly []: A }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1109@31
+       base: Unexpected ]
+
+## RESTORE: tsc does not parse TS1110   (4 forms)
+  T "[a: ?]"  ctx[arrowret,targ] apis:15 srcs:2  parse:TS1110@18
+       base: Expected ";" but found ":" | Expected "]" but found ":" | Unexpected ]
+  T "[a?: ?]"  ctx[arrowret,targ] apis:15 srcs:2  parse:TS1110@19
+       base: Expected ";" but found ":" | Unexpected :
+  T "<out>() => "  ctx[targ] apis:15 srcs:1  parse:TS1110@13
+       base: The modifier "out" is not valid here
+  T "{ #a:  }"  ctx[arrowret,targ] apis:15 srcs:2  parse:TS1110@20
+       base: Expected ";" but found ":" | Unexpected #a
+
+## RESTORE: tsc does not parse TS1131   (17 forms)
+  T "(a = 1) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@32,TS1128@42,TS1128@44
+       base: Expected ")" but found "=" | Expected ";" but found "1" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found "x" | Unexpect
+  T "(a: A = 1) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@35,TS1128@45,TS1128@47
+       base: Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found "=" | Expected ";" but found ")" | Expected identifier but found "=>" | 
+  T "(a?: A = 1) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@36,TS1128@46,TS1128@48
+       base: Expected ")" but found "?" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "return" | Un
+  T "(a = 1, b = 2) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@39,TS1128@49,TS1128@51
+       base: Expected ")" but found "=" | Expected ";" but found "1" | Expected identifier but found "," | Expected ";" but found ")" | Expected identifier but found "=>" | 
+  T "(a = () => 1) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@38,TS1128@48,TS1128@50
+       base: Expected ")" but found "=" | Expected ";" but found "(" | Expected identifier but found ")" | Expected ";" but found "1" | Expected identifier but found ")" | E
+  T "(a = b as C) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@37,TS1128@47,TS1128@49
+       base: Expected ")" but found "=" | Expected ";" but found "b" | Expected ";" but found "C" | Expected identifier but found ")" | Expected ";" but found "{" | Expected
+  T "({ a = 1 }: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@39,TS1128@49,TS1128@51
+       base: Unexpected =
+  T "({ a: b = 1 }: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@42,TS1128@52,TS1128@54
+       base: Unexpected =
+  T "([a = 1]: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@37,TS1128@47,TS1128@49
+       base: Expected "]" but found "=" | Expected ")" but found "1" | Expected ";" but found "]" | Expected identifier but found ":" | Expected ";" but found ")" | Expected
+  T "([a, , b]: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@38,TS1128@48,TS1128@50
+       base: Unexpected , | Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found
+  T "({ [a]: b }: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@40,TS1128@50,TS1128@52
+       base: Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found "x" | Unexpect
+  T "({ a, b } = c) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@39,TS1128@49,TS1128@51
+       base: Expected ")" but found "=" | Expected ";" but found "c" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found "x" | Unexpect
+  T "(public a: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@38,TS1128@48,TS1128@50
+       base: Expected ")" but found "a" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "return" | Un
+  T "(private a: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@39,TS1128@49,TS1128@51
+       base: Expected ")" but found "a" | Expected ";" but found ":" | Expected ";" but found ")" | Expected identifier but found "=>" | Expected ";" but found "return" | Un
+  T "(readonly a: A) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@40,TS1128@50,TS1128@52
+       base: Expected ")" but found ":" | Expected ";" but found "A" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found "x" | Unexpect
+  T "<out>() => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@32,TS1128@42,TS1128@44
+       base: The modifier "out" is not valid here
+  T "new (a = 1) => "  ctx[ret,fnret] apis:15 srcs:2  parse:TS1131@36,TS1128@46,TS1128@48
+       base: Expected ")" but found "=" | Expected ";" but found "1" | Expected identifier but found ")" | Expected ";" but found "{" | Expected ";" but found "x" | Unexpect
+
+## RESTORE: tsc does not parse TS1136   (1 forms)
+  T "{ (b = 1): void }"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1136@21,TS1005@28,TS1109@30,TS1109@35
+       base: Expected ")" but found "=" | Unexpected 1
+
+## RESTORE: tsc does not parse TS1477   (1 forms)
+  T "A<>.C"  ctx[heritage,iextends] apis:15 srcs:2  parse:TS1477@20
+       base: Unexpected >
+
+## ruling: metadata of a source that tsc does not parse   (32 forms)
+  T "A extends infer U[] ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1005@33,TS1005@36,TS1442@40
+       base: o
+  T "(a is A)"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1005@19,TS1434@22,TS1128@23,TS1128@26
+       base: o
+  T "a is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1128@24
+       base: o
+  T "x is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1128@24
+       base: o
+  T "a is A | B"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1128@28
+       base: o
+  T "a is A[]"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1011@23,TS1128@26
+       base: o
+  T "a is A extends B ? C : D"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1434@21,TS1128@23,TS1128@42
+       base: o
+  T "a is a is A"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1442@18,TS1434@21,TS1228@23,TS1128@29
+       base: o
+  T "asserts is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@27
+       base: o
+  T "asserts is"  ctx[ret] apis:4 srcs:1  parse:TS1131@31,TS1128@41,TS1128@43
+       base: o
+  T "asserts is is A"  ctx[ret] apis:4 srcs:1  parse:TS1144@32,TS1068@34,TS1128@48
+       base: o
+  T "asserts a.b"  ctx[ret] apis:4 srcs:1  parse:TS1144@27,TS1434@28,TS1068@30,TS1128@44
+       base: o
+  T "A extends infer U extends  ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1005@47
+       base: o
+  T "A extends (infer U extends ) ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1110@43
+       base: o
+  T "A extends [infer U extends ] ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1110@43
+       base: o
+  T "A extends { a infer U } ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1131@28,TS1005@30,TS1128@40,TS1128@53
+       base: o
+  T "A extends { a infer U extends B } ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1131@28,TS1005@30,TS1128@50,TS1128@63
+       base: o
+  T "A extends { a: infer U extends  } ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1110@48
+       base: o
+  T "A extends B<infer U extends > ? U : never"  ctx[field,param,ctor,ret] apis:4 srcs:4  parse:TS1110@44
+       base: o
+  T "a is  | B"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18,TS1128@27
+       base: o
+  T "a is []"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@18
+       base: o
+  T " a is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@19,TS1128@25
+       base: o
+  T "asserts  is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@28
+       base: o
+  T "asserts  is"  ctx[ret] apis:4 srcs:1  parse:TS1131@32,TS1128@42,TS1128@44
+       base: o
+  T "asserts is "  ctx[ret] apis:4 srcs:1  parse:TS1131@32,TS1128@42,TS1128@44
+       base: o
+  T " is is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@20,TS1128@26
+       base: o
+  T "asserts is  A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@28
+       base: o
+  T "asserts is is "  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1110@30
+       base: o
+  T " asserts is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@28
+       base: o
+  T " a is A | B"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@19,TS1128@29
+       base: o
+  T "asserts  is A | B"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@28,TS1068@30,TS1128@35
+       base: o
+  T "ab is A"  ctx[field,param,ctor] apis:4 srcs:3  parse:TS1442@19,TS1128@25
+       base: o
+
+## ruling: tsc reports a rule of syntax outside its grammar checks TS1102   (1 forms)
+  T "[delete A]"  ctx[heritage,iextends] apis:15 srcs:2  oth:TS1102,TS2500
+       base: Unexpected delete | Expected ":" but found "A"

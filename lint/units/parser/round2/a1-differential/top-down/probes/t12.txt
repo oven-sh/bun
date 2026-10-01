@@ -1,0 +1,14 @@
+class C implements [delete A] {}
+class C extends [delete A] {}
+interface I extends [delete A] {}
+class C { m() { delete A } }
+delete A
+class C extends A<>.C {}
+class C implements A<>.C {}
+function f(): A {} { return x; }
+function f(): class {} { return x; }
+class C implements a<B>.c {}
+type a = 1⏎type as <T>(x: T) => void
+interface a {}⏎interface as {} | X⏎foo()
+namespace a {}⏎namespace as any
+namespace a {}⏎namespace as { foo(): void }

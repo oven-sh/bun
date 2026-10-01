@@ -1,0 +1,29 @@
+f<extends>(x);
+f<extends A>(x);
+f<extends A ? B : C>(x);
+f<A, extends>(x);
+f<extends, A>(x);
+f<extends B>(x);
+let x: A[extends];
+let x: A[extends B];
+let x: A[extends B ? C : D];
+let x: A<extends>;
+let x: A<extends B>;
+let x: A<extends B ? C : D>;
+let x: A<B, extends>;
+class C implements extends {}
+class C implements extends A {}
+interface I extends extends {}
+interface I extends extends A {}
+interface I extends A, extends {}
+let v = x as A<extends>;
+new A<extends>();
+f<const>(x);
+let x: A[const];
+let x: A<const>;
+type X = extends;
+let x: extends | A;
+let x: [extends];
+let x: [extends: A];
+let x: [...extends];
+function f(): extends {}

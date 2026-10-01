@@ -1,0 +1,2310 @@
+"function f<out>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C<out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <out>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<out>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { m<out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = <out>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = new <out>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = function<out>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { <out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f<in>() {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"class C<in> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"interface I<in> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X<in> = 1;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +2 ==
+"let f = <in>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +1 -> A
+"class C { m<in>() {} }"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"type X = { m<in>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"type X = <in>() => void;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"type X = new <in>() => A;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"let f = function<in>() {};"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"type X = { <in>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"function f<out T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2637]
+    t.ts.plain: A ==
+"let f = <out T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<in T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C<in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<in T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2637]
+    t.ts.plain: A ==
+"let f = <in T>() => 1;"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C { m<in T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { m<in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = <in T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = new <in T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = function<in T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { <in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"function f<in out T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C<in out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<in out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<in out T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2637]
+    t.ts.plain: A ==
+"let f = <in out T>() => 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C { m<in out T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { m<in out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = <in out T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = new <in out T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = function<in out T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { <in out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"function f<out in T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"interface I<out in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X<out in T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1029] chk.tsx[TS1029] oth[2637]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = <out in T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out in T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out in T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out in T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out in T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<out out>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out out> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2637]
+    t.ts.plain: A ==
+"let f = <out out>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out out>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out out>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out out>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out out>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<out out T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"interface I<out out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X<out out T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2637]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = <out out T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out out T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out out T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out out T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out out T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<in in T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C<in in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"interface I<in in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X<in in T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1030] chk.tsx[TS1030] oth[2637]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = <in in T>() => 1;"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C { m<in in T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { m<in in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = <in in T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = new <in in T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = function<in in T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { <in in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"function f<const T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C<const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<const T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <const T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<const T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m<const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = <const T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new <const T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<const T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { <const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f<const>() {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"class C<const> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"interface I<const> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" +2 ==
+"type X<const> = 1;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" +3 ==
+"let f = <const>() => 1;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<const>() {} }"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = { m<const>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = <const>() => void;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = new <const>() => A;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"let f = function<const>() {};"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = { <const>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"function f<const const T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C<const const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<const const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<const const T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <const const T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<const const T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m<const const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = <const const T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new <const const T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<const const T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { <const const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f<const in T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C<const in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<const in T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<const in T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[2637]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <const in T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C { m<const in T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { m<const in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = <const in T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = new <const in T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = function<const in T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { <const in T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"function f<in const T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C<in const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<in const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<in const T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[2637]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <in const T>() => 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"class C { m<in const T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { m<in const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = <in const T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = new <in const T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"let f = function<in const T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"type X = { <in const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" ==
+"function f<out const T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out const T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<out const T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[2637]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <out const T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out const T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out const T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out const T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out const T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out const T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<public T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<public T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<public T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<public T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <public T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<public T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<public T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <public T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <public T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<public T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <public T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<readonly T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<readonly T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<readonly T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<readonly T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <readonly T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<readonly T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<readonly T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <readonly T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <readonly T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<readonly T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <readonly T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<static T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<static T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<static T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<static T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <static T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<static T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<static T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <static T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <static T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<static T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <static T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<T extends>() {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"class C<T extends> {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"interface I<T extends> {}"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"type X<T extends> = 1;"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"let f = <T extends>() => 1;"
+    tsc: parse.ts[TS1109] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T extends>() {} }"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"type X = { m<T extends>(): void };"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"type X = <T extends>() => void;"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"type X = new <T extends>() => A;"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"let f = function<T extends>() {};"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"type X = { <T extends>(): void };"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"function f<T =>() {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"class C<T => {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +2 ==
+"interface I<T => {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"type X<T => = 1;"
+    tsc: parse.ts[TS1005,TS1139,TS1139] parse.tsx[TS1005,TS1139,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"let f = <T =>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1003] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" ==
+"class C { m<T =>() {} }"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"type X = { m<T =>(): void };"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" ==
+"type X = <T =>() => void;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"type X = new <T =>() => A;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"let f = function<T =>() {};"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" +1 ==
+"type X = { <T =>(): void };"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=>\"" ==
+"function f<T extends A = B>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C<T extends A = B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I<T extends A = B> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X<T extends A = B> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = <T extends A = B>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C { m<T extends A = B>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { m<T extends A = B>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = <T extends A = B>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = new <T extends A = B>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends A = B>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { <T extends A = B>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"function f<T = B extends A>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +4 ==
+"class C<T = B extends A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +1 ==
+"interface I<T = B extends A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +1 ==
+"type X<T = B extends A> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +3 ==
+"let f = <T = B extends A>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"=\"" ==
+"class C { m<T = B extends A>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +5 ==
+"type X = { m<T = B extends A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +2 ==
+"type X = <T = B extends A>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +2 ==
+"type X = new <T = B extends A>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +2 ==
+"let f = function<T = B extends A>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +5 ==
+"type X = { <T = B extends A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"?\" but found \">\"" +2 ==
+"function f<T,>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C<T,> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<T,> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<T,> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <T,>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T,>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m<T,>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = <T,>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new <T,>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T,>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { <T,>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f<T, U>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C<T, U> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<T, U> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<T, U> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <T, U>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T, U>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m<T, U>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = <T, U>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new <T, U>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T, U>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { <T, U>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f<T,,U>() {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"class C<T,,U> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +2 ==
+"interface I<T,,U> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +2 ==
+"type X<T,,U> = 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +3 ==
+"let f = <T,,U>() => 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \",\"" ==
+"class C { m<T,,U>() {} }"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +5 ==
+"type X = { m<T,,U>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +1 ==
+"type X = <T,,U>() => void;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"type X = new <T,,U>() => A;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"let f = function<T,,U>() {};"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +5 ==
+"type X = { <T,,U>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +1 ==
+"function f<,T>() {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"class C<,T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +2 ==
+"interface I<,T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +2 ==
+"type X<,T> = 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +3 ==
+"let f = <,T>() => 1;"
+    tsc: parse.ts[TS1110,TS1005,TS1109,TS1005] parse.tsx[TS1109,TS1110,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ," ==
+"class C { m<,T>() {} }"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +5 ==
+"type X = { m<,T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +1 ==
+"type X = <,T>() => void;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"type X = new <,T>() => A;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +4 ==
+"let f = function<,T>() {};"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +5 ==
+"type X = { <,T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \",\"" +1 ==
+"function f<>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"class C<> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"interface I<> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <>() => 1;"
+    tsc: parse.ts[TS1110,TS1109,TS1005] parse.tsx[TS1382,TS17014,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" ==
+"class C { m<>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = { m<>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = <>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = new <>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[2304]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"let f = function<>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"type X = { <>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1098] chk.tsx[TS1098] oth[]
+    t.ts.plain: R "Expected identifier but found \">\"" +1 ==
+"function f<T extends A extends B ? C : D>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C<T extends A extends B ? C : D> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304,2314]
+    t.ts.plain: A ==
+"interface I<T extends A extends B ? C : D> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X<T extends A extends B ? C : D> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = <T extends A extends B ? C : D>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C { m<T extends A extends B ? C : D>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { m<T extends A extends B ? C : D>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = <T extends A extends B ? C : D>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = new <T extends A extends B ? C : D>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends A extends B ? C : D>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { <T extends A extends B ? C : D>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"function f<out = A>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C<out = A> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I<out = A> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X<out = A> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = <out = A>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<out = A>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { m<out = A>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = <out = A>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = new <out = A>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = function<out = A>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { <out = A>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f<out extends A>() {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<out extends A> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out extends A> {}"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out extends A> = 1;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <out extends A>() => 1;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<out extends A>() {} }"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<out extends A>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <out extends A>() => void;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <out extends A>() => A;"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<out extends A>() {};"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <out extends A>(): void };"
+    tsc: parse.ts[TS1359] parse.tsx[TS1359] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<in = A>() {}"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +5 ==
+"class C<in = A> {}"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"=\"" +2 ==
+"interface I<in = A> {}"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"=\"" +2 ==
+"type X<in = A> = 1;"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"=\"" +3 ==
+"let f = <in = A>() => 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1003,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +1 -> R "Expected \">\" but found \"=\""
+"class C { m<in = A>() {} }"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +6 ==
+"type X = { m<in = A>(): void };"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"type X = <in = A>() => void;"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +5 ==
+"type X = new <in = A>() => A;"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +5 ==
+"let f = function<in = A>() {};"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +6 ==
+"type X = { <in = A>(): void };"
+    tsc: parse.ts[TS1359,TS1139] parse.tsx[TS1359,TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"in\" is not valid here" +2 ==
+"function f<out, T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C<out, T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out, T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out, T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <out, T>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<out, T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { m<out, T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = <out, T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = new <out, T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = function<out, T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { <out, T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f<T, out>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C<T, out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<T, out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<T, out> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <T, out>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<T, out>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { m<T, out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = <T, out>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = new <T, out>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = function<T, out>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { <T, out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f<out\nT>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +3
+"class C<out\nT> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<out\nT> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<out\nT> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <out\nT>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +1
+"class C { m<out\nT>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +4
+"type X = { m<out\nT>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +1
+"type X = <out\nT>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +3
+"type X = new <out\nT>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +3
+"let f = function<out\nT>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\"" +4
+"type X = { <out\nT>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> R "Expected \">\" but found \"T\""
+"function f<out.T>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +4 -> R "Expected \">\" but found \".\"" +3
+"class C<out.T> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"interface I<out.T> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +1 ==
+"type X<out.T> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +2 ==
+"let f = <out.T>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<out.T>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +5 -> R "Expected \">\" but found \".\"" +4
+"type X = { m<out.T>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +1 -> R "Expected \">\" but found \".\""
+"type X = <out.T>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +4 -> R "Expected \">\" but found \".\"" +3
+"type X = new <out.T>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +4 -> R "Expected \">\" but found \".\"" +3
+"let f = function<out.T>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +4 -> R "Expected \">\" but found \".\"" +3
+"type X = { <out.T>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" +1 -> R "Expected \">\" but found \".\""
+"function f<const out>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C<const out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<const out> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<const out> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <const out>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"class C { m<const out>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { m<const out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = <const out>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = new <const out>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"let f = function<const out>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"type X = { <const out>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" -> A
+"function f<const out T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C<const out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<const out T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"type X<const out T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1277] chk.tsx[TS1277] oth[2637]
+    t.ts.plain: R "The modifier \"const\" is not valid here" ==
+"let f = <const out T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1274] chk.tsx[] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"class C { m<const out T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { m<const out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = <const out T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = new <const out T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[2304]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"let f = function<const out T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"type X = { <const out T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1274] chk.tsx[TS1274] oth[]
+    t.ts.plain: R "The modifier \"out\" is not valid here" ==
+"function f<accessor T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<accessor T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<accessor T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<accessor T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <accessor T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<accessor T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<accessor T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <accessor T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <accessor T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<accessor T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <accessor T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<abstract T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<abstract T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<abstract T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<abstract T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <abstract T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<abstract T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<abstract T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <abstract T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <abstract T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<abstract T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <abstract T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<override T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<override T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<override T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<override T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <override T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<override T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<override T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <override T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <override T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<override T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <override T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<declare T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<declare T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<declare T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<declare T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <declare T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<declare T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<declare T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <declare T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <declare T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<declare T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <declare T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<export T>() {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +4 ==
+"class C<export T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +2 ==
+"interface I<export T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +2 ==
+"type X<export T> = 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +3 ==
+"let f = <export T>() => 1;"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected export" -> R "Expected \">\" but found \"T\"" +1
+"class C { m<export T>() {} }"
+    tsc: parse.ts[TS1139,TS1434,TS1068,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1434,TS1068,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +5 ==
+"type X = { m<export T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +1 ==
+"type X = <export T>() => void;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +4 ==
+"type X = new <export T>() => A;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +4 ==
+"let f = function<export T>() {};"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +5 ==
+"type X = { <export T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"export\"" +1 ==
+"function f<default T>() {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +4 ==
+"class C<default T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +2 ==
+"interface I<default T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +2 ==
+"type X<default T> = 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +3 ==
+"let f = <default T>() => 1;"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected default" -> R "Expected \">\" but found \"T\"" +1
+"class C { m<default T>() {} }"
+    tsc: parse.ts[TS1139,TS1434,TS1068,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1434,TS1068,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +5 ==
+"type X = { m<default T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +1 ==
+"type X = <default T>() => void;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +4 ==
+"type X = new <default T>() => A;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +4 ==
+"let f = function<default T>() {};"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +5 ==
+"type X = { <default T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"default\"" +1 ==
+"function f<async T>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<async T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<async T> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<async T> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <async T>() => 1;"
+    tsc: parse.ts[] parse.tsx[TS1382,TS17008,TS1005] chk.ts[TS1273] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"class C { m<async T>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<async T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <async T>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <async T>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[2304]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<async T>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <async T>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1273] chk.tsx[TS1273] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<T?>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +3 ==
+"class C<T?> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +1 ==
+"interface I<T?> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +1 ==
+"type X<T?> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +2 ==
+"let f = <T?>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1003,TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" ==
+"class C { m<T?>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +4 ==
+"type X = { m<T?>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" ==
+"type X = <T?>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +3 ==
+"type X = new <T?>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +3 ==
+"let f = function<T?>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" +4 ==
+"type X = { <T?>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"?\"" ==
+"function f<T!>() {}"
+    tsc: parse.ts[TS1005,TS1109,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +3 ==
+"class C<T!> {}"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +1 ==
+"interface I<T!> {}"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +1 ==
+"type X<T!> = 1;"
+    tsc: parse.ts[TS1005,TS1110,TS1109] parse.tsx[TS1005,TS1110,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +2 ==
+"let f = <T!>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T!>() {} }"
+    tsc: parse.ts[TS1005,TS1109,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1109,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +4 ==
+"type X = { m<T!>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" ==
+"type X = <T!>() => void;"
+    tsc: parse.ts[TS1005,TS1110,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1110,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +3 ==
+"type X = new <T!>() => A;"
+    tsc: parse.ts[TS1005,TS1110,TS1109,TS1005] parse.tsx[TS1005,TS1110,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +3 ==
+"let f = function<T!>() {};"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" +4 ==
+"type X = { <T!>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"!\"" ==
+"function f<...T>() {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +4 ==
+"class C<...T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +2 ==
+"interface I<...T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +2 ==
+"type X<...T> = 1;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +3 ==
+"let f = <...T>() => 1;"
+    tsc: parse.ts[TS1110,TS1005,TS1109,TS1005] parse.tsx[TS1109,TS1109,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected ..." ==
+"class C { m<...T>() {} }"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +5 ==
+"type X = { m<...T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +1 ==
+"type X = <...T>() => void;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +4 ==
+"type X = new <...T>() => A;"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +4 ==
+"let f = function<...T>() {};"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +5 ==
+"type X = { <...T>(): void };"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"...\"" +1 ==
+"function f<T: A>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +3 ==
+"class C<T: A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +3 ==
+"interface I<T: A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +1 ==
+"type X<T: A> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +2 ==
+"let f = <T: A>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" ==
+"class C { m<T: A>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +4 ==
+"type X = { m<T: A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +1 ==
+"type X = <T: A>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +3 ==
+"type X = new <T: A>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +3 ==
+"let f = function<T: A>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +3 ==
+"type X = { <T: A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \":\"" +1 ==
+"function f<T in A>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +3 ==
+"class C<T in A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +3 ==
+"interface I<T in A> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +1 ==
+"type X<T in A> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +2 ==
+"let f = <T in A>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" ==
+"class C { m<T in A>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +4 ==
+"type X = { m<T in A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" ==
+"type X = <T in A>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +3 ==
+"type X = new <T in A>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +3 ==
+"let f = function<T in A>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" +3 ==
+"type X = { <T in A>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"in\"" ==
+"function f<T as A>() {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +3 ==
+"class C<T as A> {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +3 ==
+"interface I<T as A> {}"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +1 ==
+"type X<T as A> = 1;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +2 ==
+"let f = <T as A>() => 1;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +2 ==
+"class C { m<T as A>() {} }"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +4 ==
+"type X = { m<T as A>(): void };"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" ==
+"type X = <T as A>() => void;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +3 ==
+"type X = new <T as A>() => A;"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +3 ==
+"let f = function<T as A>() {};"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" +3 ==
+"type X = { <T as A>(): void };"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"as\"" ==
+"function f<typeof T>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +4 ==
+"class C<typeof T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +2 ==
+"interface I<typeof T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +2 ==
+"type X<typeof T> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +3 ==
+"let f = <typeof T>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<typeof T>() {} }"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +5 ==
+"type X = { m<typeof T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +1 ==
+"type X = <typeof T>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +4 ==
+"type X = new <typeof T>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +4 ==
+"let f = function<typeof T>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +5 ==
+"type X = { <typeof T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"typeof\"" +1 ==
+"function f<keyof T>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"class C<keyof T> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"interface I<keyof T> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +1 ==
+"type X<keyof T> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +2 ==
+"let f = <keyof T>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<keyof T>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { m<keyof T>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"type X = <keyof T>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"type X = new <keyof T>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +3 ==
+"let f = function<keyof T>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" +4 ==
+"type X = { <keyof T>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"T\"" ==
+"function f<new T>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +4 ==
+"class C<new T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +2 ==
+"interface I<new T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +2 ==
+"type X<new T> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +3 ==
+"let f = <new T>() => 1;"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \"(\" but found \"T\"" +2 ==
+"class C { m<new T>() {} }"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +5 ==
+"type X = { m<new T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +1 ==
+"type X = <new T>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +4 ==
+"type X = new <new T>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +4 ==
+"let f = function<new T>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +5 ==
+"type X = { <new T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"new\"" +1 ==
+"function f<this>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"class C<this> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"interface I<this> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X<this> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"let f = <this>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<this>() {} }"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X = { m<this>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X = <this>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X = new <this>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"let f = function<this>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"type X = { <this>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"this\"" ==
+"function f<null>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"class C<null> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"interface I<null> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"type X<null> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"let f = <null>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<null>() {} }"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"type X = { m<null>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"type X = <null>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"type X = new <null>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"let f = function<null>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"type X = { <null>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"null\"" ==
+"function f<void>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"class C<void> {}"
+    tsc: parse.ts[TS1139,TS1109] parse.tsx[TS1139,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"interface I<void> {}"
+    tsc: parse.ts[TS1139,TS1109] parse.tsx[TS1139,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"type X<void> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"let f = <void>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<void>() {} }"
+    tsc: parse.ts[TS1139,TS1109,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1109,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"type X = { m<void>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"type X = <void>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"type X = new <void>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"let f = function<void>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"type X = { <void>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"void\"" ==
+"function f<1>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"class C<1> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"interface I<1> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"type X<1> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"let f = <1>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<1>() {} }"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"type X = { m<1>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"type X = <1>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"type X = new <1>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"let f = function<1>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"type X = { <1>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"1\"" ==
+"function f<\"a\">() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"class C<\"a\"> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"interface I<\"a\"> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"type X<\"a\"> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"let f = <\"a\">() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<\"a\">() {} }"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"type X = { m<\"a\">(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"type X = <\"a\">() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"type X = new <\"a\">() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"let f = function<\"a\">() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"type X = { <\"a\">(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"\"a\"\"" ==
+"function f<[T]>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +5 ==
+"class C<[T]> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +3 ==
+"interface I<[T]> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +2 ==
+"type X<[T]> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +3 ==
+"let f = <[T]>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<[T]>() {} }"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +6 ==
+"type X = { m<[T]>(): void };"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +1 ==
+"type X = <[T]>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +4 ==
+"type X = new <[T]>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +3 ==
+"let f = function<[T]>() {};"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +5 ==
+"type X = { <[T]>(): void };"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"[\"" +1 ==
+"function f<{T}>() {}"
+    tsc: parse.ts[TS1005,TS1109,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +5 ==
+"class C<{T}> {}"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +2 ==
+"interface I<{T}> {}"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +2 ==
+"type X<{T}> = 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +2 ==
+"let f = <{T}>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<{T}>() {} }"
+    tsc: parse.ts[TS1005,TS1068,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1068,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +6 ==
+"type X = { m<{T}>(): void };"
+    tsc: parse.ts[TS1005,TS1109,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1109,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +1 ==
+"type X = <{T}>() => void;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +4 ==
+"type X = new <{T}>() => A;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +3 ==
+"let f = function<{T}>() {};"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +5 ==
+"type X = { <{T}>(): void };"
+    tsc: parse.ts[TS1005,TS1109,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1109,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"{\"" +1 ==
+"function f<(T)>() {}"
+    tsc: parse.ts[TS1005,TS1144,TS1109,TS1005] parse.tsx[TS1005,TS1144,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +3 ==
+"class C<(T)> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +3 ==
+"interface I<(T)> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +2 ==
+"type X<(T)> = 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +3 ==
+"let f = <(T)>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<(T)>() {} }"
+    tsc: parse.ts[TS1005,TS1144,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1144,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +5 ==
+"type X = { m<(T)>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +1 ==
+"type X = <(T)>() => void;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +4 ==
+"type X = new <(T)>() => A;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +3 ==
+"let f = function<(T)>() {};"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +3 ==
+"type X = { <(T)>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"(\"" +1 ==
+"function f<T[]>() {}"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +4 ==
+"class C<T[]> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +2 ==
+"interface I<T[]> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +1 ==
+"type X<T[]> = 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +2 ==
+"let f = <T[]>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T[]>() {} }"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +5 ==
+"type X = { m<T[]>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" ==
+"type X = <T[]>() => void;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +3 ==
+"type X = new <T[]>() => A;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +2 ==
+"let f = function<T[]>() {};"
+    tsc: parse.ts[TS1005,TS1011,TS1109,TS1005] parse.tsx[TS1005,TS1011,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" +4 ==
+"type X = { <T[]>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"[\"" ==
+"function f<T | U>() {}"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +3 ==
+"class C<T | U> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +3 ==
+"interface I<T | U> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +1 ==
+"type X<T | U> = 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +2 ==
+"let f = <T | U>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T | U>() {} }"
+    tsc: parse.ts[TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +4 ==
+"type X = { m<T | U>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" ==
+"type X = <T | U>() => void;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +3 ==
+"type X = new <T | U>() => A;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +3 ==
+"let f = function<T | U>() {};"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" +3 ==
+"type X = { <T | U>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"|\"" ==
+"function f<T & U>() {}"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +3 ==
+"class C<T & U> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +3 ==
+"interface I<T & U> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +1 ==
+"type X<T & U> = 1;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +2 ==
+"let f = <T & U>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1003,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T & U>() {} }"
+    tsc: parse.ts[TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +4 ==
+"type X = { m<T & U>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" ==
+"type X = <T & U>() => void;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +3 ==
+"type X = new <T & U>() => A;"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +3 ==
+"let f = function<T & U>() {};"
+    tsc: parse.ts[TS1005,TS1109,TS1005] parse.tsx[TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" +3 ==
+"type X = { <T & U>(): void };"
+    tsc: parse.ts[TS1005,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \"&\"" ==
+"function f<A.B>() {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"class C<A.B> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"interface I<A.B> {}"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +1 ==
+"type X<A.B> = 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +2 ==
+"let f = <A.B>() => 1;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<A.B>() {} }"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +4 ==
+"type X = { m<A.B>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" ==
+"type X = <A.B>() => void;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"type X = new <A.B>() => A;"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"let f = function<A.B>() {};"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" +3 ==
+"type X = { <A.B>(): void };"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected \">\" but found \".\"" ==
+"function f<#T>() {}"
+    tsc: parse.ts[TS1139,TS1109,TS1005] parse.tsx[TS1139,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"class C<#T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"interface I<#T> {}"
+    tsc: parse.ts[TS1139] parse.tsx[TS1139] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"type X<#T> = 1;"
+    tsc: parse.ts[TS1139,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"let f = <#T>() => 1;"
+    tsc: parse.ts[TS1109,TS1005] parse.tsx[TS1382,TS17008,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected #T" -> A
+"class C { m<#T>() {} }"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1128] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"type X = { m<#T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"type X = <#T>() => void;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1005,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"type X = new <#T>() => A;"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"let f = function<#T>() {};"
+    tsc: parse.ts[TS1139,TS1005,TS1109,TS1005] parse.tsx[TS1139,TS1005,TS1109,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"type X = { <#T>(): void };"
+    tsc: parse.ts[TS1139,TS1109,TS1005,TS1109] parse.tsx[TS1139,TS1109,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Expected identifier but found \"#T\"" ==
+"function f<T extends any[]>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C<T extends any[]> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface I<T extends any[]> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X<T extends any[]> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let f = <T extends any[]>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C { m<T extends any[]>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { m<T extends any[]>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = <T extends any[]>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = new <T extends any[]>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends any[]>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = { <T extends any[]>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"function f<T extends keyof U>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C<T extends keyof U> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"interface I<T extends keyof U> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X<T extends keyof U> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = <T extends keyof U>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"class C { m<T extends keyof U>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { m<T extends keyof U>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = <T extends keyof U>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = new <T extends keyof U>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends keyof U>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"type X = { <T extends keyof U>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: A ==
+"function f<T extends (infer V)[]>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"class C<T extends (infer V)[]> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"interface I<T extends (infer V)[]> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X<T extends (infer V)[]> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"let f = <T extends (infer V)[]>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"class C { m<T extends (infer V)[]>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = { m<T extends (infer V)[]>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = <T extends (infer V)[]>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = new <T extends (infer V)[]>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends (infer V)[]>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = { <T extends (infer V)[]>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"function f<T extends infer V>() {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"class C<T extends infer V> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"interface I<T extends infer V> {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X<T extends infer V> = 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"let f = <T extends infer V>() => 1;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"class C { m<T extends infer V>() {} }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = { m<T extends infer V>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = <T extends infer V>() => void;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = new <T extends infer V>() => A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[2304]
+    t.ts.plain: A ==
+"let f = function<T extends infer V>() {};"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==
+"type X = { <T extends infer V>(): void };"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1338] chk.tsx[TS1338] oth[]
+    t.ts.plain: A ==

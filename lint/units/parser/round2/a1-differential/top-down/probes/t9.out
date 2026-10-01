@@ -1,0 +1,87 @@
+"f<extends>(x);"
+    tsc: parse.ts[TS1109,TS1109] parse.tsx[TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" -> A
+"f<extends A>(x);"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" ==
+"f<extends A ? B : C>(x);"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"f<A, extends>(x);"
+    tsc: parse.ts[TS1109,TS1109] parse.tsx[TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" -> A
+"f<extends, A>(x);"
+    tsc: parse.ts[TS1109,TS1128] parse.tsx[TS1109,TS1128] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" -> A
+"f<extends B>(x);"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" ==
+"let x: A[extends];"
+    tsc: parse.ts[TS1005,TS1110] parse.tsx[TS1005,TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 -> A
+"let x: A[extends B];"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 ==
+"let x: A[extends B ? C : D];"
+    tsc: parse.ts[TS1005,TS1005] parse.tsx[TS1005,TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" ==
+"let x: A<extends>;"
+    tsc: parse.ts[TS1005,TS1110,TS1109] parse.tsx[TS1005,TS1110,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 -> A
+"let x: A<extends B>;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 ==
+"let x: A<extends B ? C : D>;"
+    tsc: parse.ts[TS1005,TS1005,TS1109] parse.tsx[TS1005,TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" ==
+"let x: A<B, extends>;"
+    tsc: parse.ts[TS1005,TS1110,TS1109] parse.tsx[TS1005,TS1110,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 -> A
+"class C implements extends {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097,TS1173] chk.tsx[TS1097,TS1173] oth[]
+    t.ts.plain: R "Unexpected extends" +1 ==
+"class C implements extends A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097,TS1173] chk.tsx[TS1097,TS1173] oth[2304]
+    t.ts.plain: R "Unexpected extends" +3 ==
+"interface I extends extends {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097,TS1172] chk.tsx[TS1097,TS1172] oth[]
+    t.ts.plain: R "Unexpected extends" +1 ==
+"interface I extends extends A {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1097,TS1172] chk.tsx[TS1097,TS1172] oth[]
+    t.ts.plain: R "Unexpected extends" +3 ==
+"interface I extends A, extends {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1009,TS1172] chk.tsx[TS1009,TS1172] oth[2304]
+    t.ts.plain: R "Unexpected extends" +1 ==
+"let v = x as A<extends>;"
+    tsc: parse.ts[TS1005,TS1110,TS1109] parse.tsx[TS1005,TS1110,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +3 -> A
+"new A<extends>();"
+    tsc: parse.ts[TS1109,TS1109,TS1109] parse.tsx[TS1109,TS1109,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" -> A
+"f<const>(x);"
+    tsc: parse.ts[TS1109,TS1134] parse.tsx[TS1109,TS1134] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let x: A[const];"
+    tsc: parse.ts[TS1005,TS1134] parse.tsx[TS1005,TS1134] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"let x: A<const>;"
+    tsc: parse.ts[TS1005,TS1134,TS1109] parse.tsx[TS1005,TS1134,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type X = extends;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Unexpected extends" +2 -> A
+"let x: extends | A;"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Unexpected extends" +2 ==
+"let x: [extends];"
+    tsc: parse.ts[TS1110] parse.tsx[TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" +2 ==
+"let x: [extends: A];"
+    tsc: parse.ts[TS1110,TS1110] parse.tsx[TS1110,TS1110] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected extends" ==
+"let x: [...extends];"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Unexpected extends" +2 -> A
+"function f(): extends {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[2304]
+    t.ts.plain: R "Unexpected extends" +1 ==

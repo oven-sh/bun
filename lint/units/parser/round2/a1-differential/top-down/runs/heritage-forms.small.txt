@@ -1,0 +1,150 @@
+
+## 1 the form itself is restored (14 forms)
+  "[a: A?]" [heritage,iextends] tsc does not parse TS1005  || alias: R>A RESTORE: grammar error of the checker TS5086
+  "[a?: A?]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS5086
+  "(a?: A = 1) => void" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1015
+  "{ [k?: string]: A }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1019
+  "{ [...k: string[]]: A }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1017
+  "{ [k: string, l: number]: A }" [heritage,iextends] tsc does not parse TS1005  || alias: R>A RESTORE: grammar error of the checker TS1096
+  "{ [k: string,]: A }" [heritage,iextends] tsc does not parse TS1005  || alias: R>A RESTORE: grammar error of the checker TS1025
+  "A.<B>" [heritage,iextends] tsc does not parse TS1003  || alias: R>A RESTORE: grammar error of the checker TS8020
+  "Array.<A>" [heritage,iextends] tsc does not parse TS1003  || alias: R>A RESTORE: grammar error of the checker TS8020
+  "A.<C>" [heritage,iextends] tsc does not parse TS1003  || alias: R>A RESTORE: grammar error of the checker TS8020
+  "A.B.<D>[]" [heritage,iextends] tsc does not parse TS1003  || alias: R>A RESTORE: grammar error of the checker TS8020
+  "{ [...k: []]: A }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1017
+  "{ []: A }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1096
+  "{ readonly []: A }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A RESTORE: grammar error of the checker TS1096
+
+## 3 LEAK: the form is a valid new type form elsewhere (46 forms)
+  "[...in: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[function]" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a reserved word is the name of a type reference
+  "[...class: A[]]" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...delete: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...var: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...const: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...enum: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...extends: A[]]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "(a = 1) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "(a: A = 1) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "(a = 1, b = 2) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "(a = () => 1) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "(a = b as C) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "({ a = 1 }: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "({ a: b = 1 }: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a binding pattern of a signature is read as a binding pattern
+  "([a = 1]: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "([a, , b]: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a binding pattern of a signature is read as a binding pattern
+  "({ [a]: b }: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a binding pattern of a signature is read as a binding pattern
+  "({ a, b } = c) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "(public a: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(private a: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(readonly a: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "<out>() => out" [heritage,iextends] tsc does not parse TS1109  || alias: R>A out or in names a type or a type parameter
+  "new (a = 1) => A" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "[...in: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...class: []]" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...delete: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...var: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...const: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...enum: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "[...extends: []]" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the label of a rest element of a tuple
+  "A extends  in ? 1 : 2" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the name of a type reference
+  "{ [K in in ]: V }" [heritage,iextends] tsc does not parse TS1109  || alias: R>A a reserved word is the name of a type reference
+  "import('x').A.<C, D>" [heritage,iextends] tsc does not parse TS1003  || alias: R>A an import type takes type arguments and an expression in an attribute; .< stands before type arguments
+  "([a, , ]: A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a binding pattern of a signature is read as a binding pattern
+  "({ a,  } = c) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "<out >() => T" [heritage,iextends] tsc does not parse TS1109  || alias: R>A out or in names a type or a type parameter
+  "(a: A) => asserts  is B" [heritage,iextends] tsc does not parse TS1005  || alias: R>A asserts is T is the assertion about a parameter named is
+  "() => asserts  is A" [heritage,iextends] tsc does not parse TS1109  || alias: R>A asserts is T is the assertion about a parameter named is
+  "(readonly A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(override A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(public A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(private A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  "(protected A) => void" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a modifier stands before a parameter that is no parameter property
+  " (a = 1) => A" [heritage,iextends] tsc does not parse TS1005  || alias: R>A a parameter of a signature has an initializer
+  "{ (b = 1): void }" [heritage,iextends] tsc does not parse TS1136  || alias: R>A a parameter of a signature has an initializer
+
+## 4 other: R>R both reject: another error list (1 forms)
+  "delete A" [heritage,iextends] tsc does not parse TS1109  || alias: R>R both reject: another error list
+
+## 4 other: same on both sides: R(Expected "(" but found "[") (2 forms)
+  "<B>[]" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "(" but found "[")
+  "<B>[C]" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "(" but found "[")
+
+## 4 other: same on both sides: R(Expected ";" but found "(") (3 forms)
+  "typeof a.b()" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "(")
+  "typeof a()" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "(")
+  "typeof ab()" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "(")
+
+## 4 other: same on both sides: R(Expected ";" but found "?.") (1 forms)
+  "typeof a?.b" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "?.")
+
+## 4 other: same on both sides: R(Expected ";" but found "A") (2 forms)
+  "await A" [heritage,iextends] tsc does not parse TS1005  || alias: same on both sides: R(Expected ";" but found "A")
+  "void A" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "A")
+
+## 4 other: same on both sides: R(Expected ";" but found "a") (1 forms)
+  "typeof typeof a" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected ";" but found "a")
+
+## 4 other: same on both sides: R(Expected "?" but found ";") (9 forms)
+  "A extends B" [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends (...a: infer P) => infer R extends B ? P : R" [iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends () => infer R extends B ? R : never" [iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends B " [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Expected "?" but found ";")
+  " U extends A" [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends (a: infer P) => infer R extends B ? P : R" [iextends] tsc does not parse TS1005  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends (...a:  P) => infer R extends B ? P : R" [iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends (...a: infer P) =>  R extends B ? P : R" [iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "?" but found ";")
+  "A extends () =>  R extends B ? R : never" [iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected "?" but found ";")
+
+## 4 other: same on both sides: R(Expected "?" but found "extends") (2 forms)
+  "A extends B extends C ? D : E" [iextends] tsc does not parse TS1005  || alias: same on both sides: R(Expected "?" but found "extends")
+  "A extends  U extends B ? U : never" [iextends] tsc does not parse TS1005  || alias: same on both sides: R(Expected "?" but found "extends")
+
+## 4 other: same on both sides: R(Expected identifier but found "'a'") (1 forms)
+  "typeof 'a'" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "'a'")
+
+## 4 other: same on both sides: R(Expected identifier but found "(") (4 forms)
+  "typeof (a)" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "(")
+  "typeof ('x')" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "(")
+  "typeof ('x').a" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "(")
+  "typeof ('x').a<B>" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "(")
+
+## 4 other: same on both sides: R(Expected identifier but found "1") (1 forms)
+  "typeof 1" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "1")
+
+## 4 other: same on both sides: R(Expected identifier but found "<") (1 forms)
+  "typeof <B>[]" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "<")
+
+## 4 other: same on both sides: R(Expected identifier but found "[") (4 forms)
+  "typeof [B]" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "[")
+  "typeof []" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "[")
+  "typeof [number]" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "[")
+  "typeof ['b']" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected identifier but found "[")
+
+## 4 other: same on both sides: R(Expected identifier but found "extends (1 forms)
+  "infer  extends A" [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Expected identifier but found "extends")
+
+## 4 other: same on both sides: R(Expected number but found "a") (1 forms)
+  "-a" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected number but found "a")
+
+## 4 other: same on both sides: R(Expected number but found "true") (1 forms)
+  "-true" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Expected number but found "true")
+
+## 4 other: same on both sides: R(Unexpected !) (1 forms)
+  "!A" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Unexpected !)
+
+## 4 other: same on both sides: R(Unexpected +) (1 forms)
+  "+1" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Unexpected +)
+
+## 4 other: same on both sides: R(Unexpected ;) (4 forms)
+  "A extends" [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Unexpected ;)
+  "typeof a\n<B>" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Unexpected ;)
+  "" [iextends] grammar error of the checker TS1097  || alias: same on both sides: R(Unexpected ;)
+  "A extends " [iextends] grammar error of the checker TS1172  || alias: same on both sides: R(Unexpected ;)
+
+## 4 other: same on both sides: R(Unexpected >) (2 forms)
+  "A<>.C" [heritage,iextends] tsc does not parse TS1477  || alias: same on both sides: R(Unexpected >)
+  "typeof a<>.c" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Unexpected >)
+
+## 4 other: same on both sides: R(Unexpected ~) (1 forms)
+  "~A" [heritage,iextends] tsc does not parse TS1109  || alias: same on both sides: R(Unexpected ~)

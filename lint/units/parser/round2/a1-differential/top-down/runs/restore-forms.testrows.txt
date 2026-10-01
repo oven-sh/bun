@@ -1,0 +1,42 @@
+
+## RESTORE: tsc does not parse TS1005   (1 forms)
+  S "import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"  ctx[-] apis:15 srcs:1  parse:TS1005@64,TS1005@68
+       base: Expected "(" but found "{" | Expected ")" but found ":" | Unexpected }
+
+## ruling: A>A a declaration named as or satisfies, where the base read a cast   (6 forms)
+  S "namespace as {}"  ctx[-] apis:10 srcs:1
+       base: o
+  S "interface as {}\nfoo()"  ctx[-] apis:10 srcs:1  oth:TS2304
+       base: o
+  S "interface as { a: 1 }\nconst x = 1;"  ctx[-] apis:10 srcs:1
+       base: o
+  S "interface as {}\n[x] = y"  ctx[-] apis:10 srcs:1  oth:TS2304
+       base: o
+  S "namespace as {}\nfoo()"  ctx[-] apis:10 srcs:1  oth:TS2304
+       base: o
+  S "namespace as {};"  ctx[-] apis:10 srcs:1
+       base: o
+
+## ruling: attributes of a type-only import on the next line   (1 forms)
+  S "import type A from \"x\"\nwith { type: \"json\" };"  ctx[-] apis:15 srcs:1  chk:TS2857  oth:TS2307,TS2318
+       base: Expected "(" but found "{" | Expected ")" but found ":" | Unexpected }
+
+## ruling: attributes of an export on the next line   (2 forms)
+  S "export { a } from \"x\"\nwith { type: \"json\" };"  ctx[-] apis:15 srcs:1  parse:TS1005@27,TS1005@43
+       base: Expected "(" but found "{" | Expected ")" but found ":" | Unexpected }
+  S "export * from \"x\"\nwith { type: \"json\" };"  ctx[-] apis:15 srcs:1  parse:TS1005@23,TS1005@39
+       base: Expected "(" but found "{" | Expected ")" but found ":" | Unexpected }
+
+## ruling: cast after a declaration named as   (6 forms)
+  S "type as = 1\ntype as any"  ctx[-] apis:15 srcs:1  parse:TS1005@20
+       base: Unexpected =
+  S "type as = 1\ntype as <T>(x: T) => void"  ctx[-] apis:15 srcs:1  parse:TS1005@23
+       base: Unexpected =
+  S "interface as {}\ninterface as any\nfoo()"  ctx[-] apis:10 srcs:1  parse:TS1005@29
+       base: o
+  S "interface as {}\ninterface as {} | X\nfoo()"  ctx[-] apis:10 srcs:1  parse:TS1109@32
+       base: o
+  S "namespace as {}\nnamespace as any"  ctx[-] apis:10 srcs:1  parse:TS1005@29
+       base: o
+  S "namespace as {}\nnamespace as { foo(): void }"  ctx[-] apis:10 srcs:1  parse:TS1005@36,TS1109@43
+       base: o

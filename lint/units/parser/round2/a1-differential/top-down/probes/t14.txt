@@ -1,0 +1,770 @@
+function f<out>() {}
+class C<out> {}
+interface I<out> {}
+type X<out> = 1;
+let f = <out>() => 1;
+class C { m<out>() {} }
+type X = { m<out>(): void };
+type X = <out>() => void;
+type X = new <out>() => A;
+let f = function<out>() {};
+type X = { <out>(): void };
+function f<in>() {}
+class C<in> {}
+interface I<in> {}
+type X<in> = 1;
+let f = <in>() => 1;
+class C { m<in>() {} }
+type X = { m<in>(): void };
+type X = <in>() => void;
+type X = new <in>() => A;
+let f = function<in>() {};
+type X = { <in>(): void };
+function f<out T>() {}
+class C<out T> {}
+interface I<out T> {}
+type X<out T> = 1;
+let f = <out T>() => 1;
+class C { m<out T>() {} }
+type X = { m<out T>(): void };
+type X = <out T>() => void;
+type X = new <out T>() => A;
+let f = function<out T>() {};
+type X = { <out T>(): void };
+function f<in T>() {}
+class C<in T> {}
+interface I<in T> {}
+type X<in T> = 1;
+let f = <in T>() => 1;
+class C { m<in T>() {} }
+type X = { m<in T>(): void };
+type X = <in T>() => void;
+type X = new <in T>() => A;
+let f = function<in T>() {};
+type X = { <in T>(): void };
+function f<in out T>() {}
+class C<in out T> {}
+interface I<in out T> {}
+type X<in out T> = 1;
+let f = <in out T>() => 1;
+class C { m<in out T>() {} }
+type X = { m<in out T>(): void };
+type X = <in out T>() => void;
+type X = new <in out T>() => A;
+let f = function<in out T>() {};
+type X = { <in out T>(): void };
+function f<out in T>() {}
+class C<out in T> {}
+interface I<out in T> {}
+type X<out in T> = 1;
+let f = <out in T>() => 1;
+class C { m<out in T>() {} }
+type X = { m<out in T>(): void };
+type X = <out in T>() => void;
+type X = new <out in T>() => A;
+let f = function<out in T>() {};
+type X = { <out in T>(): void };
+function f<out out>() {}
+class C<out out> {}
+interface I<out out> {}
+type X<out out> = 1;
+let f = <out out>() => 1;
+class C { m<out out>() {} }
+type X = { m<out out>(): void };
+type X = <out out>() => void;
+type X = new <out out>() => A;
+let f = function<out out>() {};
+type X = { <out out>(): void };
+function f<out out T>() {}
+class C<out out T> {}
+interface I<out out T> {}
+type X<out out T> = 1;
+let f = <out out T>() => 1;
+class C { m<out out T>() {} }
+type X = { m<out out T>(): void };
+type X = <out out T>() => void;
+type X = new <out out T>() => A;
+let f = function<out out T>() {};
+type X = { <out out T>(): void };
+function f<in in T>() {}
+class C<in in T> {}
+interface I<in in T> {}
+type X<in in T> = 1;
+let f = <in in T>() => 1;
+class C { m<in in T>() {} }
+type X = { m<in in T>(): void };
+type X = <in in T>() => void;
+type X = new <in in T>() => A;
+let f = function<in in T>() {};
+type X = { <in in T>(): void };
+function f<const T>() {}
+class C<const T> {}
+interface I<const T> {}
+type X<const T> = 1;
+let f = <const T>() => 1;
+class C { m<const T>() {} }
+type X = { m<const T>(): void };
+type X = <const T>() => void;
+type X = new <const T>() => A;
+let f = function<const T>() {};
+type X = { <const T>(): void };
+function f<const>() {}
+class C<const> {}
+interface I<const> {}
+type X<const> = 1;
+let f = <const>() => 1;
+class C { m<const>() {} }
+type X = { m<const>(): void };
+type X = <const>() => void;
+type X = new <const>() => A;
+let f = function<const>() {};
+type X = { <const>(): void };
+function f<const const T>() {}
+class C<const const T> {}
+interface I<const const T> {}
+type X<const const T> = 1;
+let f = <const const T>() => 1;
+class C { m<const const T>() {} }
+type X = { m<const const T>(): void };
+type X = <const const T>() => void;
+type X = new <const const T>() => A;
+let f = function<const const T>() {};
+type X = { <const const T>(): void };
+function f<const in T>() {}
+class C<const in T> {}
+interface I<const in T> {}
+type X<const in T> = 1;
+let f = <const in T>() => 1;
+class C { m<const in T>() {} }
+type X = { m<const in T>(): void };
+type X = <const in T>() => void;
+type X = new <const in T>() => A;
+let f = function<const in T>() {};
+type X = { <const in T>(): void };
+function f<in const T>() {}
+class C<in const T> {}
+interface I<in const T> {}
+type X<in const T> = 1;
+let f = <in const T>() => 1;
+class C { m<in const T>() {} }
+type X = { m<in const T>(): void };
+type X = <in const T>() => void;
+type X = new <in const T>() => A;
+let f = function<in const T>() {};
+type X = { <in const T>(): void };
+function f<out const T>() {}
+class C<out const T> {}
+interface I<out const T> {}
+type X<out const T> = 1;
+let f = <out const T>() => 1;
+class C { m<out const T>() {} }
+type X = { m<out const T>(): void };
+type X = <out const T>() => void;
+type X = new <out const T>() => A;
+let f = function<out const T>() {};
+type X = { <out const T>(): void };
+function f<public T>() {}
+class C<public T> {}
+interface I<public T> {}
+type X<public T> = 1;
+let f = <public T>() => 1;
+class C { m<public T>() {} }
+type X = { m<public T>(): void };
+type X = <public T>() => void;
+type X = new <public T>() => A;
+let f = function<public T>() {};
+type X = { <public T>(): void };
+function f<readonly T>() {}
+class C<readonly T> {}
+interface I<readonly T> {}
+type X<readonly T> = 1;
+let f = <readonly T>() => 1;
+class C { m<readonly T>() {} }
+type X = { m<readonly T>(): void };
+type X = <readonly T>() => void;
+type X = new <readonly T>() => A;
+let f = function<readonly T>() {};
+type X = { <readonly T>(): void };
+function f<static T>() {}
+class C<static T> {}
+interface I<static T> {}
+type X<static T> = 1;
+let f = <static T>() => 1;
+class C { m<static T>() {} }
+type X = { m<static T>(): void };
+type X = <static T>() => void;
+type X = new <static T>() => A;
+let f = function<static T>() {};
+type X = { <static T>(): void };
+function f<T extends>() {}
+class C<T extends> {}
+interface I<T extends> {}
+type X<T extends> = 1;
+let f = <T extends>() => 1;
+class C { m<T extends>() {} }
+type X = { m<T extends>(): void };
+type X = <T extends>() => void;
+type X = new <T extends>() => A;
+let f = function<T extends>() {};
+type X = { <T extends>(): void };
+function f<T =>() {}
+class C<T => {}
+interface I<T => {}
+type X<T => = 1;
+let f = <T =>() => 1;
+class C { m<T =>() {} }
+type X = { m<T =>(): void };
+type X = <T =>() => void;
+type X = new <T =>() => A;
+let f = function<T =>() {};
+type X = { <T =>(): void };
+function f<T extends A = B>() {}
+class C<T extends A = B> {}
+interface I<T extends A = B> {}
+type X<T extends A = B> = 1;
+let f = <T extends A = B>() => 1;
+class C { m<T extends A = B>() {} }
+type X = { m<T extends A = B>(): void };
+type X = <T extends A = B>() => void;
+type X = new <T extends A = B>() => A;
+let f = function<T extends A = B>() {};
+type X = { <T extends A = B>(): void };
+function f<T = B extends A>() {}
+class C<T = B extends A> {}
+interface I<T = B extends A> {}
+type X<T = B extends A> = 1;
+let f = <T = B extends A>() => 1;
+class C { m<T = B extends A>() {} }
+type X = { m<T = B extends A>(): void };
+type X = <T = B extends A>() => void;
+type X = new <T = B extends A>() => A;
+let f = function<T = B extends A>() {};
+type X = { <T = B extends A>(): void };
+function f<T,>() {}
+class C<T,> {}
+interface I<T,> {}
+type X<T,> = 1;
+let f = <T,>() => 1;
+class C { m<T,>() {} }
+type X = { m<T,>(): void };
+type X = <T,>() => void;
+type X = new <T,>() => A;
+let f = function<T,>() {};
+type X = { <T,>(): void };
+function f<T, U>() {}
+class C<T, U> {}
+interface I<T, U> {}
+type X<T, U> = 1;
+let f = <T, U>() => 1;
+class C { m<T, U>() {} }
+type X = { m<T, U>(): void };
+type X = <T, U>() => void;
+type X = new <T, U>() => A;
+let f = function<T, U>() {};
+type X = { <T, U>(): void };
+function f<T,,U>() {}
+class C<T,,U> {}
+interface I<T,,U> {}
+type X<T,,U> = 1;
+let f = <T,,U>() => 1;
+class C { m<T,,U>() {} }
+type X = { m<T,,U>(): void };
+type X = <T,,U>() => void;
+type X = new <T,,U>() => A;
+let f = function<T,,U>() {};
+type X = { <T,,U>(): void };
+function f<,T>() {}
+class C<,T> {}
+interface I<,T> {}
+type X<,T> = 1;
+let f = <,T>() => 1;
+class C { m<,T>() {} }
+type X = { m<,T>(): void };
+type X = <,T>() => void;
+type X = new <,T>() => A;
+let f = function<,T>() {};
+type X = { <,T>(): void };
+function f<>() {}
+class C<> {}
+interface I<> {}
+type X<> = 1;
+let f = <>() => 1;
+class C { m<>() {} }
+type X = { m<>(): void };
+type X = <>() => void;
+type X = new <>() => A;
+let f = function<>() {};
+type X = { <>(): void };
+function f<T extends A extends B ? C : D>() {}
+class C<T extends A extends B ? C : D> {}
+interface I<T extends A extends B ? C : D> {}
+type X<T extends A extends B ? C : D> = 1;
+let f = <T extends A extends B ? C : D>() => 1;
+class C { m<T extends A extends B ? C : D>() {} }
+type X = { m<T extends A extends B ? C : D>(): void };
+type X = <T extends A extends B ? C : D>() => void;
+type X = new <T extends A extends B ? C : D>() => A;
+let f = function<T extends A extends B ? C : D>() {};
+type X = { <T extends A extends B ? C : D>(): void };
+function f<out = A>() {}
+class C<out = A> {}
+interface I<out = A> {}
+type X<out = A> = 1;
+let f = <out = A>() => 1;
+class C { m<out = A>() {} }
+type X = { m<out = A>(): void };
+type X = <out = A>() => void;
+type X = new <out = A>() => A;
+let f = function<out = A>() {};
+type X = { <out = A>(): void };
+function f<out extends A>() {}
+class C<out extends A> {}
+interface I<out extends A> {}
+type X<out extends A> = 1;
+let f = <out extends A>() => 1;
+class C { m<out extends A>() {} }
+type X = { m<out extends A>(): void };
+type X = <out extends A>() => void;
+type X = new <out extends A>() => A;
+let f = function<out extends A>() {};
+type X = { <out extends A>(): void };
+function f<in = A>() {}
+class C<in = A> {}
+interface I<in = A> {}
+type X<in = A> = 1;
+let f = <in = A>() => 1;
+class C { m<in = A>() {} }
+type X = { m<in = A>(): void };
+type X = <in = A>() => void;
+type X = new <in = A>() => A;
+let f = function<in = A>() {};
+type X = { <in = A>(): void };
+function f<out, T>() {}
+class C<out, T> {}
+interface I<out, T> {}
+type X<out, T> = 1;
+let f = <out, T>() => 1;
+class C { m<out, T>() {} }
+type X = { m<out, T>(): void };
+type X = <out, T>() => void;
+type X = new <out, T>() => A;
+let f = function<out, T>() {};
+type X = { <out, T>(): void };
+function f<T, out>() {}
+class C<T, out> {}
+interface I<T, out> {}
+type X<T, out> = 1;
+let f = <T, out>() => 1;
+class C { m<T, out>() {} }
+type X = { m<T, out>(): void };
+type X = <T, out>() => void;
+type X = new <T, out>() => A;
+let f = function<T, out>() {};
+type X = { <T, out>(): void };
+function f<out⏎T>() {}
+class C<out⏎T> {}
+interface I<out⏎T> {}
+type X<out⏎T> = 1;
+let f = <out⏎T>() => 1;
+class C { m<out⏎T>() {} }
+type X = { m<out⏎T>(): void };
+type X = <out⏎T>() => void;
+type X = new <out⏎T>() => A;
+let f = function<out⏎T>() {};
+type X = { <out⏎T>(): void };
+function f<out.T>() {}
+class C<out.T> {}
+interface I<out.T> {}
+type X<out.T> = 1;
+let f = <out.T>() => 1;
+class C { m<out.T>() {} }
+type X = { m<out.T>(): void };
+type X = <out.T>() => void;
+type X = new <out.T>() => A;
+let f = function<out.T>() {};
+type X = { <out.T>(): void };
+function f<const out>() {}
+class C<const out> {}
+interface I<const out> {}
+type X<const out> = 1;
+let f = <const out>() => 1;
+class C { m<const out>() {} }
+type X = { m<const out>(): void };
+type X = <const out>() => void;
+type X = new <const out>() => A;
+let f = function<const out>() {};
+type X = { <const out>(): void };
+function f<const out T>() {}
+class C<const out T> {}
+interface I<const out T> {}
+type X<const out T> = 1;
+let f = <const out T>() => 1;
+class C { m<const out T>() {} }
+type X = { m<const out T>(): void };
+type X = <const out T>() => void;
+type X = new <const out T>() => A;
+let f = function<const out T>() {};
+type X = { <const out T>(): void };
+function f<accessor T>() {}
+class C<accessor T> {}
+interface I<accessor T> {}
+type X<accessor T> = 1;
+let f = <accessor T>() => 1;
+class C { m<accessor T>() {} }
+type X = { m<accessor T>(): void };
+type X = <accessor T>() => void;
+type X = new <accessor T>() => A;
+let f = function<accessor T>() {};
+type X = { <accessor T>(): void };
+function f<abstract T>() {}
+class C<abstract T> {}
+interface I<abstract T> {}
+type X<abstract T> = 1;
+let f = <abstract T>() => 1;
+class C { m<abstract T>() {} }
+type X = { m<abstract T>(): void };
+type X = <abstract T>() => void;
+type X = new <abstract T>() => A;
+let f = function<abstract T>() {};
+type X = { <abstract T>(): void };
+function f<override T>() {}
+class C<override T> {}
+interface I<override T> {}
+type X<override T> = 1;
+let f = <override T>() => 1;
+class C { m<override T>() {} }
+type X = { m<override T>(): void };
+type X = <override T>() => void;
+type X = new <override T>() => A;
+let f = function<override T>() {};
+type X = { <override T>(): void };
+function f<declare T>() {}
+class C<declare T> {}
+interface I<declare T> {}
+type X<declare T> = 1;
+let f = <declare T>() => 1;
+class C { m<declare T>() {} }
+type X = { m<declare T>(): void };
+type X = <declare T>() => void;
+type X = new <declare T>() => A;
+let f = function<declare T>() {};
+type X = { <declare T>(): void };
+function f<export T>() {}
+class C<export T> {}
+interface I<export T> {}
+type X<export T> = 1;
+let f = <export T>() => 1;
+class C { m<export T>() {} }
+type X = { m<export T>(): void };
+type X = <export T>() => void;
+type X = new <export T>() => A;
+let f = function<export T>() {};
+type X = { <export T>(): void };
+function f<default T>() {}
+class C<default T> {}
+interface I<default T> {}
+type X<default T> = 1;
+let f = <default T>() => 1;
+class C { m<default T>() {} }
+type X = { m<default T>(): void };
+type X = <default T>() => void;
+type X = new <default T>() => A;
+let f = function<default T>() {};
+type X = { <default T>(): void };
+function f<async T>() {}
+class C<async T> {}
+interface I<async T> {}
+type X<async T> = 1;
+let f = <async T>() => 1;
+class C { m<async T>() {} }
+type X = { m<async T>(): void };
+type X = <async T>() => void;
+type X = new <async T>() => A;
+let f = function<async T>() {};
+type X = { <async T>(): void };
+function f<T?>() {}
+class C<T?> {}
+interface I<T?> {}
+type X<T?> = 1;
+let f = <T?>() => 1;
+class C { m<T?>() {} }
+type X = { m<T?>(): void };
+type X = <T?>() => void;
+type X = new <T?>() => A;
+let f = function<T?>() {};
+type X = { <T?>(): void };
+function f<T!>() {}
+class C<T!> {}
+interface I<T!> {}
+type X<T!> = 1;
+let f = <T!>() => 1;
+class C { m<T!>() {} }
+type X = { m<T!>(): void };
+type X = <T!>() => void;
+type X = new <T!>() => A;
+let f = function<T!>() {};
+type X = { <T!>(): void };
+function f<...T>() {}
+class C<...T> {}
+interface I<...T> {}
+type X<...T> = 1;
+let f = <...T>() => 1;
+class C { m<...T>() {} }
+type X = { m<...T>(): void };
+type X = <...T>() => void;
+type X = new <...T>() => A;
+let f = function<...T>() {};
+type X = { <...T>(): void };
+function f<T: A>() {}
+class C<T: A> {}
+interface I<T: A> {}
+type X<T: A> = 1;
+let f = <T: A>() => 1;
+class C { m<T: A>() {} }
+type X = { m<T: A>(): void };
+type X = <T: A>() => void;
+type X = new <T: A>() => A;
+let f = function<T: A>() {};
+type X = { <T: A>(): void };
+function f<T in A>() {}
+class C<T in A> {}
+interface I<T in A> {}
+type X<T in A> = 1;
+let f = <T in A>() => 1;
+class C { m<T in A>() {} }
+type X = { m<T in A>(): void };
+type X = <T in A>() => void;
+type X = new <T in A>() => A;
+let f = function<T in A>() {};
+type X = { <T in A>(): void };
+function f<T as A>() {}
+class C<T as A> {}
+interface I<T as A> {}
+type X<T as A> = 1;
+let f = <T as A>() => 1;
+class C { m<T as A>() {} }
+type X = { m<T as A>(): void };
+type X = <T as A>() => void;
+type X = new <T as A>() => A;
+let f = function<T as A>() {};
+type X = { <T as A>(): void };
+function f<typeof T>() {}
+class C<typeof T> {}
+interface I<typeof T> {}
+type X<typeof T> = 1;
+let f = <typeof T>() => 1;
+class C { m<typeof T>() {} }
+type X = { m<typeof T>(): void };
+type X = <typeof T>() => void;
+type X = new <typeof T>() => A;
+let f = function<typeof T>() {};
+type X = { <typeof T>(): void };
+function f<keyof T>() {}
+class C<keyof T> {}
+interface I<keyof T> {}
+type X<keyof T> = 1;
+let f = <keyof T>() => 1;
+class C { m<keyof T>() {} }
+type X = { m<keyof T>(): void };
+type X = <keyof T>() => void;
+type X = new <keyof T>() => A;
+let f = function<keyof T>() {};
+type X = { <keyof T>(): void };
+function f<new T>() {}
+class C<new T> {}
+interface I<new T> {}
+type X<new T> = 1;
+let f = <new T>() => 1;
+class C { m<new T>() {} }
+type X = { m<new T>(): void };
+type X = <new T>() => void;
+type X = new <new T>() => A;
+let f = function<new T>() {};
+type X = { <new T>(): void };
+function f<this>() {}
+class C<this> {}
+interface I<this> {}
+type X<this> = 1;
+let f = <this>() => 1;
+class C { m<this>() {} }
+type X = { m<this>(): void };
+type X = <this>() => void;
+type X = new <this>() => A;
+let f = function<this>() {};
+type X = { <this>(): void };
+function f<null>() {}
+class C<null> {}
+interface I<null> {}
+type X<null> = 1;
+let f = <null>() => 1;
+class C { m<null>() {} }
+type X = { m<null>(): void };
+type X = <null>() => void;
+type X = new <null>() => A;
+let f = function<null>() {};
+type X = { <null>(): void };
+function f<void>() {}
+class C<void> {}
+interface I<void> {}
+type X<void> = 1;
+let f = <void>() => 1;
+class C { m<void>() {} }
+type X = { m<void>(): void };
+type X = <void>() => void;
+type X = new <void>() => A;
+let f = function<void>() {};
+type X = { <void>(): void };
+function f<1>() {}
+class C<1> {}
+interface I<1> {}
+type X<1> = 1;
+let f = <1>() => 1;
+class C { m<1>() {} }
+type X = { m<1>(): void };
+type X = <1>() => void;
+type X = new <1>() => A;
+let f = function<1>() {};
+type X = { <1>(): void };
+function f<"a">() {}
+class C<"a"> {}
+interface I<"a"> {}
+type X<"a"> = 1;
+let f = <"a">() => 1;
+class C { m<"a">() {} }
+type X = { m<"a">(): void };
+type X = <"a">() => void;
+type X = new <"a">() => A;
+let f = function<"a">() {};
+type X = { <"a">(): void };
+function f<[T]>() {}
+class C<[T]> {}
+interface I<[T]> {}
+type X<[T]> = 1;
+let f = <[T]>() => 1;
+class C { m<[T]>() {} }
+type X = { m<[T]>(): void };
+type X = <[T]>() => void;
+type X = new <[T]>() => A;
+let f = function<[T]>() {};
+type X = { <[T]>(): void };
+function f<{T}>() {}
+class C<{T}> {}
+interface I<{T}> {}
+type X<{T}> = 1;
+let f = <{T}>() => 1;
+class C { m<{T}>() {} }
+type X = { m<{T}>(): void };
+type X = <{T}>() => void;
+type X = new <{T}>() => A;
+let f = function<{T}>() {};
+type X = { <{T}>(): void };
+function f<(T)>() {}
+class C<(T)> {}
+interface I<(T)> {}
+type X<(T)> = 1;
+let f = <(T)>() => 1;
+class C { m<(T)>() {} }
+type X = { m<(T)>(): void };
+type X = <(T)>() => void;
+type X = new <(T)>() => A;
+let f = function<(T)>() {};
+type X = { <(T)>(): void };
+function f<T[]>() {}
+class C<T[]> {}
+interface I<T[]> {}
+type X<T[]> = 1;
+let f = <T[]>() => 1;
+class C { m<T[]>() {} }
+type X = { m<T[]>(): void };
+type X = <T[]>() => void;
+type X = new <T[]>() => A;
+let f = function<T[]>() {};
+type X = { <T[]>(): void };
+function f<T | U>() {}
+class C<T | U> {}
+interface I<T | U> {}
+type X<T | U> = 1;
+let f = <T | U>() => 1;
+class C { m<T | U>() {} }
+type X = { m<T | U>(): void };
+type X = <T | U>() => void;
+type X = new <T | U>() => A;
+let f = function<T | U>() {};
+type X = { <T | U>(): void };
+function f<T & U>() {}
+class C<T & U> {}
+interface I<T & U> {}
+type X<T & U> = 1;
+let f = <T & U>() => 1;
+class C { m<T & U>() {} }
+type X = { m<T & U>(): void };
+type X = <T & U>() => void;
+type X = new <T & U>() => A;
+let f = function<T & U>() {};
+type X = { <T & U>(): void };
+function f<A.B>() {}
+class C<A.B> {}
+interface I<A.B> {}
+type X<A.B> = 1;
+let f = <A.B>() => 1;
+class C { m<A.B>() {} }
+type X = { m<A.B>(): void };
+type X = <A.B>() => void;
+type X = new <A.B>() => A;
+let f = function<A.B>() {};
+type X = { <A.B>(): void };
+function f<#T>() {}
+class C<#T> {}
+interface I<#T> {}
+type X<#T> = 1;
+let f = <#T>() => 1;
+class C { m<#T>() {} }
+type X = { m<#T>(): void };
+type X = <#T>() => void;
+type X = new <#T>() => A;
+let f = function<#T>() {};
+type X = { <#T>(): void };
+function f<T extends any[]>() {}
+class C<T extends any[]> {}
+interface I<T extends any[]> {}
+type X<T extends any[]> = 1;
+let f = <T extends any[]>() => 1;
+class C { m<T extends any[]>() {} }
+type X = { m<T extends any[]>(): void };
+type X = <T extends any[]>() => void;
+type X = new <T extends any[]>() => A;
+let f = function<T extends any[]>() {};
+type X = { <T extends any[]>(): void };
+function f<T extends keyof U>() {}
+class C<T extends keyof U> {}
+interface I<T extends keyof U> {}
+type X<T extends keyof U> = 1;
+let f = <T extends keyof U>() => 1;
+class C { m<T extends keyof U>() {} }
+type X = { m<T extends keyof U>(): void };
+type X = <T extends keyof U>() => void;
+type X = new <T extends keyof U>() => A;
+let f = function<T extends keyof U>() {};
+type X = { <T extends keyof U>(): void };
+function f<T extends (infer V)[]>() {}
+class C<T extends (infer V)[]> {}
+interface I<T extends (infer V)[]> {}
+type X<T extends (infer V)[]> = 1;
+let f = <T extends (infer V)[]>() => 1;
+class C { m<T extends (infer V)[]>() {} }
+type X = { m<T extends (infer V)[]>(): void };
+type X = <T extends (infer V)[]>() => void;
+type X = new <T extends (infer V)[]>() => A;
+let f = function<T extends (infer V)[]>() {};
+type X = { <T extends (infer V)[]>(): void };
+function f<T extends infer V>() {}
+class C<T extends infer V> {}
+interface I<T extends infer V> {}
+type X<T extends infer V> = 1;
+let f = <T extends infer V>() => 1;
+class C { m<T extends infer V>() {} }
+type X = { m<T extends infer V>(): void };
+type X = <T extends infer V>() => void;
+type X = new <T extends infer V>() => A;
+let f = function<T extends infer V>() {};
+type X = { <T extends infer V>(): void };

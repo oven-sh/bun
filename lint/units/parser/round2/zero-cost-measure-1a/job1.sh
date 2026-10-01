@@ -5,7 +5,7 @@ T=/workspace/notes/lint/units/parser/paren-expr-seam
 export OUT=$S/link CACHE=$S/thinlto-cache
 date -u +"lock acquired %FT%TZ load $(cut -d' ' -f1-3 /proc/loadavg)"
 if [ ! -d $CACHE ] && [ -d /tmp/zcm-td/seam/thinlto-cache ]; then cp -r /tmp/zcm-td/seam/thinlto-cache $CACHE; echo "cache seeded from /tmp/zcm-td ($(ls $CACHE | wc -l) files)"; fi
-for v in "$@"; do
+for v in $(cat $S/variants.txt 2>/dev/null || echo "$@"); do
   python3 $T/relink.py $v $S/out/$v/libbun_js_parser-185fe25973f3a1f8.rlib full
   if [ -x $S/link/$v/bun-profile ]; then
     /workspace/notes/lint/tools/cgbench.sh $S/link/$v/bun-profile $S/cg $v 20 > $S/cg.$v.summary.txt 2>&1; echo "cgbench $v rc=$? $(date -u +%T)"

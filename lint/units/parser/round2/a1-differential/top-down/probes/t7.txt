@@ -1,0 +1,19 @@
+let v = A<>.C;
+let v = A<>;
+let v = a<B>.c;
+let v = A<>();
+let x: A<>;
+let x: A<>.C;
+class C extends A<>.C {}
+class C extends A<> {}
+class C implements A<> {}
+interface I extends A<> {}
+class C implements a<B>.c {}
+let v = +1;
+class C extends +1 {}
+class C extends typeof a {}
+class C extends (+1) {}
+class C implements (+1) {}
+class C implements (a, b) {}
+class C implements a.b<C>.d {}
+class C implements a<B><C> {}

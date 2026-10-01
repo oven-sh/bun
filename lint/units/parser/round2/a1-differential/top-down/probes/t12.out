@@ -1,0 +1,42 @@
+"class C implements [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2500]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C extends [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2304,2507,2703]
+    t.ts.plain: A ==
+"interface I extends [delete A] {}"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2499]
+    t.ts.plain: R "Unexpected delete" +1 -> A
+"class C { m() { delete A } }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2304,2703]
+    t.ts.plain: A ==
+"delete A"
+    tsc: parse.ts[] parse.tsx[] chk.ts[] chk.tsx[] oth[1102,2304,2703]
+    t.ts.plain: A ==
+"class C extends A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"class C implements A<>.C {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: R "Unexpected >" -> A
+"function f(): A {} { return x; }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: A ==
+"function f(): class {} { return x; }"
+    tsc: parse.ts[] parse.tsx[] chk.ts[TS1108] chk.tsx[TS1108] oth[2304]
+    t.ts.plain: R "Unexpected class" -> A
+"class C implements a<B>.c {}"
+    tsc: parse.ts[TS1477] parse.tsx[TS1477] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"type a = 1\ntype as <T>(x: T) => void"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"interface a {}\ninterface as {} | X\nfoo()"
+    tsc: parse.ts[TS1109] parse.tsx[TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"namespace a {}\nnamespace as any"
+    tsc: parse.ts[TS1005] parse.tsx[TS1005] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==
+"namespace a {}\nnamespace as { foo(): void }"
+    tsc: parse.ts[TS1005,TS1109] parse.tsx[TS1005,TS1109] chk.ts[] chk.tsx[] oth[]
+    t.ts.plain: A ==

@@ -1,0 +1,117 @@
+diff -ru v2/src/js_parser/parse/parse_skip_typescript.rs v2b/src/js_parser/parse/parse_skip_typescript.rs
+--- v2/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 18:59:57.235478630 +0000
++++ v2b/src/js_parser/parse/parse_skip_typescript.rs	2026-10-01 19:20:30.846134991 +0000
+@@ -425,25 +425,37 @@
+             let name = self.lexer.identifier;
+             self.skip_type_script_binding()?;
+ 
+-            // "(public a)"
+-            if is_identifier && self.lexer.token == T::TIdentifier {
+-                self.skip_type_script_parameter_modifiers(name)?;
+-            }
++            let mut is_at_binding = is_identifier;
++            loop {
++                // "(a?)"
++                if self.lexer.token == T::TQuestion {
++                    self.lexer.next()?;
++                    is_at_binding = false;
++                }
+ 
+-            // "(a?)"
+-            if self.lexer.token == T::TQuestion {
+-                self.lexer.next()?;
+-            }
++                // "(a: any)"
++                if self.lexer.token == T::TColon {
++                    self.lexer.next()?;
++                    self.skip_type_script_type(Level::Lowest)?;
++                    is_at_binding = false;
++                }
+ 
+-            // "(a: any)"
+-            if self.lexer.token == T::TColon {
+-                self.lexer.next()?;
+-                self.skip_type_script_type(Level::Lowest)?;
+-            }
++                if self.lexer.token == T::TComma || self.lexer.token == T::TCloseParen {
++                    break;
++                }
+ 
+-            // "(a = 1)"
+-            if self.lexer.token == T::TEquals {
+-                self.parse_initializer_in_type()?;
++                // "(public a)"
++                if is_at_binding && self.lexer.token == T::TIdentifier {
++                    is_at_binding = false;
++                    self.skip_type_script_parameter_modifiers(name)?;
++                    continue;
++                }
++
++                // "(a = 1)"
++                if self.lexer.token == T::TEquals {
++                    self.parse_initializer_in_type()?;
++                }
++                break;
+             }
+ 
+             // "(a, b)"
+@@ -830,6 +842,22 @@
+                 self.parse_postfix_type_rest::<S>(out)?;
+                 Ok(Plain::More)
+             }
++            T::TOpenBrace => {
++                self.skip_type_script_object_type()?;
++                S::object_type(out);
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
++            T::TOpenBracket => {
++                self.parse_tuple_type::<S>(out)?;
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
++            T::TOpenParen => {
++                self.skip_type_script_paren_or_fn_type::<S>(out)?;
++                self.parse_postfix_type_rest::<S>(out)?;
++                Ok(Plain::More)
++            }
+             _ => Ok(Plain::No),
+         }
+     }
+@@ -2319,7 +2347,25 @@
+     fn parse_type_member(&mut self) -> Result<(), Error> {
+         if self.lexer.token == T::TIdentifier && MEMBER_KEYWORD_MAP.get(self.lexer.raw()).is_none() {
+             self.lexer.next()?;
+-            return self.parse_property_or_method_signature(MemberName::Word, false);
++            match self.lexer.token {
++                T::TColon => {
++                    self.lexer.next()?;
++                    self.skip_type_script_type(Level::Lowest)?;
++                    if self.lexer.token == T::TEquals {
++                        self.parse_initializer_in_type()?;
++                    }
++                    return self.parse_type_member_semicolon();
++                }
++                T::TOpenParen => {
++                    self.skip_typescript_fn_args()?;
++                    if self.lexer.token == T::TColon {
++                        self.lexer.next()?;
++                        self.skip_typescript_return_type()?;
++                    }
++                    return self.parse_type_member_semicolon();
++                }
++                _ => return self.parse_property_or_method_signature(MemberName::Word, false),
++            }
+         }
+         // "+" or "-" is accepted before any member, not only before "readonly" of a mapped type
+         if self.lexer.token == T::TPlus || self.lexer.token == T::TMinus {
+@@ -2695,6 +2741,9 @@
+ 
+     /// parseTypeMemberSemicolon
+     fn parse_type_member_semicolon(&mut self) -> Result<(), Error> {
++        if self.lexer.token == T::TSemicolon || self.lexer.token == T::TComma {
++            return self.lexer.next().map_err(Into::into);
++        }
+         match self.lexer.token {
+             T::TCloseBrace => {}
+             T::TComma | T::TSemicolon => {

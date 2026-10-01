@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { getArch, requireCommand, run } from "./agent.ts";
+import { getArch, request, requireCommand, run } from "./agent.ts";
 import {
   type WindowsImage,
   bakeDirectory,
@@ -67,6 +67,17 @@ function getLinuxImageState(name: string): ImageState {
   return states.size ? "failed" : "missing";
 }
 
+const azureAttempts = 5;
+
+/**
+ * `request()` names the URL in its error, and Azure's name the tenant or the
+ * subscription. This has the status and what came with it: the body of the
+ * response, or why there was none.
+ */
+function azureError(what: string, { error, status }: Awaited<ReturnType<typeof request>>): Error {
+  return new Error(`${what}: ${status ?? "no response"}`, { cause: error?.cause });
+}
+
 type Azure = {
   token: string;
   subscriptionId: string;
@@ -77,7 +88,7 @@ type Azure = {
 
 async function getAzure(): Promise<Azure> {
   const tenantId = getSecret("AZURE_TENANT_ID");
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+  const response = await request(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -85,12 +96,17 @@ async function getAzure(): Promise<Azure> {
       client_id: getSecret("AZURE_CLIENT_ID"),
       client_secret: getSecret("AZURE_CLIENT_SECRET"),
       scope: "https://management.azure.com/.default",
-    }),
+    }).toString(),
+    json: true,
+    attempts: azureAttempts,
   });
-  if (!response.ok) {
-    throw new Error(`Azure auth failed: ${response.status}`);
+  if (response.error) {
+    // Without the body of a response, which can name the client.
+    throw response.status
+      ? new Error(`Azure auth failed: ${response.status}`)
+      : azureError("Azure auth failed", response);
   }
-  const { access_token: token } = (await response.json()) as { access_token: string };
+  const { access_token: token } = response.body as { access_token: string };
   return {
     token,
     subscriptionId: getSecret("AZURE_SUBSCRIPTION_ID"),
@@ -101,12 +117,13 @@ async function getAzure(): Promise<Azure> {
 }
 
 /** A request to the gallery image definition `name`, or to a path under it. */
-function galleryRequest(azure: Azure, name: string, path: string, init?: RequestInit): Promise<Response> {
+function galleryRequest(azure: Azure, name: string, path: string, init?: { method: string; body?: string }) {
   const { subscriptionId, resourceGroup, galleryName, token } = azure;
   const definition = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${name}`;
-  return fetch(`https://management.azure.com${definition}${path}?api-version=2024-03-03`, {
+  return request(`https://management.azure.com${definition}${path}?api-version=2024-03-03`, {
     ...init,
     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    attempts: azureAttempts,
   });
 }
 
@@ -118,10 +135,10 @@ async function getWindowsImageState(azure: Azure, name: string): Promise<ImageSt
   if (response.status === 404) {
     return "missing";
   }
-  if (!response.ok) {
-    throw new Error(`Azure gallery lookup of ${name} failed: ${response.status} ${await response.text()}`);
+  if (response.error) {
+    throw azureError(`Azure gallery lookup of ${name} failed`, response);
   }
-  const { properties } = (await response.json()) as { properties: { provisioningState: string } };
+  const { properties } = JSON.parse(response.body as string) as { properties: { provisioningState: string } };
   switch (properties.provisioningState) {
     case "Succeeded":
       return "available";
@@ -226,16 +243,16 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
       },
     }),
   });
-  if (!definition.ok && definition.status !== 409) {
-    throw new Error(`Failed to create gallery image definition: ${definition.status} ${await definition.text()}`);
+  if (definition.error && definition.status !== 409) {
+    throw azureError("Failed to create gallery image definition", definition);
   }
 
   if (state === "failed") {
     // Packer refuses to publish over a version that exists, and this one never became an image.
     console.log(`[packer] Deleting the failed version of ${name}`);
     const deleted = await galleryRequest(azure, name, galleryVersion, { method: "DELETE" });
-    if (!deleted.ok) {
-      throw new Error(`Failed to delete the failed version of ${name}: ${deleted.status} ${await deleted.text()}`);
+    if (deleted.error) {
+      throw azureError(`Failed to delete the failed version of ${name}`, deleted);
     }
     while ((await getWindowsImageState(azure, name)) !== "missing") {
       await new Promise(done => setTimeout(done, 10_000));

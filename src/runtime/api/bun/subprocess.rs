@@ -948,10 +948,6 @@ impl Subprocess<'_> {
     /// `process` must be the live `*mut Process` threaded from the
     /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
-    // Forwards `process` to `VirtualMachine::on_subprocess_exit` without
-    // dereferencing it; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
@@ -1617,6 +1613,31 @@ pub(crate) mod testing_apis {
         // SAFETY: live pipe reader; `on_error` is the raw entry so the
         // (maybe-freeing) error dispatch runs under no receiver protector.
         unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
+        Ok(JSValue::TRUE)
+    }
+
+    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
+    #[bun_jsc::host_fn]
+    pub(crate) fn close_stdin_writer(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(windows)]
+        use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+
+        let [subprocess_value] = callframe.arguments_as_array::<1>();
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
+            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
+        };
+        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
+        let subprocess = unsafe { &*subprocess_ptr };
+        let Writable::Pipe(pipe) = subprocess.stdin.get() else {
+            return Ok(JSValue::FALSE);
+        };
+        let writer = pipe.writer.as_ptr();
+        // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
+        // `close()` may free both, and nothing touches them afterwards.
+        unsafe { (*writer).close() };
         Ok(JSValue::TRUE)
     }
 }

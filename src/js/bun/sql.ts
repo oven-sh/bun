@@ -244,7 +244,7 @@ const SQL = function SQL(
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      const query = new Query(
+      const query = new Query<import("internal/sql/shared.ts").SQLResultArray<any>, any>(
         strings,
         values,
         flags,

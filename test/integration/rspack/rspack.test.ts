@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -9,9 +9,10 @@ async function run(cmd: string[], cwd: string) {
   return { exitCode: proc.exitCode, signalCode: proc.signalCode };
 }
 
-// Guards the napi ThreadSafeFunction finalizer (#24771). Bun ran it without the
-// function's context as the hint, and rspack's native binding then crashed with
-// "Segmentation fault at address 0x0" in the middle of a build.
+// End-to-end guard for the napi ThreadSafeFunction finalizer (#24771). Bun ran it
+// without the function's context as the hint, and rspack's native binding then
+// crashed with "Segmentation fault at address 0x0" in the middle of a build.
+// test/napi/napi.test.ts checks the hint itself, without a package install.
 //
 // `app/` is what `bun create rsbuild@1 app --template solid-ts` generates, with
 // every version pinned by `app/bun.lock`. Stay on rsbuild 1.x: in 2.x,
@@ -30,5 +31,5 @@ test(
   },
   // The install downloads 89 tarballs (49 MB) from the npm registry. This is the
   // bound scripts/runner.node.ts gives each test of an integration file.
-  150_000 * (isASAN ? 3 : 1),
+  150_000 * (isASAN || isDebug ? 3 : 1),
 );

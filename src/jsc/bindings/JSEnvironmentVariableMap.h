@@ -22,7 +22,7 @@ public:
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSEnvironmentVariableMap* map = new (NotNull, JSC::allocateCell<JSEnvironmentVariableMap>(vm)) JSEnvironmentVariableMap(vm, structure);
+        JSEnvironmentVariableMap* map = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEnvironmentVariableMap))) JSEnvironmentVariableMap(vm, structure);
         map->finishCreation(vm);
         return map;
     }
@@ -38,7 +38,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
@@ -56,8 +56,8 @@ private:
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
-// reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData
-// whose gregorian cache still matches, so walk the heap and invalidate those.
+// reset only clears shared slots; live DateInstances keep their own cached fields
+// that still match, so walk the heap and invalidate those.
 void invalidateLiveDateInstanceCaches(JSC::VM&);
 
 // The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel

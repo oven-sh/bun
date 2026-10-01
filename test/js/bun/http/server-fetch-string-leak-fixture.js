@@ -3,10 +3,7 @@
 // bun.String. Both code paths are exercised:
 //   - absolute URL with a hostname (dupe branch)
 //   - relative path with no hostname (append-to-base-url branch)
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const isASAN = process.execPath.includes("bun-asan");
 using server = Bun.serve({
   port: 0,

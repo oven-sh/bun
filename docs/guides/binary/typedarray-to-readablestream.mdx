@@ -4,7 +4,7 @@ sidebarTitle: "Uint8Array to ReadableStream"
 mode: center
 ---
 
-The naive approach to creating a [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) from a [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) is to use the [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) constructor and enqueue the entire array as a single chunk. For a large array, this may be undesirable because it doesn't stream the data in smaller chunks.
+The naive approach to creating a [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) from a [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) is to use the [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) constructor and enqueue the entire array as a single chunk. For a large array, this approach may be undesirable because it doesn't stream the data in smaller chunks.
 
 ```ts
 const arr = new Uint8Array(64);
@@ -28,20 +28,14 @@ const stream = blob.stream();
 
 ---
 
-To control the chunk size, split the `Uint8Array` into chunks and enqueue each one individually.
+Pass a number to `.stream()` to set the chunk size.
 
 ```ts
 const arr = new Uint8Array(64);
-const chunkSize = 1024;
+const blob = new Blob([arr]);
 
-const stream = new ReadableStream({
-  start(controller) {
-    for (let i = 0; i < arr.length; i += chunkSize) {
-      controller.enqueue(arr.slice(i, i + chunkSize));
-    }
-    controller.close();
-  },
-});
+// set chunk size of 1024 bytes
+const stream = blob.stream(1024);
 ```
 
 ---

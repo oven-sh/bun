@@ -4,7 +4,7 @@ sidebarTitle: "Buffer to ReadableStream"
 mode: center
 ---
 
-The naive approach to creating a [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) from a [`Buffer`](https://nodejs.org/api/buffer.html) is to use the `ReadableStream` constructor and enqueue the entire array as a single chunk. For a large buffer, this may be undesirable because it doesn't stream the data in smaller chunks.
+The naive approach to creating a [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) from a [`Buffer`](https://nodejs.org/api/buffer.html) is to use the `ReadableStream` constructor and enqueue the entire array as a single chunk. For a large buffer, this approach may be undesirable because it doesn't stream the data in smaller chunks.
 
 ```ts
 const buf = Buffer.from("hello world");
@@ -28,20 +28,14 @@ const stream = blob.stream();
 
 ---
 
-To control the chunk size, split the `Buffer` into chunks and enqueue each one individually.
+Pass a number to `.stream()` to set the chunk size.
 
 ```ts
 const buf = Buffer.from("hello world");
-const chunkSize = 1024;
+const blob = new Blob([buf]);
 
-const stream = new ReadableStream({
-  start(controller) {
-    for (let i = 0; i < buf.length; i += chunkSize) {
-      controller.enqueue(buf.subarray(i, i + chunkSize));
-    }
-    controller.close();
-  },
-});
+// set chunk size of 1024 bytes
+const stream = blob.stream(1024);
 ```
 
 ---

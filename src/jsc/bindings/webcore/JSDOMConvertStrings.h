@@ -143,7 +143,11 @@ template<typename T> struct Converter<IDLAtomStringAdaptor<T>> : DefaultConverte
     {
         static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
 
-        return value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* string = value.toString(&lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, string->toAtomString(&lexicalGlobalObject).data);
     }
 };
 

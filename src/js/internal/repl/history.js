@@ -20,13 +20,19 @@ const {
 
 const { validateNumber, validateArray } = require("internal/validators");
 
-const path = require("node:path");
-const fs = require("node:fs");
-const os = require("node:os");
-let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
-  debug = fn;
-});
-const permission = require("internal/repl/node-shims");
+// Every readline Interface constructs a ReplHistory, but only the REPL (with a
+// history file) touches fs/os/path or the node-shims helpers, so load those on
+// first use instead of pulling node:fs, node:util, node:vm etc. into every
+// readline.createInterface() / FileHandle.readLines().
+let fs, os, path, permission;
+const lazyFs = () => (fs ??= require("node:fs"));
+const lazyOs = () => (os ??= require("node:os"));
+const lazyPath = () => (path ??= require("node:path"));
+const lazyPermission = () => (permission ??= require("internal/repl/node-shims"));
+let debug = (...args) => {
+  debug = require("internal/repl/node-shims").debuglog("repl");
+  return debug(...args);
+};
 const { clearTimeout, setTimeout } = require("node:timers");
 const { reverseString } = require("internal/readline/utils");
 
@@ -272,7 +278,7 @@ class ReplHistory {
   [kResolveHistoryPath]() {
     if (!this[kHistoryPath]) {
       try {
-        this[kHistoryPath] = path.join(os.homedir(), ".node_repl_history");
+        this[kHistoryPath] = lazyPath().join(lazyOs().homedir(), ".node_repl_history");
         return this[kHistoryPath];
       } catch (err) {
         debug(err.stack);
@@ -283,6 +289,7 @@ class ReplHistory {
   }
 
   [kHasWritePermission]() {
+    const permission = lazyPermission();
     return !(permission.isEnabled() && permission.has("fs.write", this[kHistoryPath]) === false);
   }
 
@@ -300,12 +307,12 @@ class ReplHistory {
       // Open and close file first to ensure it exists
       // History files are conventionally not readable by others
       // 0o0600 = read/write for owner only
-      const hnd = await fs.promises.open(this[kHistoryPath], "a+", 0o0600);
+      const hnd = await lazyFs().promises.open(this[kHistoryPath], "a+", 0o0600);
       await hnd.close();
 
       let data;
       try {
-        data = await fs.promises.readFile(this[kHistoryPath], "utf8");
+        data = await lazyFs().promises.readFile(this[kHistoryPath], "utf8");
       } catch (err) {
         return this[kHandleHistoryInitError](err, onReadyCallback);
       }
@@ -318,7 +325,7 @@ class ReplHistory {
 
       validateArray(this[kHistory], "history");
 
-      const handle = await fs.promises.open(this[kHistoryPath], "r+");
+      const handle = await lazyFs().promises.open(this[kHistoryPath], "r+");
       this[kHistoryHandle] = handle;
 
       await handle.truncate(0);

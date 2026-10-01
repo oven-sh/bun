@@ -1048,12 +1048,14 @@ describe.concurrent("yarn.lock and --dry-run", () => {
     return { packageDir, yarnLock: join(packageDir, "yarn.lock"), run };
   }
 
+  const yarnBunfig = '\n[install.lockfile]\nprint = "yarn"\n';
+
   // The three ways to ask for a yarn.lock.
   it.each([
     ["--yarn before --dry-run", { flags: ["--yarn", "--dry-run"] }],
     ["--yarn after --dry-run", { flags: ["--dry-run", "--yarn"] }],
     ["BUN_CONFIG_YARN_LOCKFILE", { flags: ["--dry-run"], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
-    ['bunfig print = "yarn"', { flags: ["--dry-run"], bunfig: '\n[install.lockfile]\nprint = "yarn"\n' }],
+    ['bunfig print = "yarn"', { flags: ["--dry-run"], bunfig: yarnBunfig }],
   ] as [string, { flags: string[]; env?: Record<string, string>; bunfig?: string }][])(
     "a dry run does not write it: %s",
     async (_, route) => {
@@ -1069,12 +1071,6 @@ describe.concurrent("yarn.lock and --dry-run", () => {
         expect(err).not.toContain("error:");
         expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: false, exitCode: 0 });
       }
-
-      // The same request without --dry-run writes it.
-      const args = ["install", ...route.flags.filter(flag => flag !== "--dry-run")];
-      const { err, exitCode } = await run(args, route.env);
-      expect(err).toContain("Saved yarn.lock");
-      expect({ args, wrote: await exists(yarnLock), exitCode }).toEqual({ args, wrote: true, exitCode: 0 });
     },
   );
 
@@ -1096,6 +1092,21 @@ describe.concurrent("yarn.lock and --dry-run", () => {
         exitCode: 0,
       });
     }
+  });
+
+  it("BUN_CONFIG_YARN_LOCKFILE and bunfig still write it in an install that is not a dry run", async () => {
+    const { packageDir, yarnLock, run } = await setup();
+
+    const fromEnv = await run(["install"], { BUN_CONFIG_YARN_LOCKFILE: "1" });
+    expect(fromEnv.err).toContain("Saved yarn.lock");
+    expect({ wrote: await exists(yarnLock), exitCode: fromEnv.exitCode }).toEqual({ wrote: true, exitCode: 0 });
+
+    await rm(yarnLock);
+    const bunfig = join(packageDir, "bunfig.toml");
+    await write(bunfig, (await file(bunfig).text()) + yarnBunfig);
+    const fromBunfig = await run(["install"]);
+    expect(fromBunfig.err).toContain("Saved yarn.lock");
+    expect({ wrote: await exists(yarnLock), exitCode: fromBunfig.exitCode }).toEqual({ wrote: true, exitCode: 0 });
   });
 
   it("--no-save and --frozen-lockfile still write it", async () => {

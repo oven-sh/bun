@@ -137,6 +137,13 @@ pub struct Watcher {
     pub thread_lock: ThreadLock,
 }
 
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        // `MultiArrayList` frees only its slab, not the owned `file_path`s.
+        self.watchlist.drop_elements();
+    }
+}
+
 /// Context types passed to `Watcher::init` implement this trait.
 /// The default `on_watch_error` forwards to `on_error`.
 pub trait WatcherContext {

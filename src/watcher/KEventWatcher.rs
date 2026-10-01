@@ -5,9 +5,9 @@ use crate::watcher_impl::{Op, WatchEvent, Watcher};
 
 pub(crate) type Platform = KEventWatcher;
 
-// Darwin: `src/io/io_darwin.cpp` (same helpers `bun_io::waker::KEventWaker`
-// uses). The non-Darwin stubs there are no-ops so the symbols exist
-// everywhere the C++ link step runs, but we only call them on macOS.
+// Darwin: `src/io/io_darwin.cpp`. `bun_io::waker::KEventWaker` uses the first
+// two; `io_darwin_close_machport` is for this watcher only and has no
+// non-Darwin stub.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn io_darwin_create_machport(

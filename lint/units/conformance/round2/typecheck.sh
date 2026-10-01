@@ -35,5 +35,6 @@ cat > "$tmp/tsconfig.json" <<EOF
 }
 EOF
 "$wt/node_modules/.bin/tsc" -p "$tmp/tsconfig.json" > "$tmp/out.txt" 2>&1 || true
-if grep "/test/cli/lint/" "$tmp/out.txt"; then exit 1; fi
+# tsc prints a path relative to the current directory: without a leading slash when that directory is the tree.
+if grep -E "(^|/)test/cli/lint/" "$tmp/out.txt"; then exit 1; fi
 echo "no type error below test/cli/lint ($(grep -c 'error TS' "$tmp/out.txt" || true) elsewhere, in files that these import)"

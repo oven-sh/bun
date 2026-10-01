@@ -1,0 +1,5 @@
+test zz_probe::zz_probe_reads_the_sources_of_a_file ... ok
+
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+tests exit 0

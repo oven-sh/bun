@@ -40,6 +40,8 @@ async function startFakeDns() {
           labels.push(query.toString("latin1", offset + 1, offset + 1 + query[offset]));
           offset += 1 + query[offset];
         }
+        // A datagram without a whole question is not from c-ares. It gets no reply.
+        if (query.length < offset + 5) return;
         const name = labels.join(".").toLowerCase();
         const qtype = query.readUInt16BE(offset + 1);
         questions.push(name);

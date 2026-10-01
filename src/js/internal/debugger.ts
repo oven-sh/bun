@@ -290,7 +290,7 @@ class Debugger {
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
-  #server?: WebSocketServer;
+  #server?: WebSocketServer<Connection>;
 
   constructor(
     executionContextId: number,
@@ -375,7 +375,7 @@ class Debugger {
       });
 
       this.#server = server;
-      this.#url!.hostname = server.hostname;
+      this.#url!.hostname = server.hostname!;
       this.#url!.port = `${server.port}`;
       return;
     }
@@ -484,7 +484,7 @@ class Debugger {
     ];
   }
 
-  #fetch(request: Request, server: WebSocketServer): Response | undefined {
+  #fetch(request: Request, server: WebSocketServer<Connection>): Response | undefined {
     const { method, url, headers } = request;
     const { pathname } = new URL(url);
 

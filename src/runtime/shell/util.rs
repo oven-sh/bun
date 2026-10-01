@@ -1,6 +1,6 @@
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum OutKind {
+pub(crate) enum OutKind {
     Stdout,
     Stderr,
 }

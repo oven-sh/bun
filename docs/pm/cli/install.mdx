@@ -456,7 +456,7 @@ These flags install packages for the specified platform instead of the current s
 
 `bun install` installs required peer dependencies. If nothing in the install depends on the peer's package, Bun installs the newest version in the peer's range.
 
-If your project or another dependency already depends on a version of the peer's package from the registry, Bun reuses that copy for the peer and installs no second copy. The reused copy can be outside the peer's range. Each install that writes `node_modules` then prints a warning that names the package and the range it requires:
+If your project or another dependency already depends on a version of the peer's package from the registry, Bun reuses that copy for the peer and installs no second copy. The reused copy can be outside the peer's range. Each install that writes `node_modules`, and each `--dry-run`, then prints a warning that names the package and the range it requires:
 
 ```txt
 warn: incorrect peer dependency "react@17.0.2" (react-dom@18.3.1 requires "^18.3.1")

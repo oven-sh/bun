@@ -1,0 +1,280 @@
+{"kind":"valid","code":"'\\u000B';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u000C';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u0085';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u00A0';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u180E';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\ufeff';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2000';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2001';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2002';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2003';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2004';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2005';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2006';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2007';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2008';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2009';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u200A';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u200B';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2028';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u2029';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u202F';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u205f';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\u3000';","type":"script","reports":[]}
+{"kind":"valid","code":"'\u000b';","type":"script","reports":[]}
+{"kind":"valid","code":"'\f';","type":"script","reports":[]}
+{"kind":"valid","code":"'';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"'᠎';","type":"script","reports":[]}
+{"kind":"valid","code":"'﻿';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"'​';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\ ';","type":"script","reports":[]}
+{"kind":"valid","code":"'\\ ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"' ';","type":"script","reports":[]}
+{"kind":"valid","code":"'　';","type":"script","reports":[]}
+{"kind":"valid","code":"// \u000b","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// \f","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// ᠎","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// ﻿","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// ​","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//  ","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"// 　","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* \u000b */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* \f */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*  */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* ᠎ */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* ﻿ */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* ​ */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-2:1 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-2:1 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/*   */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/* 　 */","type":"script","options":[{"skipComments":true}],"reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/\u000b/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/\f/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"//","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/᠎/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/﻿/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/​/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/ /","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"/　/","type":"script","options":[{"skipRegExps":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`\u000b`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`\f`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"``","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`᠎`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`﻿`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`​`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"` `","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`　`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"`　${foo}　`","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed.","1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"const error = ` 　 `;","type":"script","options":[{"skipTemplates":true}],"reports":["1:17-1:18 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"const error = `\n　`;","type":"script","options":[{"skipTemplates":true}],"reports":["2:1-2:2 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"const error = `　\n`;","type":"script","options":[{"skipTemplates":true}],"reports":["1:16-1:17 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"const error = `\n　\n`;","type":"script","options":[{"skipTemplates":true}],"reports":["2:1-2:2 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"const error = `foo　bar\nfoo　bar`;","type":"script","options":[{"skipTemplates":true}],"reports":["1:19-1:20 Irregular whitespace not allowed.","2:4-2:5 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>\u000b</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>\f</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div></div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>᠎</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>﻿</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>​</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div> </div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"<div>　</div>;","type":"script","jsx":true,"options":[{"skipJSXText":true}],"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"valid","code":"﻿console.log('hello BOM');","type":"script","reports":[]}
+{"kind":"invalid","code":"var any \u000b = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any \f = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any ﻿ = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any   = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any 　 = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var a = 'b', c = 'd',\ne = 'f' ","type":"script","reports":["1:13-2:1 Irregular whitespace not allowed.","3:8-4:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any 　 = 'thing', other 　 = 'thing';\nvar third 　 = 'thing';","type":"script","reports":["1:9-1:10 Irregular whitespace not allowed.","1:28-1:29 Irregular whitespace not allowed.","2:11-2:12 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// \u000b","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// \f","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// ᠎","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// ﻿","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// ​","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"//  ","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"// 　","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* \u000b */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* \f */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*  */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* ᠎ */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* ﻿ */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* ​ */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/*   */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"/* 　 */","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any = /　/, other = /\u000b/;","type":"script","reports":["1:12-1:13 Irregular whitespace not allowed.","1:25-1:26 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any = '　', other = '\u000b';","type":"script","options":[{"skipStrings":false}],"reports":[]}
+{"kind":"invalid","code":"var any = `　`, other = `\u000b`;","type":"script","reports":["1:12-1:13 Irregular whitespace not allowed.","1:25-1:26 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var any = `　`, other = `\u000b`;","type":"script","options":[{"skipTemplates":false}],"reports":["1:12-1:13 Irregular whitespace not allowed.","1:25-1:26 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`something ${　 10} another thing`","type":"script","options":[{"skipTemplates":true}],"reports":["1:14-1:15 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`something ${10　} another thing`","type":"script","options":[{"skipTemplates":true}],"reports":["1:16-1:17 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"　\n`　template`","type":"script","options":[{"skipTemplates":true}],"reports":["1:1-1:2 Irregular whitespace not allowed.","2:2-2:3 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"　\n`　multiline\ntemplate`","type":"script","options":[{"skipTemplates":true}],"reports":["1:1-1:2 Irregular whitespace not allowed.","2:2-2:3 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"　`　template`","type":"script","options":[{"skipTemplates":true}],"reports":["1:1-1:2 Irregular whitespace not allowed.","1:3-1:4 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"　`　multiline\ntemplate`","type":"script","options":[{"skipTemplates":true}],"reports":["1:1-1:2 Irregular whitespace not allowed.","1:3-1:4 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`　template`　","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed.","1:12-1:13 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`　multiline\ntemplate`　","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed.","2:10-2:11 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`　template`\n　","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed.","2:1-2:2 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"`　multiline\ntemplate`\n　","type":"script","options":[{"skipTemplates":true}],"reports":["1:2-1:3 Irregular whitespace not allowed.","3:1-3:2 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000b bar;","type":"script","reports":["1:11-1:12 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo =\u000bbar;","type":"script","reports":["1:10-1:11 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000b\u000b bar;","type":"script","reports":["1:11-1:13 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000b\f bar;","type":"script","reports":["1:11-1:13 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000b \u000b bar;","type":"script","reports":["1:11-1:12 Irregular whitespace not allowed.","1:13-1:14 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000bbar\u000b;","type":"script","reports":["1:11-1:12 Irregular whitespace not allowed.","1:15-1:16 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"\u000b","type":"script","reports":["1:1-1:2 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"   ","type":"script","reports":["1:1-1:4 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \u000b\nbar;","type":"script","reports":["1:11-1:12 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo =\u000b\n\u000bbar;","type":"script","reports":["1:10-1:11 Irregular whitespace not allowed.","2:1-2:2 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = \f\u000b\n\f\u000b\fbar\n;\u000b\f\n","type":"script","reports":["1:11-1:13 Irregular whitespace not allowed.","2:1-2:4 Irregular whitespace not allowed.","3:2-3:4 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo =  bar;","type":"script","reports":["1:11-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo =  bar;","type":"script","reports":["1:10-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"var foo = bar; ","type":"script","reports":["1:15-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":" ","type":"script","reports":["1:1-2:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"foo  ","type":"script","reports":["1:4-2:1 Irregular whitespace not allowed.","2:1-3:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"foo  ","type":"script","reports":["1:4-2:1 Irregular whitespace not allowed.","2:1-3:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"foo \n ","type":"script","reports":["1:4-2:1 Irregular whitespace not allowed.","3:1-4:1 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"foo\u000b \u000b","type":"script","reports":["1:4-1:5 Irregular whitespace not allowed.","1:5-2:1 Irregular whitespace not allowed.","2:1-2:2 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>\u000b</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>\f</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div></div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>᠎</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>﻿</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>​</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div> </div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}
+{"kind":"invalid","code":"<div>　</div>;","type":"script","jsx":true,"reports":["1:6-1:7 Irregular whitespace not allowed."]}

@@ -1,122 +1,122 @@
-{"kind":"valid","code":"var foo;","type":"module","reports":[]}
-{"kind":"valid","code":"class Foo {}","type":"module","reports":[]}
-{"kind":"valid","code":"!!obj?.foo","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo();","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo?.();","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo ?? bar)();","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo)?.()","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo ?? bar?.baz)?.()","type":"module","reports":[]}
-{"kind":"valid","code":"(obj.foo)?.();","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo.bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo?.bar;","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo)?.bar;","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo)?.bar.baz;","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo)?.().bar","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo ?? bar).baz;","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo ?? val)`template`","type":"module","reports":[]}
-{"kind":"valid","code":"new (obj?.foo ?? val)()","type":"module","reports":[]}
-{"kind":"valid","code":"new bar();","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo?.()();","type":"module","reports":[]}
-{"kind":"valid","code":"const {foo} = obj?.baz || {};","type":"module","reports":[]}
-{"kind":"valid","code":"const foo = obj?.bar","type":"module","reports":[]}
-{"kind":"valid","code":"foo = obj?.bar","type":"module","reports":[]}
-{"kind":"valid","code":"foo.bar = obj?.bar","type":"module","reports":[]}
-{"kind":"valid","code":"bar(...obj?.foo ?? []);","type":"module","reports":[]}
-{"kind":"valid","code":"var bar = {...foo?.bar};","type":"module","reports":[]}
-{"kind":"valid","code":"foo?.bar in {};","type":"module","reports":[]}
-{"kind":"valid","code":"foo?.bar < foo?.baz;","type":"module","reports":[]}
-{"kind":"valid","code":"foo?.bar <= foo?.baz;","type":"module","reports":[]}
-{"kind":"valid","code":"foo?.bar > foo?.baz;","type":"module","reports":[]}
-{"kind":"valid","code":"foo?.bar >= foo?.baz;","type":"module","reports":[]}
-{"kind":"valid","code":"[foo = obj?.bar] = [];","type":"module","reports":[]}
-{"kind":"valid","code":"[foo.bar = obj?.bar] = [];","type":"module","reports":[]}
-{"kind":"valid","code":"({foo = obj?.bar} = obj);","type":"module","reports":[]}
-{"kind":"valid","code":"({foo: obj.bar = obj?.baz} = obj);","type":"module","reports":[]}
-{"kind":"valid","code":"(foo?.bar, bar)();","type":"module","reports":[]}
-{"kind":"valid","code":"(foo?.bar ? baz : qux)();","type":"module","reports":[]}
-{"kind":"valid","code":"\n        async function func() {\n          await obj?.foo();\n          await obj?.foo?.();\n          (await obj?.foo)?.();\n          (await obj?.foo)?.bar;\n          await bar?.baz;\n          await (foo ?? obj?.foo.baz);\n          (await bar?.baz ?? bar).baz;\n          (await bar?.baz ?? await bar).baz;\n          await (foo?.bar ? baz : qux);\n        }\n        ","type":"module","reports":[]}
-{"kind":"valid","code":"(obj?.foo ?? bar?.baz ?? qux)();","type":"module","reports":[]}
-{"kind":"valid","code":"((obj?.foo ?? bar?.baz) || qux)();","type":"module","reports":[]}
-{"kind":"valid","code":"((obj?.foo || bar?.baz) || qux)();","type":"module","reports":[]}
-{"kind":"valid","code":"((obj?.foo && bar?.baz) || qux)();","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo - bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo + bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo * bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo / bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo % bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo ** bar;","type":"module","reports":[]}
-{"kind":"valid","code":"+obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"-obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"bar += obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"bar -= obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"bar %= obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"bar **= obj?.foo;","type":"module","reports":[]}
-{"kind":"valid","code":"bar *= obj?.boo","type":"module","reports":[]}
-{"kind":"valid","code":"bar /= obj?.boo","type":"module","reports":[]}
-{"kind":"valid","code":"async function func() {\n            await obj?.foo + await obj?.bar;\n            await obj?.foo - await obj?.bar;\n            await obj?.foo * await obj?.bar;\n            +await obj?.foo;\n            -await obj?.foo;\n            bar += await obj?.foo;\n            bar -= await obj?.foo;\n            bar %= await obj?.foo;\n            bar **= await obj?.foo;\n            bar *= await obj?.boo;\n            bar /= await obj?.boo;\n        }\n        ","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo - bar;","type":"module","reports":[]}
-{"kind":"valid","code":"obj?.foo - bar;","type":"module","reports":[]}
-{"kind":"invalid","code":"(obj?.foo)();","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj.foo ?? bar?.baz)();","type":"module","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj.foo || bar?.baz)();","type":"module","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo && bar)();","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(bar && obj?.foo)();","type":"module","reports":["1:9-1:17 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo?.())();","type":"module","reports":["1:2-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo).bar","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo)[1];","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo)`template`","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"new (obj?.foo)();","type":"module","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"new (obj?.foo?.())()","type":"module","reports":["1:6-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"new (obj?.foo?.() || obj?.bar)()","type":"module","reports":["1:22-1:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() {\n              (await obj?.foo)();\n            }","type":"module","reports":["2:22-2:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() {\n              (await obj?.foo).bar;\n            }","type":"module","reports":["2:22-2:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() {\n              (bar?.baz ?? await obj?.foo)();\n            }","type":"module","reports":["2:34-2:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() {\n              (bar && await obj?.foo)();\n            }","type":"module","reports":["2:29-2:37 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() {\n              (await (bar && obj?.foo))();\n            }","type":"module","reports":["2:30-2:38 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"[...obj?.foo];","type":"module","reports":["1:5-1:13 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"bar(...obj?.foo);","type":"module","reports":["1:8-1:16 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"new Bar(...obj?.foo);","type":"module","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const {foo} = obj?.bar;","type":"module","reports":["1:15-1:23 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const {foo} = obj?.bar();","type":"module","reports":["1:15-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const {foo: bar} = obj?.bar();","type":"module","reports":["1:20-1:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const [foo] = obj?.bar;","type":"module","reports":["1:15-1:23 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const [foo] = obj?.bar || obj?.foo;","type":"module","reports":["1:27-1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"([foo] = obj?.bar);","type":"module","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"const [foo] = obj?.bar?.();","type":"module","reports":["1:15-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"[{ foo } = obj?.bar] = [];","type":"module","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"({bar: [ foo ] = obj?.prop} = {});","type":"module","reports":["1:18-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"[[ foo ] = obj?.bar] = [];","type":"module","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { const {foo} = await obj?.bar; }","type":"module","reports":["1:44-1:52 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { const {foo} = await obj?.bar(); }","type":"module","reports":["1:44-1:54 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { const [foo] = await obj?.bar || await obj?.foo; }","type":"module","reports":["1:62-1:70 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { ([foo] = await obj?.bar); }","type":"module","reports":["1:39-1:47 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"class A extends obj?.foo {}","type":"module","reports":["1:17-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { class A extends (await obj?.foo) {}}","type":"module","reports":["1:47-1:55 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"var a = class A extends obj?.foo {}","type":"module","reports":["1:25-1:33 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { var a = class A extends (await obj?.foo) {}}","type":"module","reports":["1:55-1:63 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"foo instanceof obj?.prop","type":"module","reports":["1:16-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { foo instanceof await obj?.prop }","type":"module","reports":["1:45-1:54 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"1 in foo?.bar;","type":"module","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { 1 in await foo?.bar; }","type":"module","reports":["1:35-1:43 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"for (foo of obj?.bar);","type":"module","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { for (foo of await obj?.bar);}","type":"module","reports":["1:42-1:50 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(foo, obj?.foo)();","type":"module","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(foo, obj?.foo)[1];","type":"module","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (foo, obj?.foo))(); }","type":"module","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { ((foo, await obj?.foo))(); }","type":"module","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (foo, await obj?.foo)[1]; }","type":"module","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (foo, obj?.foo)) [1]; }","type":"module","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(a ? obj?.foo : b)();","type":"module","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(a ? b : obj?.foo)();","type":"module","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(a ? obj?.foo : b)[1];","type":"module","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(a ? b : obj?.foo).bar;","type":"module","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (a ? obj?.foo : b))(); }","type":"module","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (a ? await obj?.foo : b)(); }","type":"module","reports":["1:35-1:43 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (a ? b : obj?.foo))(); }","type":"module","reports":["1:40-1:48 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (a ? obj?.foo : b))[1]; }","type":"module","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (await (a ? b : obj?.foo)).bar; }","type":"module","reports":["1:40-1:48 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { (a ? b : await obj?.foo).bar; }","type":"module","reports":["1:39-1:47 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(obj?.foo && obj?.baz).bar","type":"module","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.","1:14-1:22 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"with (obj?.foo) {};","type":"script","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"async function foo() { with ( await obj?.foo) {}; }","type":"script","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
-{"kind":"invalid","code":"(foo ? obj?.foo : obj?.bar).bar","type":"module","reports":["1:8-1:16 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.","1:19-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"valid","code":"var foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"class Foo {}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"!!obj?.foo","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo?.();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo ?? bar)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo)?.()","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo ?? bar?.baz)?.()","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj.foo)?.();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo?.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo)?.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo)?.bar.baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo)?.().bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo ?? bar).baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo ?? val)`template`","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"new (obj?.foo ?? val)()","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"new bar();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo?.()();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"const {foo} = obj?.baz || {};","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"const foo = obj?.bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo = obj?.bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo.bar = obj?.bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar(...obj?.foo ?? []);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"var bar = {...foo?.bar};","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo?.bar in {};","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo?.bar < foo?.baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo?.bar <= foo?.baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo?.bar > foo?.baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"foo?.bar >= foo?.baz;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"[foo = obj?.bar] = [];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"[foo.bar = obj?.bar] = [];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"({foo = obj?.bar} = obj);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"({foo: obj.bar = obj?.baz} = obj);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(foo?.bar, bar)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(foo?.bar ? baz : qux)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"\n        async function func() {\n          await obj?.foo();\n          await obj?.foo?.();\n          (await obj?.foo)?.();\n          (await obj?.foo)?.bar;\n          await bar?.baz;\n          await (foo ?? obj?.foo.baz);\n          (await bar?.baz ?? bar).baz;\n          (await bar?.baz ?? await bar).baz;\n          await (foo?.bar ? baz : qux);\n        }\n        ","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"(obj?.foo ?? bar?.baz ?? qux)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"((obj?.foo ?? bar?.baz) || qux)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"((obj?.foo || bar?.baz) || qux)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"((obj?.foo && bar?.baz) || qux)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo - bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo + bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo * bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo / bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo % bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo ** bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"+obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"-obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar += obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar -= obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar %= obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar **= obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar *= obj?.boo","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"bar /= obj?.boo","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"async function func() {\n            await obj?.foo + await obj?.bar;\n            await obj?.foo - await obj?.bar;\n            await obj?.foo * await obj?.bar;\n            +await obj?.foo;\n            -await obj?.foo;\n            bar += await obj?.foo;\n            bar -= await obj?.foo;\n            bar %= await obj?.foo;\n            bar **= await obj?.foo;\n            bar *= await obj?.boo;\n            bar /= await obj?.boo;\n        }\n        ","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo - bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"valid","code":"obj?.foo - bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":[]}
+{"kind":"invalid","code":"(obj?.foo)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj.foo ?? bar?.baz)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj.foo || bar?.baz)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo && bar)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(bar && obj?.foo)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:9-1:17 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo?.())();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo).bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo)[1];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo)`template`","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"new (obj?.foo)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"new (obj?.foo?.())()","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:6-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"new (obj?.foo?.() || obj?.bar)()","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:22-1:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() {\n              (await obj?.foo)();\n            }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["2:22-2:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() {\n              (await obj?.foo).bar;\n            }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["2:22-2:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() {\n              (bar?.baz ?? await obj?.foo)();\n            }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["2:34-2:42 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() {\n              (bar && await obj?.foo)();\n            }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["2:29-2:37 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() {\n              (await (bar && obj?.foo))();\n            }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["2:30-2:38 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"[...obj?.foo];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:5-1:13 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"bar(...obj?.foo);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:8-1:16 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"new Bar(...obj?.foo);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const {foo} = obj?.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:15-1:23 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const {foo} = obj?.bar();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:15-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const {foo: bar} = obj?.bar();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:20-1:30 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const [foo] = obj?.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:15-1:23 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const [foo] = obj?.bar || obj?.foo;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:27-1:35 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"([foo] = obj?.bar);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"const [foo] = obj?.bar?.();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:15-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"[{ foo } = obj?.bar] = [];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"({bar: [ foo ] = obj?.prop} = {});","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:18-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"[[ foo ] = obj?.bar] = [];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:12-1:20 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { const {foo} = await obj?.bar; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:44-1:52 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { const {foo} = await obj?.bar(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:44-1:54 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { const [foo] = await obj?.bar || await obj?.foo; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:62-1:70 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { ([foo] = await obj?.bar); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:39-1:47 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"class A extends obj?.foo {}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:17-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { class A extends (await obj?.foo) {}}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:47-1:55 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"var a = class A extends obj?.foo {}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:25-1:33 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { var a = class A extends (await obj?.foo) {}}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:55-1:63 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"foo instanceof obj?.prop","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:16-1:25 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { foo instanceof await obj?.prop }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:45-1:54 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"1 in foo?.bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { 1 in await foo?.bar; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:35-1:43 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"for (foo of obj?.bar);","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:13-1:21 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { for (foo of await obj?.bar);}","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:42-1:50 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(foo, obj?.foo)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(foo, obj?.foo)[1];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (foo, obj?.foo))(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { ((foo, await obj?.foo))(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (foo, await obj?.foo)[1]; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (foo, obj?.foo)) [1]; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(a ? obj?.foo : b)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(a ? b : obj?.foo)();","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(a ? obj?.foo : b)[1];","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:6-1:14 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(a ? b : obj?.foo).bar;","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:10-1:18 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (a ? obj?.foo : b))(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (a ? await obj?.foo : b)(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:35-1:43 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (a ? b : obj?.foo))(); }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:40-1:48 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (a ? obj?.foo : b))[1]; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:36-1:44 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (await (a ? b : obj?.foo)).bar; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:40-1:48 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { (a ? b : await obj?.foo).bar; }","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:39-1:47 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(obj?.foo && obj?.baz).bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:2-1:10 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.","1:14-1:22 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"with (obj?.foo) {};","type":"script","given":"{\"ecmaVersion\":2021,\"sourceType\":\"script\"}","reports":["1:7-1:15 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"async function foo() { with ( await obj?.foo) {}; }","type":"script","given":"{\"ecmaVersion\":2021,\"sourceType\":\"script\"}","reports":["1:37-1:45 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}
+{"kind":"invalid","code":"(foo ? obj?.foo : obj?.bar).bar","type":"module","given":"{\"ecmaVersion\":2021,\"sourceType\":\"module\"}","reports":["1:8-1:16 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.","1:19-1:27 Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError."]}

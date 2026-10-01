@@ -1,0 +1,84 @@
+{"kind":"valid","code":"8","type":"script","reports":[]}
+{"kind":"valid","code":"var \\u8888","type":"script","reports":[]}
+{"kind":"valid","code":"/\\8/","type":"script","reports":[]}
+{"kind":"valid","code":"''","type":"script","reports":[]}
+{"kind":"valid","code":"'foo'","type":"script","reports":[]}
+{"kind":"valid","code":"'8'","type":"script","reports":[]}
+{"kind":"valid","code":"'9'","type":"script","reports":[]}
+{"kind":"valid","code":"'foo8'","type":"script","reports":[]}
+{"kind":"valid","code":"'foo9bar'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\ '","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\a'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\n'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\0'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\1'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\7'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\01'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\08'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\19'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\t9'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\👍8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\9'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\8\\\\9'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\ \\\\8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\\\\\9'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\9bar'","type":"script","reports":[]}
+{"kind":"valid","code":"'a\\\\8'","type":"script","reports":[]}
+{"kind":"valid","code":"'foo\\\\8'","type":"script","reports":[]}
+{"kind":"valid","code":"'foo\\\\8bar'","type":"script","reports":[]}
+{"kind":"valid","code":"'9\\\\9'","type":"script","reports":[]}
+{"kind":"valid","code":"'n\\n8'","type":"script","reports":[]}
+{"kind":"valid","code":"'n\\nn\\n8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\1.8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\1\\28'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\x99'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\\\\x38'","type":"script","reports":[]}
+{"kind":"valid","code":"\\u99999","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\n8'","type":"script","reports":[]}
+{"kind":"valid","code":"'\\\n\\\\9'","type":"script","reports":[]}
+{"kind":"invalid","code":"'\\8'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\9'","type":"script","reports":["1:2-1:4 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"\"\\8\"","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'f\\9'","type":"script","reports":["1:3-1:5 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'fo\\9'","type":"script","reports":["1:4-1:6 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'foo\\9'","type":"script","reports":["1:5-1:7 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'foo\\8bar'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'👍\\8'","type":"script","reports":["1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\\\\\8'","type":"script","reports":["1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\\\\\\\\\9'","type":"script","reports":["1:6-1:8 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'foo\\\\\\8'","type":"script","reports":["1:7-1:9 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\ \\8'","type":"script","reports":["1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\1\\9'","type":"script","reports":["1:4-1:6 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'foo\\1\\9'","type":"script","reports":["1:7-1:9 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\n\\n\\8\\n'","type":"script","reports":["1:6-1:8 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\n.\\n\\8\\n'","type":"script","reports":["1:7-1:9 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\n.\\nn\\8\\n'","type":"script","reports":["1:8-1:10 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\👍\\8'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\\\8\\9'","type":"script","reports":["1:5-1:7 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\8\\\\9'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\8 \\\\9'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\8\\8'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence.","1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\9\\8'","type":"script","reports":["1:2-1:4 Don't use '\\9' escape sequence.","1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'foo\\8bar\\9baz'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence.","1:10-1:12 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\8\\1\\9'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence.","1:6-1:8 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\9\\n9\\\\9\\9'","type":"script","reports":["1:2-1:4 Don't use '\\9' escape sequence.","1:10-1:12 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\8\\\\\\9'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence.","1:6-1:8 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"var foo = '\\8'; bar('\\9')","type":"script","reports":["1:12-1:14 Don't use '\\8' escape sequence.","1:22-1:24 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"var foo = '8'\n  bar = '\\9'","type":"script","reports":["2:10-2:12 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\\n\\8'","type":"script","reports":["2:1-2:3 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\\r\n\\9'","type":"script","reports":["2:1-2:3 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\\\\\\n\\8'","type":"script","reports":["2:1-2:3 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'foo\\\nbar\\9baz'","type":"script","reports":["2:4-2:6 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\0\\8'","type":"script","reports":["1:4-1:6 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'foo\\0\\9bar'","type":"script","reports":["1:7-1:9 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\1\\0\\8'","type":"script","reports":["1:6-1:8 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\0\\8\\9'","type":"script","reports":["1:4-1:6 Don't use '\\8' escape sequence.","1:6-1:8 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'\\8\\0\\9'","type":"script","reports":["1:2-1:4 Don't use '\\8' escape sequence.","1:6-1:8 Don't use '\\9' escape sequence."]}
+{"kind":"invalid","code":"'0\\8'","type":"script","reports":["1:3-1:5 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\\\0\\8'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\0 \\8'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\01\\8'","type":"script","reports":["1:5-1:7 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\0\\1\\8'","type":"script","reports":["1:6-1:8 Don't use '\\8' escape sequence."]}
+{"kind":"invalid","code":"'\\0\\\n\\8'","type":"script","reports":["2:1-2:3 Don't use '\\8' escape sequence."]}

@@ -1,0 +1,35 @@
+{"kind":"valid","code":"if (foo) { bar() }","type":"script","reports":[]}
+{"kind":"valid","code":"while (foo) { bar() }","type":"script","reports":[]}
+{"kind":"valid","code":"for (;foo;) { bar() }","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } catch (ex) { foo() }","type":"script","reports":[]}
+{"kind":"valid","code":"switch(foo) {case 'foo': break;}","type":"script","reports":[]}
+{"kind":"valid","code":"(function() { }())","type":"script","reports":[]}
+{"kind":"valid","code":"var foo = () => {};","type":"script","reports":[]}
+{"kind":"valid","code":"function foo() { }","type":"script","reports":[]}
+{"kind":"valid","code":"if (foo) {/* empty */}","type":"script","reports":[]}
+{"kind":"valid","code":"while (foo) {/* empty */}","type":"script","reports":[]}
+{"kind":"valid","code":"switch (foo) {/* empty */}","type":"script","reports":[]}
+{"kind":"valid","code":"for (;foo;) {/* empty */}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } catch (ex) {/* empty */}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } catch (ex) {// empty\n}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } finally {// empty\n}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } finally {// test\n}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } finally {\n \n // hi i am off no use\n}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo() } catch (ex) {/* test111 */}","type":"script","reports":[]}
+{"kind":"valid","code":"if (foo) { bar() } else { // nothing in me \n}","type":"script","reports":[]}
+{"kind":"valid","code":"if (foo) { bar() } else { /**/ \n}","type":"script","reports":[]}
+{"kind":"valid","code":"if (foo) { bar() } else { // \n}","type":"script","reports":[]}
+{"kind":"valid","code":"try { foo(); } catch (ex) {}","type":"script","options":[{"allowEmptyCatch":true}],"reports":["1:27-1:29 Empty block statement."]}
+{"kind":"valid","code":"try { foo(); } catch (ex) {} finally { bar(); }","type":"script","options":[{"allowEmptyCatch":true}],"reports":["1:27-1:29 Empty block statement."]}
+{"kind":"invalid","code":"try {} catch (ex) {throw ex}","type":"script","reports":["1:5-1:7 Empty block statement."]}
+{"kind":"invalid","code":"try { foo() } catch (ex) {}","type":"script","reports":["1:26-1:28 Empty block statement."]}
+{"kind":"invalid","code":"try { foo() } catch (ex) {throw ex} finally {}","type":"script","reports":["1:45-1:47 Empty block statement."]}
+{"kind":"invalid","code":"if (foo) {}","type":"script","reports":["1:10-1:12 Empty block statement."]}
+{"kind":"invalid","code":"while (foo) {}","type":"script","reports":["1:13-1:15 Empty block statement."]}
+{"kind":"invalid","code":"for (;foo;) {}","type":"script","reports":["1:13-1:15 Empty block statement."]}
+{"kind":"invalid","code":"switch(foo) {}","type":"script","reports":["1:13-1:15 Empty switch statement."]}
+{"kind":"invalid","code":"switch /* empty */ (/* empty */ foo /* empty */) /* empty */ {} /* empty */","type":"script","reports":["1:62-1:64 Empty switch statement."]}
+{"kind":"invalid","code":"try {} catch (ex) {}","type":"script","options":[{"allowEmptyCatch":true}],"reports":["1:5-1:7 Empty block statement.","1:19-1:21 Empty block statement."]}
+{"kind":"invalid","code":"try { foo(); } catch (ex) {} finally {}","type":"script","options":[{"allowEmptyCatch":true}],"reports":["1:27-1:29 Empty block statement.","1:38-1:40 Empty block statement."]}
+{"kind":"invalid","code":"try {} catch (ex) {} finally {}","type":"script","options":[{"allowEmptyCatch":true}],"reports":["1:5-1:7 Empty block statement.","1:19-1:21 Empty block statement.","1:30-1:32 Empty block statement."]}
+{"kind":"invalid","code":"try { foo(); } catch (ex) {} finally {}","type":"script","reports":["1:27-1:29 Empty block statement.","1:38-1:40 Empty block statement."]}

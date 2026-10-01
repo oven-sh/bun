@@ -1,0 +1,17 @@
+{"kind":"valid","code":"var a = 'hello world';","type":"script","reports":[]}
+{"kind":"valid","code":"0x1234","type":"script","reports":[]}
+{"kind":"valid","code":"0X5;","type":"script","reports":[]}
+{"kind":"valid","code":"a = 0;","type":"script","reports":[]}
+{"kind":"valid","code":"0.1","type":"script","reports":[]}
+{"kind":"valid","code":"0.5e1","type":"script","reports":[]}
+{"kind":"invalid","code":"var a = 01234;","type":"script","reports":["1:9-1:14 Octal literals should not be used."]}
+{"kind":"invalid","code":"a = 1 + 01234;","type":"script","reports":["1:9-1:14 Octal literals should not be used."]}
+{"kind":"invalid","code":"00","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"kind":"invalid","code":"08","type":"script","reports":["1:1-1:3 Octal literals should not be used."]}
+{"kind":"invalid","code":"09.1","type":"script","reports":["1:1-1:5 Octal literals should not be used."]}
+{"kind":"invalid","code":"09e1","type":"script","reports":["1:1-1:5 Octal literals should not be used."]}
+{"kind":"invalid","code":"09.1e1","type":"script","reports":["1:1-1:7 Octal literals should not be used."]}
+{"kind":"invalid","code":"018","type":"script","reports":["1:1-1:4 Octal literals should not be used."]}
+{"kind":"invalid","code":"019.1","type":"script","reports":["1:1-1:6 Octal literals should not be used."]}
+{"kind":"invalid","code":"019e1","type":"script","reports":["1:1-1:6 Octal literals should not be used."]}
+{"kind":"invalid","code":"019.1e1","type":"script","reports":["1:1-1:8 Octal literals should not be used."]}

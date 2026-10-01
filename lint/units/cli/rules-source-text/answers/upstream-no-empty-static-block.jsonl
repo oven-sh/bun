@@ -1,0 +1,10 @@
+{"kind":"valid","code":"class Foo { static { bar(); } }","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo { static { /* comments */ } }","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo { static {\n// comment\n} }","type":"script","reports":[]}
+{"kind":"valid","code":"class Foo { static { bar(); } static { bar(); } }","type":"script","reports":[]}
+{"kind":"invalid","code":"class Foo { static {} }","type":"script","reports":["1:20-1:22 Unexpected empty static block."]}
+{"kind":"invalid","code":"class Foo { static { } }","type":"script","reports":["1:20-1:23 Unexpected empty static block."]}
+{"kind":"invalid","code":"class Foo { static { \n\n } }","type":"script","reports":["1:20-3:3 Unexpected empty static block."]}
+{"kind":"invalid","code":"class Foo { static { bar(); } static {} }","type":"script","reports":["1:38-1:40 Unexpected empty static block."]}
+{"kind":"invalid","code":"class Foo { static // comment\n {} }","type":"script","reports":["2:2-2:4 Unexpected empty static block."]}
+{"kind":"invalid","code":"class Foo { static /* empty */ {} /* empty */ }","type":"script","reports":["1:32-1:34 Unexpected empty static block."]}

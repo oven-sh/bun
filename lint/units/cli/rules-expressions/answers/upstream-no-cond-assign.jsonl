@@ -12,7 +12,7 @@
 {"kind":"valid","code":"do { } while (someNode || (someNode = parentNode));","type":"script","reports":[]}
 {"kind":"valid","code":"for (;someNode || (someNode = parentNode););","type":"script","reports":[]}
 {"kind":"valid","code":"if ((function(node) { return node = parentNode; })(someNode)) { }","type":"script","reports":[]}
-{"kind":"valid","code":"if ((node => node = parentNode)(someNode)) { }","type":"script","reports":[]}
+{"kind":"valid","code":"if ((node => node = parentNode)(someNode)) { }","type":"script","given":"{\"ecmaVersion\":6}","reports":[]}
 {"kind":"valid","code":"if (function(node) { return node = parentNode; }) { }","type":"script","reports":[]}
 {"kind":"valid","code":"var x; var b = (x === 0) ? 1 : 0;","type":"script","reports":[]}
 {"kind":"valid","code":"switch (foo) { case a = b: bar(); }","type":"script","reports":[]}

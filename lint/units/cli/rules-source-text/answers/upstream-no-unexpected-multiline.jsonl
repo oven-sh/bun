@@ -1,0 +1,58 @@
+{"kind":"valid","code":"(x || y).aFunction()","type":"script","reports":[]}
+{"kind":"valid","code":"[a, b, c].forEach(doSomething)","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b;\n(x || y).doSomething()","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b\n;(x || y).doSomething()","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b\nvoid (x || y).doSomething()","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b;\n[1, 2, 3].forEach(console.log)","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b\nvoid [1, 2, 3].forEach(console.log)","type":"script","reports":[]}
+{"kind":"valid","code":"\"abc\\\n(123)\"","type":"script","reports":[]}
+{"kind":"valid","code":"var a = (\n(123)\n)","type":"script","reports":[]}
+{"kind":"valid","code":"f(\n(x)\n)","type":"script","reports":[]}
+{"kind":"valid","code":"(\nfunction () {}\n)[1]","type":"script","reports":[]}
+{"kind":"valid","code":"let x = function() {};\n   `hello`","type":"script","reports":[]}
+{"kind":"valid","code":"let x = function() {}\nx `hello`","type":"script","reports":[]}
+{"kind":"valid","code":"String.raw `Hi\n${2+3}!`;","type":"script","reports":[]}
+{"kind":"valid","code":"x\n.y\nz `Valid Test Case`","type":"script","reports":[]}
+{"kind":"valid","code":"f(x\n)`Valid Test Case`","type":"script","reports":[]}
+{"kind":"valid","code":"x.\ny `Valid Test Case`","type":"script","reports":[]}
+{"kind":"valid","code":"(x\n)`Valid Test Case`","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar /2\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar / mgy\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar /\n            gym\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar\n            / ygm\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar /GYM\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / bar / baz\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"foo /bar/g","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            /denominator/\n            2\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            foo\n            / /abc/\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n            5 / (5\n            / 5)\n        ","type":"script","reports":[]}
+{"kind":"valid","code":"\n                tag<generic>`\n                    multiline\n                `;\n            ","type":"ts","reports":[]}
+{"kind":"valid","code":"\n                tag<\n                  generic\n                >`\n                    multiline\n                `;\n            ","type":"ts","reports":[]}
+{"kind":"valid","code":"\n                tag<\n                  generic\n                >`multiline`;\n            ","type":"ts","reports":[]}
+{"kind":"valid","code":"var a = b\n  ?.(x || y).doSomething()","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b\n  ?.[a, b, c].forEach(doSomething)","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b?.\n  (x || y).doSomething()","type":"script","reports":[]}
+{"kind":"valid","code":"var a = b?.\n  [a, b, c].forEach(doSomething)","type":"script","reports":[]}
+{"kind":"valid","code":"class C { field1\n[field2]; }","type":"script","reports":[]}
+{"kind":"valid","code":"class C { field1\n*gen() {} }","type":"script","reports":[]}
+{"kind":"valid","code":"class C { field1 = () => {}\n[field2]; }","type":"script","reports":[]}
+{"kind":"valid","code":"class C { field1 = () => {}\n*gen() {} }","type":"script","reports":[]}
+{"kind":"invalid","code":"var a = b\n(x || y).doSomething()","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"kind":"invalid","code":"var a = (a || b)\n(x || y).doSomething()","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"kind":"invalid","code":"var a = (a || b)\n(x).doSomething()","type":"script","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"kind":"invalid","code":"var a = b\n[a, b, c].forEach(doSomething)","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"kind":"invalid","code":"var a = b\n    (x || y).doSomething()","type":"script","reports":["2:5-2:6 Unexpected newline between function and ( of function call."]}
+{"kind":"invalid","code":"var a = b\n  [a, b, c].forEach(doSomething)","type":"script","reports":["2:3-2:4 Unexpected newline between object and [ of property access."]}
+{"kind":"invalid","code":"let x = function() {}\n `hello`","type":"script","reports":["2:2-2:3 Unexpected newline between template tag and template literal."]}
+{"kind":"invalid","code":"let x = function() {}\nx\n`hello`","type":"script","reports":["3:1-3:2 Unexpected newline between template tag and template literal."]}
+{"kind":"invalid","code":"x\n.y\nz\n`Invalid Test Case`","type":"script","reports":["4:1-4:2 Unexpected newline between template tag and template literal."]}
+{"kind":"invalid","code":"\n                foo\n                / bar /gym\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                / bar /g\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                / bar /g.test(baz)\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                /bar/gimuygimuygimuy.test(baz)\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                /bar/s.test(baz)\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                /bar/d.test(baz)\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"\n                foo\n                /bar/v.test(baz)\n            ","type":"script","reports":["3:17-3:18 Unexpected newline between numerator and division operator."]}
+{"kind":"invalid","code":"const x = aaaa<\n  test\n>/*\ntest\n*/`foo`","type":"ts","reports":["5:3-5:4 Unexpected newline between template tag and template literal."]}
+{"kind":"invalid","code":"class C { field1 = obj\n[field2]; }","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"kind":"invalid","code":"class C { field1 = function() {}\n[field2]; }","type":"script","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}

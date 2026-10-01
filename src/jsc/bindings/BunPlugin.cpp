@@ -38,27 +38,14 @@ namespace Zig {
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
-static inline bool isValidNamespaceCharacter(char16_t c)
+static bool isValidNamespaceCharacter(char16_t c)
 {
     return isASCIIAlphanumeric(c) || c == '_' || c == '-' || c == '/' || c == '@';
 }
 
-// Equivalent to /^[/@a-zA-Z0-9_\-]+$/. Hand-rolled because this is reachable
-// from multiple VMs (workers) concurrently and Yarr::RegularExpression is not
-// thread-safe: match() drives a per-instance BumpPointerAllocator.
 static bool isValidNamespaceString(String& namespaceString)
 {
-    if (namespaceString.isEmpty()) return false;
-    if (namespaceString.is8Bit()) {
-        for (auto c : namespaceString.span8()) {
-            if (!isValidNamespaceCharacter(c)) return false;
-        }
-    } else {
-        for (auto c : namespaceString.span16()) {
-            if (!isValidNamespaceCharacter(c)) return false;
-        }
-    }
-    return true;
+    return !namespaceString.isEmpty() && namespaceString.containsOnly<isValidNamespaceCharacter>();
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)

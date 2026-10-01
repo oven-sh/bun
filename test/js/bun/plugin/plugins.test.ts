@@ -1155,3 +1155,154 @@ it.concurrent(
     });
   },
 );
+
+describe("namespace validation", () => {
+  const neverMatches = /(?!)/;
+  const rejection = { name: "Error", message: "namespace can only contain letters, numbers, dashes, or underscores" };
+  const accepted = { onLoad: null, onResolve: null };
+  const rejected = { onLoad: rejection, onResolve: rejection };
+
+  function thrownBy(setup: (build: import("bun").PluginBuilder) => void) {
+    try {
+      plugin({ name: "namespace validation", setup });
+    } catch (error: any) {
+      return { name: error.name, message: error.message };
+    }
+    return null;
+  }
+
+  function register(namespace: string) {
+    return {
+      onLoad: thrownBy(build => build.onLoad({ filter: neverMatches, namespace }, () => ({ contents: "" }))),
+      onResolve: thrownBy(build => build.onResolve({ filter: neverMatches, namespace }, () => undefined)),
+    };
+  }
+
+  it.each([
+    ["abc", "accepted"],
+    ["abc-def", "accepted"],
+    ["abc_def", "accepted"],
+    ["a/b", "accepted"],
+    ["@scope/pkg", "accepted"],
+    ["azAZ09", "accepted"],
+    ["0", "accepted"],
+    ["/", "accepted"],
+    ["@", "accepted"],
+    ["-", "accepted"],
+    ["_", "accepted"],
+
+    ["", "rejected"],
+    ["a b", "rejected"],
+    ["a!b", "rejected"],
+    ["a.b", "rejected"],
+    ["a:b", "rejected"],
+    ["a+b", "rejected"],
+    ["a$b", "rejected"],
+    ["a\\b", "rejected"],
+    ["a,b", "rejected"],
+    ["a?b", "rejected"],
+    ["a[b", "rejected"],
+    ["a^b", "rejected"],
+    ["a`b", "rejected"],
+    ["a{b", "rejected"],
+    ["a\nb", "rejected"],
+    ["a\tb", "rejected"],
+    ["a\0b", "rejected"],
+    ["héllo", "rejected"],
+    ["a\u0161b", "rejected"],
+    ["a😀b", "rejected"],
+  ])("%j is %s", (namespace, verdict) => {
+    expect(register(namespace)).toEqual(verdict === "accepted" ? accepted : rejected);
+  });
+
+  it("applies the same rule to a UTF-16 string", () => {
+    const utf16 = (ascii: string) => Buffer.from(ascii, "utf16le").toString("utf16le");
+    expect([register(utf16("abc-DEF/@_09")), register(utf16("abc DEF"))]).toEqual([accepted, rejected]);
+  });
+
+  // Serial: the child keeps four threads busy.
+  it("gives every thread the right answer while four threads register plugins at once", async () => {
+    using dir = tempDir("plugin-namespace-threads", {
+      "entry.js": `
+        const namespaces = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"];
+        const rejection = "namespace can only contain letters, numbers, dashes, or underscores";
+        const filter = /.*/;
+        const callback = () => undefined;
+
+        function registerPlugins(progress, thread) {
+          try {
+            Bun.plugin({
+              name: "thread " + thread,
+              setup(build) {
+                // No thread stops before all four have done 50 rounds, so their work overlaps.
+                while (Math.min(...progress) < 50) {
+                  for (const namespace of namespaces) {
+                    build.onLoad({ filter, namespace }, callback);
+                    for (let i = 0; i < 20; i++) build.onResolve({ filter, namespace }, callback);
+                  }
+
+                  let message;
+                  try {
+                    build.onResolve({ filter, namespace: "not valid" }, callback);
+                  } catch (error) {
+                    message = error.message;
+                  }
+                  if (message !== rejection) {
+                    throw new Error("thread " + thread + ': "not valid" was not rejected: ' + message);
+                  }
+                  progress[thread]++;
+                }
+              },
+            });
+          } finally {
+            // A thread that fails must not keep the others waiting.
+            progress[thread] = 2 ** 31 - 1;
+          }
+        }
+
+        if (Bun.isMainThread) {
+          function reply(worker, expected) {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            worker.onmessage = ({ data }) => (data === expected ? resolve() : reject(new Error(data)));
+            worker.onerror = event => reject(new Error(event.message));
+            return promise;
+          }
+
+          const workers = Array.from({ length: 3 }, () => new Worker(import.meta.url));
+          const progress = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * (workers.length + 1)));
+          await Promise.all(workers.map(worker => reply(worker, "ready")));
+          const finished = workers.map(worker => reply(worker, "done"));
+          workers.forEach((worker, index) => worker.postMessage({ progress, thread: index + 1 }));
+          registerPlugins(progress, 0);
+          await Promise.all(finished);
+          console.log("ok");
+        } else {
+          // Once: a worker with no listener left exits on its own.
+          addEventListener(
+            "message",
+            ({ data: { progress, thread } }) => {
+              try {
+                registerPlugins(progress, thread);
+                postMessage("done");
+              } catch (error) {
+                postMessage(String(error));
+              }
+            },
+            { once: true },
+          );
+          postMessage("ready");
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});

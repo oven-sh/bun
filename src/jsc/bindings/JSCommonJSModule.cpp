@@ -427,7 +427,8 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    // The realm may be a node:vm context (the FTL passes the realm of inlined code), which has no require cache.
+    Zig::GlobalObject* thisObject = defaultGlobalObject(globalObject);
     auto* requirer = requirerOf(JSValue::decode(thisValue));
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
     if (!graph)
@@ -437,7 +438,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
         return JSValue::encode(existing);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), requirer);
+    JSValue cache = createRequireCacheObject(thisObject, graph->requireMap(), requirer);
     RETURN_IF_EXCEPTION(scope, {});
     graph->setRequireCache(vm, cache);
     return JSValue::encode(cache);
@@ -467,7 +468,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    // The realm may be a node:vm context, as in jsRequireCacheGetter.
+    Zig::GlobalObject* thisObject = defaultGlobalObject(globalObject);
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 

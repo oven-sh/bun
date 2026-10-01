@@ -192,6 +192,19 @@ pub fn instructions_and_cycles() -> (u64, u64) {
     (0, 0)
 }
 
+/// How many columns the terminal standard output goes to has. 0 if it goes elsewhere.
+pub fn terminal_width() -> usize {
+    // SAFETY: all zeros is a `winsize`, which the call fills in.
+    unsafe {
+        let mut size: libc::winsize = core::mem::zeroed();
+        if libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) == 0 {
+            usize::from(size.ws_col)
+        } else {
+            0
+        }
+    }
+}
+
 pub fn peak_rss() -> u64 {
     #[repr(C)]
     struct Rusage {

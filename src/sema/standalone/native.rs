@@ -520,6 +520,53 @@ unsafe extern "C" fn simdutf__base64_encode(
     unreachable!("nothing that parses encodes base64")
 }
 
+// ───────────────────────────── widths ─────────────────────────────
+
+/// Roughly. What Bun has knows about graphemes.
+fn width_of(c: char) -> usize {
+    match c as u32 {
+        0x0300..=0x036F | 0x200B..=0x200F | 0xFE00..=0xFE0F => 0,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1FAFF
+        | 0x20000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__visibleWidthExcludeANSI_utf8(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice.
+    let bytes = unsafe { core::slice::from_raw_parts(p, len) };
+    String::from_utf8_lossy(bytes).chars().map(width_of).sum()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__visibleWidthExcludeANSI_utf8IndexAtWidth(
+    p: *const u8,
+    len: usize,
+    max_width: usize,
+) -> usize {
+    // SAFETY: the caller passes a slice.
+    let bytes = unsafe { core::slice::from_raw_parts(p, len) };
+    let Ok(text) = core::str::from_utf8(bytes) else {
+        return len.min(max_width);
+    };
+    let mut width = 0;
+    for (at, c) in text.char_indices() {
+        width += width_of(c);
+        if width > max_width {
+            return at;
+        }
+    }
+    len
+}
+
 // ───────────────────────────── the rest ─────────────────────────────
 
 #[unsafe(no_mangle)]

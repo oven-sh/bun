@@ -26,6 +26,8 @@ pub struct Style<'a> {
     pub cwd: &'a str,
     /// Also print `::error` workflow commands, which GitHub Actions turns into annotations.
     pub github_annotations: bool,
+    /// How many columns the terminal has. 0: it is not known, or there is none.
+    pub width: usize,
 }
 
 /// `ConvertToRelativePath`
@@ -100,22 +102,68 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", with_commas(n), if n == 1 { one } else { many })
 }
 
-/// How many columns of a terminal `text` takes up to its UTF-16 offset `units`. Tabs have been made spaces by then.
-fn columns_before(text: &str, units: u32) -> usize {
+/// How many columns of a terminal `text` takes: two for most of what is written in East Asia and for emoji, none for what combines with the
+/// character before it.
+fn columns(text: &str) -> usize {
+    bun_core::strings::visible::width::exclude_ansi_colors::utf8(text.as_bytes())
+}
+
+/// Where in `text` its UTF-16 offset `units` is, in bytes.
+fn byte_offset(text: &str, units: u32) -> usize {
     let mut seen = 0;
-    let mut columns = 0;
-    for c in text.chars() {
+    for (at, c) in text.char_indices() {
         if seen >= units {
-            break;
+            return at;
         }
         seen += c.len_utf16() as u32;
-        columns += 1;
     }
-    columns
+    text.len()
+}
+
+/// The longest start of `text` that fits `width` columns.
+fn fitting(text: &str, width: usize) -> &str {
+    let end = bun_core::strings::visible::width::exclude_ansi_colors::utf8_index_at_width(
+        text.as_bytes(),
+        width,
+    );
+    &text[..end]
+}
+
+/// The part of `line` to show where there is room for `room` columns, so that the bytes `from..to`, which are what is wrong, are in it as far as
+/// they fit: where it starts and ends, in bytes.
+fn window(line: &str, from: usize, to: usize, room: usize) -> (usize, usize) {
+    if room == 0 || columns(line) <= room {
+        return (0, line.len());
+    }
+    // Room for a mark at either end.
+    let room = room.saturating_sub(2).max(8);
+    let wrong = columns(&line[from..to]).min(room);
+    // What is wrong goes two thirds of the way along what is left: what leads up to it says more than what follows.
+    let lead = (room - wrong) * 2 / 3;
+    let mut start = from;
+    let mut taken = 0;
+    for (at, c) in line[..from].char_indices().rev() {
+        taken += columns(c.encode_utf8(&mut [0; 4]));
+        if taken > lead {
+            break;
+        }
+        start = at;
+    }
+    if columns(&line[..start]) <= 1 {
+        start = 0;
+    }
+    (start, start + fitting(&line[start..], room).len())
 }
 
 /// The lines the error is on with what is wrong underlined, and up to `before` lines before and `after` lines after them.
-fn write_source(out: &mut String, d: &Diagnostic, paint: &Paint, before: usize, after: usize) {
+fn write_source(
+    out: &mut String,
+    d: &Diagnostic,
+    paint: &Paint,
+    before: usize,
+    after: usize,
+    width: usize,
+) {
     if d.source.is_empty() {
         return;
     }
@@ -133,6 +181,7 @@ fn write_source(out: &mut String, d: &Diagnostic, paint: &Paint, before: usize, 
         .map_or(after_error, |i| i + 1)
         .min(d.source.len());
     let gutter = (d.source_line as usize + end_shown - 1).to_string().len();
+    let room = width.saturating_sub(gutter + 3);
     for (i, line) in d
         .source
         .iter()
@@ -152,42 +201,44 @@ fn write_source(out: &mut String, d: &Diagnostic, paint: &Paint, before: usize, 
         }
         let line = line.replace('\t', " ");
         let line = line.trim_end();
+        // What of the line is wrong, in bytes.
+        let from = if !in_error {
+            0
+        } else if nth == 0 {
+            byte_offset(line, d.column - 1)
+        } else {
+            line.len() - line.trim_start().len()
+        };
+        let to = if in_error && nth + 1 == error_lines {
+            byte_offset(line, d.end_column - 1).max(from)
+        } else if in_error {
+            line.len()
+        } else {
+            0
+        };
+        let (start, end) = window(line, from, to, room);
         let number = format!("{:>gutter$} | ", d.source_line as usize + i);
         paint.put(out, &[if in_error { BOLD } else { DIM }], &number);
-        let _ = write!(
-            out,
-            "{}",
-            bun_core::fmt::fmt_javascript(
-                line.as_bytes(),
-                bun_core::fmt::HighlighterOptions {
-                    enable_colors: paint.on,
-                    ..Default::default()
-                },
-            )
-        );
+        if start > 0 {
+            paint.put(out, &[DIM], "\u{2026}");
+        }
+        // Colored as a whole: a part may start in the middle of a string.
+        write_part(out, &highlighted(line, paint.on, &[]), start, end);
+        if end < line.len() {
+            paint.put(out, &[DIM], "\u{2026}");
+        }
         out.push('\n');
         if !in_error {
             continue;
         }
-        let width = line.chars().count();
-        let from = if nth == 0 {
-            columns_before(line, d.column - 1)
-        } else {
-            line.chars().take_while(|c| c.is_whitespace()).count()
-        };
-        let to = if nth + 1 == error_lines {
-            columns_before(line, d.end_column - 1)
-        } else {
-            width
-        };
+        let (from, to) = (from.clamp(start, end), to.clamp(start, end));
         // An error without a length points at one character.
-        let carets = to.saturating_sub(from).max(usize::from(error_lines == 1));
+        let carets = columns(&line[from..to]).max(usize::from(error_lines == 1));
         if carets == 0 {
             continue;
         }
-        for _ in 0..gutter + 3 + from {
-            out.push(' ');
-        }
+        let indent = gutter + 3 + usize::from(start > 0) + columns(&line[start..from]);
+        out.extend(std::iter::repeat_n(' ', indent));
         paint.put(
             out,
             &[BOLD, category_color(d.category)],
@@ -195,6 +246,128 @@ fn write_source(out: &mut String, d: &Diagnostic, paint: &Paint, before: usize, 
         );
         out.push('\n');
     }
+}
+
+/// `code` in the colors Bun shows source in, on top of `base`.
+fn highlighted(code: &str, colors: bool, base: &[&str]) -> String {
+    let text = bun_core::fmt::fmt_javascript(
+        code.as_bytes(),
+        bun_core::fmt::HighlighterOptions {
+            enable_colors: colors,
+            ..Default::default()
+        },
+    )
+    .to_string();
+    if !colors || base.is_empty() {
+        return text;
+    }
+    // Whatever ends a color ends everything.
+    let base = base.concat();
+    format!(
+        "{base}{}{RESET}",
+        text.replace(RESET, &format!("{RESET}{base}"))
+    )
+}
+
+/// Of `colored`, which is text with escape sequences in it, the bytes `start..end` of the text and all the escape sequences, so that what
+/// is left has the colors it had.
+fn write_part(out: &mut String, colored: &str, start: usize, end: usize) {
+    let (mut at, mut rest) = (0, colored);
+    while let Some(c) = rest.chars().next() {
+        if c == '\u{1b}' {
+            let len = rest
+                .find(|c: char| c.is_ascii_alphabetic())
+                .map_or(rest.len(), |last| last + 1);
+            out.push_str(&rest[..len]);
+            rest = &rest[len..];
+            continue;
+        }
+        if (start..end).contains(&at) {
+            out.push(c);
+        }
+        at += c.len_utf8();
+        rest = &rest[c.len_utf8()..];
+    }
+}
+
+/// A message in pieces: what is prose and what is quoted from the program, which is a name or a type.
+fn pieces(message: &str) -> Vec<(&str, bool)> {
+    let bytes = message.as_bytes();
+    let mut out = Vec::new();
+    let (mut at, mut plain_from) = (0, 0);
+    while at < bytes.len() {
+        // A quote opens at the start or after a blank or a bracket, and closes before the end, a blank or punctuation. An apostrophe does neither.
+        let opens = bytes[at] == b'\'' && (at == 0 || matches!(bytes[at - 1], b' ' | b'(' | b'['));
+        let close = opens
+            .then(|| {
+                (at + 2..=bytes.len()).find(|&end| {
+                    bytes[end - 1] == b'\''
+                        && bytes.get(end).is_none_or(|next| {
+                            matches!(next, b' ' | b'.' | b',' | b':' | b';' | b')' | b']' | b'?')
+                        })
+                })
+            })
+            .flatten();
+        match close {
+            Some(end) => {
+                out.push((&message[plain_from..at], false));
+                out.push((&message[at + 1..end - 1], true));
+                (at, plain_from) = (end, end);
+            }
+            None => at += 1,
+        }
+    }
+    out.push((&message[plain_from..], false));
+    out.retain(|piece| !piece.0.is_empty() || piece.1);
+    out
+}
+
+/// `message`, from the column `at` on. Where it does not fit `width` it goes on in the next line, after `hanging`.
+fn write_message(
+    out: &mut String,
+    message: &str,
+    paint: &Paint,
+    prose: &[&str],
+    mut at: usize,
+    hanging: &str,
+    width: usize,
+) {
+    let hang = columns(hanging);
+    let mut is_first = true;
+    for (piece, is_quoted) in pieces(message) {
+        // Words stay whole, with the blanks after them, and so does a word with the quote before it and the punctuation after it, for which
+        // there is room left.
+        let mut opens = is_quoted;
+        for word in piece.split_inclusive(' ') {
+            let cells = columns(word.trim_end()) + usize::from(opens);
+            let is_punctuation = !is_quoted && word.starts_with(['.', ',', ':', ';', ')', '?']);
+            if width > 0 && !is_first && !is_punctuation && at + cells + 2 > width && at > hang {
+                while out.ends_with(' ') {
+                    out.pop();
+                }
+                out.push('\n');
+                paint.put(out, &[DIM], hanging);
+                at = hang;
+            }
+            is_first = false;
+            if std::mem::take(&mut opens) {
+                paint.put(out, &[DIM], "'");
+                at += 1;
+            }
+            if is_quoted && paint.on {
+                out.push_str(&highlighted(word, true, prose));
+            } else {
+                paint.put(out, prose, word);
+            }
+            at += columns(word);
+        }
+        if is_quoted {
+            // Nothing was quoted but the quotes.
+            paint.put(out, &[DIM], if opens { "''" } else { "'" });
+            at += 1 + usize::from(opens);
+        }
+    }
+    out.push('\n');
 }
 
 fn write_location(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) {
@@ -206,23 +379,65 @@ fn write_location(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint
 }
 
 fn write_pretty(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) {
-    write_source(out, d, paint, 2, 0);
+    write_source(out, d, paint, 2, 0, style.width);
     paint.put(out, &[category_color(d.category)], d.category.name());
     // What is Bun's own to say has no code.
-    match d.code {
-        0 => paint.put(out, &[DIM], ": "),
-        code => paint.put(out, &[DIM], &format!(" TS{code}: ")),
-    }
+    let label = match d.code {
+        0 => ": ".to_owned(),
+        code => format!(" TS{code}: "),
+    };
+    paint.put(out, &[DIM], &label);
     let mut lines = d.text.split('\n');
-    paint.put(out, &[BOLD], lines.next().unwrap_or(""));
-    out.push('\n');
-    for reason in lines {
-        out.push_str("  ");
-        out.push_str(reason);
-        out.push('\n');
+    write_message(
+        out,
+        lines.next().unwrap_or(""),
+        paint,
+        &[BOLD],
+        d.category.name().len() + label.len(),
+        "    ",
+        style.width,
+    );
+    // The reasons, each under what it is the reason for.
+    let reasons: Vec<(usize, &str)> = lines
+        .map(|line| {
+            let text = line.trim_start_matches(' ');
+            (((line.len() - text.len()) / 2).max(1), text)
+        })
+        .collect();
+    for (i, &(depth, text)) in reasons.iter().enumerate() {
+        // Whether another reason at `level` is still to come under the same one.
+        let goes_on = |level: usize| {
+            reasons[i + 1..]
+                .iter()
+                .find(|later| later.0 <= level)
+                .is_some_and(|later| later.0 == level)
+        };
+        let mut guide = String::from("  ");
+        for level in 1..depth {
+            guide.push_str(if goes_on(level) { "\u{2502}  " } else { "   " });
+        }
+        let hanging = format!(
+            "{guide}{}",
+            if goes_on(depth) { "\u{2502}  " } else { "   " }
+        );
+        guide.push_str(if goes_on(depth) {
+            "\u{251c}\u{2500} "
+        } else {
+            "\u{2514}\u{2500} "
+        });
+        paint.put(out, &[DIM], &guide);
+        write_message(
+            out,
+            text,
+            paint,
+            &[],
+            columns(&guide),
+            &hanging,
+            style.width,
+        );
     }
     if !d.path.is_empty() {
-        out.push_str("    ");
+        out.push_str("      ");
         paint.put(out, &[DIM], "at ");
         write_location(out, d, style, paint);
         out.push('\n');
@@ -274,7 +489,7 @@ fn write_agent(out: &mut String, d: &Diagnostic, style: &Style) {
     out.push('\n');
     if !d.source.is_empty() {
         out.push_str("<source>\n");
-        write_source(out, d, &Paint { on: false }, 3, 2);
+        write_source(out, d, &Paint { on: false }, 3, 2, 0);
         out.push_str("</source>\n");
     }
     let _ = writeln!(out, "</{}>", d.category.name());
@@ -397,18 +612,38 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         return;
     }
     out.push('\n');
+    // A person reads the top of a list. Whatever reads the rest reads all of it.
+    let shown = if style.layout == Layout::Pretty && by_file.len() > MOST_FILES + 1 {
+        by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+        MOST_FILES
+    } else {
+        by_file.len()
+    };
     let width = by_file
         .iter()
         .map(|(_, count)| with_commas(*count).len())
         .max()
         .unwrap_or(1);
-    for (first, count) in by_file {
-        let _ = write!(out, "  {:>width$}  ", with_commas(count));
+    for (first, count) in &by_file[..shown] {
+        let _ = write!(out, "  {:>width$}  ", with_commas(*count));
         paint.put(out, &[CYAN], &relative_path(&first.path, style.cwd));
         paint.put(out, &[DIM], &format!(":{}", first.line));
         out.push('\n');
     }
+    if shown < by_file.len() {
+        let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
+        let _ = write!(out, "  {:>width$}  ", with_commas(rest));
+        paint.put(
+            out,
+            &[DIM],
+            &format!("in {} more files", with_commas(by_file.len() - shown)),
+        );
+        out.push('\n');
+    }
 }
+
+/// How many files the summary lists for a person.
+const MOST_FILES: usize = 12;
 
 #[cfg(test)]
 mod tests {
@@ -429,6 +664,34 @@ mod tests {
         assert_eq!(with_commas(1234567), "1,234,567");
         assert_eq!(duration(Duration::from_millis(412)), "412ms");
         assert_eq!(duration(Duration::from_millis(2412)), "2.41s");
+    }
+
+    #[test]
+    fn what_is_quoted() {
+        assert_eq!(
+            pieces("Type 'string' is not assignable to type 'number'."),
+            [
+                ("Type ", false),
+                ("string", true),
+                (" is not assignable to type ", false),
+                ("number", true),
+                (".", false)
+            ]
+        );
+        // An apostrophe inside a string literal type, and one in prose.
+        assert_eq!(
+            pieces("Type '\"it's\"' isn't 'a'"),
+            [
+                ("Type ", false),
+                ("\"it's\"", true),
+                (" isn't ", false),
+                ("a", true)
+            ]
+        );
+        assert_eq!(
+            pieces("Expression expected."),
+            [("Expression expected.", false)]
+        );
     }
 
     #[test]

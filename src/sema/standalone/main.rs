@@ -572,6 +572,11 @@ fn main() {
                 color: !has("--no-color") && !has("--plain") && !has("--agent"),
                 cwd: &cwd,
                 github_annotations: has("--github"),
+                width: args
+                    .iter()
+                    .find_map(|a| a.strip_prefix("--width="))
+                    .and_then(|w| w.parse().ok())
+                    .unwrap_or_else(bun_sema_standalone::terminal_width),
             };
             let mut out = String::new();
             write_diagnostics(&mut out, &report, &style);

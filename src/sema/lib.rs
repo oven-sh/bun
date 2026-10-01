@@ -8,6 +8,7 @@ pub mod atom;
 pub mod bind;
 pub mod check;
 pub mod config;
+pub mod config_options;
 pub mod describe;
 pub mod hir;
 pub mod json;

@@ -156,7 +156,13 @@ fn run(
 
 /// A person at a terminal gets the source around each error, and so does an agent, in tags and without colors, which spares it opening
 /// the files. A pipe or continuous integration gets a line an error.
-fn style_for(cwd: &str, pretty: Option<bool>, is_tty: bool, colors: bool) -> Style<'_> {
+fn style_for(
+    cwd: &str,
+    pretty: Option<bool>,
+    to: bun_core::Fd,
+    is_tty: bool,
+    colors: bool,
+) -> Style<'_> {
     let layout = match pretty {
         Some(true) => Layout::Pretty,
         Some(false) => Layout::Plain,
@@ -169,6 +175,13 @@ fn style_for(cwd: &str, pretty: Option<bool>, is_tty: bool, colors: bool) -> Sty
         color: layout == Layout::Pretty && colors,
         cwd,
         github_annotations: Output::is_github_action(),
+        width: if is_tty {
+            bun_core::output::File::from(to)
+                .winsize()
+                .map_or(0, |size| usize::from(size.col))
+        } else {
+            0
+        },
     }
 }
 
@@ -192,6 +205,7 @@ impl CheckCommand {
             &style_for(
                 &shown_from,
                 options.pretty,
+                bun_core::Fd::stdout(),
                 Output::is_stdout_tty(),
                 Output::enable_ansi_colors_stdout(),
             ),
@@ -203,7 +217,13 @@ impl CheckCommand {
             &report,
             &Style {
                 color: Output::enable_ansi_colors_stderr(),
-                ..style_for(&shown_from, options.pretty, Output::is_stderr_tty(), true)
+                ..style_for(
+                    &shown_from,
+                    options.pretty,
+                    bun_core::Fd::stderr(),
+                    Output::is_stderr_tty(),
+                    true,
+                )
             },
         );
         if options.timing {
@@ -247,6 +267,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     let style = style_for(
         &shown_from,
         None,
+        bun_core::Fd::stderr(),
         Output::is_stderr_tty(),
         Output::enable_ansi_colors_stderr(),
     );

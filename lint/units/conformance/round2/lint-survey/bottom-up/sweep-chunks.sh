@@ -4,7 +4,8 @@
 # debug build of the worktree, in nine chunks by the first character of the instance name (12,797 run instances).
 # One report per chunk in <work directory>/reports; a chunk whose report exists is not run again.
 # After each chunk the reports are merged into observed/ of this directory (merge.ts) and the notes are saved.
-# After the last chunk, raw.ts runs again every instance whose outcome is crash or timeout and keeps what came back.
+# After the last chunk, raw.ts runs again every instance whose outcome is crash or timeout and keeps what came back,
+# once with the environment of the sweep and once with the leak check of CI.
 # The script that runs sweep.ts is the INSTALLED bun; the binary under test is --bin. Never more than 4 processes.
 set -u
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -60,5 +61,19 @@ if [ -f "$here/raw.ts" ] && [ ! -s "$work/raw.jsonl" ]; then
   rc=$?
   if [ $rc -eq 0 ]; then mv "$work/raw.jsonl.tmp" "$work/raw.jsonl"; fi
   echo "raw.ts: exit $rc, $(($(date +%s) - start)) s, $(tail -1 "$work/raw.log")"
+fi
+
+# The same instances again with the leak check that CI runs a debug build with: a report of LeakSanitizer ends the command with SIGABRT.
+if [ -f "$here/raw.ts" ] && [ -s "$work/raw.jsonl" ] && [ ! -s "$work/raw-leak.jsonl" ]; then
+  start=$(date +%s)
+  BUN_DESTRUCT_VM_ON_EXIT=1 \
+    ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1 \
+    LSAN_OPTIONS=malloc_context_size=30:print_suppressions=0:suppressions=$scratch/test/leaksan.supp \
+    bun "$here/raw.ts" --scratch "$scratch" --bin "$bin" --from "$here/observed/instances.tsv" --out "$work/raw-leak.jsonl.tmp" --jobs 4 \
+    --keep "$work/kept-leak" \
+    > "$work/raw-leak.log" 2>&1
+  rc=$?
+  if [ $rc -eq 0 ]; then mv "$work/raw-leak.jsonl.tmp" "$work/raw-leak.jsonl"; fi
+  echo "raw.ts with the leak check: exit $rc, $(($(date +%s) - start)) s, $(tail -1 "$work/raw-leak.log")"
 fi
 echo "### finished $(date -u +%FT%TZ)"

@@ -347,6 +347,10 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
+    // A hole in an array, or an index past its end: what reading it gives.
+    if (otherProp.isEmpty())
+        otherProp = jsUndefined();
+
     if (dynamicDowncast<JSExpectAnything>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;

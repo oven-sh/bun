@@ -880,6 +880,43 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    it("gives a matcher undefined for an element that the other array does not have", () => {
+      const seen = [];
+      expect.extend({
+        toBeRecorded(value) {
+          seen.push(value);
+          return { pass: false, message: () => "" };
+        },
+      });
+      const matchers = [
+        expect.stringContaining("a"),
+        expect.stringMatching(/a/),
+        expect.any(String),
+        expect.any(Symbol),
+        expect.any(BigInt),
+        expect.any(Boolean),
+        expect.any(Number),
+        expect.any(Array),
+        expect.any(Object),
+        expect.any(Promise),
+        expect.any(Date),
+        expect.anything(),
+        expect.arrayContaining([1]),
+        expect.objectContaining({ a: 1 }),
+        expect.closeTo(1),
+        // @ts-expect-error
+        expect.toBeRecorded(),
+      ];
+      for (const matcher of matchers) {
+        expect([,]).not.toEqual([matcher]);
+        expect([[,]]).not.toEqual(expect.arrayContaining([[matcher]]));
+        expect({ a: [["x"]] }).not.toMatchObject({ a: expect.arrayContaining([["x", matcher]]) });
+      }
+      expect([,]).toEqual([expect.not.stringContaining("a")]);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.filter(value => value !== undefined)).toEqual([]);
+    });
   });
 
   test("toThrow asymmetric matchers", () => {

@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isIPv6,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -10139,6 +10140,57 @@ describe.concurrent("bun-install", () => {
           expect.stringMatching(slotPattern),
           expect.stringMatching(slotPattern),
         ]);
+      });
+
+      // The host in a folder name is read from a URL. Only a plain name is
+      // shown: `[::1]` has bytes that a file name cannot hold on every platform.
+      it.skipIf(!isIPv6())("leaves a host that is not a plain name out of the folder name", async () => {
+        const tarball = await new Bun.Archive({
+          "package/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+          "package/index.js": `module.exports = "ipv6";`,
+        }).bytes({ compress: "gzip" });
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "::1",
+          fetch(req, server) {
+            if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(tarball);
+            return Response.json({
+              name: "no-deps",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "no-deps",
+                  version: "1.0.0",
+                  dist: { tarball: `http://[::1]:${server.port}/no-deps/-/no-deps-1.0.0.tgz` },
+                },
+              },
+            });
+          },
+        });
+
+        using dir = tempDir("registry-ipv6-host", project("a", `http://[::1]:${server.port}/`));
+        const cacheDir = join(String(dir), ".bun-cache");
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: join(String(dir), "a"),
+          // An ambient proxy would intercept the requests to the local registry.
+          env: {
+            ...env,
+            BUN_INSTALL_CACHE_DIR: cacheDir,
+            http_proxy: "",
+            https_proxy: "",
+            HTTP_PROXY: "",
+            HTTPS_PROXY: "",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        expect(await installedVariant(join(String(dir), "a"))).toBe("ipv6");
+        expect(await cacheSlots(cacheDir)).toEqual([expect.stringMatching(/^no-deps@1\.0\.0@@__[0-9a-f]{16}@@@1$/)]);
       });
     });
   });

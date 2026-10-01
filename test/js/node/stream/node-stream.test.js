@@ -1718,17 +1718,41 @@ describe("node v26 stream semantics", () => {
     expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
   });
 
+  const waitFor = async condition => {
+    for (let i = 0; i < 200 && !condition(); i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    return condition();
+  };
+
+  it("compose pauses the tail on backpressure and resumes it on read", async () => {
+    const tail = new PassThrough();
+    const composed = compose(new PassThrough(), tail);
+    const first = Buffer.alloc(composed.readableHighWaterMark, "a");
+    const second = Buffer.from("b");
+
+    // Nothing reads the composed stream, so one chunk fills its buffer and push() returns false.
+    composed.write(first);
+    expect(await waitFor(() => composed.readableLength === first.length)).toBe(true);
+    expect(tail.isPaused()).toBe(true);
+
+    // The paused tail keeps the next chunk.
+    composed.write(second);
+    expect(await waitFor(() => tail.readableLength === second.length)).toBe(true);
+    expect(composed.readableLength).toBe(first.length);
+
+    // read() drains the buffer and calls _read(), which resumes the tail.
+    expect(composed.read()).toEqual(first);
+    expect(await waitFor(() => composed.readableLength === second.length)).toBe(true);
+    expect(tail.isPaused()).toBe(false);
+    expect(composed.read()).toEqual(second);
+  });
+
   // Upstream: nodejs/node#63699. With a web stream tail, compose runs one
   // reader loop per _read() call. When the loop that sees done runs while the
   // composed buffer is over the high water mark, push(value) reports
   // backpressure. The done check has to come first or push(null) never runs.
   it("compose with a web stream tail ends when done arrives under backpressure", async () => {
-    const waitFor = async condition => {
-      for (let i = 0; i < 200 && !condition(); i++) {
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      return condition();
-    };
     const src = new Readable({ read() {} });
     const composed = compose(src, new TransformStream());
     let ended = false;

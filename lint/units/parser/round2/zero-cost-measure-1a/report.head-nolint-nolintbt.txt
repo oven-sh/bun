@@ -1,0 +1,80 @@
+== bun-types: base program Bc 94,907,118 parser Bc 46,594,583
+   head   program dIr   +34,254,720 dBc   +5,492,386 dBi  -278,962 | parser dIr   +33,600,630 dBc   +5,416,920 dBi  -279,880
+   nolint program dIr   +35,037,896 dBc   +5,562,076 dBi  -270,321 | parser dIr   +32,900,277 dBc   +5,270,468 dBi  -279,907
+   nolintbt program dIr   +34,836,374 dBc   +5,551,499 dBi  -270,365 | parser dIr   +32,696,817 dBc   +5,260,048 dBi  -279,907
+   dBc against the base, by cause:                head       nolint     nolintbt
+     a1 type grammar                          +4,312,860   +4,307,340   +4,307,160
+     a2 statement named like a cast (lookah     +149,840     +149,840     +149,840
+     a3 class index signature lookahead           +1,440       +1,440       +1,440
+     a4 lexer (tokens read again)               +800,540     +800,540     +800,540
+     b parse pass outside the type grammar      +128,120       +9,500       +9,500
+     d backtracker (attempt wrappers, log t      +30,960      +10,240           +0
+     f visit pass, symbols, drop glue             -6,840       -6,842       -6,842
+     g other bun_js_parser / bun_ast                  +0       -1,590       -1,590
+     w JavaScriptCore and bindings                  -235       -1,566       -1,145
+     x memcpy/memmove/memset/memcmp               -3,671      -16,930      -16,951
+     y allocator (mimalloc, AstAlloc)            +78,103     +186,210     +186,181
+     z other non-parser                           +1,269     +123,894     +123,366
+== typescript-lib: base program Bc 330,701,877 parser Bc 167,000,043
+   head   program dIr  +162,481,236 dBc  +25,969,334 dBi  -390,831 | parser dIr  +162,422,643 dBc  +25,994,060 dBi  -388,582
+   nolint program dIr  +162,815,413 dBc  +26,144,217 dBi  -381,162 | parser dIr  +160,780,170 dBc  +25,707,088 dBi  -388,609
+   nolintbt program dIr  +161,623,336 dBc  +25,837,728 dBi  -383,787 | parser dIr  +160,331,030 dBc  +25,685,048 dBi  -388,609
+   dBc against the base, by cause:                head       nolint     nolintbt
+     a1 type grammar                         +20,514,480  +20,508,120  +20,508,120
+     a2 statement named like a cast (lookah     +771,540     +771,540     +771,540
+     a4 lexer (tokens read again)             +4,405,011   +4,405,011   +4,405,011
+     b parse pass outside the type grammar      +265,014      +37,314      +37,314
+     d backtracker (attempt wrappers, log t      +73,360      +22,040           +0
+     f visit pass, symbols, drop glue            -30,955      -30,957      -30,957
+     g other bun_js_parser / bun_ast              -4,390       -5,980       -5,980
+     v printer                                   -15,756      -15,756      -15,756
+     w JavaScriptCore and bindings                -3,006      +50,168       -6,834
+     x memcpy/memmove/memset/memcmp              -34,755     +158,325      -43,908
+     y allocator (mimalloc, AstAlloc)            +65,625     +150,828     +140,414
+     z other non-parser                          -36,834      +93,564      +78,764
+== src-js: base program Bc 1,120,533,278 parser Bc 565,356,671
+   head   program dIr   +23,496,991 dBc   +4,723,345 dBi   -72,217 | parser dIr   +18,478,690 dBc   +3,976,440 dBi   -84,600
+   nolint program dIr   +22,424,976 dBc   +4,302,696 dBi   -76,368 | parser dIr   +17,803,677 dBc   +3,696,708 dBi   -84,627
+   nolintbt program dIr   +29,033,192 dBc   +4,804,493 dBi   -65,790 | parser dIr   +20,763,797 dBc   +3,646,308 dBi   -84,627
+   dBc against the base, by cause:                head       nolint     nolintbt
+     a1 type grammar                          +2,858,080   +3,018,780   +3,004,180
+     a2 statement named like a cast (lookah      +85,880      +85,880      +85,880
+     a3 class index signature lookahead          +30,940      +30,940      +30,940
+     a4 lexer (tokens read again)               +409,740     +409,740     +409,740
+     b parse pass outside the type grammar      +333,480     +139,280     +139,280
+     d backtracker (attempt wrappers, log t     +280,440      +35,800           +0
+     f visit pass, symbols, drop glue            -22,520      -22,522      -22,522
+     g other bun_js_parser / bun_ast                +400       -1,190       -1,190
+     w JavaScriptCore and bindings               +58,051     -125,530     +336,086
+     x memcpy/memmove/memset/memcmp             -242,581     -226,889     -238,666
+     y allocator (mimalloc, AstAlloc)           +898,733     +880,898     +947,871
+     z other non-parser                          +32,702      +77,509     +112,894
+== tsx: base program Bc 333,948,498 parser Bc 156,419,646
+   head   program dIr   +50,542,774 dBc   +9,042,932 dBi  -488,599 | parser dIr   +45,335,990 dBc   +8,248,000 dBi  -500,000
+   nolint program dIr   +49,760,468 dBc   +8,805,481 dBi  -481,599 | parser dIr   +43,990,797 dBc   +7,894,408 dBi  -500,027
+   nolintbt program dIr   +50,064,149 dBc   +8,773,493 dBi  -481,950 | parser dIr   +44,290,797 dBc   +7,862,408 dBi  -500,027
+   dBc against the base, by cause:                head       nolint     nolintbt
+     a1 type grammar                          +6,816,000   +6,976,000   +6,960,000
+     a2 statement named like a cast (lookah     +200,000     +200,000     +200,000
+     a3 class index signature lookahead          +16,000      +16,000      +16,000
+     a4 lexer (tokens read again)               +666,000     +666,000     +666,000
+     b parse pass outside the type grammar      +404,000     +186,000     +186,000
+     d backtracker (attempt wrappers, log t     +310,000      +16,000           +0
+     f visit pass, symbols, drop glue            -74,000      -74,002      -74,002
+     g other bun_js_parser / bun_ast             -90,000      -91,590      -91,590
+     w JavaScriptCore and bindings              +100,354       -5,509       -1,696
+     x memcpy/memmove/memset/memcmp               +4,006       -5,867       -5,887
+     y allocator (mimalloc, AstAlloc)           +691,034     +793,780     +792,187
+     z other non-parser                             -462     +128,669     +126,481
+== js-control: base program Bc 706,344,757 parser Bc 343,415,262
+   head   program dIr    -4,137,431 dBc      -60,895 dBi      +822 | parser dIr    -2,547,530 dBc     +163,520 dBi        +0
+   nolint program dIr    -2,613,637 dBc     +420,500 dBi    +3,673 | parser dIr    -1,806,223 dBc      -30,532 dBi       -27
+   nolintbt program dIr    -3,606,013 dBc     -114,025 dBi    +3,760 | parser dIr    -1,806,223 dBc      -30,532 dBi       -27
+   dBc against the base, by cause:                head       nolint     nolintbt
+     b parse pass outside the type grammar       +92,680      -99,780      -99,780
+     f visit pass, symbols, drop glue            +70,840      +70,838      +70,838
+     g other bun_js_parser / bun_ast                  +0       -1,590       -1,590
+     w JavaScriptCore and bindings               +79,751      -98,847     -138,909
+     x memcpy/memmove/memset/memcmp             -224,585     +460,978         -126
+     y allocator (mimalloc, AstAlloc)            -84,388      -31,775      -62,723
+     z other non-parser                           +4,807     +120,676     +118,265

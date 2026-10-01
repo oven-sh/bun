@@ -1,0 +1,10 @@
+program                                           dIr    -4,137,431  dBc      -60,895  dBi       +822   Bc 706,344,757 -> 706,283,862
+a4 lexer (tokens read again)                      dIr            +0  dBc           +0  dBi         +0   (0 symbols differ)
+b parse pass outside the type grammar             dIr    -2,283,460  dBc      +92,680  dBi         +0   (9 symbols differ)
+f visit pass, symbols, drop glue                  dIr      -382,110  dBc      +70,840  dBi         +0   (13 symbols differ)
+g other bun_js_parser / bun_ast                   dIr      +118,040  dBc           +0  dBi         +0   (1 symbols differ)
+v printer                                         dIr    -1,219,860  dBc           +0  dBi         +0   (2 symbols differ)
+w JavaScriptCore and bindings                     dIr      +446,660  dBc      +79,751  dBi       +445   (334 symbols differ)
+x memcpy/memmove/memset/memcmp                    dIr      -280,626  dBc     -224,585  dBi         +0   (3 symbols differ)
+y allocator (mimalloc, AstAlloc)                  dIr      -563,609  dBc      -84,388  dBi       -236   (66 symbols differ)
+z other non-parser                                dIr       +27,534  dBc       +4,807  dBi       +613   (59 symbols differ)

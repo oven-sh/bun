@@ -352,7 +352,19 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              name = self.lexer.identifier;
              self.lexer.next()?;
          }
-@@ -1269,10 +1310,7 @@
+@@ -694,7 +735,10 @@
+ 
+         self.lexer.expect(T::TQuestion)?;
+         let mut when_true = S::branch();
+-        self.parse_type::<S>(SkipTypeOptionsBitset::empty(), &mut when_true)?;
++        self.parse_type::<S>(
++            SkipTypeOptionsBitset::only(SkipTypeOptions::IsTrueType),
++            &mut when_true,
++        )?;
+         if S::BUILDS {
+             true_type = S::node(&when_true);
+         }
+@@ -1269,10 +1313,7 @@
              if is_undefined {
                  S::keyword(out, TypeKeyword::Object);
              } else {
@@ -364,7 +376,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              }
          }
          let _ = self.parse_type_predicate_after_name::<S>(out)?;
-@@ -1383,10 +1421,7 @@
+@@ -1383,10 +1424,7 @@
      ) -> Result<(), Error> {
          if self.lexer.token == T::TIdentifier {
              if kind == TsIdentKind::Normal {
@@ -376,7 +388,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              }
              if S::BUILDS {
                  S::b_reference(&self.lexer, out);
-@@ -1418,7 +1453,7 @@
+@@ -1418,7 +1456,7 @@
                  S::b_reference(&self.lexer, out);
              }
              self.lexer.next()?;
@@ -385,7 +397,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              self.parse_type_arguments_of_type_reference::<S>(out)?;
  
              // "implements class {}": before "{" the word starts an expression, as before, but in a return type
-@@ -1437,10 +1472,20 @@
+@@ -1437,10 +1475,20 @@
              return Ok(());
          }
  
@@ -407,7 +419,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
      /// Whether the reserved word or the private name that the lexer is on is the first name of a type reference.
      fn is_reserved_type_name<S: TypeSink>(&mut self, opts: SkipTypeOptionsBitset) -> bool {
          let is_private_name = self.lexer.token == T::TPrivateIdentifier;
-@@ -1450,16 +1495,27 @@
+@@ -1450,16 +1498,26 @@
          if S::STRICT {
              return true;
          }
@@ -424,12 +436,11 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
 +                self.lexer.token,
 +                T::TClass | T::TDelete | T::TIn | T::TInstanceof | T::TSuper
 +            )
-+            && self.is_directly_after(b"extends")
          {
              return false;
          }
 +        // "A extends B ? if : C": the reference ends the type before a "?" that no type follows
-+        if self.lexer.token != T::TFunction && self.is_directly_after(b"?") {
++        if opts.contains(SkipTypeOptions::IsTrueType) && self.lexer.token != T::TFunction {
 +            return false;
 +        }
          // Inside an attempt a word that an expression or a new line starts or goes on with is none: `a < (super.x) > (b)` stays a comparison
@@ -440,22 +451,11 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
                  || matches!(
                      self.lexer.token,
                      T::TSuper | T::TDelete | T::TIn | T::TInstanceof
-@@ -1470,11 +1526,24 @@
+@@ -1470,11 +1528,13 @@
          !self.is_keyword_of_enclosing_type(opts)
      }
  
 -    /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" and "extends" are read as before.
-+    /// Whether `text` ends right before the token the lexer is on, with nothing but white space between.
-+    fn is_directly_after(&self, text: &[u8]) -> bool {
-+        let lexer = &self.lexer;
-+        let start = u32::try_from(lexer.start).unwrap_or(u32::MAX);
-+        let before = ts::full_start(lexer.contents, &lexer.all_comments, start) as usize;
-+        lexer
-+            .contents
-+            .get(..before)
-+            .is_some_and(|head| head.ends_with(text))
-+    }
-+
 +    /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" is read as before.
      fn is_word_that_starts_no_type(&mut self) -> bool {
          match self.lexer.token {
@@ -467,7 +467,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              token => token.is_reserved_word() && !self.is_start_of_type(false),
          }
      }
-@@ -1491,11 +1560,15 @@
+@@ -1491,11 +1551,15 @@
      }
  
      /// The loop of `parseEntityName`: the names after the first one.
@@ -486,7 +486,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
                  break;
              }
              self.parse_right_side_of_dot::<S>(out)?;
-@@ -1563,13 +1636,16 @@
+@@ -1563,13 +1627,16 @@
          // "import('fs').promises.FileHandle"
          if self.lexer.token == T::TDot {
              self.lexer.next()?;
@@ -506,7 +506,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              return self.parse_type_arguments_of_type_reference::<S>(out);
          }
  
-@@ -1770,13 +1846,31 @@
+@@ -1770,13 +1837,31 @@
          {
              if self.lexer.token == T::TDotDotDot {
                  self.lexer.next()?;
@@ -542,7 +542,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
          }
  
          self.parse_tuple_element_type(SkipTypeOptionsBitset::only(
-@@ -2156,8 +2250,9 @@
+@@ -2156,8 +2241,9 @@
                      return self.parse_property_or_method_signature(MemberName::Word, false);
                  }
                  // A private name. A bigint too, but not inside an attempt, so that `f<{ 1n: a }>(b)` stays a comparison.
@@ -554,7 +554,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
                  {
                      self.lexer.next()?;
                      return self.parse_property_or_method_signature_of_reference(false, false);
-@@ -2167,6 +2262,24 @@
+@@ -2167,6 +2253,24 @@
          }
      }
  
@@ -579,7 +579,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
      /// parseModifiers for a member, and the test for "get" and "set" that parseTypeMember makes after it.
      fn parse_modifiers_of_type_member(&mut self) -> Result<AfterModifiers, Error> {
          let mut has_static = false;
-@@ -2388,7 +2501,7 @@
+@@ -2388,7 +2492,7 @@
              if (has_type_annotation || has_question || is_computed_name)
                  && self.lexer.token == T::TEquals
              {
@@ -588,7 +588,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              }
          }
          self.parse_type_member_semicolon()
-@@ -2464,7 +2577,7 @@
+@@ -2464,7 +2568,7 @@
                  self.lexer.next()?;
                  self.skip_type_script_type(Level::Lowest)?;
                  if may_have_initializer && self.lexer.token == T::TEquals {
@@ -597,7 +597,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
                  }
              }
              _ => {
-@@ -2477,7 +2590,7 @@
+@@ -2477,7 +2581,7 @@
                      && (has_question || name == MemberName::Bracket)
                      && self.lexer.token == T::TEquals
                  {
@@ -606,7 +606,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
                  }
              }
          }
-@@ -2525,9 +2638,19 @@
+@@ -2525,9 +2629,19 @@
              return result;
          }
          let failed = self.set_aside_failed_read(mark);
@@ -628,7 +628,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
          } else {
              self.parse_computed_property_name()
                  .map(|()| Bracketed::Expression)
-@@ -2657,6 +2780,26 @@
+@@ -2657,6 +2771,26 @@
          Ok(())
      }
  
@@ -655,7 +655,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
      /// parseComputedPropertyName
      fn parse_computed_property_name(&mut self) -> Result<(), Error> {
          self.lexer.expect(T::TOpenBracket)?;
-@@ -2684,12 +2827,22 @@
+@@ -2684,12 +2818,22 @@
          }
      }
  
@@ -680,7 +680,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              return Ok(false);
          }
          match self.parse_and_drop_in_type(Dropped::FunctionBlock) {
-@@ -2971,7 +3124,11 @@
+@@ -2971,7 +3115,11 @@
              if self.lexer.token == T::TExtends {
                  result = SkipTypeParameterResult::DefinitelyTypeParameters;
                  self.lexer.next()?;
@@ -693,7 +693,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              }
  
              // "class Foo<T = void> {}"
-@@ -3112,6 +3269,25 @@
+@@ -3112,6 +3260,25 @@
  
      /// parseHeritageClauses of an interface
      fn parse_heritage_clauses(&mut self) -> Result<(), Error> {
@@ -719,7 +719,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
          while self.lexer.token == T::TExtends || self.lexer.is_contextual_keyword(b"implements") {
              self.parse_heritage_clause()?;
          }
-@@ -3122,8 +3298,10 @@
+@@ -3122,8 +3289,10 @@
      fn parse_heritage_clause(&mut self) -> Result<(), Error> {
          self.lexer.next()?;
          loop {
@@ -732,7 +732,7 @@ diff --git a/src/js_parser/parse/parse_skip_typescript.rs b/src/js_parser/parse/
              {
                  break;
              }
-@@ -3194,6 +3372,11 @@
+@@ -3194,6 +3363,11 @@
              return result;
          }
          let failed = self.set_aside_failed_read(mark);
@@ -909,12 +909,14 @@ diff --git a/src/js_parser/typescript.rs b/src/js_parser/typescript.rs
      fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
          let p = self;
          let old_lexer = p.lexer.snapshot();
-@@ -315,6 +323,8 @@
+@@ -315,6 +323,10 @@
      DisallowConditionalTypes,
      /// The type is an element of a list of type arguments, which a token that starts no type ends.
      IsTypeArgument,
 +    /// The type is the constraint of a type parameter, where the reference reads an expression if one starts and no type does.
 +    IsConstraint,
++    /// The type stands after the "?" of a conditional type, which the reference reads as one only if a type starts after it.
++    IsTrueType,
  }
  
  // Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable

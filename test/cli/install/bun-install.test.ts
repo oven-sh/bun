@@ -11296,6 +11296,8 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     it(`are not installed by the ${linker} linker from a bun.lock that already holds one under a tarball dependency`, async () => {
       using dir = tempDir(`escaping-link-in-lockfile-${linker}`, {
         "global/outside/package.json": JSON.stringify({ name: "outside-dir", version: "1.0.0" }),
+        // A node_modules from an earlier hoisted install.
+        "project/node_modules/tb/package.json": JSON.stringify({ name: "tb", version: "1.0.0" }),
         "project/package.json": rootPackageJson({ tb: "file:./tb-1.0.0.tgz" }),
         "project/bun.lock": JSON.stringify({
           lockfileVersion: 2,
@@ -11323,6 +11325,13 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
         : [];
       for (const entry of tbEntries) {
         expect(await exists(join(store, entry, "node_modules", "outside"))).toBe(false);
+      }
+      // The isolated linker refuses before it moves the existing node_modules aside.
+      if (linker === "isolated") {
+        expect(await file(join(root, "project", "node_modules", "tb", "package.json")).json()).toEqual({
+          name: "tb",
+          version: "1.0.0",
+        });
       }
       expect(exitCode).toBe(1);
     });
